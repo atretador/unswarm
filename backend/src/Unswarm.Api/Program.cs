@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Api.Configuration;
@@ -73,7 +74,12 @@ builder.Services.AddSingleton<ISchedulerQueue, SchedulerQueue>();
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
     {
-        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        // Frontend wire contract for statuses is lowercase (AgentsController
+        // ToContainerStatus precedent). CamelCase aligns all enum-typed DTO statuses
+        // (ModelStatus, ContainerStatus, QueueItemStatus) with the frontend types.
+        // JsonStringEnumConverter still READS case-insensitively, so request bodies
+        // with either casing keep working.
+        o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
     });
 
 // ── Background services ──────────────────────────────────────────────────

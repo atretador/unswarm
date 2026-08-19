@@ -37,7 +37,7 @@ public sealed class OpenAIController : ControllerBase
                 Quantization = m.Quantization,
                 ContextWindow = m.ContextWindow,
                 ContainerImage = m.ContainerImage,
-                Status = m.Status.ToString()
+                Status = m.Status.ToString().ToLowerInvariant()
             }
         }).ToList();
 

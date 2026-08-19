@@ -163,6 +163,19 @@ public sealed class ContainersControllerTests
     }
 
     [Fact]
+    public async Task GetRegistered_EmitsLowercaseStatus()
+    {
+        await SeedRegisteredWithModelAsync("reg-1", "model-1", "llama-3");
+
+        var result = await CreateController().GetRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        // Wire contract: status is lowercase ("ready"), not PascalCase ("Ready").
+        Assert.Equal("ready", response.Status);
+    }
+
+    [Fact]
     public async Task GetRegistered_UsesLatestBenchmark_PerModel()
     {
         var (_, model) = await SeedRegisteredWithModelAsync("reg-1", "model-1", "llama-3");
@@ -204,7 +217,7 @@ public sealed class ContainersControllerTests
         var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
 
         Assert.Equal("reg-1", response.Id);
-        Assert.Equal("Ready", response.Status);
+        Assert.Equal("ready", response.Status);
         Assert.Equal("c1", response.RuntimeContainerId);
         Assert.Equal(8081, response.MappedPort);
         // discoveredModels populated with lastBenchmark via BuildRegisteredResponseAsync.
@@ -245,7 +258,7 @@ public sealed class ContainersControllerTests
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
-        Assert.Equal("Error", response.Status);
+        Assert.Equal("error", response.Status);
         Assert.Equal("Connection refused", response.ErrorMessage);
     }
 }

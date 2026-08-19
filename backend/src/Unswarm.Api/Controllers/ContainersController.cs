@@ -170,7 +170,7 @@ public sealed class ContainersController : ControllerBase
             ContainerPort = container.ContainerPort,
             Agent = container.Agent,
             CanRunAlongWith = (container.CanRunAlongWith ?? []).ToList(),
-            Status = container.Status.ToString(),
+            Status = container.Status.ToString().ToLowerInvariant(),
             RuntimeContainerId = container.RuntimeContainerId,
             MappedPort = container.MappedPort,
             ErrorMessage = container.ErrorMessage,
