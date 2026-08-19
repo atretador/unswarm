@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Unswarm.Api/Unswarm.Api.csproj" />
+    <Project Path="src/Unswarm.Core/Unswarm.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Unswarm.Tests/Unswarm.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,6 @@
+@Unswarm.Api_HostAddress = http://localhost:5014
+
+GET {{Unswarm.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

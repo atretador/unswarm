@@ -1,0 +1,20 @@
+# Unswarm Agent Configuration
+# Copy this file and modify as needed.
+
+# Backend WebSocket URL (supports ws://, wss://, http://, https://)
+backend_url: "ws://localhost:5014"
+
+# API key for authentication (empty = no auth)
+api_key: ""
+
+# Unique agent name — must be unique across all agents on the same backend
+agent_name: "machine-b"
+
+# Docker socket path
+docker_socket: "unix:///var/run/docker.sock"
+
+# Reconnection settings
+reconnect:
+  initial_backoff_ms: 1000    # 1 second
+  max_backoff_ms: 30000       # 30 seconds
+  max_retries: -1             # -1 = infinite retries

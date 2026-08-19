@@ -1,0 +1,642 @@
+using System.Collections.Concurrent;
+using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
+using Unswarm.Core.Contracts;
+using Unswarm.Core.Models;
+using LogLevel = Unswarm.Core.Models.LogLevel;
+
+namespace Unswarm.Core.Services.Scheduler;
+
+/// <summary>
+/// Multi-target non-preemptive scheduler. A dispatcher reads requests from a global
+/// bounded channel, resolves each request's execution target ("host" | "agent:&lt;name&gt;"),
+/// and enqueues it into that target's own bounded channel. Each target runs a sequential
+/// worker that preserves single-slot behavior WITHIN the target: it ensures the correct
+/// container is running (stop/start scoped to that target only), batch-drains before
+/// switching, applies canRunAlongWith compatibility, and fails queued requests for that
+/// target when a container cannot be started. Containers on different targets run
+/// concurrently.
+/// </summary>
+public sealed class SchedulerWorker
+{
+    private const int TargetQueueDepth = 16;
+
+    private readonly Channel<InferenceRequest> _channel;
+    private readonly IDockerController _hostDocker;
+    private readonly IDockerControllerRouter _router;
+    private readonly IModelTargetResolver _resolver;
+    private readonly IInferenceProxy _inference;
+    private readonly IHealthChecker _healthChecker;
+    private readonly ILogStore _logStore;
+    private readonly IStatsTracker _statsTracker;
+    private readonly IClock _clock;
+    private readonly ILogger<SchedulerWorker> _logger;
+    private readonly SchedulerSettings _settings;
+    private readonly IContainerRegistry? _containerRegistry;
+
+    // Per-target state
+    private readonly ConcurrentDictionary<string, TargetSlot> _slots = new(StringComparer.Ordinal);
+
+    // Tracking
+    private readonly ConcurrentDictionary<string, QueueItem> _allItems = new();
+    private readonly ConcurrentDictionary<string, ModelTransition> _activeTransitions = new();
+    private readonly ConcurrentQueue<QueueItem> _recentCompleted = new();
+    private readonly object _snapshotLock = new();
+    private Task? _runTask;
+
+    public SchedulerWorker(
+        Channel<InferenceRequest> channel,
+        IDockerController docker,
+        IInferenceProxy inference,
+        IHealthChecker healthChecker,
+        ILogStore logStore,
+        IStatsTracker statsTracker,
+        IClock clock,
+        ILogger<SchedulerWorker> logger,
+        SchedulerSettings settings,
+        IContainerRegistry? containerRegistry = null,
+        IDockerControllerRouter? router = null,
+        IModelTargetResolver? resolver = null)
+    {
+        _channel = channel;
+        _hostDocker = docker;
+        _inference = inference;
+        _healthChecker = healthChecker;
+        _logStore = logStore;
+        _statsTracker = statsTracker;
+        _clock = clock;
+        _logger = logger;
+        _settings = settings;
+        _containerRegistry = containerRegistry;
+        _router = router ?? new HostOnlyDockerControllerRouter(docker);
+        _resolver = resolver ?? new HostOnlyTargetResolver();
+    }
+
+    public void Start(CancellationToken ct)
+    {
+        _runTask = RunAsync(ct);
+    }
+
+    public async Task WaitForShutdownAsync()
+    {
+        if (_runTask is not null)
+        {
+            try { await _runTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    public QueueSnapshot GetSnapshot()
+    {
+        lock (_snapshotLock)
+        {
+            var waiting = _allItems.Values
+                .Where(i => i.Status == QueueItemStatus.Waiting)
+                .OrderBy(i => i.Priority)
+                .ThenBy(i => i.CreatedAt)
+                .ToList();
+
+            var recent = _recentCompleted.ToArray()
+                .OrderByDescending(i => i.CreatedAt)
+                .Take(20)
+                .ToList();
+
+            var transitions = _activeTransitions.Values
+                .Where(t => t.Status != "complete")
+                .ToList();
+
+            return new QueueSnapshot
+            {
+                Waiting = waiting,
+                RecentCompleted = recent,
+                ActiveTransitions = transitions
+            };
+        }
+    }
+
+    // ── Dispatcher ────────────────────────────────────────────────────────────
+
+    private async Task RunAsync(CancellationToken stoppingToken)
+    {
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", "Scheduler worker started");
+
+        try
+        {
+            await foreach (var request in _channel.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+            {
+                var queueItem = CreateQueueItem(request);
+                TryAddItem(queueItem);
+
+                try
+                {
+                    await DispatchAsync(request, queueItem, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    FailItem(queueItem, "Scheduler shutting down");
+                    request.Tcs.TrySetCanceled(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error dispatching request {Id}", request.Id);
+                    FailItem(queueItem, ex.Message);
+                    request.Tcs.TrySetException(ex);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal shutdown
+        }
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", "Scheduler worker stopped");
+    }
+
+    private async Task DispatchAsync(InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    {
+        var targetId = await _resolver.ResolveTargetAsync(request.ModelName, ct).ConfigureAwait(false);
+        request.TargetId = targetId;
+
+        if (!_router.IsTargetReachable(targetId))
+        {
+            FailItem(queueItem, $"Target {targetId} not reachable for model {request.ModelName}");
+            request.Tcs.TrySetException(new InvalidOperationException(
+                $"Target {targetId} is not reachable for model {request.ModelName}"));
+            return;
+        }
+
+        if (_settings.MaxConcurrentTargets > 0
+            && !_slots.ContainsKey(targetId)
+            && _slots.Count >= _settings.MaxConcurrentTargets)
+        {
+            FailItem(queueItem, $"Max concurrent targets ({_settings.MaxConcurrentTargets}) exceeded");
+            request.Tcs.TrySetException(new InvalidOperationException(
+                $"Max concurrent targets ({_settings.MaxConcurrentTargets}) exceeded for model {request.ModelName}"));
+            return;
+        }
+
+        var slot = GetOrCreateSlot(targetId);
+        await slot.Channel.Writer.WriteAsync(request, ct).ConfigureAwait(false);
+        EnsureSlotWorkerStarted(slot, ct);
+    }
+
+    private TargetSlot GetOrCreateSlot(string targetId)
+    {
+        return _slots.GetOrAdd(targetId, _ => new TargetSlot
+        {
+            TargetId = targetId,
+            Channel = Channel.CreateBounded<InferenceRequest>(new BoundedChannelOptions(TargetQueueDepth)
+            {
+                FullMode = BoundedChannelFullMode.Wait
+            })
+        });
+    }
+
+    private void EnsureSlotWorkerStarted(TargetSlot slot, CancellationToken ct)
+    {
+        lock (slot)
+        {
+            if (slot.Worker is not null && !slot.Worker.IsCompleted)
+                return;
+
+            slot.Worker = RunTargetAsync(slot, ct);
+        }
+    }
+
+    // ── Per-target worker ─────────────────────────────────────────────────────
+
+    private async Task RunTargetAsync(TargetSlot slot, CancellationToken stoppingToken)
+    {
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", $"Target worker started for {slot.TargetId}");
+
+        try
+        {
+            await foreach (var request in slot.Channel.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+            {
+                var queueItem = _allItems.TryGetValue(request.Id, out var existing)
+                    ? existing
+                    : CreateQueueItem(request);
+
+                try
+                {
+                    await ProcessRequestAsync(slot, request, queueItem, stoppingToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    FailItem(queueItem, "Scheduler shutting down");
+                    request.Tcs.TrySetCanceled(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
+                        request.Id, slot.TargetId);
+                    FailItem(queueItem, ex.Message);
+                    request.Tcs.TrySetException(ex);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Normal shutdown
+        }
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", $"Target worker stopped for {slot.TargetId}");
+    }
+
+    private async Task ProcessRequestAsync(TargetSlot slot, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    {
+        // Ensure correct model is running on this target
+        if (slot.ResidentModel != request.ModelName)
+        {
+            await SwitchModelAsync(slot, request.ModelName, ct).ConfigureAwait(false);
+        }
+
+        // If switch failed, the model container won't be running
+        if (slot.ResidentModel != request.ModelName)
+        {
+            FailItem(queueItem, $"Failed to start container for model {request.ModelName}");
+            request.Tcs.TrySetException(new InvalidOperationException($"Container for model {request.ModelName} not available"));
+            return;
+        }
+
+        // Process the request
+        UpdateItemStatus(queueItem, QueueItemStatus.Processing);
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Processing request {request.Id} for model {request.ModelName} on {slot.TargetId}");
+
+        try
+        {
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.RequestTimeout));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+
+            var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
+
+            var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
+            UpdateItem(queueItem with
+            {
+                Status = QueueItemStatus.Completed,
+                TokensGenerated = response.TokensGenerated,
+                ElapsedMs = waitMs,
+                WaitMs = waitMs
+            });
+
+            _statsTracker.RecordCompletion(request);
+            request.Tcs.TrySetResult(response);
+
+            _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                $"Request {request.Id} completed: {response.TokensGenerated} tokens in {waitMs}ms");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            FailItem(queueItem, "Request timed out");
+            request.Tcs.TrySetException(new TimeoutException("Request timed out"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Inference failed for request {Id}", request.Id);
+            FailItem(queueItem, ex.Message);
+            _statsTracker.RecordError(request);
+            request.Tcs.TrySetException(ex);
+        }
+    }
+
+    // ── Target-scoped model switching ─────────────────────────────────────────
+
+    private async Task SwitchModelAsync(TargetSlot slot, string targetModel, CancellationToken ct)
+    {
+        var transitionId = Guid.NewGuid().ToString("N");
+        var fromModel = slot.ResidentModel ?? "(none)";
+        var switchStart = _clock.UtcNow;
+
+        var transition = new ModelTransition
+        {
+            Id = transitionId,
+            FromModel = fromModel,
+            ToModel = targetModel,
+            Status = "switching",
+            StartedAt = _clock.UtcNow
+        };
+        _activeTransitions[transitionId] = transition;
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Switching model on {slot.TargetId}: {fromModel} -> {targetModel}");
+
+        try
+        {
+            // Resolve the target model's registered container (if any)
+            string? targetRegisteredContainerId = null;
+            RegisteredContainer? targetRegisteredContainer = null;
+            if (_containerRegistry is not null)
+            {
+                targetRegisteredContainerId = await _containerRegistry
+                    .GetContainerIdForModelAsync(targetModel, ct).ConfigureAwait(false);
+
+                if (targetRegisteredContainerId is not null)
+                {
+                    targetRegisteredContainer = await _containerRegistry
+                        .GetAsync(targetRegisteredContainerId, ct).ConfigureAwait(false);
+                }
+            }
+
+            // Container-aware: same registered container as resident → instant switch
+            if (targetRegisteredContainerId is not null
+                && slot.ResidentRegisteredContainerId is not null
+                && targetRegisteredContainerId == slot.ResidentRegisteredContainerId)
+            {
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (same container {slot.ResidentRegisteredContainerId})");
+
+                slot.ResidentModel = targetModel;
+
+                var switchDurationMs = (_clock.UtcNow - switchStart).TotalMilliseconds;
+                _statsTracker.RecordSwitch(switchDurationMs);
+
+                transition = transition with { Status = "complete" };
+                _activeTransitions[transitionId] = transition;
+
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Instant model switch complete on {slot.TargetId}: now running {targetModel} ({switchDurationMs:F0}ms)");
+                return;
+            }
+
+            // Target container already running on this target (compatible set) → instant
+            if (targetRegisteredContainerId is not null
+                && slot.RunningContainers.TryGetValue(targetRegisteredContainerId, out var alreadyRunning))
+            {
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
+
+                slot.ResidentModel = targetModel;
+                slot.ResidentContainerId = alreadyRunning.ContainerId;
+                slot.ResidentRegisteredContainerId = targetRegisteredContainerId;
+
+                var switchDurationMs2 = (_clock.UtcNow - switchStart).TotalMilliseconds;
+                _statsTracker.RecordSwitch(switchDurationMs2);
+
+                transition = transition with { Status = "complete" };
+                _activeTransitions[transitionId] = transition;
+                return;
+            }
+
+            // Drain: if LazyStop, batch-drain all requests for the current model first
+            if (_settings.LazyStop && slot.ResidentContainerId is not null && slot.ResidentModel is not null)
+            {
+                transition = transition with { Status = "draining" };
+                _activeTransitions[transitionId] = transition;
+
+                await DrainCurrentModelAsync(slot, ct).ConfigureAwait(false);
+            }
+
+            // Stop incompatible running containers on this target (canRunAlongWith)
+            transition = transition with { Status = "switching" };
+            _activeTransitions[transitionId] = transition;
+
+            await StopIncompatibleContainersAsync(slot, targetRegisteredContainer, ct).ConfigureAwait(false);
+
+            // Start new container
+            transition = transition with { Status = "starting" };
+            _activeTransitions[transitionId] = transition;
+
+            var controller = _router.GetController(slot.TargetId);
+            var startResult = await controller.StartContainerAsync(targetModel, ct).ConfigureAwait(false);
+
+            if (startResult.ErrorMessage is not null)
+            {
+                // Start failed: fail ALL queued requests for this model
+                _logStore.Enqueue(LogLevel.Error, "Scheduler",
+                    $"Container start failed on {slot.TargetId} for model {targetModel}: {startResult.ErrorMessage}");
+
+                FailAllForModel(targetModel, $"Container start failed: {startResult.ErrorMessage}");
+
+                transition = transition with { Status = "complete" };
+                _activeTransitions[transitionId] = transition;
+                return;
+            }
+
+            // Wait for health
+            if (startResult.MappedPort.HasValue)
+            {
+                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, ct).ConfigureAwait(false);
+            }
+
+            slot.ResidentModel = targetModel;
+            slot.ResidentContainerId = startResult.ContainerId;
+            slot.ResidentRegisteredContainerId = targetRegisteredContainerId;
+
+            var runningKey = targetRegisteredContainerId ?? $"legacy:{startResult.ContainerId}";
+            slot.RunningContainers[runningKey] = new RunningContainerInfo
+            {
+                Key = runningKey,
+                RegisteredContainerId = targetRegisteredContainerId,
+                ContainerName = targetRegisteredContainer?.Image ?? targetModel,
+                ContainerId = startResult.ContainerId
+            };
+
+            var switchDurationMs3 = (_clock.UtcNow - switchStart).TotalMilliseconds;
+            _statsTracker.RecordSwitch(switchDurationMs3);
+
+            transition = transition with { Status = "complete" };
+            _activeTransitions[transitionId] = transition;
+
+            _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                $"Model switch complete on {slot.TargetId}: now running {targetModel} on port {startResult.MappedPort} ({switchDurationMs3:F0}ms)");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Model switch failed on {Target}: {From} -> {To}", slot.TargetId, fromModel, targetModel);
+
+            // Fail all queued requests for the target model
+            FailAllForModel(targetModel, $"Model switch failed: {ex.Message}");
+
+            transition = transition with { Status = "complete" };
+            _activeTransitions[transitionId] = transition;
+
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Stops containers on this target that cannot run alongside the target container.
+    /// With no registry info (legacy path) or an empty canRunAlongWith set, behaves as
+    /// single-container mode: every other running container on the target is stopped.
+    /// </summary>
+    private async Task StopIncompatibleContainersAsync(TargetSlot slot, RegisteredContainer? targetContainer, CancellationToken ct)
+    {
+        // No registry or no mapping for the target model → conservative single-slot behavior
+        if (_containerRegistry is null || targetContainer is null)
+        {
+            await StopAllRunningAsync(slot, ct).ConfigureAwait(false);
+            return;
+        }
+
+        var targetNames = ContainerNames(targetContainer);
+        var targetCanRun = new HashSet<string>(targetContainer.CanRunAlongWith ?? [], StringComparer.OrdinalIgnoreCase);
+
+        var toStop = new List<string>();
+        foreach (var kv in slot.RunningContainers)
+        {
+            var info = kv.Value;
+
+            // Same registered container → never stop
+            if (info.RegisteredContainerId is not null && info.RegisteredContainerId == targetContainer.Id)
+                continue;
+
+            // Legacy running container (no registry info) → cannot prove compatibility → stop
+            if (info.RegisteredContainerId is null)
+            {
+                toStop.Add(kv.Key);
+                continue;
+            }
+
+            var runningEntity = await _containerRegistry.GetAsync(info.RegisteredContainerId, ct).ConfigureAwait(false);
+            if (runningEntity is null)
+            {
+                toStop.Add(kv.Key);
+                continue;
+            }
+
+            var runningNames = ContainerNames(runningEntity);
+            var runningCanRun = new HashSet<string>(runningEntity.CanRunAlongWith ?? [], StringComparer.OrdinalIgnoreCase);
+
+            // Symmetric compatibility: target accepts running, running accepts target
+            var targetAccepts = runningNames.Any(runningName => targetCanRun.Contains(runningName));
+            var runningAccepts = targetNames.Any(targetName => runningCanRun.Contains(targetName));
+
+            if (!(targetAccepts && runningAccepts))
+                toStop.Add(kv.Key);
+        }
+
+        var controller = _router.GetController(slot.TargetId);
+        foreach (var key in toStop)
+        {
+            var info = slot.RunningContainers[key];
+            _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                $"Stopping incompatible container {info.ContainerName} on {slot.TargetId}");
+
+            await controller.StopContainerAsync(info.ContainerId, ct).ConfigureAwait(false);
+            slot.RunningContainers.Remove(key);
+
+            if (slot.ResidentContainerId == info.ContainerId)
+            {
+                slot.ResidentModel = null;
+                slot.ResidentContainerId = null;
+                slot.ResidentRegisteredContainerId = null;
+            }
+        }
+    }
+
+    private async Task StopAllRunningAsync(TargetSlot slot, CancellationToken ct)
+    {
+        var controller = _router.GetController(slot.TargetId);
+        foreach (var kv in slot.RunningContainers.ToList())
+        {
+            _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                $"Stopping container {kv.Value.ContainerName} on {slot.TargetId}");
+
+            await controller.StopContainerAsync(kv.Value.ContainerId, ct).ConfigureAwait(false);
+            slot.RunningContainers.Remove(kv.Key);
+        }
+
+        slot.ResidentModel = null;
+        slot.ResidentContainerId = null;
+        slot.ResidentRegisteredContainerId = null;
+    }
+
+    private static IEnumerable<string> ContainerNames(RegisteredContainer container)
+    {
+        yield return container.Image;
+        if (!string.IsNullOrEmpty(container.DisplayName))
+            yield return container.DisplayName;
+    }
+
+    private async Task DrainCurrentModelAsync(TargetSlot slot, CancellationToken ct)
+    {
+        if (slot.ResidentModel is null) return;
+
+        // Collect all waiting requests for the current model on this target
+        var toDrain = _allItems.Values
+            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == slot.ResidentModel)
+            .OrderBy(i => i.Priority)
+            .ThenBy(i => i.CreatedAt)
+            .ToList();
+
+        if (toDrain.Count == 0) return;
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Batch-draining {toDrain.Count} requests for model {slot.ResidentModel} on {slot.TargetId}");
+
+        foreach (var item in toDrain)
+        {
+            ct.ThrowIfCancellationRequested();
+            UpdateItemStatus(item, QueueItemStatus.Processing);
+        }
+    }
+
+    private void FailAllForModel(string modelName, string errorMessage)
+    {
+        var toFail = _allItems.Values
+            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == modelName)
+            .ToList();
+
+        foreach (var item in toFail)
+        {
+            FailItem(item, errorMessage);
+        }
+    }
+
+    // ── Queue item helpers ────────────────────────────────────────────────────
+
+    private QueueItem CreateQueueItem(InferenceRequest request)
+    {
+        return new QueueItem
+        {
+            Id = request.Id,
+            ModelRequested = request.ModelName,
+            Status = QueueItemStatus.Waiting,
+            Priority = request.Priority,
+            TokensRequested = 0,
+            CreatedAt = request.EnqueuedAt
+        };
+    }
+
+    private void TryAddItem(QueueItem item)
+    {
+        _allItems[item.Id] = item;
+    }
+
+    private void UpdateItemStatus(QueueItem item, QueueItemStatus status)
+    {
+        var updated = item with { Status = status };
+        _allItems[item.Id] = updated;
+    }
+
+    private void UpdateItem(QueueItem item)
+    {
+        _allItems[item.Id] = item;
+        if (item.Status is QueueItemStatus.Completed or QueueItemStatus.Failed)
+        {
+            _recentCompleted.Enqueue(item);
+            // Keep only last 100 completed items
+            while (_recentCompleted.Count > 100)
+            {
+                _recentCompleted.TryDequeue(out _);
+            }
+        }
+    }
+
+    private void FailItem(QueueItem item, string errorMessage)
+    {
+        var updated = item with
+        {
+            Status = QueueItemStatus.Failed,
+            ErrorMessage = errorMessage
+        };
+        UpdateItem(updated);
+    }
+
+    private sealed class HostOnlyTargetResolver : IModelTargetResolver
+    {
+        public Task<string> ResolveTargetAsync(string modelName, CancellationToken ct = default)
+            => Task.FromResult(ExecutionTarget.HostId);
+    }
+}

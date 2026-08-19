@@ -6,6 +6,14 @@ node_modules/
 dist/
 *.local
 
+# .NET build artifacts
+bin/
+obj/
+
+# Go build artifacts
+agent/unswarm
+unswarm-agent
+
 # Env
 .env
 .env.*
