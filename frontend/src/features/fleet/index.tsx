@@ -718,6 +718,7 @@ function RegisteredContainerCard({
   } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [ringActive, setRingActive] = useState(highlight);
+  const [rediscoverError, setRediscoverError] = useState<string | null>(null);
 
   // Clear the highlight ring after a short window so it doesn't linger.
   useEffect(() => {
@@ -745,7 +746,14 @@ function RegisteredContainerCard({
 
   const rediscoverMutation = useMutation({
     mutationFn: (id: string) => client.rediscoverContainer(id),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      setRediscoverError(null);
+      invalidate();
+    },
+    onError: (err: Error) => {
+      // Surface non-2xx failures (e.g. unknown id / dead container) inline.
+      setRediscoverError(err.message || "Rediscover failed");
+    },
   });
 
   const deleteMutation = useMutation({
@@ -853,6 +861,21 @@ function RegisteredContainerCard({
           <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
             <AlertTriangle className="size-3 shrink-0" />
             <span className="truncate">{container.errorMessage}</span>
+          </div>
+        )}
+
+        {rediscoverError && (
+          <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
+            <AlertTriangle className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{rediscoverError}</span>
+            <button
+              type="button"
+              onClick={() => setRediscoverError(null)}
+              aria-label="Dismiss rediscover error"
+              className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
+            >
+              <X className="size-3" />
+            </button>
           </div>
         )}
 

@@ -393,6 +393,37 @@ describe("Fleet", () => {
     expect(rediscoverSpy).toHaveBeenCalledWith("rc1");
   });
 
+  it("rediscover failure renders inline error and can be dismissed", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "rediscoverContainer").mockRejectedValue(
+      new Error("Model discovery failed: connection refused"),
+    );
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const rediscoverButtons = screen.getAllByRole("button", { name: /rediscover/i });
+    await user.click(rediscoverButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText("Model discovery failed: connection refused")).toBeInTheDocument();
+    });
+
+    // Dismiss clears the inline error.
+    await user.click(screen.getByRole("button", { name: /dismiss rediscover error/i }));
+    await waitFor(() => {
+      expect(screen.queryByText("Model discovery failed: connection refused")).not.toBeInTheDocument();
+    });
+  });
+
   it("benchmark button calls runBenchmark with the first discovered model", async () => {
     seedRegisteredContainers(HOST_RCS);
     const user = userEvent.setup();

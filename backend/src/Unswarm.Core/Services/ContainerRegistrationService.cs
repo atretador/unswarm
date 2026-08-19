@@ -99,10 +99,35 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         var controller = GetController(container);
         var isRemote = controller is IRemoteDockerController;
+        var mappedPort = container.MappedPort!.Value;
 
-        var discovered = isRemote
-            ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false)
-            : await _discoveryService.DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false);
+        IReadOnlyList<DiscoveredModel> discovered;
+        try
+        {
+            discovered = isRemote
+                ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false)
+                : await _discoveryService.DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Transport failure (e.g. the runtime container was OOM-killed and its port
+            // is dead). Surface it: mark the container Error instead of silently
+            // flipping it back to Ready with zero models.
+            _logger.LogError(ex, "Model discovery failed for container {ContainerId} on port {Port}",
+                registeredContainerId, mappedPort);
+
+            var errored = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                Status = ContainerRegistrationStatus.Error,
+                ErrorMessage = $"Model discovery failed: {ex.Message}"
+            }, ct).ConfigureAwait(false);
+
+            return new RegisteredContainerWithModels
+            {
+                Container = errored,
+                DiscoveredModels = []
+            };
+        }
 
         var existingModelIds = await _registry.GetModelIdsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false);
         var existingSet = new HashSet<string>(existingModelIds);

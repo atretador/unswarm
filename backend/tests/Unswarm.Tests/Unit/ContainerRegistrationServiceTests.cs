@@ -1,3 +1,6 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
@@ -17,11 +20,51 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     private readonly FakeClock _clock = new();
     private readonly ILogger<ContainerRegistrationService> _logger =
         new LoggerFactory().CreateLogger<ContainerRegistrationService>();
+    private readonly List<TcpListener> _listeners = [];
 
     public ContainerRegistrationServiceTests()
     {
         _router = new FakeDockerControllerRouter(
             new Dictionary<string, IDockerController> { ["host"] = _docker });
+    }
+
+    /// <summary>
+    /// Starts a local HTTP listener serving the given body so host-path discovery
+    /// (which now throws on transport failure) succeeds with a real endpoint.
+    /// </summary>
+    private int StartDiscoveryServer(string jsonResponse = """{"data":[]}""")
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        _listeners.Add(listener);
+
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    using var client = await listener.AcceptTcpClientAsync();
+                    using var stream = client.GetStream();
+                    using var reader = new StreamReader(stream);
+                    using var writer = new StreamWriter(stream) { AutoFlush = true };
+
+                    await reader.ReadLineAsync();
+                    string? line;
+                    while ((line = await reader.ReadLineAsync()) != null && line.Length > 0) { }
+
+                    var bodyBytes = Encoding.UTF8.GetBytes(jsonResponse);
+                    await writer.WriteAsync(
+                        $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {bodyBytes.Length}\r\n\r\n");
+                    await stream.WriteAsync(bodyBytes);
+                }
+            }
+            catch { /* listener stopped */ }
+        });
+
+        return port;
     }
 
     private ContainerRegistrationService CreateService(
@@ -47,6 +90,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task RegisterAsync_Success_CreatesContainerAndStarts()
     {
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -63,8 +107,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal("ghcr.io/ollama/ollama:latest", result.Container.Image);
         Assert.Equal(8080, result.Container.ContainerPort);
         Assert.Equal(4096, result.Container.MemoryLimitMb);
-        // With fake Docker + health checker, the flow succeeds through to Ready
-        // (discovery returns empty because no real server, but status = Ready)
+        // With fake Docker + health checker + a real discovery endpoint, the flow
+        // succeeds through to Ready (discovery returns zero models).
         Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
         Assert.NotNull(result.Container.RuntimeContainerId);
         Assert.NotNull(result.Container.MappedPort);
@@ -75,6 +119,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task RegisterAsync_DisplayNameDefaultsToImage_WhenEmpty()
     {
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -128,6 +173,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_RemovesContainerAndMappings()
     {
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -159,6 +205,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_WithoutDeleteModels_DeprecatesModels()
     {
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -224,8 +271,61 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RegisterAsync_DiscoveryTransportFailure_SetsErrorStatus()
+    {
+        // Dead port (no listener) → ModelDiscoveryService throws → register must
+        // surface the real error instead of silently going Ready.
+        _docker.MappedPortOverride = 1; // almost certainly nothing listening
+        var service = CreateService();
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "DeadPort",
+            Image = "dead:latest"
+        };
+
+        var result = await service.RegisterAsync(request);
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        // The transport failure (connection refused) surfaces, not a silent Ready.
+        Assert.Contains("Connection refused", result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
+    }
+
+    [Fact]
+    public async Task RediscoverAsync_DiscoveryTransportFailure_SetsErrorStatus_DoesNotThrow()
+    {
+        // OOM-killed container: MappedPort present but port is dead. Rediscover must
+        // set Status=Error + message and return (not throw, not flip back to Ready).
+        var container = new RegisteredContainer
+        {
+            Id = "reg-dead",
+            DisplayName = "OomKilled",
+            Image = "test:latest",
+            MappedPort = 1, // dead port
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var service = CreateService();
+        var result = await service.RediscoverAsync("reg-dead");
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        Assert.Contains("Model discovery failed", result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
+        // Still persisted as Error in the registry.
+        var persisted = await _registry.GetAsync("reg-dead");
+        Assert.Equal(ContainerRegistrationStatus.Error, persisted!.Status);
+        Assert.Contains("Model discovery failed", persisted.ErrorMessage!);
+    }
+
+    [Fact]
     public async Task DeleteAsync_RuntimeContainerStopped()
     {
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -735,5 +835,9 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
     public void Dispose()
     {
+        foreach (var listener in _listeners)
+        {
+            try { listener.Stop(); } catch { }
+        }
     }
 }

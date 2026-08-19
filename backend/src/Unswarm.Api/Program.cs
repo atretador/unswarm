@@ -127,6 +127,10 @@ static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
 {
     try
     {
+        // EF names the table after the DbSet ("Benchmarks"), not the entity class
+        // (BenchmarkHistoryEntity). Using the wrong name makes every PRAGMA/ALTER
+        // fail with "no such table" and the repair silently no-ops on old DBs.
+        const string table = "Benchmarks";
         var conn = db.Database.GetDbConnection();
         await db.Database.OpenConnectionAsync();
 
@@ -134,7 +138,7 @@ static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
         var columns = new List<string>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = "PRAGMA table_info(BenchmarkHistory)";
+            cmd.CommandText = $"PRAGMA table_info({table})";
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -155,14 +159,14 @@ static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
         foreach (var add in adds)
         {
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"ALTER TABLE BenchmarkHistory {add}";
+            cmd.CommandText = $"ALTER TABLE {table} {add}";
             await cmd.ExecuteNonQueryAsync();
         }
 
         // Cleanup stale NULL-ModelId rows from old-schema installs.
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = "DELETE FROM BenchmarkHistory WHERE ModelId IS NULL OR ModelId = ''";
+            cmd.CommandText = $"DELETE FROM {table} WHERE ModelId IS NULL OR ModelId = ''";
             await cmd.ExecuteNonQueryAsync();
         }
 
@@ -171,7 +175,7 @@ static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
         var uniqueIndexes = new List<string>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = "PRAGMA index_list(BenchmarkHistory)";
+            cmd.CommandText = $"PRAGMA index_list({table})";
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -190,7 +194,7 @@ static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
             if (!await IndexCoversModelIdAsync(conn, indexName).ConfigureAwait(false))
                 continue;
 
-            Console.WriteLine($"BenchmarkHistory schema repair: dropping stale unique index '{indexName}' on ModelId");
+            Console.WriteLine($"Benchmarks schema repair: dropping stale unique index '{indexName}' on ModelId");
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $"DROP INDEX IF EXISTS \"{indexName.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
             await cmd.ExecuteNonQueryAsync();

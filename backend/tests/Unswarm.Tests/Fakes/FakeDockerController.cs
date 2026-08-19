@@ -23,6 +23,12 @@ public sealed class FakeDockerController : IDockerController
     public bool FailStart { get; set; }
     public string? StartErrorMessage { get; set; }
 
+    /// <summary>
+    /// When set, StartRegisteredContainerAsync returns this MappedPort instead of a
+    /// self-incremented one — lets tests point discovery at a real local listener.
+    /// </summary>
+    public int? MappedPortOverride { get; set; }
+
     /// <summary>Containers returned by ListContainersAsync (empty by default).</summary>
     public List<ContainerInfo> ListedContainers { get; set; } = [];
 
@@ -78,7 +84,7 @@ public sealed class FakeDockerController : IDockerController
         return Task.FromResult(new ContainerStartResult
         {
             ContainerId = id,
-            MappedPort = Interlocked.Increment(ref _nextPort)
+            MappedPort = MappedPortOverride ?? Interlocked.Increment(ref _nextPort)
         });
     }
 

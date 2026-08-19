@@ -87,25 +87,22 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DiscoverModelsAsync_HttpError_ReturnsEmpty()
+    public async Task DiscoverModelsAsync_HttpError_Throws()
     {
         var port = StartServerError();
         var service = new ModelDiscoveryService(_logger);
 
-        var models = await service.DiscoverModelsAsync(port);
-
-        Assert.Empty(models);
+        await Assert.ThrowsAsync<HttpRequestException>(() => service.DiscoverModelsAsync(port));
     }
 
     [Fact]
-    public async Task DiscoverModelsAsync_ConnectionRefused_ReturnsEmpty()
+    public async Task DiscoverModelsAsync_ConnectionRefused_Throws()
     {
-        // Port almost certainly not listening
+        // Port almost certainly not listening → transport failure must surface,
+        // not silently return an empty list.
         var service = new ModelDiscoveryService(_logger);
 
-        var models = await service.DiscoverModelsAsync(1);
-
-        Assert.Empty(models);
+        await Assert.ThrowsAsync<HttpRequestException>(() => service.DiscoverModelsAsync(1));
     }
 
     private int StartServer(string jsonResponse)
