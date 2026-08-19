@@ -1,7 +1,11 @@
 export type {
+  Agent,
+  AgentContainerStatus,
   BenchmarkResult,
   Container,
+  ContainerRegistrationStatus,
   ContainerStatus,
+  LastBenchmarkResult,
   LogLevel,
   LogEntry,
   Model,
@@ -10,9 +14,11 @@ export type {
   QueueItem,
   QueueItemStatus,
   QueueSnapshot,
+  RegisterContainerPayload,
+  RegisteredContainer,
   Settings,
   StatsSummary,
 } from "./types";
 
 export type { UnswarmClient } from "./client";
-export { mockClient } from "./mock";
+export { httpClient } from "./httpClient";
