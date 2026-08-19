@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Box,
@@ -702,13 +703,28 @@ function ModelChip({ model }: { model: Model }) {
 
 // ─── Registered container card ────────────────────────────────────
 
-function RegisteredContainerCard({ container }: { container: RegisteredContainer }) {
+function RegisteredContainerCard({
+  container,
+  highlight = false,
+}: {
+  container: RegisteredContainer;
+  /** When true, briefly ring the card (deep-link focus). */
+  highlight?: boolean;
+}) {
   const queryClient = useQueryClient();
   const [benchmark, setBenchmark] = useState<{
     tokensPerSec: number;
     latencyMs: number;
   } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [ringActive, setRingActive] = useState(highlight);
+
+  // Clear the highlight ring after a short window so it doesn't linger.
+  useEffect(() => {
+    if (!highlight) return;
+    const t = setTimeout(() => setRingActive(false), 2600);
+    return () => clearTimeout(t);
+  }, [highlight]);
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
@@ -761,7 +777,14 @@ function RegisteredContainerCard({ container }: { container: RegisteredContainer
       exit={{ opacity: 0, scale: 0.96 }}
       transition={{ duration: 0.2 }}
     >
-      <Card padding="md" className="flex h-full flex-col gap-3">
+      <Card
+        padding="md"
+        className={`
+          flex h-full flex-col gap-3 transition-shadow duration-500
+          ${ringActive ? "ring-2 ring-[var(--color-primary)] shadow-[var(--shadow-glow)]" : ""}
+        `}
+        aria-live={ringActive ? "polite" : undefined}
+      >
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
@@ -954,19 +977,42 @@ function AgentSection({
   agent,
   registeredContainers,
   defaultExpanded,
+  focusContainerId,
   onManage,
   onAddAgent,
 }: {
   agent: Agent;
   registeredContainers: RegisteredContainer[];
   defaultExpanded: boolean;
+  /** When a registered container on this agent is the deep-link target. */
+  focusContainerId: string | null;
   onManage: (agentName: string) => void;
   onAddAgent: () => void;
 }) {
-  const [expanded, setExpanded] = useState(defaultExpanded);
+  const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
+  // Deep-link focus forces this section open even if it normally starts collapsed.
+  const [expanded, setExpanded] = useState(
+    defaultExpanded ||
+      (focusContainerId !== null && agentRcs.some((rc) => rc.id === focusContainerId)),
+  );
   const connectivity = agentConnectivity(agent);
   const isHost = agent.name === "host";
-  const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
+  const focusedCardRef = useRef<HTMLDivElement | null>(null);
+
+  // Deep-link: once the focused card mounts (after the expand animation),
+  // bring it into view. Guarded so it only scrolls once per focus target.
+  const hasFocusTarget = focusContainerId !== null && agentRcs.some((rc) => rc.id === focusContainerId);
+  const scrolledForFocus = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hasFocusTarget || !expanded || scrolledForFocus.current === focusContainerId) return;
+    if (!focusedCardRef.current) return;
+    const t = setTimeout(() => {
+      focusedCardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrolledForFocus.current = focusContainerId;
+    }, 350);
+    return () => clearTimeout(t);
+  }, [hasFocusTarget, expanded, focusContainerId]);
 
   return (
     <section>
@@ -1059,9 +1105,17 @@ function AgentSection({
             <div className="pb-4 pl-9">
               {agentRcs.length > 0 ? (
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {agentRcs.map((rc) => (
-                    <RegisteredContainerCard key={rc.id} container={rc} />
-                  ))}
+                  {agentRcs.map((rc) => {
+                    const focused = focusContainerId === rc.id;
+                    return (
+                      <div key={rc.id} ref={focused ? focusedCardRef : undefined}>
+                        <RegisteredContainerCard
+                          container={rc}
+                          highlight={focused}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <Card
@@ -1097,6 +1151,8 @@ function AgentSection({
 export default function Fleet() {
   const [manageAgent, setManageAgent] = useState<string | null>(null);
   const [showAddAgent, setShowAddAgent] = useState(false);
+  const [searchParams] = useSearchParams();
+  const focusContainerId = searchParams.get("focus");
 
   const {
     data: agents,
@@ -1192,6 +1248,7 @@ export default function Fleet() {
               agent={agent}
               registeredContainers={registeredContainers ?? []}
               defaultExpanded={agent.name === "host"}
+              focusContainerId={focusContainerId}
               onManage={(name) => setManageAgent(name)}
               onAddAgent={() => setShowAddAgent(true)}
             />

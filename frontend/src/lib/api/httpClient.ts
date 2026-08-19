@@ -165,6 +165,10 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  listBenchmarks() {
+    return request<BenchmarkResult[]>("/api/benchmarks");
+  },
+
   // ── Agents ────────────────────────────────────────────────────
   listAgents() {
     return request<Agent[]>("/api/agents");

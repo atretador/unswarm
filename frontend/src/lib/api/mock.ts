@@ -54,6 +54,109 @@ function bench(modelId: string, modelName: string, tokensPerSec: number, latency
   };
 }
 
+const LONG_PROMPT =
+  "You are an inference engineer. Given a workload of concurrent streaming requests with mixed context lengths, describe how you would size the KV cache, pick a batch size, and schedule model swaps so that time-to-first-token stays under 200ms while throughput degrades gracefully under memory pressure. Be concrete and keep the answer under 400 words.";
+
+/** Seed benchmark history — newest first, mixed outcomes, varied timestamps. */
+const BENCHMARKS: BenchmarkResult[] = [
+  {
+    id: "b8",
+    modelId: "1",
+    modelName: "llama-3.1-70b",
+    prompt: LONG_PROMPT,
+    tokensPerSec: 44.7,
+    latencyMs: 108,
+    tokensGenerated: 368,
+    timestamp: new Date(Date.now() - 2 * 60_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+  {
+    id: "b7",
+    modelId: "2",
+    modelName: "mistral-large-2",
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec: 27.9,
+    latencyMs: 194,
+    tokensGenerated: 512,
+    timestamp: new Date(Date.now() - 38 * 60_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+  {
+    id: "b6",
+    modelId: "3",
+    modelName: "codestral-22b",
+    prompt: "Write a type-safe middleware chain for an HTTP router.",
+    tokensPerSec: 0,
+    latencyMs: 0,
+    tokensGenerated: 0,
+    timestamp: new Date(Date.now() - 95 * 60_000).toISOString(),
+    status: "error",
+    errorMessage: "Model is still validating — refused to serve. No response tokens produced.",
+  },
+  {
+    id: "b5",
+    modelId: "5",
+    modelName: "gemma-2-27b",
+    prompt: "Summarize the tokenizer differences between Llama 3 and Gemma in two sentences.",
+    tokensPerSec: 56.3,
+    latencyMs: 91,
+    tokensGenerated: 512,
+    timestamp: new Date(Date.now() - 6 * 3600_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+  {
+    id: "b4",
+    modelId: "4",
+    modelName: "phi-3.5-mini",
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec: 101.2,
+    latencyMs: 31,
+    tokensGenerated: 640,
+    timestamp: new Date(Date.now() - 26 * 3600_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+  {
+    id: "b3",
+    modelId: "1",
+    modelName: "llama-3.1-70b",
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec: 41.8,
+    latencyMs: 124,
+    tokensGenerated: 512,
+    timestamp: new Date(Date.now() - 3 * 86400_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+  {
+    id: "b2",
+    modelId: "2",
+    modelName: "mistral-large-2",
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec: 0,
+    latencyMs: 0,
+    tokensGenerated: 0,
+    timestamp: new Date(Date.now() - 5 * 86400_000).toISOString(),
+    status: "error",
+    errorMessage: "CUDA out of memory while loading weights — retry with a smaller quantization.",
+  },
+  {
+    id: "b1",
+    modelId: "5",
+    modelName: "gemma-2-27b",
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec: 54.2,
+    latencyMs: 99,
+    tokensGenerated: 448,
+    timestamp: new Date(Date.now() - 9 * 86400_000).toISOString(),
+    status: "completed",
+    errorMessage: null,
+  },
+];
+
 // ─── Seed Data ────────────────────────────────────────────────────
 
 const MODELS: Model[] = [
@@ -446,6 +549,7 @@ function stopLogStreamIfIdle() {
 
 let models = [...MODELS];
 let containers = [...CONTAINERS];
+let benchmarks = [...BENCHMARKS];
 let registeredContainers: RegisteredContainer[] = [
   {
     id: "rc1",
@@ -608,7 +712,12 @@ export const mockClient: UnswarmClient = {
       384,
     );
     if (prompt) b.prompt = prompt;
+    benchmarks.unshift(b);
     return b;
+  },
+  async listBenchmarks() {
+    await delay(rand(80, 200));
+    return benchmarks.map((b) => ({ ...b }));
   },
   async startContainer(modelId) {
     await delay(rand(200, 500));

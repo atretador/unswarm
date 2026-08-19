@@ -42,6 +42,9 @@ export interface UnswarmClient {
   /** Run a benchmark against a model. Optional prompt overrides the default. */
   runBenchmark(modelId: string, prompt?: string): Promise<BenchmarkResult>;
 
+  /** Benchmark history, newest first (max 50). */
+  listBenchmarks(): Promise<BenchmarkResult[]>;
+
   // Agents
   listAgents(): Promise<Agent[]>;
 

@@ -844,4 +844,58 @@ describe("Fleet", () => {
     // still render as registered (disabled, not selectable).
     expect(within(dialog).getAllByText("registered").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("deep link focus expands a collapsed agent and highlights its container", async () => {
+    // rc3 lives on edge-node-1, which normally starts collapsed.
+    const edgeRcs = HOST_RCS.map((rc) =>
+      rc.id === "rc1"
+        ? {
+            ...rc,
+            id: "rc3",
+            displayName: "edge-llama-server",
+            agent: "edge-node-1",
+            runtimeContainerId: "en-vllm",
+          }
+        : rc,
+    );
+    seedRegisteredContainers([...edgeRcs, HOST_RCS[0]]);
+    render(
+      <TestWrapper initialEntries={["/fleet?focus=rc3"]}>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    // The edge-node-1 section is force-expanded by the focus param, so its card is visible.
+    await waitFor(() => {
+      expect(screen.getByText("edge-llama-server")).toBeInTheDocument();
+    });
+
+    const toggle = screen.getByRole("button", { name: "Toggle edge-node-1 section" });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+
+    // The focused card carries the highlight ring
+    let card = screen.getByText("edge-llama-server").parentElement as HTMLElement;
+    for (let i = 0; i < 5 && card; i++) {
+      if (card.className.includes("ring-")) break;
+      card = card.parentElement as HTMLElement;
+    }
+    expect(card.className).toContain("ring-");
+  });
+
+  it("deep link focus does not expand agents that do not own the container", async () => {
+    // focus=rc1 belongs to host (already expanded by default) — edge-node-1 must stay collapsed.
+    seedRegisteredContainers(HOST_RCS);
+    render(
+      <TestWrapper initialEntries={["/fleet?focus=rc1"]}>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const edgeToggle = screen.getByRole("button", { name: "Toggle edge-node-1 section" });
+    expect(edgeToggle).toHaveAttribute("aria-expanded", "false");
+  });
 });

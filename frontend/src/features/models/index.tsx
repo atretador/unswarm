@@ -1,224 +1,140 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "motion/react";
-import { Plus, Trash2, ChevronDown, ChevronUp, Beaker } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { motion } from "motion/react";
+import { Box, ExternalLink, Gauge } from "lucide-react";
+import { Link } from "react-router-dom";
 import { client } from "../../lib/query-client";
+import {
+  Card,
+  Badge,
+  StatusDot,
+  Button,
+  Skeleton,
+  EmptyState,
+  Tooltip,
+} from "../../components/ui";
 import type { Model, ModelStatus } from "../../lib/api/types";
-import { Card, Badge, StatusDot, Button, Skeleton, EmptyState, Input, Switch } from "../../components/ui";
 
-const STATUS_VARIANT: Record<ModelStatus, "success" | "info" | "error" | "warning"> = {
+// ─── Status semantics — identical to the Fleet page palette ───────
+
+const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" | "default"> = {
   ready: "success",
-  validating: "info",
+  validating: "warning",
   invalid: "error",
-  deprecated: "warning",
+  deprecated: "default",
 };
 
-function ModelRow({
-  model,
-  onDelete,
-  deletePending,
-}: {
-  model: Model;
-  onDelete: () => void;
-  deletePending: boolean;
-}) {
-  const [expanded, setExpanded] = useState(false);
+const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
+  ready: "ready",
+  validating: "validating…",
+  invalid: "invalid",
+  deprecated: "deprecated",
+};
+
+function formatTokensPerSec(v: number): string {
+  if (!v || v <= 0) return "n/a";
+  return `${v.toFixed(1)} tok/s`;
+}
+
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return `${Math.floor(diff / 86_400_000)}d ago`;
+}
+
+// ─── Model row ────────────────────────────────────────────────────
+
+function ModelRow({ model, index }: { model: Model; index: number }) {
   const bench = model.lastBenchmark;
 
   return (
-    <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <div
-        className="flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-0 cursor-pointer hover:bg-[var(--color-bg-muted)] transition-colors"
-        role="button"
-        tabIndex={0}
-        onClick={() => setExpanded((p) => !p)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((p) => !p);
-          }
-        }}
-      >
-        <StatusDot status={model.status} size="sm" />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-xs text-[var(--color-text-heading)] truncate">
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors">
+        {/* Name + status */}
+        <div className="flex min-w-0 flex-1 basis-52 items-center gap-2.5">
+          <StatusDot status={model.status} size="sm" />
+          <div className="min-w-0">
+            <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
               {model.name}
-            </span>
-            <Badge variant={STATUS_VARIANT[model.status]}>{model.status}</Badge>
-          </div>
-          <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-            {model.family} · {model.parameterSize} · {model.quantization}
-          </p>
-        </div>
-        <div className="text-right shrink-0">
-          {bench ? (
-            <p className="font-mono text-xs text-[var(--color-text-heading)]">
-              {bench.tokensPerSec} tok/s
             </p>
+            <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+              {model.family} · {model.parameterSize} · {model.quantization}
+            </p>
+          </div>
+          <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
+            {MODEL_STATUS_LABEL[model.status]}
+          </Badge>
+        </div>
+
+        {/* Last benchmark */}
+        <div className="flex min-w-0 basis-44 items-center gap-2">
+          <Gauge className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+          {bench ? (
+            <div className="min-w-0">
+              <p className="font-mono text-xs text-[var(--color-text-heading)]">
+                {formatTokensPerSec(bench.tokensPerSec)}
+                <span className="text-[var(--color-text-muted)]"> · {bench.latencyMs}ms</span>
+              </p>
+              <p className="text-[10px] text-[var(--color-text-muted)]">
+                {formatRelativeTime(bench.timestamp)}
+              </p>
+            </div>
           ) : (
-            <p className="text-[10px] text-[var(--color-text-muted)]">no benchmark</p>
+            <p className="text-xs text-[var(--color-text-muted)]">Not benchmarked yet</p>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-            disabled={deletePending}
-          >
-            <Trash2 className="size-3" />
-          </Button>
-          {expanded ? <ChevronUp className="size-3 text-[var(--color-text-muted)]" /> : <ChevronDown className="size-3 text-[var(--color-text-muted)]" />}
+
+        {/* Source container deep link */}
+        <div className="ml-auto flex shrink-0 items-center gap-1">
+          {model.sourceContainerId ? (
+            <Tooltip content={`View ${model.sourceContainerId} on the Fleet page`}>
+              <Link
+                to={`/fleet?focus=${encodeURIComponent(model.sourceContainerId)}`}
+                aria-label={`View source container ${model.sourceContainerId} on the Fleet page`}
+                className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+              >
+                <ExternalLink className="size-3.5" />
+              </Link>
+            </Tooltip>
+          ) : (
+            <span className="text-[10px] italic text-[var(--color-text-muted)]">not registered</span>
+          )}
         </div>
       </div>
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="px-4 py-3 bg-[var(--color-bg-muted)] border-b border-[var(--color-border-subtle)]">
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                <div>
-                  <p className="text-[var(--color-text-muted)] mb-0.5">Image</p>
-                  <p className="font-mono text-[var(--color-text-heading)] break-all">{model.containerImage}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--color-text-muted)] mb-0.5">Context window</p>
-                  <p className="font-mono text-[var(--color-text-heading)]">{model.contextWindow.toLocaleString()}</p>
-                </div>
-                <div>
-                  <p className="text-[var(--color-text-muted)] mb-0.5">Created</p>
-                  <p className="font-mono text-[var(--color-text-heading)]">
-                    {new Date(model.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[var(--color-text-muted)] mb-0.5">Last benchmark</p>
-                  {bench ? (
-                    <p className="font-mono text-[var(--color-text-heading)]">
-                      {bench.tokensPerSec} tok/s · {bench.latencyMs}ms TTFT
-                    </p>
-                  ) : (
-                    <p className="text-[var(--color-text-muted)]">—</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
 
-function RegisterForm({ onDone }: { onDone: () => void }) {
-  const queryClient = useQueryClient();
-  const [form, setForm] = useState({
-    name: "",
-    family: "",
-    parameterSize: "",
-    quantization: "Q4_K_M",
-    containerImage: "",
-    contextWindow: "32000",
-    runValidation: true,
-  });
-
-  const createMutation = useMutation({
-    mutationFn: () =>
-      client.createModel({
-        name: form.name,
-        family: form.family,
-        parameterSize: form.parameterSize,
-        quantization: form.quantization,
-        status: form.runValidation ? "validating" : "ready",
-        lastBenchmark: null,
-        contextWindow: Number(form.contextWindow),
-        containerImage: form.containerImage,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-      onDone();
-    },
-  });
-
-  const updateStatusMutation = useMutation({
-    mutationFn: (modelId: string) =>
-      client.updateModel(modelId, { status: "ready" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-    },
-  });
-
-  const handleSubmit = async () => {
-    const model = await createMutation.mutateAsync();
-    if (form.runValidation) {
-      // Simulate validation completing
-      await new Promise((r) => setTimeout(r, 500));
-      await updateStatusMutation.mutateAsync(model.id);
-    }
-  };
-
-  return (
-    <Card padding="lg" className="space-y-4">
-      <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-        Register Model
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Input label="Model name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="my-model-7b" />
-        <Input label="Family" value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value })} placeholder="Llama" />
-        <Input label="Parameter size" value={form.parameterSize} onChange={(e) => setForm({ ...form, parameterSize: e.target.value })} placeholder="7B" />
-        <Input label="Context window" value={form.contextWindow} onChange={(e) => setForm({ ...form, contextWindow: e.target.value })} type="number" />
-        <Input label="Container image" value={form.containerImage} onChange={(e) => setForm({ ...form, containerImage: e.target.value })} placeholder="org/image:tag" className="md:col-span-2" />
-      </div>
-      <div className="flex items-center justify-between">
-        <Switch
-          checked={form.runValidation}
-          onCheckedChange={(v) => setForm({ ...form, runValidation: v })}
-          label="Run validation + benchmark on register"
-        />
-        <div className="flex gap-2">
-          <Button variant="ghost" size="sm" onClick={onDone}>Cancel</Button>
-          <Button
-            size="sm"
-            onClick={handleSubmit}
-            loading={createMutation.isPending}
-            disabled={!form.name || !form.containerImage}
-          >
-            Register
-          </Button>
-        </div>
-      </div>
-    </Card>
-  );
-}
+// ─── Main Models page ─────────────────────────────────────────────
 
 export default function Models() {
-  const queryClient = useQueryClient();
-  const [showRegister, setShowRegister] = useState(false);
-
-  const { data: models, isLoading, error, refetch, isRefetching } = useQuery({
+  const {
+    data: models,
+    isLoading,
+    error,
+    refetch,
+    isRefetching,
+  } = useQuery({
     queryKey: ["models"],
     queryFn: () => client.listModels(),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.deleteModel(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["models"] }),
-  });
-
   if (isLoading) {
     return (
-      <div className="p-6 space-y-4 max-w-5xl">
-        <Skeleton className="h-6 w-40" />
+      <div className="max-w-5xl space-y-4 p-6">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-4 w-72" />
         <Card padding="none">
           {Array.from({ length: 4 }, (_, i) => (
-            <div key={i} className="px-4 py-3 border-b border-[var(--color-border-subtle)]">
+            <div key={i} className="border-b border-[var(--color-border-subtle)] px-4 py-3.5">
               <Skeleton className="h-4 w-48" />
+              <Skeleton className="mt-2 h-3 w-64" />
             </div>
           ))}
         </Card>
@@ -228,67 +144,45 @@ export default function Models() {
 
   if (error) {
     return (
-      <div className="p-6 max-w-5xl">
+      <div className="max-w-5xl p-6">
         <EmptyState
           title="Failed to load models"
           description={error.message}
-          action={<Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>Retry</Button>}
+          action={
+            <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>
+              Retry
+            </Button>
+          }
         />
       </div>
     );
   }
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-            Model Registry
-          </h2>
-          <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Manage registered models, validation status, and benchmarks.
-          </p>
-        </div>
-        <Button size="sm" onClick={() => setShowRegister((p) => !p)}>
-          <Plus className="size-3.5" />
-          Register
-        </Button>
+    <div className="max-w-5xl space-y-6 p-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Models</h2>
+        <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+          Discovered models: inference endpoints registered across agents.
+        </p>
       </div>
 
-      <AnimatePresence>
-        {showRegister && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
-            <RegisterForm onDone={() => setShowRegister(false)} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <Card padding="none">
-        <div className="px-4 py-2.5 border-b border-[var(--color-border)] flex items-center justify-between">
-          <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-            {models?.length ?? 0} models
-          </span>
-          <div className="flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
-            <Beaker className="size-3" />
-            <span>Benchmark: tok/s · TTFT</span>
-          </div>
-        </div>
-        {models && models.length > 0 ? (
-          models.map((model) => (
-            <ModelRow
-              key={model.id}
-              model={model}
-              onDelete={() => deleteMutation.mutate(model.id)}
-              deletePending={deleteMutation.isPending}
-            />
-          ))
-        ) : (
+      {!models || models.length === 0 ? (
+        <Card padding="none">
           <EmptyState
-            title="No models registered"
-            description="Register your first model to get started."
+            icon={<Box className="size-12" strokeWidth={1.5} />}
+            title="No models discovered yet"
+            description="Register containers on the Fleet page to auto-discover their models."
           />
-        )}
-      </Card>
+        </Card>
+      ) : (
+        <Card padding="none">
+          {models.map((model, i) => (
+            <ModelRow key={model.id} model={model} index={i} />
+          ))}
+        </Card>
+      )}
     </div>
   );
 }

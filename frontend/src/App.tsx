@@ -3,6 +3,7 @@ import { AppShell } from "./components/layout/AppShell";
 import Dashboard from "./features/dashboard";
 import Models from "./features/models";
 import Fleet from "./features/fleet";
+import Benchmarks from "./features/benchmarks";
 import Queue from "./features/queue";
 import Logs from "./features/logs";
 import Settings from "./features/settings";
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/models" element={<Models />} />
         <Route path="/fleet" element={<Fleet />} />
+        <Route path="/benchmarks" element={<Benchmarks />} />
         <Route path="/queue" element={<Queue />} />
         <Route path="/logs" element={<Logs />} />
         <Route path="/settings" element={<Settings />} />

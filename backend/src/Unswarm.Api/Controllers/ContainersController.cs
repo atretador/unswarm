@@ -14,19 +14,22 @@ public sealed class ContainersController : ControllerBase
     private readonly IClock _clock;
     private readonly IContainerRegistrationService _registrationService;
     private readonly IContainerRegistry _containerRegistry;
+    private readonly IBenchmarkHistory _benchmarks;
 
     public ContainersController(
         IDockerController docker,
         IModelRegistry registry,
         IClock clock,
         IContainerRegistrationService registrationService,
-        IContainerRegistry containerRegistry)
+        IContainerRegistry containerRegistry,
+        IBenchmarkHistory benchmarks)
     {
         _docker = docker;
         _registry = registry;
         _clock = clock;
         _registrationService = registrationService;
         _containerRegistry = containerRegistry;
+        _benchmarks = benchmarks;
     }
 
     [HttpGet]
@@ -124,15 +127,7 @@ public sealed class ContainersController : ControllerBase
 
         foreach (var container in containers)
         {
-            var modelIds = await _containerRegistry.GetModelIdsForContainerAsync(container.Id, ct);
-            var models = new List<ModelDefinition>();
-            foreach (var modelId in modelIds)
-            {
-                var model = await _registry.GetAsync(modelId, ct);
-                if (model is not null)
-                    models.Add(model);
-            }
-            responses.Add(RegisteredContainerResponse.From(container, models));
+            responses.Add(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
         }
 
         return Ok(responses);
@@ -145,16 +140,44 @@ public sealed class ContainersController : ControllerBase
         if (container is null)
             return NotFound();
 
-        var modelIds = await _containerRegistry.GetModelIdsForContainerAsync(id, ct);
-        var models = new List<ModelDefinition>();
+        return Ok(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Builds a RegisteredContainerResponse, populating each discovered model's
+    /// LastBenchmark from the model's latest persisted benchmark (same pattern as
+    /// ModelsController.List/Get).
+    /// </summary>
+    private async Task<RegisteredContainerResponse> BuildRegisteredResponseAsync(RegisteredContainer container, CancellationToken ct)
+    {
+        var modelIds = await _containerRegistry.GetModelIdsForContainerAsync(container.Id, ct);
+        var models = new List<ModelResponse>();
         foreach (var modelId in modelIds)
         {
             var model = await _registry.GetAsync(modelId, ct);
-            if (model is not null)
-                models.Add(model);
+            if (model is null)
+                continue;
+
+            var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
+            models.Add(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
         }
 
-        return Ok(RegisteredContainerResponse.From(container, models));
+        return new RegisteredContainerResponse
+        {
+            Id = container.Id,
+            DisplayName = container.DisplayName,
+            Image = container.Image,
+            ContainerPort = container.ContainerPort,
+            Agent = container.Agent,
+            CanRunAlongWith = (container.CanRunAlongWith ?? []).ToList(),
+            Status = container.Status.ToString(),
+            RuntimeContainerId = container.RuntimeContainerId,
+            MappedPort = container.MappedPort,
+            ErrorMessage = container.ErrorMessage,
+            CreatedAt = container.CreatedAt,
+            LastDiscoveredAt = container.LastDiscoveredAt,
+            DiscoveredModels = models
+        };
     }
 
     [HttpPost("registered/{id}/rediscover")]

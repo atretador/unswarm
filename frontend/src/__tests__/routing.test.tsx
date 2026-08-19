@@ -27,8 +27,9 @@ function renderAt(path: string) {
 describe("Routing smoke tests", () => {
   const routes: Array<{ path: string; heading: string }> = [
     { path: "/", heading: "Dashboard" },
-    { path: "/models", heading: "Model Registry" },
+    { path: "/models", heading: "Models" },
     { path: "/fleet", heading: "Fleet" },
+    { path: "/benchmarks", heading: "Benchmarks" },
     { path: "/queue", heading: "Queue" },
     { path: "/logs", heading: "Logs" },
     { path: "/settings", heading: "Settings" },
