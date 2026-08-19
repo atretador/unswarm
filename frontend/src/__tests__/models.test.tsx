@@ -49,7 +49,7 @@ describe("Models", () => {
     expect(validatingBadge.className).toContain("color-status-warning");
   });
 
-  it("shows the last benchmark block when present", async () => {
+  it("shows the last benchmark metrics with labels (speed, processing, tokens)", async () => {
     render(
       <TestWrapper>
         <Models />
@@ -60,9 +60,55 @@ describe("Models", () => {
       expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
     });
 
-    // llama-3.1-70b has lastBenchmark {tokensPerSec: 42.3, latencyMs: 120}
-    expect(screen.getByText(/42\.3 tok\/s/)).toBeInTheDocument();
-    expect(screen.getByText(/· 120ms/)).toBeInTheDocument();
+    // llama-3.1-70b has lastBenchmark {tokensPerSec: 42.3, latencyMs: 120, tokensGenerated: 512}
+    expect(screen.getByText("42.3 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("120ms")).toBeInTheDocument();
+    // tokensGenerated is seeded on this model → tokens chip renders
+    expect(screen.getByText("512 tok")).toBeInTheDocument();
+    // Labels are visible for each metric
+    expect(screen.getAllByText("speed").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("processing").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("tokens").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("omits the tokens chip when lastBenchmark has no tokensGenerated", async () => {
+    const sparseModels = [
+      {
+        id: "s1",
+        name: "sparse-model",
+        family: "Test",
+        parameterSize: "1B",
+        quantization: "Q8",
+        status: "ready" as const,
+        lastBenchmark: {
+          // Wire contract only: no tokensGenerated field
+          tokensPerSec: 33.1,
+          latencyMs: 141,
+          timestamp: new Date().toISOString(),
+        },
+        contextWindow: 4096,
+        containerImage: "test/sparse",
+        sourceContainerId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    vi.spyOn(mockClient, "listModels").mockResolvedValueOnce(sparseModels);
+
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("sparse-model")).toBeInTheDocument();
+    });
+
+    // speed + processing + ran chips render; no tokens chip
+    expect(screen.getByText("33.1 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("141ms")).toBeInTheDocument();
+    expect(screen.queryByText("tokens")).not.toBeInTheDocument();
   });
 
   it('shows "Not benchmarked yet" when lastBenchmark is missing', async () => {
@@ -119,7 +165,8 @@ describe("Models", () => {
     await waitFor(() => {
       expect(screen.getByText("zero-model")).toBeInTheDocument();
     });
-    expect(screen.getByText("n/a")).toBeInTheDocument();
+    // zero tok/s → "n/a" chip; zero latency → "n/a"
+    expect(screen.getAllByText("n/a").length).toBeGreaterThanOrEqual(1);
   });
 
   it("view container link navigates with the focus param", async () => {

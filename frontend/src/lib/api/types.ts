@@ -17,6 +17,19 @@ export interface BenchmarkResult {
   errorMessage?: string | null;
 }
 
+/**
+ * Summary benchmark attached to a model (backend ModelResponse.LastBenchmark).
+ * The wire contract only carries these three fields; tokensGenerated may be
+ * present when the frontend has the full run data, but degrades gracefully.
+ */
+export interface LastBenchmarkResult {
+  tokensPerSec: number;
+  latencyMs: number;
+  timestamp: string;
+  /** Tokens generated in the run. Optional — not part of the backend wire contract. */
+  tokensGenerated?: number;
+}
+
 export interface Model {
   id: string;
   name: string;
@@ -24,7 +37,7 @@ export interface Model {
   parameterSize: string;
   quantization: string;
   status: ModelStatus;
-  lastBenchmark: BenchmarkResult | null;
+  lastBenchmark: LastBenchmarkResult | null;
   contextWindow: number;
   containerImage: string;
   sourceContainerId: string | null;

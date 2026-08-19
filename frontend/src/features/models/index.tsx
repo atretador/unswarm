@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Box, ExternalLink, Gauge } from "lucide-react";
+import { Box, Clock, ExternalLink, Gauge, Hash } from "lucide-react";
 import { Link } from "react-router-dom";
+import type { ReactNode } from "react";
 import { client } from "../../lib/query-client";
 import {
   Card,
@@ -35,6 +36,16 @@ function formatTokensPerSec(v: number): string {
   return `${v.toFixed(1)} tok/s`;
 }
 
+function formatLatency(v: number): string {
+  if (!v || v <= 0) return "n/a";
+  return `${v}ms`;
+}
+
+function formatTokens(v: number | undefined): string {
+  if (!v || v <= 0) return "n/a";
+  return `${v.toLocaleString()} tok`;
+}
+
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return "just now";
@@ -44,6 +55,31 @@ function formatRelativeTime(iso: string): string {
 }
 
 // ─── Model row ────────────────────────────────────────────────────
+
+function MetricChip({
+  icon,
+  label,
+  value,
+  title,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title ?? `${label}: ${value}`}
+      className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1"
+    >
+      <span className="flex items-center gap-1 text-[var(--color-text-muted)]">
+        {icon}
+        <span className="text-[9px] font-medium uppercase tracking-wider">{label}</span>
+      </span>
+      <span className="font-mono text-[11px] text-[var(--color-text-heading)]">{value}</span>
+    </span>
+  );
+}
 
 function ModelRow({ model, index }: { model: Model; index: number }) {
   const bench = model.lastBenchmark;
@@ -73,17 +109,37 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
         </div>
 
         {/* Last benchmark */}
-        <div className="flex min-w-0 basis-44 items-center gap-2">
-          <Gauge className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+        <div className="flex min-w-0 basis-52 items-center gap-2">
           {bench ? (
-            <div className="min-w-0">
-              <p className="font-mono text-xs text-[var(--color-text-heading)]">
-                {formatTokensPerSec(bench.tokensPerSec)}
-                <span className="text-[var(--color-text-muted)]"> · {bench.latencyMs}ms</span>
-              </p>
-              <p className="text-[10px] text-[var(--color-text-muted)]">
-                {formatRelativeTime(bench.timestamp)}
-              </p>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <MetricChip
+                icon={<Gauge className="size-2.5" />}
+                label="speed"
+                value={formatTokensPerSec(bench.tokensPerSec)}
+                title="Speed: tokens per second"
+              />
+              <MetricChip
+                icon={<Clock className="size-2.5" />}
+                label="processing"
+                value={formatLatency(bench.latencyMs)}
+                title="Processing: time to first token"
+              />
+              {/* tokensGenerated is not part of the backend wire (LastBenchmarkResponse);
+                  it is populated by the frontend when full run data is available. */}
+              {bench.tokensGenerated !== undefined && (
+                <MetricChip
+                  icon={<Hash className="size-2.5" />}
+                  label="tokens"
+                  value={formatTokens(bench.tokensGenerated)}
+                  title="Tokens generated"
+                />
+              )}
+              <MetricChip
+                icon={<Clock className="size-2.5" />}
+                label="ran"
+                value={formatRelativeTime(bench.timestamp)}
+                title={`Last run ${new Date(bench.timestamp).toLocaleString()}`}
+              />
             </div>
           ) : (
             <p className="text-xs text-[var(--color-text-muted)]">Not benchmarked yet</p>

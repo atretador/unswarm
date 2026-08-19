@@ -142,9 +142,135 @@ describe("Benchmarks", () => {
     await waitFor(() => {
       expect(runSpy).toHaveBeenCalledTimes(1);
     });
+    // Empty prompt → runBenchmark(modelId, undefined) → backend default
     expect(runSpy.mock.calls[0][0]).toBe("1");
+    expect(runSpy.mock.calls[0][1]).toBeUndefined();
     // listBenchmarks was refetched after the run so the new entry appears
     expect(listSpy).toHaveBeenCalled();
+  });
+
+  it("sends a custom typed prompt as the runBenchmark payload", async () => {
+    const user = userEvent.setup();
+    const runSpy = vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+
+    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
+    await user.type(promptInput, "Summarize the KV cache sizing trade-offs.");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    await waitFor(() => {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(runSpy.mock.calls[0][0]).toBe("1");
+    expect(runSpy.mock.calls[0][1]).toBe("Summarize the KV cache sizing trade-offs.");
+  });
+
+  it("persists the custom prompt into the run history after a run", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+
+    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
+    await user.type(promptInput, "Persisted custom instruction.");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    // The new run lands at the top of the history (newest-first); its stored
+    // prompt must be the one we typed, proving the run record persists it.
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /llama-3.1-70b/ }).length).toBeGreaterThan(0);
+    });
+    // The prompt detail is behind the expandable row — open the newest (topmost) row.
+    const rows = screen.getAllByRole("button", { name: /llama-3.1-70b/ });
+    await user.click(rows[0]);
+    expect(screen.getByText("Persisted custom instruction.")).toBeInTheDocument();
+  });
+
+  it("resets the prompt input after a successful run", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+
+    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
+    await user.type(promptInput, "Some custom instruction");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    await waitFor(() => {
+      expect(promptInput).toHaveValue("");
+    });
+  });
+
+  it("sends undefined prompt when the input is whitespace only", async () => {
+    const user = userEvent.setup();
+    const runSpy = vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+
+    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
+    await user.type(promptInput, "   ");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    await waitFor(() => {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(runSpy.mock.calls[0][1]).toBeUndefined();
   });
 
   it("run button is disabled for non-ready models", async () => {

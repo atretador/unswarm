@@ -16,6 +16,7 @@ import {
   Button,
   Skeleton,
   EmptyState,
+  Input,
   Select,
   Tooltip,
 } from "../../components/ui";
@@ -151,6 +152,7 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
 function RunBenchmarkBar() {
   const queryClient = useQueryClient();
   const [modelId, setModelId] = useState("");
+  const [prompt, setPrompt] = useState("");
 
   const { data: models } = useQuery({
     queryKey: ["models"],
@@ -158,11 +160,13 @@ function RunBenchmarkBar() {
   });
 
   const runMutation = useMutation({
-    mutationFn: (id: string) => client.runBenchmark(id),
+    mutationFn: ({ modelId, prompt }: { modelId: string; prompt?: string }) =>
+      client.runBenchmark(modelId, prompt),
     onSuccess: () => {
       // New run lands at the top of the history; the model's lastBenchmark refreshes too.
       queryClient.invalidateQueries({ queryKey: ["benchmarks"] });
       queryClient.invalidateQueries({ queryKey: ["models"] });
+      setPrompt("");
     },
   });
 
@@ -176,8 +180,14 @@ function RunBenchmarkBar() {
   const disabledReason = benchmarkDisabledReason(selected ?? undefined);
   const canRun = !!selected && selected.status === "ready";
 
+  const run = () => {
+    if (!canRun || runMutation.isPending) return;
+    // Empty prompt → backend default. Trim so whitespace-only input also falls back.
+    runMutation.mutate({ modelId, prompt: prompt.trim() || undefined });
+  };
+
   return (
-    <Card padding="md" className="flex flex-col gap-3 sm:flex-row sm:items-end">
+    <Card padding="md" className="flex flex-col gap-3 lg:flex-row lg:items-end">
       <div className="min-w-0 flex-1">
         <Select
           label="Target model"
@@ -190,13 +200,23 @@ function RunBenchmarkBar() {
           ]}
         />
       </div>
+      <div className="min-w-0 flex-[1.6]">
+        <Input
+          label="Prompt (optional)"
+          aria-label="Prompt (optional)"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          maxLength={2000}
+          placeholder="Describe what the model should do — empty uses the default benchmark prompt"
+        />
+      </div>
       <Tooltip content={disabledReason ?? "Run a benchmark against the selected model"}>
         <span className="inline-flex sm:shrink-0">
           <Button
             size="md"
             disabled={!canRun || runMutation.isPending}
             loading={runMutation.isPending}
-            onClick={() => modelId && runMutation.mutate(modelId)}
+            onClick={run}
           >
             <Play className="size-3.5" />
             Run benchmark

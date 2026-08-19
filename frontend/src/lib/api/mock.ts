@@ -2,6 +2,7 @@ import type {
   Agent,
   BenchmarkResult,
   Container,
+  LastBenchmarkResult,
   LogEntry,
   Model,
   QueueSnapshot,
@@ -51,6 +52,16 @@ function bench(modelId: string, modelName: string, tokensPerSec: number, latency
     timestamp: NOW,
     status: "completed",
     errorMessage: null,
+  };
+}
+
+/** Model-level summary (Model.lastBenchmark). tokensGenerated is optional — the backend wire contract omits it. */
+function lastBench(tokensPerSec: number, latencyMs: number, tokensGenerated?: number): LastBenchmarkResult {
+  return {
+    tokensPerSec,
+    latencyMs,
+    timestamp: NOW,
+    ...(tokensGenerated !== undefined ? { tokensGenerated } : {}),
   };
 }
 
@@ -167,7 +178,7 @@ const MODELS: Model[] = [
     parameterSize: "70B",
     quantization: "Q4_K_M",
     status: "ready",
-    lastBenchmark: bench("1", "llama-3.1-70b", 42.3, 120),
+    lastBenchmark: lastBench(42.3, 120, 512),
     contextWindow: 128000,
     containerImage: "unswarm/llama3.1:70b-q4km",
     sourceContainerId: "rc1",
@@ -181,7 +192,7 @@ const MODELS: Model[] = [
     parameterSize: "123B",
     quantization: "Q5_K_M",
     status: "ready",
-    lastBenchmark: bench("2", "mistral-large-2", 28.7, 185),
+    lastBenchmark: lastBench(28.7, 185),
     contextWindow: 128000,
     containerImage: "unswarm/mistral-large:123b-q5km",
     sourceContainerId: null,
@@ -209,7 +220,7 @@ const MODELS: Model[] = [
     parameterSize: "3.8B",
     quantization: "FP16",
     status: "deprecated",
-    lastBenchmark: bench("4", "phi-3.5-mini", 98.1, 32),
+    lastBenchmark: lastBench(98.1, 32, 640),
     contextWindow: 128000,
     containerImage: "unswarm/phi3.5-mini:fp16",
     sourceContainerId: null,
@@ -223,7 +234,7 @@ const MODELS: Model[] = [
     parameterSize: "27B",
     quantization: "Q4_K_S",
     status: "ready",
-    lastBenchmark: bench("5", "gemma-2-27b", 55.0, 95),
+    lastBenchmark: lastBench(55.0, 95, 448),
     contextWindow: 8192,
     containerImage: "unswarm/gemma2:27b-q4ks",
     sourceContainerId: "rc1",
