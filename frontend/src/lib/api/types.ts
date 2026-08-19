@@ -130,4 +130,8 @@ export interface Settings {
   idleTimeout: number;
   logRetention: number;
   enableBenchmarking: boolean;
+  priorityMode: "fifo" | "priority";
+  batchDrain: boolean;
+  lazyStop: boolean;
+  maxQueueDepth: number;
 }

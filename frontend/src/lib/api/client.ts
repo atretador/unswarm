@@ -40,6 +40,9 @@ export interface UnswarmClient {
     since?: string;
   }): Promise<LogEntry[]>;
 
+  /** Subscribe to a live stream of log entries. Returns an unsubscribe function. */
+  subscribeLogs(callback: (entry: LogEntry) => void): () => void;
+
   // Settings
   getSettings(): Promise<Settings>;
   updateSettings(data: Partial<Settings>): Promise<Settings>;

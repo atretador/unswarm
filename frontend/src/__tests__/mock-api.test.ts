@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mockClient, setMockLatency } from "../lib/api/mock";
 
 beforeEach(() => {
@@ -105,9 +105,66 @@ describe("mockClient", () => {
       const s = await mockClient.getSettings();
       expect(s).toHaveProperty("maxConcurrentModels");
       expect(s).toHaveProperty("defaultModel");
+      expect(s).toHaveProperty("priorityMode");
+      expect(s).toHaveProperty("batchDrain");
+      expect(s).toHaveProperty("lazyStop");
+      expect(s).toHaveProperty("maxQueueDepth");
 
       const updated = await mockClient.updateSettings({ requestTimeout: 999 });
       expect(updated.requestTimeout).toBe(999);
+    });
+  });
+
+  describe("getLogs filtering", () => {
+    it("returns all logs with no filter", async () => {
+      const logs = await mockClient.getLogs();
+      expect(logs.length).toBe(6);
+    });
+
+    it("filters by source", async () => {
+      const logs = await mockClient.getLogs({ source: "scheduler" });
+      expect(logs.every((l) => l.source === "scheduler")).toBe(true);
+      expect(logs.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("filters by level", async () => {
+      const logs = await mockClient.getLogs({ level: "error" });
+      expect(logs.every((l) => l.level === "error")).toBe(true);
+      expect(logs.length).toBe(1);
+    });
+
+    it("filters by limit", async () => {
+      const logs = await mockClient.getLogs({ limit: 2 });
+      expect(logs.length).toBe(2);
+    });
+  });
+
+  describe("subscribeLogs", () => {
+    it("delivers log entries via callback", async () => {
+      vi.useFakeTimers();
+      const entries: unknown[] = [];
+      const unsub = mockClient.subscribeLogs((e) => entries.push(e));
+
+      // The mock uses setInterval at 3000ms
+      vi.advanceTimersByTime(3100);
+      expect(entries.length).toBeGreaterThanOrEqual(1);
+      expect(entries[0]).toHaveProperty("id");
+      expect(entries[0]).toHaveProperty("level");
+      expect(entries[0]).toHaveProperty("message");
+
+      unsub();
+      vi.useRealTimers();
+    });
+
+    it("unsubscribe stops delivery", async () => {
+      vi.useFakeTimers();
+      const entries: unknown[] = [];
+      const unsub = mockClient.subscribeLogs((e) => entries.push(e));
+
+      unsub();
+      vi.advanceTimersByTime(6100);
+      expect(entries.length).toBe(0);
+      vi.useRealTimers();
     });
   });
 });

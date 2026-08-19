@@ -279,6 +279,10 @@ const SETTINGS: Settings = {
   idleTimeout: 300,
   logRetention: 168,
   enableBenchmarking: true,
+  priorityMode: "priority",
+  batchDrain: false,
+  lazyStop: true,
+  maxQueueDepth: 32,
 };
 
 const API_KEYS: ApiKey[] = [
@@ -304,12 +308,57 @@ const API_KEYS: ApiKey[] = [
   },
 ];
 
-// ─── Mock Client ──────────────────────────────────────────────────
+// ─── Log Streaming ────────────────────────────────────────────────
+
+const STREAM_POOL: Array<{ level: LogEntry["level"]; source: string; message: string }> = [
+  { level: "info", source: "scheduler", message: "Queue depth: 1 — next request in <2s" },
+  { level: "info", source: "proxy", message: "POST /v1/chat/completions — 200 OK (138ms)" },
+  { level: "debug", source: "c1", message: "KV cache utilization: 34%" },
+  { level: "info", source: "c1", message: "Health check passed — 8ms response" },
+  { level: "warn", source: "scheduler", message: "Request timeout approaching for q3 (115s / 120s)" },
+  { level: "info", source: "proxy", message: "GET /v1/models — 200 OK (3ms)" },
+  { level: "error", source: "c2", message: "CUDA OOM — retrying with reduced batch size" },
+  { level: "info", source: "scheduler", message: "Container c1 CPU at 78% — high load" },
+  { level: "debug", source: "proxy", message: "SSE stream opened — tokens flowing" },
+  { level: "info", source: "c3", message: "Graceful shutdown complete" },
+];
+
+const logSubscribers = new Map<symbol, (entry: LogEntry) => void>();
+let logInterval: ReturnType<typeof setInterval> | null = null;
+let logCounter = 1000;
+
+function startLogStream() {
+  if (logInterval) return;
+  logInterval = setInterval(() => {
+    const template = STREAM_POOL[Math.floor(Math.random() * STREAM_POOL.length)];
+    const entry: LogEntry = {
+      id: `stream-${++logCounter}`,
+      timestamp: new Date().toISOString(),
+      level: template.level,
+      source: template.source,
+      message: template.message,
+    };
+    for (const cb of logSubscribers.values()) {
+      cb(entry);
+    }
+  }, 3000);
+}
+
+function stopLogStreamIfIdle() {
+  if (logSubscribers.size === 0 && logInterval) {
+    clearInterval(logInterval);
+    logInterval = null;
+  }
+}
+
+// ─── Mutable state ────────────────────────────────────────────────
 
 let models = [...MODELS];
 let containers = [...CONTAINERS];
 let settings = { ...SETTINGS };
 let apiKeys = [...API_KEYS];
+
+// ─── Mock Client ──────────────────────────────────────────────────
 
 export const mockClient: UnswarmClient = {
   // Models
@@ -404,10 +453,37 @@ export const mockClient: UnswarmClient = {
     };
   },
 
-  // Logs
-  async getLogs() {
+  // Logs — with filtering support
+  async getLogs(opts) {
     await delay(rand(60, 120));
-    return [...LOGS];
+    let result = [...LOGS];
+
+    if (opts?.source) {
+      result = result.filter((l) => l.source === opts.source);
+    }
+    if (opts?.level) {
+      result = result.filter((l) => l.level === opts.level);
+    }
+    if (opts?.since) {
+      const sinceMs = new Date(opts.since).getTime();
+      result = result.filter((l) => new Date(l.timestamp).getTime() > sinceMs);
+    }
+    if (opts?.limit) {
+      result = result.slice(-opts.limit);
+    }
+
+    return result;
+  },
+
+  // Log streaming
+  subscribeLogs(callback) {
+    const key = Symbol();
+    logSubscribers.set(key, callback);
+    startLogStream();
+    return () => {
+      logSubscribers.delete(key);
+      stopLogStreamIfIdle();
+    };
   },
 
   // Settings
