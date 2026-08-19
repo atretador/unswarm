@@ -1,0 +1,12 @@
+# Deepwork state (git-local, OpenCode-readable via .ignore)
+.slim/deepwork/
+
+# Node
+node_modules/
+dist/
+*.local
+
+# Env
+.env
+.env.*
+!.env.example

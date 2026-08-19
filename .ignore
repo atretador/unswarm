@@ -1,0 +1,3 @@
+# Keep deepwork state readable by OpenCode while git-local
+!.slim/deepwork/
+!.slim/deepwork/**
