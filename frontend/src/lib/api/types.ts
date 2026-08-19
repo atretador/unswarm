@@ -108,18 +108,7 @@ export interface LogEntry {
   metadata?: Record<string, unknown>;
 }
 
-// ─── Settings / API Keys ──────────────────────────────────────────
-
-export interface ApiKey {
-  id: string;
-  name: string;
-  keyPrefix: string;
-  permissions: string[];
-  rateLimit: number | null;
-  createdAt: string;
-  lastUsedAt: string | null;
-  expiresAt: string | null;
-}
+// ─── Settings ─────────────────────────────────────────────────────
 
 export interface Settings {
   maxConcurrentModels: number;

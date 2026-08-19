@@ -1,5 +1,4 @@
 import type {
-  ApiKey,
   Container,
   LogEntry,
   Model,
@@ -285,29 +284,6 @@ const SETTINGS: Settings = {
   maxQueueDepth: 32,
 };
 
-const API_KEYS: ApiKey[] = [
-  {
-    id: "k1",
-    name: "dev-local",
-    keyPrefix: "usw-xxxx",
-    permissions: ["models:read", "proxy:access"],
-    rateLimit: 60,
-    createdAt: NOW,
-    lastUsedAt: NOW,
-    expiresAt: null,
-  },
-  {
-    id: "k2",
-    name: "ci-pipeline",
-    keyPrefix: "usw-yyyy",
-    permissions: ["models:read", "models:write", "fleet:manage", "proxy:access"],
-    rateLimit: null,
-    createdAt: NOW,
-    lastUsedAt: NOW,
-    expiresAt: new Date(Date.now() + 86400 * 90).toISOString(),
-  },
-];
-
 // ─── Log Streaming ────────────────────────────────────────────────
 
 const STREAM_POOL: Array<{ level: LogEntry["level"]; source: string; message: string }> = [
@@ -356,8 +332,6 @@ function stopLogStreamIfIdle() {
 let models = [...MODELS];
 let containers = [...CONTAINERS];
 let settings = { ...SETTINGS };
-let apiKeys = [...API_KEYS];
-
 // ─── Mock Client ──────────────────────────────────────────────────
 
 export const mockClient: UnswarmClient = {
@@ -497,28 +471,4 @@ export const mockClient: UnswarmClient = {
     return { ...settings };
   },
 
-  // API Keys
-  async listApiKeys() {
-    await delay(rand(60, 120));
-    return apiKeys.map((k) => ({ ...k }));
-  },
-  async createApiKey(data) {
-    await delay(rand(100, 300));
-    const k: ApiKey = {
-      id: id(),
-      name: data.name,
-      keyPrefix: "usw-" + Math.random().toString(36).slice(2, 6),
-      permissions: data.permissions,
-      rateLimit: 60,
-      createdAt: new Date().toISOString(),
-      lastUsedAt: null,
-      expiresAt: null,
-    };
-    apiKeys.push(k);
-    return { ...k };
-  },
-  async revokeApiKey(keyId) {
-    await delay(rand(50, 100));
-    apiKeys = apiKeys.filter((k) => k.id !== keyId);
-  },
 };

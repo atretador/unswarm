@@ -104,7 +104,24 @@ function DashboardContent() {
     );
   }
 
-  if (!stats) return null;
+  if (!stats) {
+    return (
+      <div className="p-6 space-y-6 max-w-6xl">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }, (_, i) => (
+            <Card key={i} padding="md">
+              <Skeleton className="h-3 w-24 mb-2" />
+              <Skeleton className="h-7 w-16" />
+            </Card>
+          ))}
+        </div>
+        <Card padding="lg">
+          <Skeleton className="h-4 w-40 mb-4" />
+          <Skeleton className="h-48 w-full" />
+        </Card>
+      </div>
+    );
+  }
 
   const statCards = [
     {

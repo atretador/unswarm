@@ -1,5 +1,4 @@
 export type {
-  ApiKey,
   BenchmarkResult,
   Container,
   ContainerStatus,

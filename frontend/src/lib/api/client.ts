@@ -1,5 +1,4 @@
 import type {
-  ApiKey,
   Container,
   LogEntry,
   Model,
@@ -46,9 +45,4 @@ export interface UnswarmClient {
   // Settings
   getSettings(): Promise<Settings>;
   updateSettings(data: Partial<Settings>): Promise<Settings>;
-
-  // API Keys
-  listApiKeys(): Promise<ApiKey[]>;
-  createApiKey(data: { name: string; permissions: string[] }): Promise<ApiKey>;
-  revokeApiKey(id: string): Promise<void>;
 }
