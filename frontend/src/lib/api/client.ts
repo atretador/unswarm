@@ -28,6 +28,8 @@ export interface UnswarmClient {
   listRegisteredContainers(): Promise<RegisteredContainer[]>;
   getRegisteredContainer(id: string): Promise<RegisteredContainer>;
   rediscoverContainer(id: string): Promise<RegisteredContainer>;
+  /** Start the runtime container backing a registered container. */
+  startRegisteredContainer(id: string): Promise<RegisteredContainer>;
   deleteRegisteredContainer(id: string, deleteModels?: boolean): Promise<void>;
 
   // Fleet

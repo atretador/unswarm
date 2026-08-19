@@ -21,6 +21,7 @@ import {
   MemoryStick,
   Monitor,
   PackageOpen,
+  Play,
   Plus,
   RefreshCw,
   RotateCw,
@@ -75,6 +76,46 @@ const REG_TRANSITIONAL = new Set<ContainerRegistrationStatus>([
   "healthy",
   "discovering",
 ]);
+
+// ─── Runtime container status (docker telemetry) ─────────────────
+
+/** Runtime statuses that map to the yellow (transitional) dot. */
+const RUNTIME_TRANSITIONAL = new Set(["starting", "stopping", "created", "restarting"]);
+
+/** Runtime statuses that map to the red (down) dot. */
+const RUNTIME_DOWN = new Set(["stopped", "exited", "dead", "error"]);
+
+export type RuntimeSignal = "running" | "transitional" | "down" | "unknown";
+
+function runtimeSignal(status: string | null | undefined): RuntimeSignal {
+  const s = (status ?? "").toLowerCase();
+  if (s === "running") return "running";
+  if (RUNTIME_TRANSITIONAL.has(s)) return "transitional";
+  if (RUNTIME_DOWN.has(s)) return "down";
+  return "unknown";
+}
+
+const RUNTIME_LABEL: Record<RuntimeSignal, string> = {
+  running: "Running",
+  transitional: "Starting…",
+  down: "Stopped",
+  unknown: "Unknown",
+};
+
+/** Find the runtime telemetry status for a registered container on its agent. */
+function runtimeStatusFor(
+  agentContainers: Agent["containers"],
+  rc: RegisteredContainer,
+): string | null {
+  const id = rc.runtimeContainerId?.toLowerCase();
+  const image = rc.image.toLowerCase();
+  const match = agentContainers.find(
+    (t) =>
+      (id !== undefined && t.containerId.toLowerCase() === id) ||
+      (t.modelName ?? "").toLowerCase() === image,
+  );
+  return match?.status ?? null;
+}
 
 // ─── Formatting helpers ───────────────────────────────────────────
 
@@ -706,10 +747,13 @@ function ModelChip({ model }: { model: Model }) {
 function RegisteredContainerCard({
   container,
   highlight = false,
+  runtimeStatus = null,
 }: {
   container: RegisteredContainer;
   /** When true, briefly ring the card (deep-link focus). */
   highlight?: boolean;
+  /** Runtime docker status from the owning agent's telemetry (may be null = unknown). */
+  runtimeStatus?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [benchmark, setBenchmark] = useState<{
@@ -732,7 +776,14 @@ function RegisteredContainerCard({
     queryClient.invalidateQueries({ queryKey: ["models"] });
     queryClient.invalidateQueries({ queryKey: ["containers"] });
     queryClient.invalidateQueries({ queryKey: ["agent-containers"] });
+    // Runtime dots come from agent telemetry — refresh them after any lifecycle change.
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
   };
+
+  const startMutation = useMutation({
+    mutationFn: (id: string) => client.startRegisteredContainer(id),
+    onSuccess: invalidate,
+  });
 
   const stopMutation = useMutation({
     mutationFn: (runtimeContainerId: string) => client.stopContainer(runtimeContainerId),
@@ -771,7 +822,9 @@ function RegisteredContainerCard({
   const firstModel = container.discoveredModels[0];
   const canBenchmark = !!firstModel && firstModel.status === "ready";
   const transitional = REG_TRANSITIONAL.has(container.status);
+  const signal = runtimeSignal(runtimeStatus);
   const busy =
+    startMutation.isPending ||
     stopMutation.isPending ||
     restartMutation.isPending ||
     rediscoverMutation.isPending ||
@@ -796,18 +849,22 @@ function RegisteredContainerCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <StatusDot
-              status={
-                container.status === "error"
-                  ? "error"
-                  : container.status === "ready"
-                    ? "ready"
-                    : container.status === "healthy"
-                      ? "healthy"
-                      : container.status
-              }
-              size="sm"
-            />
+            <Tooltip content={`Runtime: ${RUNTIME_LABEL[signal]}`}>
+              <span className="inline-flex">
+                <StatusDot
+                  status={
+                    signal === "running"
+                      ? "running"
+                      : signal === "transitional"
+                        ? "starting"
+                        : signal === "down"
+                          ? "error"
+                          : "stopped"
+                  }
+                  size="md"
+                />
+              </span>
+            </Tooltip>
             <div className="min-w-0">
               <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
                 {container.displayName}
@@ -867,7 +924,10 @@ function RegisteredContainerCard({
         {rediscoverError && (
           <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
             <AlertTriangle className="size-3 shrink-0" />
-            <span className="min-w-0 flex-1 truncate">{rediscoverError}</span>
+            <span className="min-w-0 flex-1 truncate">
+              {rediscoverError}
+              {signal === "down" && " — the container appears to be stopped; start it first."}
+            </span>
             <button
               type="button"
               onClick={() => setRediscoverError(null)}
@@ -905,28 +965,52 @@ function RegisteredContainerCard({
             </span>
           )}
           <span className="mx-0.5 hidden h-4 w-px bg-[var(--color-border)] sm:block" />
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!container.runtimeContainerId || busy}
-            loading={restartMutation.isPending}
-            onClick={() => container.runtimeContainerId && restartMutation.mutate(container.runtimeContainerId)}
-            title="Restart runtime container"
-          >
-            <RotateCw className="size-3" />
-            Restart
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!container.runtimeContainerId || busy}
-            loading={stopMutation.isPending}
-            onClick={() => container.runtimeContainerId && stopMutation.mutate(container.runtimeContainerId)}
-            title="Stop runtime container"
-          >
-            <Square className="size-3" />
-            Stop
-          </Button>
+          {signal === "running" ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!container.runtimeContainerId || busy}
+                loading={restartMutation.isPending}
+                onClick={() => container.runtimeContainerId && restartMutation.mutate(container.runtimeContainerId)}
+                title="Restart runtime container"
+              >
+                <RotateCw className="size-3" />
+                Restart
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!container.runtimeContainerId || busy}
+                loading={stopMutation.isPending}
+                onClick={() => container.runtimeContainerId && stopMutation.mutate(container.runtimeContainerId)}
+                title="Stop runtime container"
+              >
+                <Square className="size-3" />
+                Stop
+              </Button>
+            </>
+          ) : signal === "down" || signal === "unknown" ? (
+            // Stopped (or no telemetry): offer Start — the container may simply be down.
+            // Start works by registration id (backend resolves the runtime container by
+            // image name), so it must not require runtimeContainerId (covers never-started).
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy}
+              loading={startMutation.isPending}
+              onClick={() => startMutation.mutate(container.id)}
+              title="Start runtime container"
+            >
+              <Play className="size-3" />
+              Start
+            </Button>
+          ) : (
+            // Transitional (starting/stopping/created/restarting) — no lifecycle action.
+            <span className="text-[10px] italic text-[var(--color-text-muted)]">
+              {RUNTIME_LABEL[signal]}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-1">
             <Button
               variant="ghost"
@@ -1135,6 +1219,7 @@ function AgentSection({
                         <RegisteredContainerCard
                           container={rc}
                           highlight={focused}
+                          runtimeStatus={runtimeStatusFor(agent.containers, rc)}
                         />
                       </div>
                     );

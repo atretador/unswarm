@@ -24,8 +24,24 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
 
     public List<string> DeletedIds { get; } = [];
 
+    /// <summary>Scriptable StartAsync result; when set, returned for any id.</summary>
+    public RegisteredContainerWithModels? StartResult { get; set; }
+
+    /// <summary>When set, StartAsync throws this exception instead of returning.</summary>
+    public Exception? StartException { get; set; }
+
+    public List<string> StartedIds { get; } = [];
+
     public Task<RegisteredContainerWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
         => Task.FromResult(DefaultResult);
+
+    public Task<RegisteredContainerWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
+    {
+        StartedIds.Add(registeredContainerId);
+        if (StartException is not null)
+            throw StartException;
+        return Task.FromResult(StartResult ?? DefaultResult);
+    }
 
     public Task<RegisteredContainerWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
         => Task.FromResult(DefaultResult);

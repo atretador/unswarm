@@ -833,6 +833,148 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal(2, remote.InferCalls.Count);
     }
 
+    [Fact]
+    public async Task StartAsync_Host_StartsContainer_ReturnsReady_WithModelsPreserved()
+    {
+        _docker.MappedPortOverride = StartDiscoveryServer();
+        var service = CreateService();
+
+        // Register first so models are mapped to the container.
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "Startable",
+            Image = "test:latest"
+        };
+        var created = await service.RegisterAsync(request);
+
+        // Manually map a model (as the initial registration would).
+        var modelId = "model-1";
+        await _modelRegistry.CreateAsync(new ModelDefinition
+        {
+            Id = modelId,
+            Name = "start-model",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        await _registry.AddModelMappingAsync(created.Container.Id, modelId);
+
+        var started = await service.StartAsync(created.Container.Id);
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, started.Container.Status);
+        Assert.NotNull(started.Container.RuntimeContainerId);
+        Assert.NotNull(started.Container.MappedPort);
+        // Models preserved, no re-discovery: the same mapping still exists.
+        var model = Assert.Single(started.DiscoveredModels);
+        Assert.Equal(modelId, model.Id);
+        var mappedIds = await _registry.GetModelIdsForContainerAsync(created.Container.Id);
+        Assert.Equal([modelId], mappedIds);
+    }
+
+    [Fact]
+    public async Task StartAsync_Host_StartFailure_SetsErrorStatus()
+    {
+        _docker.FailStart = true;
+        _docker.StartErrorMessage = "Container failed to start";
+
+        var service = CreateService();
+        var container = new RegisteredContainer
+        {
+            Id = "reg-start-fail",
+            DisplayName = "FailStart",
+            Image = "test:latest",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.StartAsync("reg-start-fail");
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.Equal("Container failed to start", result.Container.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task StartAsync_Host_HealthTimeout_SetsErrorStatus()
+    {
+        _docker.MappedPortOverride = StartDiscoveryServer();
+        _healthChecker.IsReady = false;
+
+        var service = CreateService();
+        var container = new RegisteredContainer
+        {
+            Id = "reg-slow",
+            DisplayName = "SlowStart",
+            Image = "test:latest",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.StartAsync("reg-slow");
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        Assert.Contains("Health check timeout", result.Container.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task StartAsync_RemoteAgent_RoutesThroughRouter_AndHealthChecksResolvedPort()
+    {
+        var remote = new FakeRemoteDockerController
+        {
+            // Agent omits mapped port in start result → resolved from listing.
+            StartResult = new ContainerStartResult { ContainerId = "remote-c1" },
+            ListedContainers =
+            [
+                new ContainerInfo
+                {
+                    Id = "remote-c1",
+                    ModelId = "vllm-serve",
+                    ModelName = "vllm-serve",
+                    Status = ContainerStatus.Running,
+                    Port = 9090
+                }
+            ],
+            Healthy = true
+        };
+
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
+
+        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
+        var container = new RegisteredContainer
+        {
+            Id = "reg-remote-start",
+            DisplayName = "RemoteStart",
+            Image = "vllm-serve",
+            ContainerPort = 8000,
+            Agent = "gpu1",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.StartAsync("reg-remote-start");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Equal("remote-c1", result.Container.RuntimeContainerId);
+        Assert.Equal(9090, result.Container.MappedPort);
+        // Start went through the remote controller, not the host.
+        Assert.Empty(_docker.StartedContainerIds);
+        Assert.Equal(["vllm-serve"], remote.StartedImages);
+        // Health polled on the resolved port.
+        Assert.Equal([9090], remote.HealthCheckedPorts);
+    }
+
+    [Fact]
+    public async Task StartAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        var service = CreateService();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => service.StartAsync("nonexistent"));
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

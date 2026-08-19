@@ -929,4 +929,260 @@ describe("Fleet", () => {
     const edgeToggle = screen.getByRole("button", { name: "Toggle edge-node-1 section" });
     expect(edgeToggle).toHaveAttribute("aria-expanded", "false");
   });
+
+  // ─── Runtime status dot + contextual lifecycle buttons ──────────
+
+  /** Host agent with a custom runtime telemetry status for c1 (rc1's runtime container). */
+  function seedHostTelemetry(status: string) {
+    vi.spyOn(mockClient, "listAgents").mockResolvedValue([
+      {
+        name: "host",
+        connectionId: null,
+        connectedAt: null,
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.2.3",
+        hostname: "workstation",
+        osPlatform: "linux/amd64",
+        gpuInfo: null,
+        totalMemoryMb: 131072,
+        cpuCores: 16,
+        containers: [
+          { containerId: "c1", modelName: "llama-3.1-70b", status, port: 8081 },
+          { containerId: "c2", modelName: "mistral-large-2", status: "starting", port: null },
+          { containerId: "c3", modelName: "gemma-2-27b", status: "stopped", port: null },
+        ],
+      },
+    ]);
+  }
+
+  /** Walk up from a display name to its card root. */
+  function cardFor(displayName: string): HTMLElement {
+    let el = screen.getByText(displayName).parentElement as HTMLElement;
+    for (let i = 0; i < 6 && el; i++) {
+      if (el.className.includes("rounded-")) break;
+      el = el.parentElement as HTMLElement;
+    }
+    return el;
+  }
+
+  it("shows a red runtime dot and a Start button when the container is stopped", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    seedHostTelemetry("stopped");
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    // Red dot = error color; tooltip says Stopped (scope to llama-server's card)
+    const card = cardFor("llama-server");
+    expect(within(card).getByRole("status", { name: "error" })).toBeInTheDocument();
+    expect(screen.getAllByText("Runtime: Stopped").length).toBeGreaterThanOrEqual(1);
+
+    // Stop/Restart are hidden; Start (primary) is shown on this card
+    expect(within(card).getByRole("button", { name: /^start$/i })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^restart$/i })).not.toBeInTheDocument();
+  });
+
+  it("clicking Start calls startRegisteredContainer with the registered id", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    seedHostTelemetry("stopped");
+    const user = userEvent.setup();
+    const startSpy = vi.spyOn(mockClient, "startRegisteredContainer");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(within(cardFor("llama-server")).getByRole("button", { name: /^start$/i }));
+
+    await waitFor(() => {
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(startSpy).toHaveBeenCalledWith("rc1");
+  });
+
+  it("refreshes the runtime dot after a successful start", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    // Shared, mutable agent telemetry: listAgents refetches this same array after
+    // invalidation, so flipping the status here is what a live backend would report.
+    const agents = [
+      {
+        name: "host",
+        connectionId: null,
+        connectedAt: null,
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.2.3",
+        hostname: "workstation",
+        osPlatform: "linux/amd64",
+        gpuInfo: null,
+        totalMemoryMb: 131072,
+        cpuCores: 16,
+        containers: [
+          { containerId: "c1", modelName: "llama-3.1-70b", status: "stopped", port: null },
+        ],
+      },
+    ];
+    vi.spyOn(mockClient, "listAgents").mockImplementation(async () =>
+      agents.map((a) => ({ ...a, containers: a.containers.map((c) => ({ ...c })) })),
+    );
+    // The mock keeps module state (prior tests may have removed rc1), so stub the
+    // start directly: onSuccess only invalidates — the returned value is unused.
+    vi.spyOn(mockClient, "startRegisteredContainer").mockImplementation(async (id) => {
+      agents[0].containers[0].status = "running";
+      return HOST_RCS.find((rc) => rc.id === id) ?? HOST_RCS[0];
+    });
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const card = cardFor("llama-server");
+    expect(within(card).getByRole("button", { name: /^start$/i })).toBeInTheDocument();
+
+    await user.click(within(card).getByRole("button", { name: /^start$/i }));
+
+    // The ["agents"] invalidation refetches telemetry; the dot flips to running
+    // and the lifecycle buttons switch from Start to Stop/Restart.
+    await waitFor(() => {
+      expect(screen.getAllByText("Runtime: Running").length).toBeGreaterThanOrEqual(1);
+    });
+    expect(within(card).getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a green runtime dot with Stop/Restart when the container is running", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    seedHostTelemetry("running");
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const card = cardFor("llama-server");
+    expect(within(card).getByRole("status", { name: "running" })).toBeInTheDocument();
+    expect(screen.getAllByText("Runtime: Running").length).toBeGreaterThanOrEqual(1);
+
+    expect(within(card).getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: /^restart$/i })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a yellow dot for a transitional runtime status with no lifecycle buttons", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    seedHostTelemetry("starting");
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const card = cardFor("llama-server");
+    // Transitional maps to the starting dot; assert its semantics.
+    expect(within(card).getByRole("status", { name: "starting" })).toBeInTheDocument();
+    expect(screen.getAllByText("Runtime: Starting…").length).toBeGreaterThanOrEqual(1);
+
+    // No lifecycle action for a transitional container
+    expect(within(card).queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: /^restart$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows a gray dot for unknown runtime status but still offers Start", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    // c1 not present in telemetry → no match → unknown
+    vi.spyOn(mockClient, "listAgents").mockResolvedValue([
+      {
+        name: "host",
+        connectionId: null,
+        connectedAt: null,
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.2.3",
+        hostname: "workstation",
+        osPlatform: "linux/amd64",
+        gpuInfo: null,
+        totalMemoryMb: 131072,
+        cpuCores: 16,
+        containers: [
+          { containerId: "cX", modelName: "some-other-container", status: "running", port: 9999 },
+        ],
+      },
+    ]);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const card = cardFor("llama-server");
+    // Unknown → neutral gray dot (stopped color) + "Unknown" tooltip
+    expect(within(card).getByRole("status", { name: "stopped" })).toBeInTheDocument();
+    expect(screen.getAllByText("Runtime: Unknown").length).toBeGreaterThanOrEqual(1);
+
+    // Decision: unknown → show Start (the container may simply be down / unreported).
+    expect(within(card).getByRole("button", { name: /^start$/i })).toBeInTheDocument();
+  });
+
+  it("rediscover failure on a stopped container shows the start-first hint", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    seedHostTelemetry("stopped");
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "rediscoverContainer").mockRejectedValueOnce(new Error("Container is not responding"));
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole("button", { name: /rediscover/i })[0]);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/container appears to be stopped; start it first/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Container is not responding/)).toBeInTheDocument();
+  });
 });

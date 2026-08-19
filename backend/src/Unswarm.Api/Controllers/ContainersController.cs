@@ -194,6 +194,24 @@ public sealed class ContainersController : ControllerBase
         }
     }
 
+    [HttpPost("registered/{id}/start")]
+    public async Task<IActionResult> StartRegistered(string id, CancellationToken ct)
+    {
+        RegisteredContainerWithModels result;
+        try
+        {
+            result = await _registrationService.StartAsync(id, ct);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound(new { error = $"Registered container {id} not found" });
+        }
+
+        // Reuse the same response shape as GET /api/containers/registered/{id}
+        // (discoveredModels populated with lastBenchmark).
+        return Ok(await BuildRegisteredResponseAsync(result.Container, ct).ConfigureAwait(false));
+    }
+
     [HttpDelete("registered/{id}")]
     public async Task<IActionResult> DeleteRegistered(string id, [FromQuery] bool deleteModels = false, CancellationToken ct = default)
     {

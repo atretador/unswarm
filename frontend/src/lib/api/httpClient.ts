@@ -115,6 +115,13 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  startRegisteredContainer(id: string) {
+    return request<RegisteredContainer>(
+      `/api/containers/registered/${encodeURIComponent(id)}/start`,
+      { method: "POST" },
+    );
+  },
+
   deleteRegisteredContainer(id: string, deleteModels = false) {
     const qs = deleteModels ? "?deleteModels=true" : "";
     return request<void>(

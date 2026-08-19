@@ -690,6 +690,28 @@ export const mockClient: UnswarmClient = {
     };
   },
 
+  async startRegisteredContainer(containerId: string) {
+    await delay(rand(200, 500));
+    const rc = registeredContainers.find((x) => x.id === containerId);
+    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    // Flip the registration into the ready state — the runtime container is now live.
+    rc.status = "ready";
+    if (rc.runtimeContainerId) {
+      const runtime = containers.find((c) => c.id === rc.runtimeContainerId);
+      if (runtime) runtime.status = "running";
+      // Also reflect the new state in the agent telemetry lookup (host seed).
+      const agent = AGENTS.find((a) => a.name === rc.agent);
+      const telemetry = agent?.containers.find(
+        (t) => t.containerId === rc.runtimeContainerId,
+      );
+      if (telemetry) telemetry.status = "running";
+    }
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
   async deleteRegisteredContainer(containerId: string, deleteModels = false) {
     await delay(rand(60, 150));
     const idx = registeredContainers.findIndex((x) => x.id === containerId);

@@ -179,4 +179,73 @@ public sealed class ContainersControllerTests
         Assert.Equal(18, discovered.LastBenchmark!.TokensPerSec);
         Assert.Equal(400, discovered.LastBenchmark.LatencyMs);
     }
+
+    [Fact]
+    public async Task StartRegistered_Returns200_WithDiscoveredModels()
+    {
+        var (container, model) = await SeedRegisteredWithModelAsync("reg-1", "model-1", "llama-3");
+        await _benchmarks.AddAsync("model-1", "p1", 12.5, 300, 25, "completed", null);
+
+        // Scripted StartAsync result: the container flips to Ready with a runtime id.
+        _registrationService.StartResult = new RegisteredContainerWithModels
+        {
+            Container = container with
+            {
+                Status = ContainerRegistrationStatus.Ready,
+                RuntimeContainerId = "c1",
+                MappedPort = 8081
+            },
+            DiscoveredModels = [model]
+        };
+
+        var result = await CreateController().StartRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+
+        Assert.Equal("reg-1", response.Id);
+        Assert.Equal("Ready", response.Status);
+        Assert.Equal("c1", response.RuntimeContainerId);
+        Assert.Equal(8081, response.MappedPort);
+        // discoveredModels populated with lastBenchmark via BuildRegisteredResponseAsync.
+        var discovered = Assert.Single(response.DiscoveredModels);
+        Assert.Equal("model-1", discovered.Id);
+        Assert.NotNull(discovered.LastBenchmark);
+        Assert.Equal(12.5, discovered.LastBenchmark!.TokensPerSec);
+    }
+
+    [Fact]
+    public async Task StartRegistered_UnknownId_ReturnsNotFound()
+    {
+        _registrationService.StartException = new KeyNotFoundException("Registered container nope not found");
+
+        var result = await CreateController().StartRegistered("nope", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task StartRegistered_StartFailure_Returns200WithErroredContainer()
+    {
+        var (container, _) = await SeedRegisteredWithModelAsync("reg-1", "model-1", "llama-3");
+
+        // Scripted StartAsync failure: container persisted as Error with a message,
+        // endpoint returns 200 (not an error status) so the fleet refetch shows it.
+        _registrationService.StartResult = new RegisteredContainerWithModels
+        {
+            Container = container with
+            {
+                Status = ContainerRegistrationStatus.Error,
+                ErrorMessage = "Connection refused"
+            },
+            DiscoveredModels = []
+        };
+
+        var result = await CreateController().StartRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        Assert.Equal("Error", response.Status);
+        Assert.Equal("Connection refused", response.ErrorMessage);
+    }
 }

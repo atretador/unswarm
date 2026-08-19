@@ -25,6 +25,7 @@ public sealed record RegisteredContainerWithModels
 public interface IContainerRegistrationService
 {
     Task<RegisteredContainerWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default);
+    Task<RegisteredContainerWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default);
     Task<RegisteredContainerWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default);
     Task DeleteAsync(string id, bool deleteModels, CancellationToken ct = default);
 }

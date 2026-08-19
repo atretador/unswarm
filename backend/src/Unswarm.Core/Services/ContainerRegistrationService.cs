@@ -82,6 +82,107 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         return await StartAndDiscoverAsync(container, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Starts the runtime container for an already-registered container (e.g. after it
+    /// was stopped or OOM-killed) and waits for it to become healthy. Models are NOT
+    /// re-discovered — the existing mappings from the initial registration are returned.
+    /// On any start/health failure the container is persisted with Status=Error and the
+    /// errored state is returned (consistent with RediscoverAsync's semantics).
+    /// </summary>
+    public async Task<RegisteredContainerWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
+    {
+        var container = await _registry.GetAsync(registeredContainerId, ct).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"Registered container {registeredContainerId} not found");
+
+        _logger.LogInformation("Starting registered container {Id} (image {Image}) on agent {Agent}",
+            registeredContainerId, container.Image, container.Agent);
+
+        try
+        {
+            var controller = GetController(container);
+            var isRemote = controller is IRemoteDockerController;
+
+            container = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                Status = ContainerRegistrationStatus.Starting,
+                ErrorMessage = null
+            }, ct).ConfigureAwait(false);
+
+            var startResult = await controller.StartRegisteredContainerAsync(
+                container.Id,
+                container.Image,
+                container.ContainerPort,
+                gpuDevices: null,
+                memoryLimitMb: 0,
+                container.ExtraLabels,
+                ct).ConfigureAwait(false);
+
+            if (startResult.ErrorMessage is not null)
+            {
+                return await FailAsync(container, startResult.ErrorMessage, ct).ConfigureAwait(false);
+            }
+
+            // Resolve mapped port. Remote agents may omit it in the start result (or
+            // return 0, which is meaningless), so fall back to listing containers and
+            // matching the running container. Host starts carry the mapped port from
+            // the {containerPort}/tcp inspect.
+            var mappedPort = startResult.MappedPort is > 0 ? startResult.MappedPort : null;
+            if (!mappedPort.HasValue && isRemote)
+            {
+                mappedPort = await ResolveRemoteMappedPortAsync(
+                    (IRemoteDockerController)controller,
+                    startResult.ContainerId,
+                    container.Image,
+                    container.Agent,
+                    ct).ConfigureAwait(false);
+            }
+
+            if (!mappedPort.HasValue)
+            {
+                return await FailAsync(container, "Could not determine mapped port", ct).ConfigureAwait(false);
+            }
+
+            container = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                RuntimeContainerId = startResult.ContainerId,
+                MappedPort = mappedPort
+            }, ct).ConfigureAwait(false);
+
+            // Wait for health (host: local health checker; remote: agent health poll).
+            if (isRemote)
+            {
+                await WaitForRemoteHealthAsync((IRemoteDockerController)controller, mappedPort.Value, container.Agent, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await _healthChecker.WaitForReadyAsync(mappedPort.Value, ct).ConfigureAwait(false);
+            }
+
+            container = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                Status = ContainerRegistrationStatus.Ready,
+                UpdatedAt = _clock.UtcNow
+                // LastDiscoveredAt intentionally untouched: it records the last model
+                // discovery, not the last start.
+            }, ct).ConfigureAwait(false);
+
+            return new RegisteredContainerWithModels
+            {
+                Container = container,
+                DiscoveredModels = await LoadModelsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false)
+            };
+        }
+        catch (KeyNotFoundException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start registered container {Id}", registeredContainerId);
+            return await FailAsync(container, ex.Message, ct).ConfigureAwait(false);
+        }
+    }
+
     public async Task<RegisteredContainerWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
     {
         var container = await _registry.GetAsync(registeredContainerId, ct).ConfigureAwait(false)
@@ -760,6 +861,23 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Container = container,
             DiscoveredModels = []
         };
+    }
+
+    /// <summary>
+    /// Loads the model definitions currently mapped to a registered container
+    /// (used by StartAsync to return existing models without re-running discovery).
+    /// </summary>
+    private async Task<IReadOnlyList<ModelDefinition>> LoadModelsForContainerAsync(string registeredContainerId, CancellationToken ct)
+    {
+        var modelIds = await _registry.GetModelIdsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false);
+        var models = new List<ModelDefinition>();
+        foreach (var modelId in modelIds)
+        {
+            var model = await _modelRegistry.GetAsync(modelId, ct).ConfigureAwait(false);
+            if (model is not null)
+                models.Add(model);
+        }
+        return models;
     }
 
     private static ModelDefinition WithModelStatus(ModelDefinition model, ModelStatus status) => new()
