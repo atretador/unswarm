@@ -29,7 +29,15 @@ function ModelRow({
     <motion.div layout initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <div
         className="flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-0 cursor-pointer hover:bg-[var(--color-bg-muted)] transition-colors"
+        role="button"
+        tabIndex={0}
         onClick={() => setExpanded((p) => !p)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((p) => !p);
+          }
+        }}
       >
         <StatusDot status={model.status} size="sm" />
         <div className="flex-1 min-w-0">

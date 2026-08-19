@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { setMockLatency } from "../lib/api/mock";
+import userEvent from "@testing-library/user-event";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Queue from "../features/queue";
 
 beforeEach(() => {
   setMockLatency(0);
+  vi.restoreAllMocks();
 });
 
 describe("Queue", () => {
@@ -76,6 +78,50 @@ describe("Queue", () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Live.*polling every 2s/)).toBeInTheDocument();
+    });
+  });
+
+  it("shows error state when API fails", async () => {
+    vi.spyOn(mockClient, "getQueueSnapshot").mockRejectedValueOnce(new Error("Timeout"));
+
+    render(
+      <TestWrapper>
+        <Queue />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load queue")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Timeout")).toBeInTheDocument();
+  });
+
+  it("retry button refetches after error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "getQueueSnapshot")
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce({
+        currentSlot: null,
+        waiting: [],
+        recentCompleted: [],
+        activeTransitions: [],
+      });
+
+    render(
+      <TestWrapper>
+        <Queue />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load queue")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Queue")).toBeInTheDocument();
     });
   });
 });

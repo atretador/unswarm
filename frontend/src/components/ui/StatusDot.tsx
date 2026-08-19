@@ -26,7 +26,7 @@ const PULSE_STATUS = new Set(["starting", "validating"]);
 export function StatusDot({ status, size = "md" }: StatusDotProps) {
   const shouldPulse = PULSE_STATUS.has(status);
   return (
-    <span className="relative inline-flex items-center justify-center" aria-label={status}>
+    <span className="relative inline-flex items-center justify-center" role="status" aria-label={status}>
       <span
         className={`inline-block rounded-full ${STATUS_COLOR[status]} ${SIZE_MAP[size]}`}
       />

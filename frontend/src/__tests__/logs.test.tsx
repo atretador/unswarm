@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { setMockLatency } from "../lib/api/mock";
+import userEvent from "@testing-library/user-event";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Logs from "../features/logs";
 
 beforeEach(() => {
   setMockLatency(0);
+  vi.restoreAllMocks();
 });
 
 describe("Logs", () => {
@@ -94,5 +96,44 @@ describe("Logs", () => {
 
     const skeletons = container.querySelectorAll("[aria-hidden='true']");
     expect(skeletons.length).toBeGreaterThan(0);
+  });
+
+  it("shows error state when API fails", async () => {
+    vi.spyOn(mockClient, "getLogs").mockRejectedValueOnce(new Error("Service unavailable"));
+
+    render(
+      <TestWrapper>
+        <Logs />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load logs")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Service unavailable")).toBeInTheDocument();
+  });
+
+  it("retry button refetches after error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "getLogs")
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce([]);
+
+    render(
+      <TestWrapper>
+        <Logs />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load logs")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Logs")).toBeInTheDocument();
+    });
   });
 });

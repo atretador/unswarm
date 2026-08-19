@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { setMockLatency } from "../lib/api/mock";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Settings from "../features/settings";
 
 beforeEach(() => {
   setMockLatency(0);
+  vi.restoreAllMocks();
 });
 
 describe("Settings", () => {
@@ -98,6 +99,28 @@ describe("Settings", () => {
 
     await waitFor(() => {
       expect(screen.getByPlaceholderText("my-api-key")).toBeInTheDocument();
+    });
+  });
+
+  it("renders theme and API keys sections when settings API fails", async () => {
+    vi.spyOn(mockClient, "getSettings").mockRejectedValueOnce(new Error("Internal error"));
+
+    render(
+      <TestWrapper>
+        <Settings />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Settings")).toBeInTheDocument();
+    });
+
+    // Theme section is static, should always render
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+
+    // API keys section makes its own call, should still work
+    await waitFor(() => {
+      expect(screen.getByText("dev-local")).toBeInTheDocument();
     });
   });
 });

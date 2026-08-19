@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
-import { setMockLatency } from "../lib/api/mock";
+import userEvent from "@testing-library/user-event";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Dashboard from "../features/dashboard";
 
 beforeEach(() => {
   setMockLatency(0);
+  vi.restoreAllMocks();
 });
 
 describe("Dashboard", () => {
@@ -69,5 +71,56 @@ describe("Dashboard", () => {
     expect(screen.getByText("Models loaded")).toBeInTheDocument();
     expect(screen.getByText("Uptime")).toBeInTheDocument();
     expect(screen.getByText("Errors (24h)")).toBeInTheDocument();
+  });
+
+  it("shows error state when API fails", async () => {
+    vi.spyOn(mockClient, "getStats").mockRejectedValueOnce(new Error("Network failure"));
+
+    render(
+      <TestWrapper>
+        <Dashboard />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load dashboard")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Network failure")).toBeInTheDocument();
+  });
+
+  it("retry button refetches data after error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "getStats")
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce({
+        totalRequests: 999,
+        activeRequests: 0,
+        avgLatencyMs: 50,
+        totalTokensProcessed: 1000,
+        uptimeSeconds: 3600,
+        modelsLoaded: 1,
+        containersRunning: 1,
+        queueDepth: 0,
+        requestsPerMinute: [1, 2, 3],
+        errorsLast24h: 0,
+        tokensPerSecond: [10, 20, 30],
+      });
+
+    render(
+      <TestWrapper>
+        <Dashboard />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load dashboard")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("999")).toBeInTheDocument();
+    });
   });
 });

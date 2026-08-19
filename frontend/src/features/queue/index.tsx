@@ -209,6 +209,12 @@ export default function Queue() {
           </div>
         )}
       </div>
+
+      {/* Accessible live region for screen readers */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        Queue: {waiting.length} waiting, {currentSlot ? "1 processing" : "idle"}
+        {snapshot.activeTransitions.length > 0 && `, ${snapshot.activeTransitions.length} active transition(s)`}
+      </div>
     </div>
   );
 }

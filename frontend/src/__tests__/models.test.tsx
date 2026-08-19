@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { setMockLatency } from "../lib/api/mock";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Models from "../features/models";
 
 beforeEach(() => {
   setMockLatency(0);
+  vi.restoreAllMocks();
 });
 
 describe("Models", () => {
@@ -87,6 +88,59 @@ describe("Models", () => {
 
     await waitFor(() => {
       expect(screen.getByText("5 models")).toBeInTheDocument();
+    });
+  });
+
+  it("shows error state when API fails", async () => {
+    vi.spyOn(mockClient, "listModels").mockRejectedValueOnce(new Error("Server error"));
+
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load models")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Server error")).toBeInTheDocument();
+  });
+
+  it("retry button refetches after error", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "listModels")
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce([]);
+
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Failed to load models")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No models registered")).toBeInTheDocument();
+    });
+  });
+
+  it("shows empty state when no models exist", async () => {
+    vi.spyOn(mockClient, "listModels").mockResolvedValueOnce([]);
+
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("No models registered")).toBeInTheDocument();
     });
   });
 });
