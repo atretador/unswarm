@@ -281,7 +281,9 @@ func runPeriodic(sessionCtx context.Context, interval time.Duration, fn func(con
 
 // handleCommand processes a command and sends the result back.
 // Every command — including malformed ones — gets a command_result echoing
-// the command id, so the backend never waits forever.
+// the command id, so the backend never waits forever. The session context is
+// threaded through so long-running commands (chat_completion) abort when the
+// backend disconnects or cancels.
 func handleCommand(
 	ctx context.Context,
 	env protocol.Envelope,
@@ -305,8 +307,9 @@ func handleCommand(
 
 	logger.Info("command received", "command", cmdPayload.Command, "id", derefStr(env.ID))
 
-	// Use the dispatcher for routing
-	result := disp.Dispatch(cmdPayload)
+	// Use the dispatcher for routing; context-aware handlers get the session ctx
+	// so they can cancel in-flight work on backend disconnect.
+	result := disp.DispatchContext(ctx, cmdPayload)
 
 	// Send result back
 	sendCommandResult(ctx, wsClient, cfg, env.ID, result, logger)
@@ -408,6 +411,14 @@ func setupDispatcher(dh *docker.Handler, logger *slog.Logger) *dispatch.Dispatch
 	d.Register(protocol.CmdDiscoverModels, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("discovering models", "port", p.Port)
 		return docker.DiscoverModels(context.Background(), p.Port)
+	})
+
+	// chat_completion — forwards a raw OpenAI chat-completions body to the local
+	// container and returns the raw response body. Context-aware: the session
+	// cancellation (backend disconnect) aborts the HTTP call via ctx.
+	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
+		logger.Info("chat completion", "port", p.Port, "jsonBytes", len(p.JsonBody))
+		return docker.ChatCompletion(ctx, p.Port, p.JsonBody)
 	})
 
 	return d

@@ -1,3 +1,4 @@
+using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Dtos;
@@ -7,6 +8,13 @@ public sealed class LastBenchmarkResponse
     public double TokensPerSec { get; set; }
     public double LatencyMs { get; set; }
     public DateTimeOffset Timestamp { get; set; }
+
+    public static LastBenchmarkResponse From(BenchmarkHistoryEntry e) => new()
+    {
+        TokensPerSec = e.TokensPerSec,
+        LatencyMs = e.LatencyMs,
+        Timestamp = e.Timestamp
+    };
 }
 
 public sealed class ModelResponse
@@ -24,7 +32,9 @@ public sealed class ModelResponse
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
-    public static ModelResponse FromDefinition(ModelDefinition d) => new()
+    public static ModelResponse FromDefinition(ModelDefinition d) => FromDefinition(d, null);
+
+    public static ModelResponse FromDefinition(ModelDefinition d, LastBenchmarkResponse? lastBenchmark) => new()
     {
         Id = d.Id,
         Name = d.Name,
@@ -32,7 +42,7 @@ public sealed class ModelResponse
         ParameterSize = d.ParameterSize,
         Quantization = d.Quantization,
         Status = d.Status,
-        LastBenchmark = null,
+        LastBenchmark = lastBenchmark,
         ContextWindow = d.ContextWindow,
         ContainerImage = d.ContainerImage,
         SourceContainerId = d.SourceContainerId,

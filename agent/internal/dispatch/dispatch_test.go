@@ -1,7 +1,10 @@
 package dispatch
 
 import (
+	"context"
 	"testing"
+	"time"
+
 	"unswarm/agent/internal/protocol"
 )
 
@@ -113,6 +116,63 @@ func TestCommandsList(t *testing.T) {
 	cmds := d.Commands()
 	if len(cmds) != 2 {
 		t.Errorf("Commands() returned %d items, want 2", len(cmds))
+	}
+}
+
+// TestDispatchContext_ContextAwareHandler_Cancels verifies a handler registered via
+// RegisterContext receives the connection context and can observe its cancellation
+// (backend disconnect / scheduler timeout). The handler blocks on ctx.Done() and
+// returns an error result instead of hanging forever.
+func TestDispatchContext_ContextAwareHandler_Cancels(t *testing.T) {
+	d := New()
+	var observed context.Context
+
+	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
+		observed = ctx
+		select {
+		case <-ctx.Done():
+			msg := "cancelled: " + ctx.Err().Error()
+			return protocol.CommandResultPayload{OK: false, Error: &msg}
+		case <-time.After(5 * time.Second):
+			return protocol.CommandResultPayload{OK: true, Data: "completed"}
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	start := time.Now()
+	result := d.DispatchContext(ctx, protocol.CommandPayload{Command: protocol.CmdChatCompletion})
+	elapsed := time.Since(start)
+
+	if result.OK {
+		t.Error("expected ok=false when context is cancelled")
+	}
+	if result.Error == nil {
+		t.Error("expected a cancellation error message")
+	}
+	if observed == nil {
+		t.Error("context-aware handler did not receive the connection context")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("handler did not abort promptly on cancel; took %v", elapsed)
+	}
+}
+
+// TestDispatchContext_NonContextHandler_IgnoresContext verifies that handlers
+// registered with plain Register still work through DispatchContext (back-compat).
+func TestDispatchContext_NonContextHandler_IgnoresContext(t *testing.T) {
+	d := New()
+	d.Register("plain", func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		return protocol.CommandResultPayload{OK: true}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result := d.DispatchContext(ctx, protocol.CommandPayload{Command: "plain"})
+	if !result.OK {
+		t.Error("plain handler should still succeed through DispatchContext")
 	}
 }
 

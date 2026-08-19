@@ -1,8 +1,12 @@
 import type {
+  Agent,
+  BenchmarkResult,
   Container,
   LogEntry,
   Model,
   QueueSnapshot,
+  RegisterContainerPayload,
+  RegisteredContainer,
   Settings,
   StatsSummary,
 } from "./types";
@@ -19,11 +23,27 @@ export interface UnswarmClient {
   updateModel(id: string, data: Partial<Model>): Promise<Model>;
   deleteModel(id: string): Promise<void>;
 
+  // Container Registration
+  registerContainer(data: RegisterContainerPayload): Promise<RegisteredContainer>;
+  listRegisteredContainers(): Promise<RegisteredContainer[]>;
+  getRegisteredContainer(id: string): Promise<RegisteredContainer>;
+  rediscoverContainer(id: string): Promise<RegisteredContainer>;
+  deleteRegisteredContainer(id: string, deleteModels?: boolean): Promise<void>;
+
   // Fleet
   listContainers(): Promise<Container[]>;
   startContainer(modelId: string): Promise<Container>;
   stopContainer(containerId: string): Promise<void>;
   restartContainer(containerId: string): Promise<Container>;
+
+  /** Containers running on a specific agent (used by the manage-containers picker). */
+  listAgentContainers(agentName: string): Promise<Container[]>;
+
+  /** Run a benchmark against a model. Optional prompt overrides the default. */
+  runBenchmark(modelId: string, prompt?: string): Promise<BenchmarkResult>;
+
+  // Agents
+  listAgents(): Promise<Agent[]>;
 
   // Queue
   getQueueSnapshot(): Promise<QueueSnapshot>;

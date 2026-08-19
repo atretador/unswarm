@@ -1,17 +1,36 @@
-using Unswarm.Core.Models;
+using Unswarm.Core.Contracts;
 
 namespace Unswarm.Api.Dtos;
 
+/// <summary>
+/// Wire shape for a benchmark run. Shared between POST result and GET list.
+/// Note: TokensPerSec == 0 means "unknown" (the model did not report usable token
+/// counts or the run errored) — UIs should render it as n/a rather than 0 tok/s.
+/// </summary>
 public sealed class BenchmarkResponse
 {
+    public string Id { get; set; } = "";
+    public string ModelId { get; set; } = "";
+    public string ModelName { get; set; } = "";
+    public string? Prompt { get; set; }
     public double TokensPerSec { get; set; }
     public double LatencyMs { get; set; }
+    public long TokensGenerated { get; set; }
     public DateTimeOffset Timestamp { get; set; }
+    public string Status { get; set; } = "completed";
+    public string? ErrorMessage { get; set; }
 
-    public static BenchmarkResponse FromResult(BenchmarkResult r) => new()
+    public static BenchmarkResponse FromEntry(BenchmarkHistoryEntry e) => new()
     {
-        TokensPerSec = r.TokensPerSec,
-        LatencyMs = r.LatencyMs,
-        Timestamp = r.Timestamp
+        Id = e.Id,
+        ModelId = e.ModelId,
+        ModelName = e.ModelId,
+        Prompt = e.Prompt,
+        TokensPerSec = e.TokensPerSec,
+        LatencyMs = e.LatencyMs,
+        TokensGenerated = e.TokensGenerated,
+        Timestamp = e.Timestamp,
+        Status = e.Status,
+        ErrorMessage = e.ErrorMessage
     };
 }

@@ -1,5 +1,6 @@
 import type {
   Agent,
+  BenchmarkResult,
   Container,
   LogEntry,
   Model,
@@ -145,6 +146,22 @@ export const httpClient: UnswarmClient = {
     return request<Container>(
       `/api/containers/${encodeURIComponent(containerId)}/restart`,
       { method: "POST" },
+    );
+  },
+
+  listAgentContainers(agentName: string) {
+    return request<Container[]>(
+      `/api/agents/${encodeURIComponent(agentName)}/containers`,
+    );
+  },
+
+  runBenchmark(modelId: string, prompt?: string) {
+    return request<BenchmarkResult>(
+      `/api/benchmarks/${encodeURIComponent(modelId)}`,
+      {
+        method: "POST",
+        body: JSON.stringify(prompt ? { prompt } : {}),
+      },
     );
   },
 

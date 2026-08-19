@@ -17,7 +17,7 @@ public sealed class RemoteAgentDockerControllerTests
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private RemoteAgentDockerController CreateController(TimeSpan? timeout = null)
+    private RemoteAgentDockerController CreateController(TimeSpan? timeout = null, TimeSpan? inferTimeout = null)
     {
         _registry.Register("gpu1", new AgentConnection
         {
@@ -26,7 +26,7 @@ public sealed class RemoteAgentDockerControllerTests
             ConnectedAt = DateTimeOffset.UtcNow,
             IsConnected = true
         }, new FakeWebSocket());
-        return new RemoteAgentDockerController("gpu1", _registry, _logger, timeout);
+        return new RemoteAgentDockerController("gpu1", _registry, _logger, timeout, inferTimeout);
     }
 
     private static AgentMessage MakeReply(string commandId, object payload)
@@ -335,5 +335,108 @@ public sealed class RemoteAgentDockerControllerTests
 
         var model = Assert.Single(result);
         Assert.Equal("valid-model", model.ModelId);
+    }
+
+    [Fact]
+    public async Task InferAsync_SendsChatCompletionCommand_MapsRawData()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new
+            {
+                ok = true,
+                data = """{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"hi"}}],"usage":{"completion_tokens":3}}"""
+            });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var body = """{"model":"llama-3","messages":[{"role":"user","content":"hi"}],"max_tokens":1}""";
+        var raw = await controller.InferAsync(8080, body);
+
+        Assert.Contains("chatcmpl-1", raw);
+        Assert.Contains("\"completion_tokens\":3", raw);
+
+        // Verify the wire command
+        Assert.True(_registry.SentMessages.TryDequeue(out var sent));
+        Assert.Equal("chat_completion", sent.Payload!.Value.GetProperty("command").GetString());
+        Assert.Equal(8080, sent.Payload.Value.GetProperty("port").GetInt32());
+        Assert.Equal(body, sent.Payload.Value.GetProperty("json").GetString());
+    }
+
+    [Fact]
+    public async Task InferAsync_ErrorResult_Throws()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new { ok = false, error = "inference failed on agent" });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.InferAsync(8080, "{}"));
+        Assert.Contains("inference failed on agent", ex.Message);
+    }
+
+    [Fact]
+    public async Task InferAsync_UsesLongPerCommandTimeout()
+    {
+        // Default command timeout is short; inference gets a much longer per-command
+        // timeout. Use a controller with a 100ms default timeout and verify the
+        // inference command does NOT time out at the short bound.
+        var controller = CreateController(timeout: TimeSpan.FromMilliseconds(100));
+
+        var delayedReply = Task.Run(async () =>
+        {
+            // Reply after 250ms — past the default 100ms timeout but within the
+            // per-command inference timeout.
+            await Task.Delay(250);
+            var msg = _registry.SentMessages.First();
+            controller.HandleIncomingMessage(MakeReply(msg.Id!, new
+            {
+                ok = true,
+                data = """{"id":"slow"}"""
+            }));
+        });
+
+        var raw = await controller.InferAsync(8080, "{}");
+        await delayedReply;
+
+        Assert.Equal("""{"id":"slow"}""", raw);
+    }
+
+    [Fact]
+    public async Task InferAsync_CommandTimeout_Throws()
+    {
+        // Even the long per-command timeout eventually fails when no reply arrives.
+        // Use a short infer timeout to keep the test fast.
+        var controller = CreateController(timeout: TimeSpan.FromMilliseconds(100), inferTimeout: TimeSpan.FromMilliseconds(200));
+
+        await Assert.ThrowsAsync<TimeoutException>(
+            () => controller.InferAsync(8080, "{}"));
+    }
+
+    [Fact]
+    public async Task InferAsync_CancellationToken_CancelsPendingCommand()
+    {
+        // E: the caller's CancellationToken (e.g. scheduler RequestTimeout) must
+        // cancel the pending command so the agent's slot is freed.
+        var controller = CreateController(inferTimeout: TimeSpan.FromSeconds(120));
+        using var cts = new CancellationTokenSource();
+
+        var inferTask = controller.InferAsync(8080, "{}", cts.Token);
+
+        // Wait until the command is actually sent, then cancel.
+        while (_registry.SentMessages.IsEmpty)
+            await Task.Delay(5);
+        cts.Cancel();
+
+        var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inferTask);
+        Assert.True(cts.IsCancellationRequested);
+        // Pending slot cleaned up — a late reply must not resolve anything.
+        Assert.Equal(0, controller.PendingCommandCount);
     }
 }

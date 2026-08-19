@@ -28,6 +28,7 @@ const (
 	CmdRemoveContainer  = "remove_container"
 	CmdHealthCheck      = "health_check"
 	CmdDiscoverModels   = "discover_models"
+	CmdChatCompletion   = "chat_completion"
 )
 
 // Envelope is the top-level JSON structure for every message.
@@ -62,6 +63,7 @@ type CommandPayload struct {
 	ExtraLabels           map[string]string `json:"extraLabels,omitempty"`
 	TailLines             int               `json:"tailLines,omitempty"`
 	Port                  int               `json:"port,omitempty"`
+	JsonBody              json.RawMessage   `json:"json,omitempty"`
 }
 
 // CommandResultPayload is sent by the agent in response to a command.

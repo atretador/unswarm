@@ -1,17 +1,90 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Fleet from "../features/fleet";
+import type { RegisterContainerPayload, RegisteredContainer } from "../lib/api/types";
 
 beforeEach(() => {
   setMockLatency(0);
   vi.restoreAllMocks();
 });
 
+/** Registered containers seeded for the host agent (rc1 ready + rc2 starting). */
+const HOST_RCS: RegisteredContainer[] = [
+  {
+    id: "rc1",
+    displayName: "llama-server",
+    image: "unswarm/llama3.1:70b-q4km",
+    containerPort: 8080,
+    agent: "host",
+    canRunAlongWith: [],
+    status: "ready",
+    runtimeContainerId: "c1",
+    mappedPort: 8081,
+    errorMessage: null,
+    createdAt: new Date().toISOString(),
+    lastDiscoveredAt: new Date().toISOString(),
+    discoveredModels: [
+      {
+        id: "1",
+        name: "llama-3.1-70b",
+        family: "Llama",
+        parameterSize: "70B",
+        quantization: "Q4_K_M",
+        status: "ready",
+        lastBenchmark: null,
+        contextWindow: 128000,
+        containerImage: "unswarm/llama3.1:70b-q4km",
+        sourceContainerId: "rc1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: "5",
+        name: "gemma-2-27b",
+        family: "Gemma",
+        parameterSize: "27B",
+        quantization: "Q4_K_S",
+        status: "ready",
+        lastBenchmark: null,
+        contextWindow: 8192,
+        containerImage: "unswarm/gemma2:27b-q4ks",
+        sourceContainerId: "rc1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  },
+  {
+    id: "rc2",
+    displayName: "mistral-server",
+    image: "unswarm/mistral-large:123b-q5km",
+    containerPort: 8080,
+    agent: "host",
+    canRunAlongWith: [],
+    status: "starting",
+    runtimeContainerId: null,
+    mappedPort: null,
+    errorMessage: null,
+    createdAt: new Date().toISOString(),
+    lastDiscoveredAt: null,
+    discoveredModels: [],
+  },
+];
+
+/** Restore the default registered-containers seed so tests stay independent. */
+function seedRegisteredContainers(rcs: RegisteredContainer[]) {
+  // The mock keeps module state; force a fresh value via the public API:
+  // delete the real seed, then re-register the desired fixtures.
+  // Simpler: stub listRegisteredContainers for the test's lifetime.
+  vi.spyOn(mockClient, "listRegisteredContainers").mockResolvedValue([...rcs]);
+}
+
 describe("Fleet", () => {
-  it("renders container cards from mock API", async () => {
+  it("renders agent sections with host first, remotes collapsed", async () => {
+    seedRegisteredContainers(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -22,12 +95,69 @@ describe("Fleet", () => {
       expect(screen.getByText("Fleet")).toBeInTheDocument();
     });
 
+    const hostHeader = screen.getByRole("button", { name: "Toggle host section" });
+    const edgeHeader = screen.getByRole("button", { name: "Toggle edge-node-1 section" });
+    expect(hostHeader).toBeInTheDocument();
+    expect(edgeHeader).toBeInTheDocument();
+
+    // Host is expanded by default (its registered containers are visible)
+    expect(await screen.findByText("llama-server")).toBeInTheDocument();
+    // Remote is collapsed — its empty state is hidden
+    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
+  });
+
+  it("shows registered containers inside the host section", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("mistral-server")).toBeInTheDocument();
+  });
+
+  it("shows registration statuses on cards", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    // rc1 is ready, rc2 is starting
+    expect(screen.getAllByText("ready").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("starting")).toBeInTheDocument();
+  });
+
+  it("shows discovered model count and chips", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    // llama-server discovers 2 models: llama-3.1-70b (ready) and gemma-2-27b (ready)
     expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
-    expect(screen.getByText("mistral-large-2")).toBeInTheDocument();
     expect(screen.getByText("gemma-2-27b")).toBeInTheDocument();
   });
 
-  it("shows container statuses", async () => {
+  it("empty agent shows a Manage containers button once expanded", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <Fleet />
@@ -35,15 +165,23 @@ describe("Fleet", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
 
-    expect(screen.getByText("running")).toBeInTheDocument();
-    expect(screen.getByText("starting")).toBeInTheDocument();
-    expect(screen.getByText("stopped")).toBeInTheDocument();
+    // edge-node-1 has no registered containers → empty state, hidden while collapsed
+    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No containers registered")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Manage containers" })).toBeInTheDocument();
   });
 
-  it("shows container details (port, memory, uptime)", async () => {
+  it("manage modal opens and lists the agent's running containers", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <Fleet />
@@ -51,14 +189,26 @@ describe("Fleet", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
 
-    expect(screen.getByText("8081")).toBeInTheDocument();
-    expect(screen.getByText("37.5 GB")).toBeInTheDocument();
+    const manageButton = await screen.findByRole("button", { name: "Manage containers" });
+    await user.click(manageButton);
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    expect(dialog).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+    expect(screen.getByText("stable-diffusion-api")).toBeInTheDocument();
+    expect(screen.getByText("ray-worker")).toBeInTheDocument();
   });
 
-  it("start button is disabled for running containers", async () => {
+  it("filter narrows the container list in the manage modal", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <Fleet />
@@ -66,15 +216,42 @@ describe("Fleet", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
 
-    // Find the first Start button (for llama-3.1-70b which is running)
-    const startButtons = screen.getAllByText("Start");
-    expect(startButtons[0]).toBeDisabled();
+    const filter = screen.getByRole("searchbox", { name: /filter containers/i });
+    await user.type(filter, "stable");
+
+    expect(screen.queryByText("vllm-serve")).not.toBeInTheDocument();
+    expect(screen.getByText("stable-diffusion-api")).toBeInTheDocument();
   });
 
-  it("stop button is enabled for running containers", async () => {
+  it("manage modal shows pagination for many containers", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const manyContainers = Array.from({ length: 20 }, (_, i) => ({
+      id: `c${i + 1}`,
+      modelId: "",
+      modelName: `container-${i + 1}`,
+      status: "running" as const,
+      port: 8000 + i,
+      pid: 100 + i,
+      memoryMb: 1024 + i,
+      cpuPercent: i % 10,
+      uptime: 1000 + i,
+      lastHealthCheck: new Date().toISOString(),
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+    }));
+    vi.spyOn(mockClient, "listAgentContainers").mockResolvedValueOnce(manyContainers);
+
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <Fleet />
@@ -82,11 +259,258 @@ describe("Fleet", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("container-1")).toBeInTheDocument();
     });
 
-    const stopButtons = screen.getAllByText("Stop");
-    expect(stopButtons[0]).not.toBeDisabled();
+    // 9 per page → 20 containers = 3 pages; page 2 exists
+    expect(screen.getByRole("button", { name: "Page 2" })).toBeInTheDocument();
+    expect(screen.queryByText("container-10")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Page 2" }));
+    expect(within(dialog).getByText("container-10")).toBeInTheDocument();
+    expect(within(dialog).queryByText("container-1")).not.toBeInTheDocument();
+  });
+
+  it("selecting a container registers it with agent + prefilled image", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    const registerSpy = vi.spyOn(mockClient, "registerContainer");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("vllm-serve"));
+
+    const registerButton = await screen.findByRole("button", { name: /register on edge-node-1/i });
+    await user.click(registerButton);
+
+    await waitFor(() => {
+      expect(registerSpy).toHaveBeenCalledTimes(1);
+    });
+    const payload = registerSpy.mock.calls[0][0] as RegisterContainerPayload;
+    expect(payload.agent).toBe("edge-node-1");
+    expect(payload.image).toBe("vllm-serve");
+    expect(payload.containerPort).toBe(8080);
+    expect(payload.displayName).toBeTruthy();
+  });
+
+  it("modal closes after a successful registration", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("vllm-serve"));
+    await user.click(await screen.findByRole("button", { name: /register on edge-node-1/i }));
+
+    await waitFor(() => {
+      expect(dialog).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a registered badge for already-registered containers", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    // Open the manage modal for the host via the header action
+    await user.click(screen.getByRole("button", { name: "Manage containers on host" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    // rc1 has runtimeContainerId c1 and image unswarm/llama3.1:70b-q4km —
+    // the c1 card in the host picker must show the "registered" badge
+    expect(within(dialog).getAllByText("registered").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("rediscover button calls rediscoverContainer", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    const rediscoverSpy = vi.spyOn(mockClient, "rediscoverContainer");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const rediscoverButtons = screen.getAllByRole("button", { name: /rediscover/i });
+    await user.click(rediscoverButtons[0]);
+
+    await waitFor(() => {
+      expect(rediscoverSpy).toHaveBeenCalled();
+    });
+    expect(rediscoverSpy).toHaveBeenCalledWith("rc1");
+  });
+
+  it("benchmark button calls runBenchmark with the first discovered model", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    const benchmarkSpy = vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const benchmarkButtons = screen.getAllByRole("button", { name: /benchmark/i });
+    await user.click(benchmarkButtons[0]);
+
+    await waitFor(() => {
+      expect(benchmarkSpy).toHaveBeenCalled();
+    });
+    // llama-server's first discovered model is llama-3.1-70b (id "1")
+    expect(benchmarkSpy).toHaveBeenCalledTimes(1);
+    expect(benchmarkSpy.mock.calls[0][0]).toBe("1");
+  });
+
+  it("benchmark result chip appears inline after running", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "runBenchmark").mockResolvedValueOnce({
+      id: "b-test",
+      modelId: "1",
+      modelName: "llama-3.1-70b",
+      prompt: "test",
+      tokensPerSec: 55.2,
+      latencyMs: 88,
+      tokensGenerated: 384,
+      timestamp: new Date().toISOString(),
+      status: "completed",
+      errorMessage: null,
+    });
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole("button", { name: /benchmark/i })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText(/55\.2 tok\/s · 88ms/)).toBeInTheDocument();
+    });
+  });
+
+  it("benchmark is disabled when no models discovered", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    // mistral-server (rc2) has no discovered models
+    await waitFor(() => {
+      expect(screen.getByText("mistral-server")).toBeInTheDocument();
+    });
+
+    // Walk up from the display name to the card root (Card renders div.rounded-\[var(--radius-xl)\])
+    let mistralCard = screen.getByText("mistral-server").parentElement as HTMLElement;
+    for (let i = 0; i < 5 && mistralCard; i++) {
+      if (mistralCard.className.includes("rounded-")) break;
+      mistralCard = mistralCard.parentElement as HTMLElement;
+    }
+    const mistralBench = within(mistralCard).getByRole("button", { name: /benchmark/i });
+    expect(mistralBench).toBeDisabled();
+  });
+
+  it("renders validating model chips distinctly", async () => {
+    const validatingRcs = HOST_RCS.map((rc) =>
+      rc.id === "rc1"
+        ? {
+            ...rc,
+            discoveredModels: [
+              {
+                ...rc.discoveredModels[0],
+                name: "codestral-22b",
+                id: "3",
+                status: "validating" as const,
+              },
+            ],
+          }
+        : rc,
+    );
+    seedRegisteredContainers(validatingRcs);
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("codestral-22b")).toBeInTheDocument();
+    });
+
+    // The validating chip is rendered with the amber warning palette and
+    // carries a distinct "validating…" label (not "ready", not an error)
+    expect(screen.getByText("validating…")).toBeInTheDocument();
+    let chip = screen.getByText("codestral-22b").parentElement as HTMLElement;
+    for (let i = 0; i < 3 && chip; i++) {
+      if (chip.className.includes("border-")) break;
+      chip = chip.parentElement as HTMLElement;
+    }
+    expect(chip.className).toContain("color-status-warning");
   });
 
   it("shows loading state", () => {
@@ -102,7 +526,7 @@ describe("Fleet", () => {
   });
 
   it("shows error state when API fails", async () => {
-    vi.spyOn(mockClient, "listContainers").mockRejectedValueOnce(new Error("Connection refused"));
+    vi.spyOn(mockClient, "listAgents").mockRejectedValueOnce(new Error("Connection refused"));
 
     render(
       <TestWrapper>
@@ -119,7 +543,7 @@ describe("Fleet", () => {
 
   it("retry button refetches after error", async () => {
     const user = userEvent.setup();
-    vi.spyOn(mockClient, "listContainers")
+    vi.spyOn(mockClient, "listAgents")
       .mockRejectedValueOnce(new Error("Temporary failure"))
       .mockResolvedValueOnce([]);
 
@@ -136,12 +560,137 @@ describe("Fleet", () => {
     await user.click(screen.getByRole("button", { name: /retry/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("No containers running")).toBeInTheDocument();
+      expect(screen.getByText("No agents connected")).toBeInTheDocument();
     });
   });
 
-  it("shows empty state when no containers exist", async () => {
-    vi.spyOn(mockClient, "listContainers").mockResolvedValueOnce([]);
+  it("add agent modal opens with connection instructions", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Fleet")).toBeInTheDocument();
+    });
+
+    const addButtons = screen.getAllByRole("button", { name: /add agent/i });
+    await user.click(addButtons[0]);
+
+    const dialog = await screen.findByRole("dialog", { name: /add an agent/i });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(/unswarm-agent --config agent.yaml/i)).toBeInTheDocument();
+    expect(screen.getByText(/api_key/i)).toBeInTheDocument();
+  });
+
+  it("esc closes the manage modal", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(dialog).not.toBeInTheDocument();
+    });
+  });
+
+  it("locks body scroll while a modal is open and restores it on close", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    // Body should be scrollable before the modal opens
+    expect(document.body.style.overflow).not.toBe("hidden");
+
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+
+    // While open: background scroll locked
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.body.style.touchAction).toBe("none");
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(document.body.style.overflow).not.toBe("hidden");
+    });
+    expect(document.body.style.touchAction).not.toBe("none");
+  });
+
+  it("traps focus inside the dialog and restores focus to the trigger on close", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+
+    const manageButton = await screen.findByRole("button", { name: "Manage containers" });
+    manageButton.focus();
+    await user.click(manageButton);
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+
+    // Close button (first focusable) is focused on open
+    const closeBtn = screen.getByRole("button", { name: "Close dialog" });
+    expect(closeBtn).toHaveFocus();
+
+    // Tab from the last focusable wraps back to the first
+    const focusable = dialog.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    const last = focusable[focusable.length - 1];
+    last.focus();
+    await user.tab();
+    expect(closeBtn).toHaveFocus();
+
+    // Shift+Tab from the first wraps to the last
+    closeBtn.focus();
+    await user.tab({ shift: true });
+    expect(last).toHaveFocus();
+
+    // Close restores focus to the trigger (manage button)
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(dialog).not.toBeInTheDocument();
+    });
+    expect(manageButton).toHaveFocus();
+  });
+
+  it("delete requires confirmation: first click does not delete, confirm does", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    const deleteSpy = vi.spyOn(mockClient, "deleteRegisteredContainer");
 
     render(
       <TestWrapper>
@@ -150,7 +699,149 @@ describe("Fleet", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("No containers running")).toBeInTheDocument();
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
     });
+
+    // First click arms the inline confirmation — no client call yet
+    const deleteBtn = screen.getByRole("button", { name: "Delete llama-server registration" });
+    await user.click(deleteBtn);
+    expect(deleteSpy).not.toHaveBeenCalled();
+
+    // Inline confirm appears; clicking Delete confirms and calls the client
+    const confirmBtn = screen.getByRole("button", { name: "Confirm delete llama-server registration" });
+    await user.click(confirmBtn);
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(deleteSpy).toHaveBeenCalledWith("rc1");
+  });
+
+  it("cancel resets the delete confirmation without deleting", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    const deleteSpy = vi.spyOn(mockClient, "deleteRegisteredContainer");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Delete llama-server registration" }));
+    await user.click(screen.getByRole("button", { name: "Cancel delete llama-server registration" }));
+
+    expect(deleteSpy).not.toHaveBeenCalled();
+    // The inline confirm is gone; the plain delete affordance is back
+    expect(screen.queryByRole("button", { name: "Confirm delete llama-server registration" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete llama-server registration" })).toBeInTheDocument();
+  });
+
+  it("shows an error message when registering a container fails", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "registerContainer").mockRejectedValueOnce(new Error("Image not found"));
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("vllm-serve"));
+    await user.click(await screen.findByRole("button", { name: /register on edge-node-1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Image not found")).toBeInTheDocument();
+    });
+    // Dialog stays open so the user can retry
+    expect(screen.getByRole("dialog", { name: /manage containers on edge-node-1/i })).toBeInTheDocument();
+  });
+
+  it("shows a created-status container with the starting dot variant", async () => {
+    seedRegisteredContainers(HOST_RCS);
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "listAgentContainers").mockResolvedValueOnce([
+      {
+        id: "c-created",
+        modelId: "",
+        modelName: "spawn-me",
+        status: "created" as const,
+        port: null,
+        pid: null,
+        memoryMb: 0,
+        cpuPercent: 0,
+        uptime: 0,
+        lastHealthCheck: null,
+        errorMessage: null,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("spawn-me")).toBeInTheDocument();
+    });
+
+    // The status dot for "created" maps to the starting (blue) variant — rendered
+    // with the starting color and the pulsing ring.
+    const dot = within(dialog).getByRole("status", { name: "created" });
+    expect(dot.querySelector(".inline-block")).toHaveClass("bg-[var(--color-status-starting)]");
+    expect(dot.querySelector(".absolute")).toBeInTheDocument();
+  });
+
+  it("treats a registered container as registered case-insensitively", async () => {
+    // Register rc1's runtime container as "C1" — a case-mismatch with the
+    // picker's id "c1" — and ensure the card is still marked registered/disabled.
+    const caseRcs = HOST_RCS.map((rc) =>
+      rc.id === "rc1" ? { ...rc, runtimeContainerId: "C1" } : rc,
+    );
+    seedRegisteredContainers(caseRcs);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Manage containers on host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage containers on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    // The host picker lists c1 (id "c1"); with runtimeContainerId "C1" it must
+    // still render as registered (disabled, not selectable).
+    expect(within(dialog).getAllByText("registered").length).toBeGreaterThanOrEqual(1);
   });
 });

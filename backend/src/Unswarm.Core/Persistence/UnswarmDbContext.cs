@@ -29,8 +29,10 @@ public sealed class BenchmarkHistoryEntity
     public double TokensPerSec { get; set; }
     public double LatencyMs { get; set; }
     public DateTimeOffset Timestamp { get; set; }
-
-    public ModelEntity Model { get; set; } = null!;
+    public string? Prompt { get; set; }
+    public long TokensGenerated { get; set; }
+    public string Status { get; set; } = "completed";
+    public string? ErrorMessage { get; set; }
 }
 
 public sealed class LogEntity
@@ -115,9 +117,11 @@ public sealed class UnswarmDbContext : DbContext
         modelBuilder.Entity<ModelEntity>(e =>
         {
             e.HasKey(m => m.Id);
-            e.HasOne(m => m.LastBenchmark)
-             .WithOne(b => b.Model)
-             .HasForeignKey<BenchmarkHistoryEntity>(b => b.ModelId);
+            // Benchmark HISTORY: many rows per model. The LastBenchmark nav property
+            // is kept for compatibility but is explicitly ignored — enforcing a 1:1
+            // FK here would create a UNIQUE constraint on Benchmarks.ModelId, which
+            // conflicts with the benchmark-history list (newest-first, max 50).
+            e.Ignore(m => m.LastBenchmark);
             e.HasOne(m => m.SourceContainer)
              .WithMany()
              .HasForeignKey(m => m.SourceContainerId)

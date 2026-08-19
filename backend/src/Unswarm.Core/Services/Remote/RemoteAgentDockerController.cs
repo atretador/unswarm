@@ -33,6 +33,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     private readonly IAgentRegistry _agentRegistry;
     private readonly ILogger<RemoteAgentDockerController> _logger;
     private readonly TimeSpan _commandTimeout;
+    private readonly TimeSpan _inferTimeout;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<AgentMessage>> _pending = new(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -45,16 +46,26 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     public const string CommandResultType = "command_result";
     public const int DefaultContainerPort = 8080;
 
+    /// <summary>
+    /// Per-command timeout for inference requests. Aligned with the scheduler's
+    /// default RequestTimeout (120s) so a scheduler-side timeout and the agent command
+    /// timeout cannot fight: the linked cancellation token propagates the scheduler
+    /// timeout to the agent, and this value is the upper bound for un-cancelled calls.
+    /// </summary>
+    public static readonly TimeSpan DefaultInferTimeout = TimeSpan.FromSeconds(120);
+
     public RemoteAgentDockerController(
         string agentName,
         IAgentRegistry agentRegistry,
         ILogger<RemoteAgentDockerController>? logger = null,
-        TimeSpan? commandTimeout = null)
+        TimeSpan? commandTimeout = null,
+        TimeSpan? inferTimeout = null)
     {
         _agentName = agentName;
         _agentRegistry = agentRegistry;
         _logger = logger ?? NullLogger<RemoteAgentDockerController>.Instance;
         _commandTimeout = commandTimeout ?? TimeSpan.FromSeconds(60);
+        _inferTimeout = inferTimeout ?? DefaultInferTimeout;
     }
 
     /// <summary>Number of commands awaiting a result (test/observability aid).</summary>
@@ -291,6 +302,46 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         return result;
     }
 
+    /// <summary>
+    /// Runs a chat-completion request against the agent's local container. The raw
+    /// OpenAI response body is returned as a string. Uses a long per-command timeout
+    /// (benchmark prompts take substantially longer than container operations) and
+    /// propagates the caller's CancellationToken so a scheduler-side timeout cancels
+    /// the pending command (and, via the Go agent, the in-flight HTTP call).
+    /// </summary>
+    public async Task<string> InferAsync(int port, string requestJson, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "chat_completion",
+            port,
+            json = requestJson
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, _inferTimeout, ct).ConfigureAwait(false);
+
+        var p = response.Payload;
+        if (p is null || !p.HasValue)
+            throw new InvalidOperationException($"Agent '{_agentName}' returned an empty chat_completion result");
+
+        var error = GetString(p.Value, "error");
+        if (error is not null)
+            throw new InvalidOperationException($"Agent '{_agentName}' chat_completion failed: {error}");
+
+        var ok = GetBool(p.Value, "ok");
+        if (ok == false)
+            throw new InvalidOperationException($"Agent '{_agentName}' chat_completion returned failure");
+
+        var data = p.Value.TryGetProperty("data", out var dataProp)
+            ? dataProp.ValueKind == JsonValueKind.String
+                ? dataProp.GetString()
+                : dataProp.GetRawText()
+            : null;
+        if (string.IsNullOrEmpty(data))
+            throw new InvalidOperationException($"Agent '{_agentName}' chat_completion returned no data");
+
+        return data;
+    }
+
     private async Task<ContainerStartResult> ExecuteStartAsync(string command, string containerName, int containerPort, CancellationToken ct)
     {
         var payload = JsonSerializer.SerializeToElement(new
@@ -304,6 +355,9 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     }
 
     private async Task<AgentMessage> SendCommandAsync(JsonElement payload, CancellationToken ct)
+        => await SendCommandAsync(payload, _commandTimeout, ct).ConfigureAwait(false);
+
+    private async Task<AgentMessage> SendCommandAsync(JsonElement payload, TimeSpan timeout, CancellationToken ct)
     {
         var commandId = Guid.NewGuid().ToString("N");
         var tcs = new TaskCompletionSource<AgentMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -336,12 +390,19 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
         try
         {
-            return await tcs.Task.WaitAsync(_commandTimeout, ct).ConfigureAwait(false);
+            return await tcs.Task.WaitAsync(timeout, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _pending.TryRemove(commandId, out _);
-            throw new TimeoutException($"Command {commandId} to agent '{_agentName}' timed out after {_commandTimeout.TotalSeconds:0}s");
+            throw new TimeoutException($"Command {commandId} to agent '{_agentName}' timed out after {timeout.TotalSeconds:0}s");
+        }
+        catch (OperationCanceledException)
+        {
+            // Caller cancelled (e.g. scheduler RequestTimeout) — clean up the pending
+            // slot and propagate so the caller can act on the cancellation.
+            _pending.TryRemove(commandId, out _);
+            throw;
         }
     }
 

@@ -1,9 +1,11 @@
 package docker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -63,4 +65,48 @@ func DiscoverModels(ctx context.Context, port int) protocol.CommandResultPayload
 		return errorResult(fmt.Sprintf("decode models response: %v", err))
 	}
 	return okResult(result)
+}
+
+// ChatCompletion forwards a raw OpenAI chat-completions request body to a local
+// OpenAI-compatible endpoint and returns the raw response body. The inference
+// timeout is generous (120s) because benchmark/validation prompts can take a while.
+// The context is honored: if the backend disconnects/cancels, the HTTP call is
+// aborted so the agent's slot frees up promptly.
+func ChatCompletion(ctx context.Context, port int, body json.RawMessage) protocol.CommandResultPayload {
+	if port <= 0 {
+		return errorResult("invalid port")
+	}
+	if len(body) == 0 {
+		return errorResult("empty chat completion body")
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/v1/chat/completions", port)
+	httpClient := &http.Client{Timeout: 120 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return errorResult(fmt.Sprintf("build chat completion request: %v", err))
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return errorResult(fmt.Sprintf("chat completion cancelled: %v", ctx.Err()))
+		}
+		return errorResult(fmt.Sprintf("chat completion on port %d: %v", port, err))
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return errorResult(fmt.Sprintf("chat completion on port %d returned status %d: %s", port, resp.StatusCode, string(respBody)))
+	}
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return errorResult(fmt.Sprintf("read chat completion response: %v", err))
+	}
+
+	// Return the raw body as a JSON string so the backend can echo it verbatim.
+	return okResult(string(raw))
 }

@@ -2,10 +2,19 @@
 
 export type ModelStatus = "ready" | "validating" | "invalid" | "deprecated";
 
+export type BenchmarkStatus = "completed" | "error";
+
 export interface BenchmarkResult {
+  id: string;
+  modelId: string;
+  modelName: string;
+  prompt: string;
   tokensPerSec: number;
   latencyMs: number;
+  tokensGenerated: number;
   timestamp: string;
+  status: BenchmarkStatus;
+  errorMessage?: string | null;
 }
 
 export interface Model {
@@ -18,8 +27,44 @@ export interface Model {
   lastBenchmark: BenchmarkResult | null;
   contextWindow: number;
   containerImage: string;
+  sourceContainerId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ─── Container Registration ───────────────────────────────────────
+
+export type ContainerRegistrationStatus =
+  | "registered"
+  | "starting"
+  | "healthy"
+  | "discovering"
+  | "ready"
+  | "error";
+
+export interface RegisterContainerPayload {
+  displayName: string;
+  image: string;   // container name (pre-provisioned)
+  containerPort: number;
+  agent?: string;   // "host" or agent name, default "host"
+  canRunAlongWith?: string[];   // same-agent container names this may run with
+  extraLabels?: Record<string, string>;
+}
+
+export interface RegisteredContainer {
+  id: string;
+  displayName: string;
+  image: string;
+  containerPort: number;
+  agent: string;
+  canRunAlongWith: string[];
+  status: ContainerRegistrationStatus;
+  runtimeContainerId: string | null;
+  mappedPort: number | null;
+  errorMessage: string | null;
+  createdAt: string;
+  lastDiscoveredAt: string | null;
+  discoveredModels: Model[];
 }
 
 // ─── Fleet / Containers ───────────────────────────────────────────
@@ -29,6 +74,9 @@ export type ContainerStatus =
   | "starting"
   | "stopping"
   | "stopped"
+  | "created"
+  | "restarting"
+  | "dead"
   | "error";
 
 export interface Container {
@@ -44,6 +92,31 @@ export interface Container {
   lastHealthCheck: string | null;
   errorMessage: string | null;
   createdAt: string;
+}
+
+// ─── Agents ──────────────────────────────────────────────────────
+
+export interface AgentContainerStatus {
+  containerId: string;
+  modelName: string | null;
+  status: string;
+  port: number | null;
+}
+
+export interface Agent {
+  name: string;
+  connectionId: string | null;
+  connectedAt: string | null;
+  lastSeen: string | null;
+  isConnected: boolean;
+  dockerSocket: string | null;
+  version: string | null;
+  hostname: string | null;
+  osPlatform: string | null;
+  gpuInfo: string | null;
+  totalMemoryMb: number;
+  cpuCores: number;
+  containers: AgentContainerStatus[];
 }
 
 // ─── Queue ────────────────────────────────────────────────────────
@@ -93,6 +166,9 @@ export interface StatsSummary {
   requestsPerMinute: number[];
   errorsLast24h: number;
   tokensPerSecond: number[];
+  switchCount: number;
+  lastSwitchMs: number;
+  avgSwitchMs: number;
 }
 
 // ─── Logs ─────────────────────────────────────────────────────────

@@ -55,6 +55,7 @@ builder.Services.AddSingleton<ModelDiscoveryService>();
 builder.Services.AddScoped<IModelRegistry, ModelRegistry>();
 builder.Services.AddScoped<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<ModelValidator>();
+builder.Services.AddScoped<IBenchmarkHistory, BenchmarkHistoryService>();
 builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
@@ -99,6 +100,11 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<UnswarmDbContext>();
     await db.Database.EnsureCreatedAsync();
+
+    // Schema drift repair (EnsureCreated-only, no migrations): existing installs may
+    // have an EMPTY BenchmarkHistory table with the OLD schema (no Prompt/
+    // TokensGenerated/Status/ErrorMessage). Add missing columns idempotently.
+    await EnsureBenchmarkSchemaColumnsAsync(db);
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────
@@ -108,3 +114,116 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapControllers();
 
 app.Run();
+
+/// <summary>
+/// SQLite-only, idempotent schema repair for the BenchmarkHistory table. New columns
+/// added since the original EnsureCreated schema are added via ALTER TABLE when the
+/// existing table is missing them, and a stale UNIQUE index on ModelId (from the old
+/// 1:1 LastBenchmark nav) is dropped so multiple benchmark rows per model can be
+/// written. Any failure is logged and swallowed so a startup problem never bricks
+/// the API (the columns/index will be repaired on the next start).
+/// </summary>
+static async Task EnsureBenchmarkSchemaColumnsAsync(UnswarmDbContext db)
+{
+    try
+    {
+        var conn = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync();
+
+        // Read columns first.
+        var columns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(BenchmarkHistory)";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1)); // column name
+            }
+        }
+
+        var adds = new List<string>();
+        if (!columns.Contains("Prompt", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN Prompt TEXT NULL");
+        if (!columns.Contains("TokensGenerated", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN TokensGenerated INTEGER NOT NULL DEFAULT 0");
+        if (!columns.Contains("Status", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN Status TEXT NOT NULL DEFAULT 'completed'");
+        if (!columns.Contains("ErrorMessage", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN ErrorMessage TEXT NULL");
+
+        foreach (var add in adds)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE BenchmarkHistory {add}";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // Cleanup stale NULL-ModelId rows from old-schema installs.
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM BenchmarkHistory WHERE ModelId IS NULL OR ModelId = ''";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // Drop any UNIQUE index on ModelId that the old 1:1 LastBenchmark nav created
+        // (it prevents the benchmark-history semantics: many rows per model).
+        var uniqueIndexes = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA index_list(BenchmarkHistory)";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                var unique = reader.GetInt32(2) == 1; // "unique" column
+                if (unique)
+                {
+                    uniqueIndexes.Add(reader.GetString(1)); // index name
+                }
+            }
+        }
+
+        foreach (var indexName in uniqueIndexes)
+        {
+            // Only drop indexes that cover the ModelId column (the old nav's unique
+            // constraint); skip the ordinary non-unique ModelId index if any.
+            if (!await IndexCoversModelIdAsync(conn, indexName).ConfigureAwait(false))
+                continue;
+
+            Console.WriteLine($"BenchmarkHistory schema repair: dropping stale unique index '{indexName}' on ModelId");
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"DROP INDEX IF EXISTS \"{indexName.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to repair BenchmarkHistory schema: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+static async Task<bool> IndexCoversModelIdAsync(System.Data.Common.DbConnection conn, string indexName)
+{
+    try
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"PRAGMA index_info(\"{indexName.Replace("\"", "\"\"", StringComparison.Ordinal)}\")";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var columnName = reader.GetString(2); // "name" column of the indexed column
+            if (string.Equals(columnName, "ModelId", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+    }
+    catch
+    {
+        // Best-effort: if we cannot inspect the index, conservatively leave it alone.
+    }
+    return false;
+}

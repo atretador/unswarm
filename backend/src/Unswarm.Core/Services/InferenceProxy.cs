@@ -32,58 +32,67 @@ public sealed class InferenceProxy : IInferenceProxy
         var targetId = request.TargetId ?? ExecutionTarget.HostId;
         var controller = _router.GetController(targetId);
 
-        // Remote targets: the container lookup below works over the agent, but the HTTP
-        // inference hop must be tunneled over the agent WebSocket. That is Phase 4.2 —
-        // until then, remote inference returns 501 so callers fail loudly, not silently.
         if (targetId != ExecutionTarget.HostId)
         {
             return await InvokeRemoteAsync(request, targetId, controller, ct).ConfigureAwait(false);
         }
 
-        // First try: container registry lookup — find the running container that serves this model
+        // Host path: find the running container that serves this model.
+        // 1. Registered-container lookup (via the unswarm.registry label populated by
+        //    DockerController.ListContainersAsync) — most precise.
+        // 2. Fallback: model name/image match against the registered container's
+        //    Image/DisplayName (mirrors remote resolution semantics).
+        // 3. Legacy: standalone model-name label path.
+        RegisteredContainer? registered = null;
+        string? registeredContainerId = null;
         if (_containerRegistry is not null)
         {
-            var registeredContainerId = await _containerRegistry
+            registeredContainerId = await _containerRegistry
                 .GetContainerIdForModelAsync(request.ModelName, ct).ConfigureAwait(false);
-
             if (registeredContainerId is not null)
             {
-                var modelIds = await _containerRegistry
-                    .GetModelIdsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false);
-
-                if (modelIds.Contains(request.ModelName))
-                {
-                    // Find the running Docker container for this registered container
-                    var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
-                    var container = containers.FirstOrDefault(c =>
-                        c.RegisteredContainerId == registeredContainerId
-                        && c.Status == ContainerStatus.Running
-                        && c.Port.HasValue);
-
-                    if (container?.Port is not null)
-                    {
-                        var port = container.Port.Value;
-                        await _healthChecker.WaitForReadyAsync(port, ct).ConfigureAwait(false);
-                        return await ProxyToPortAsync(request, port, ct).ConfigureAwait(false);
-                    }
-                }
+                registered = await _containerRegistry.GetAsync(registeredContainerId, ct).ConfigureAwait(false);
             }
         }
 
-        // Fallback: legacy model-name label path for standalone models
-        var allContainers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
-        var legacyContainer = allContainers.FirstOrDefault(c =>
-            c.ModelName == request.ModelName && c.Status == ContainerStatus.Running && c.Port.HasValue);
+        var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+        var running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
 
-        if (legacyContainer?.Port is null)
+        ContainerInfo? container = null;
+        if (!string.IsNullOrEmpty(registeredContainerId))
+        {
+            // Match by registry label first.
+            container = running.FirstOrDefault(c => c.RegisteredContainerId == registeredContainerId);
+
+            // Fallback: match by runtime container id or by the registered container's
+            // image/display name (the container name on docker ps).
+            if (container is null && registered is not null)
+            {
+                var names = RegisteredContainerNames(registered);
+                container = running.FirstOrDefault(c =>
+                    names.Contains(c.ModelName) || names.Contains(c.ModelId));
+            }
+        }
+
+        // Legacy path for standalone models (no registration): match by model name.
+        container ??= running.FirstOrDefault(c => c.ModelName == request.ModelName);
+
+        if (container?.Port is not { } port)
         {
             _logger.LogWarning("No running container found for model {Model}", request.ModelName);
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
         }
 
-        var legacyPort = legacyContainer.Port.Value;
-        await _healthChecker.WaitForReadyAsync(legacyPort, ct).ConfigureAwait(false);
-        return await ProxyToPortAsync(request, legacyPort, ct).ConfigureAwait(false);
+        await _healthChecker.WaitForReadyAsync(port, ct).ConfigureAwait(false);
+        return await ProxyToPortAsync(request, port, ct).ConfigureAwait(false);
+    }
+
+    private static IReadOnlySet<string> RegisteredContainerNames(RegisteredContainer registered)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(registered.Image)) names.Add(registered.Image);
+        if (!string.IsNullOrEmpty(registered.DisplayName)) names.Add(registered.DisplayName);
+        return names;
     }
 
     private async Task<InferenceResponse> InvokeRemoteAsync(
@@ -92,22 +101,97 @@ public sealed class InferenceProxy : IInferenceProxy
         IDockerController controller,
         CancellationToken ct)
     {
-        // Container lookup works via the remote controller (ListContainersAsync over the agent).
-        // The actual inference HTTP hop will be tunneled over the agent WebSocket in Phase 4.2.
-        var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
-        var container = containers.FirstOrDefault(c =>
-            c.Status == ContainerStatus.Running && c.Port.HasValue);
+        // Remote inference is tunneled over the agent WebSocket via IRemoteDockerController.InferAsync.
+        // Resolve the model's registered container and its mapped port on the target agent.
+        if (controller is not IRemoteDockerController remote)
+        {
+            _logger.LogWarning(
+                "Controller for target {Target} is not a remote controller; cannot proxy inference for model {Model}",
+                targetId, request.ModelName);
+            return new InferenceResponse { StatusCode = 501, ContentType = "text/plain" };
+        }
 
-        _logger.LogWarning(
-            "Remote inference for model {Model} on target {Target} is not yet implemented (Phase 4.2); " +
-            "found container {ContainerId}",
-            request.ModelName, targetId, container?.Id ?? "(none)");
+        // Find the registered container serving this model on this agent.
+        string? registeredContainerId = null;
+        if (_containerRegistry is not null)
+        {
+            registeredContainerId = await _containerRegistry
+                .GetContainerIdForModelAsync(request.ModelName, ct).ConfigureAwait(false);
+        }
+
+        IReadOnlyList<ContainerInfo> containers;
+        try
+        {
+            containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to list containers on target {Target} for model {Model}", targetId, request.ModelName);
+            return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+        }
+
+        ContainerInfo? container = null;
+        if (!string.IsNullOrEmpty(registeredContainerId))
+        {
+            container = containers.FirstOrDefault(c =>
+                c.RegisteredContainerId == registeredContainerId
+                && c.Status == ContainerStatus.Running
+                && c.Port.HasValue);
+        }
+
+        // Fallback: match by model/container name on the agent.
+        container ??= containers.FirstOrDefault(c =>
+            (c.ModelName == request.ModelName || c.ModelId == request.ModelName)
+            && c.Status == ContainerStatus.Running
+            && c.Port.HasValue);
+
+        if (container?.Port is not { } port)
+        {
+            _logger.LogWarning("No running container found for model {Model} on target {Target}", request.ModelName, targetId);
+            return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
+        }
+
+        string rawBody;
+        try
+        {
+            rawBody = await remote.InferAsync(port, request.OriginalJson, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Remote inference failed for model {Model} on target {Target} port {Port}",
+                request.ModelName, targetId, port);
+            return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+        }
+
+        var tokens = TryParseCompletionTokens(rawBody);
 
         return new InferenceResponse
         {
-            StatusCode = 501,
-            ContentType = "text/plain"
+            StatusCode = 200,
+            ContentType = "application/json",
+            Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
+            TokensGenerated = tokens
         };
+    }
+
+    private static int TryParseCompletionTokens(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("usage", out var usage)
+                && usage.TryGetProperty("completion_tokens", out var tokensProp)
+                && tokensProp.ValueKind == System.Text.Json.JsonValueKind.Number
+                && tokensProp.TryGetInt32(out var n))
+            {
+                return n;
+            }
+        }
+        catch
+        {
+            // best-effort token parsing; 0 is fine
+        }
+        return 0;
     }
 
     private async Task<InferenceResponse> ProxyToPortAsync(InferenceRequest request, int port, CancellationToken ct)

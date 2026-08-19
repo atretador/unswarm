@@ -10,21 +10,35 @@ namespace Unswarm.Api.Controllers;
 public sealed class ModelsController : ControllerBase
 {
     private readonly IModelRegistry _registry;
+    private readonly IBenchmarkHistory _benchmarks;
 
-    public ModelsController(IModelRegistry registry) => _registry = registry;
+    public ModelsController(IModelRegistry registry, IBenchmarkHistory benchmarks)
+    {
+        _registry = registry;
+        _benchmarks = benchmarks;
+    }
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var models = await _registry.ListAllAsync(ct);
-        return Ok(models.Select(ModelResponse.FromDefinition).ToList());
+        var responses = new List<ModelResponse>(models.Count);
+        foreach (var model in models)
+        {
+            var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
+            responses.Add(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
+        }
+        return Ok(responses);
     }
 
     [HttpGet("{id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
         var model = await _registry.GetAsync(id, ct);
-        return model is null ? NotFound() : Ok(ModelResponse.FromDefinition(model));
+        if (model is null) return NotFound();
+
+        var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
+        return Ok(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
     }
 
     [HttpPost]

@@ -1,8 +1,12 @@
 import type {
+  Agent,
+  BenchmarkResult,
   Container,
   LogEntry,
   Model,
   QueueSnapshot,
+  RegisterContainerPayload,
+  RegisteredContainer,
   Settings,
   StatsSummary,
 } from "./types";
@@ -33,6 +37,23 @@ function id(): string {
 
 const NOW = new Date().toISOString();
 
+// ─── Helpers for benchmark seeds ─────────────────────────────────
+
+function bench(modelId: string, modelName: string, tokensPerSec: number, latencyMs: number, tokensGenerated = 512): BenchmarkResult {
+  return {
+    id: `b-${modelId}`,
+    modelId,
+    modelName,
+    prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    tokensPerSec,
+    latencyMs,
+    tokensGenerated,
+    timestamp: NOW,
+    status: "completed",
+    errorMessage: null,
+  };
+}
+
 // ─── Seed Data ────────────────────────────────────────────────────
 
 const MODELS: Model[] = [
@@ -43,9 +64,10 @@ const MODELS: Model[] = [
     parameterSize: "70B",
     quantization: "Q4_K_M",
     status: "ready",
-    lastBenchmark: { tokensPerSec: 42.3, latencyMs: 120, timestamp: NOW },
+    lastBenchmark: bench("1", "llama-3.1-70b", 42.3, 120),
     contextWindow: 128000,
     containerImage: "unswarm/llama3.1:70b-q4km",
+    sourceContainerId: "rc1",
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -56,9 +78,10 @@ const MODELS: Model[] = [
     parameterSize: "123B",
     quantization: "Q5_K_M",
     status: "ready",
-    lastBenchmark: { tokensPerSec: 28.7, latencyMs: 185, timestamp: NOW },
+    lastBenchmark: bench("2", "mistral-large-2", 28.7, 185),
     contextWindow: 128000,
     containerImage: "unswarm/mistral-large:123b-q5km",
+    sourceContainerId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -72,6 +95,7 @@ const MODELS: Model[] = [
     lastBenchmark: null,
     contextWindow: 32000,
     containerImage: "unswarm/codestral:22b-q6k",
+    sourceContainerId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -82,9 +106,10 @@ const MODELS: Model[] = [
     parameterSize: "3.8B",
     quantization: "FP16",
     status: "deprecated",
-    lastBenchmark: { tokensPerSec: 98.1, latencyMs: 32, timestamp: NOW },
+    lastBenchmark: bench("4", "phi-3.5-mini", 98.1, 32),
     contextWindow: 128000,
     containerImage: "unswarm/phi3.5-mini:fp16",
+    sourceContainerId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -95,9 +120,10 @@ const MODELS: Model[] = [
     parameterSize: "27B",
     quantization: "Q4_K_S",
     status: "ready",
-    lastBenchmark: { tokensPerSec: 55.0, latencyMs: 95, timestamp: NOW },
+    lastBenchmark: bench("5", "gemma-2-27b", 55.0, 95),
     contextWindow: 8192,
     containerImage: "unswarm/gemma2:27b-q4ks",
+    sourceContainerId: "rc1",
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -145,6 +171,92 @@ const CONTAINERS: Container[] = [
     lastHealthCheck: null,
     errorMessage: null,
     createdAt: NOW,
+  },
+];
+
+/** Containers running on each agent (returned by listAgentContainers). */
+const AGENT_CONTAINERS: Record<string, Container[]> = {
+  host: [...CONTAINERS],
+  "edge-node-1": [
+    {
+      id: "en-vllm",
+      modelId: "",
+      modelName: "vllm-serve",
+      status: "running",
+      port: 8000,
+      pid: 77124,
+      memoryMb: 10240,
+      cpuPercent: 8.2,
+      uptime: 21600,
+      lastHealthCheck: NOW,
+      errorMessage: null,
+      createdAt: NOW,
+    },
+    {
+      id: "en-sd",
+      modelId: "",
+      modelName: "stable-diffusion-api",
+      status: "running",
+      port: 7860,
+      pid: 77140,
+      memoryMb: 6144,
+      cpuPercent: 3.1,
+      uptime: 43200,
+      lastHealthCheck: NOW,
+      errorMessage: null,
+      createdAt: NOW,
+    },
+    {
+      id: "en-ray",
+      modelId: "",
+      modelName: "ray-worker",
+      status: "stopped",
+      port: null,
+      pid: null,
+      memoryMb: 0,
+      cpuPercent: 0,
+      uptime: 0,
+      lastHealthCheck: null,
+      errorMessage: null,
+      createdAt: NOW,
+    },
+  ],
+};
+
+const AGENTS: Agent[] = [
+  {
+    name: "host",
+    connectionId: null,
+    connectedAt: null,
+    lastSeen: NOW,
+    isConnected: true,
+    dockerSocket: "/var/run/docker.sock",
+    version: "1.2.3",
+    hostname: "workstation",
+    osPlatform: "linux/amd64",
+    gpuInfo: "NVIDIA GeForce RTX 4090 (24GB)",
+    totalMemoryMb: 131072,
+    cpuCores: 16,
+    containers: [
+      { containerId: "c1", modelName: "llama-3.1-70b", status: "running", port: 8081 },
+      { containerId: "c2", modelName: "mistral-large-2", status: "starting", port: null },
+      { containerId: "c3", modelName: "gemma-2-27b", status: "stopped", port: null },
+    ],
+  },
+  {
+    name: "edge-node-1",
+    connectionId: "conn-1",
+    connectedAt: NOW,
+    lastSeen: NOW,
+    isConnected: true,
+    dockerSocket: "/var/run/docker.sock",
+    version: "0.9.1",
+    hostname: "edge-node-1",
+    osPlatform: "linux/arm64",
+    gpuInfo: null,
+    totalMemoryMb: 16384,
+    cpuCores: 8,
+    containers: [],
   },
 ];
 
@@ -222,6 +334,9 @@ const STATS: StatsSummary = {
     420, 380, 510, 620, 580, 440, 490, 680, 720, 690, 550, 500, 530, 640, 700,
     750, 710, 520, 480, 430, 390, 460, 510, 590,
   ],
+  switchCount: 12,
+  lastSwitchMs: 3420,
+  avgSwitchMs: 2850,
 };
 
 const LOGS: LogEntry[] = [
@@ -331,6 +446,41 @@ function stopLogStreamIfIdle() {
 
 let models = [...MODELS];
 let containers = [...CONTAINERS];
+let registeredContainers: RegisteredContainer[] = [
+  {
+    id: "rc1",
+    displayName: "llama-server",
+    image: "unswarm/llama3.1:70b-q4km",
+    containerPort: 8080,
+    agent: "host",
+    canRunAlongWith: [],
+    status: "ready",
+    runtimeContainerId: "c1",
+    mappedPort: 8081,
+    errorMessage: null,
+    createdAt: NOW,
+    lastDiscoveredAt: NOW,
+    discoveredModels: [
+      { ...MODELS[0], sourceContainerId: "rc1" },
+      { ...MODELS[4], sourceContainerId: "rc1" },
+    ],
+  },
+  {
+    id: "rc2",
+    displayName: "mistral-server",
+    image: "unswarm/mistral-large:123b-q5km",
+    containerPort: 8080,
+    agent: "host",
+    canRunAlongWith: [],
+    status: "starting",
+    runtimeContainerId: null,
+    mappedPort: null,
+    errorMessage: null,
+    createdAt: NOW,
+    lastDiscoveredAt: null,
+    discoveredModels: [],
+  },
+];
 let settings = { ...SETTINGS };
 // ─── Mock Client ──────────────────────────────────────────────────
 
@@ -369,10 +519,96 @@ export const mockClient: UnswarmClient = {
     models = models.filter((x) => x.id !== modelId);
   },
 
+  // ── Container Registration ──────────────────────────────────
+  async registerContainer(data: RegisterContainerPayload) {
+    await delay(rand(100, 300));
+    const agentName = data.agent ?? "host";
+    const runtime = (AGENT_CONTAINERS[agentName] ?? []).find(
+      (c) => c.modelName === data.image || c.id === data.image,
+    );
+    const rc: RegisteredContainer = {
+      id: id(),
+      displayName: data.displayName,
+      image: data.image,
+      containerPort: data.containerPort,
+      agent: agentName,
+      canRunAlongWith: data.canRunAlongWith ?? [],
+      status: runtime ? "discovering" : "registered",
+      runtimeContainerId: runtime?.id ?? null,
+      mappedPort: runtime?.port ?? null,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      lastDiscoveredAt: null,
+      discoveredModels: [],
+    };
+    registeredContainers.push(rc);
+    return { ...rc, discoveredModels: [] };
+  },
+
+  async listRegisteredContainers() {
+    await delay(rand(80, 200));
+    return registeredContainers.map((rc) => ({
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    }));
+  },
+
+  async getRegisteredContainer(containerId: string) {
+    await delay(rand(60, 150));
+    const rc = registeredContainers.find((x) => x.id === containerId);
+    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
+  async rediscoverContainer(containerId: string) {
+    await delay(rand(200, 500));
+    const rc = registeredContainers.find((x) => x.id === containerId);
+    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    rc.status = "ready";
+    rc.lastDiscoveredAt = new Date().toISOString();
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
+  async deleteRegisteredContainer(containerId: string, deleteModels = false) {
+    await delay(rand(60, 150));
+    const idx = registeredContainers.findIndex((x) => x.id === containerId);
+    if (idx === -1) throw new Error(`Registered container ${containerId} not found`);
+    if (deleteModels) {
+      const modelIds = new Set(registeredContainers[idx].discoveredModels.map((m) => m.id));
+      models = models.filter((m) => !modelIds.has(m.id));
+    }
+    registeredContainers.splice(idx, 1);
+  },
+
   // Fleet
   async listContainers() {
     await delay(rand(80, 200));
     return containers.map((c) => ({ ...c }));
+  },
+  async listAgentContainers(agentName: string) {
+    await delay(rand(80, 200));
+    const list = AGENT_CONTAINERS[agentName] ?? [];
+    return list.map((c) => ({ ...c }));
+  },
+  async runBenchmark(modelId: string, prompt?: string) {
+    await delay(rand(200, 500));
+    const model = models.find((m) => m.id === modelId);
+    if (!model) throw new Error(`Model ${modelId} not found`);
+    const b = bench(
+      modelId,
+      model.name,
+      30 + Math.random() * 45,
+      90 + Math.random() * 160,
+      384,
+    );
+    if (prompt) b.prompt = prompt;
+    return b;
   },
   async startContainer(modelId) {
     await delay(rand(200, 500));
@@ -404,6 +640,15 @@ export const mockClient: UnswarmClient = {
     const c = containers.find((x) => x.id === containerId);
     if (c) c.status = "running";
     return { ...(c ?? CONTAINERS[0]) };
+  },
+
+  // Agents
+  async listAgents() {
+    await delay(rand(80, 200));
+    return AGENTS.map((a) => ({
+      ...a,
+      containers: a.containers.map((c) => ({ ...c })),
+    }));
   },
 
   // Queue

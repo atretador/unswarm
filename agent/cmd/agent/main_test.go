@@ -24,6 +24,24 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
+// TestDispatcherRegistersChatCompletion verifies the chat_completion command is
+// registered on the dispatcher so benchmark/validation inference can be proxied.
+func TestDispatcherRegistersChatCompletion(t *testing.T) {
+	disp := setupDispatcher(nil, discardLogger())
+	if !disp.HasCommand(protocol.CmdChatCompletion) {
+		t.Fatalf("dispatcher does not have %q registered", protocol.CmdChatCompletion)
+	}
+	// With a nil docker handler the command should still route to a result
+	// (not-connected error), never panic.
+	result := disp.Dispatch(protocol.CommandPayload{Command: protocol.CmdChatCompletion, Port: 8080})
+	if result.OK {
+		t.Error("chat_completion with nil docker handler should return ok=false")
+	}
+	if result.Error == nil || *result.Error == "" {
+		t.Error("chat_completion with nil docker handler should include an error message")
+	}
+}
+
 // TestRunPeriodicStopsOnCancel verifies the session-scoped ticker goroutine
 // terminates promptly when its session context is cancelled — the mechanism
 // that prevents tickers from leaking across reconnects.

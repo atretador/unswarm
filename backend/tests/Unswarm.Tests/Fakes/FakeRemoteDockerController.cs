@@ -46,8 +46,19 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
     /// <summary>Models returned by DiscoverModelsAsync.</summary>
     public List<DiscoveredModel> Discovered { get; set; } = [];
 
+    /// <summary>
+    /// Scriptable inference behavior. When set, called with (port, requestJson, ct).
+    /// Return the raw response body string. If it throws, the call is treated as failure.
+    /// </summary>
+    public Func<int, string, CancellationToken, Task<string>>? InferFunc { get; set; }
+
+    /// <summary>Default raw body returned by InferAsync when no InferFunc is set.</summary>
+    public string InferResult { get; set; } =
+        """{"id":"chatcmpl-test","choices":[{"message":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}""";
+
     public List<string> StartedImages { get; } = [];
     public List<int> HealthCheckedPorts { get; } = [];
+    public List<(int Port, string RequestJson)> InferCalls { get; } = [];
 
     public Task<ContainerStartResult> StartContainerAsync(string modelName, CancellationToken ct = default)
         => Task.FromResult(StartResult);
@@ -99,4 +110,12 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
 
     public Task<IReadOnlyList<DiscoveredModel>> DiscoverModelsAsync(int port, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<DiscoveredModel>>(Discovered.ToList());
+
+    public Task<string> InferAsync(int port, string requestJson, CancellationToken ct = default)
+    {
+        lock (InferCalls) InferCalls.Add((port, requestJson));
+        return InferFunc is not null
+            ? InferFunc(port, requestJson, ct)
+            : Task.FromResult(InferResult);
+    }
 }
