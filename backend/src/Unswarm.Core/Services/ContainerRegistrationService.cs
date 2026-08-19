@@ -1,13 +1,14 @@
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
-using Unswarm.Core.Services.Validation;
 
 namespace Unswarm.Core.Services;
 
 /// <summary>
 /// Orchestrates the full lifecycle of container registration:
-/// register → start → health check → discover models → validate → ready.
+/// register → start → health check → discover models → ready.
+/// The model list returned by the container IS the validation — no smoke inference
+/// runs during registration. Benchmarks remain the optional user action afterwards.
 /// Host containers are driven via the local Docker controller; containers registered
 /// to a remote agent are driven through the router's RemoteAgentDockerController.
 /// </summary>
@@ -15,44 +16,37 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 {
     private static readonly TimeSpan DefaultRemoteHealthTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DefaultRemoteHealthPollInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan DefaultRemoteValidateTimeout = TimeSpan.FromSeconds(30);
 
     private readonly IContainerRegistry _registry;
     private readonly IDockerControllerRouter _router;
     private readonly IHealthChecker _healthChecker;
     private readonly ModelDiscoveryService _discoveryService;
-    private readonly ModelValidator _validator;
     private readonly IModelRegistry _modelRegistry;
     private readonly IClock _clock;
     private readonly ILogger<ContainerRegistrationService> _logger;
     private readonly TimeSpan _remoteHealthTimeout;
     private readonly TimeSpan _remoteHealthPollInterval;
-    private readonly TimeSpan _validateTimeout;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
         IDockerControllerRouter router,
         IHealthChecker healthChecker,
         ModelDiscoveryService discoveryService,
-        ModelValidator validator,
         IModelRegistry modelRegistry,
         IClock clock,
         ILogger<ContainerRegistrationService> logger,
         TimeSpan? remoteHealthTimeout = null,
-        TimeSpan? remoteHealthPollInterval = null,
-        TimeSpan? remoteValidateTimeout = null)
+        TimeSpan? remoteHealthPollInterval = null)
     {
         _registry = registry;
         _router = router;
         _healthChecker = healthChecker;
         _discoveryService = discoveryService;
-        _validator = validator;
         _modelRegistry = modelRegistry;
         _clock = clock;
         _logger = logger;
         _remoteHealthTimeout = remoteHealthTimeout ?? DefaultRemoteHealthTimeout;
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
-        _validateTimeout = remoteValidateTimeout ?? DefaultRemoteValidateTimeout;
     }
 
     public async Task<RegisteredContainerWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -554,45 +548,13 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false)
             : await _discoveryService.DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false);
 
+        // The model list from the container IS the validation — no smoke inference
+        // runs during registration. Every discovered model is created/updated Ready.
         var models = new List<ModelDefinition>();
-        if (isRemote)
+        foreach (var discoveredModel in discovered)
         {
-            // Remote models: create each, then validate in PARALLEL (each smoke is
-            // independent; serial validation would stretch registration by
-            // count × validation budget).
-            var created = new List<ModelDefinition>();
-            foreach (var discoveredModel in discovered)
-            {
-                created.Add(await CreateModelFromDiscoveredAsync(container.Id, discoveredModel, container.MappedPort.Value, isRemote, ct).ConfigureAwait(false));
-            }
-
-            var validated = await Task.WhenAll(created.Select(async modelDef =>
-            {
-                var discoveredModel = discovered.First(d => d.ModelId == modelDef.Id);
-                return await ValidateRemoteModelAsync((IRemoteDockerController)controller, modelDef, container, discoveredModel, ct).ConfigureAwait(false);
-            })).ConfigureAwait(false);
-
-            models.AddRange(validated);
-
-            // Container status honesty: an Invalid model is a per-model verdict, not a
-            // container failure (the container itself came up and answered discovery).
-            // Keep the container Ready but surface the aggregate in logs so operators
-            // see partial validation failures.
-            var invalidCount = validated.Count(m => m.Status == ModelStatus.Invalid);
-            if (invalidCount > 0)
-            {
-                _logger.LogWarning(
-                    "Container {ContainerId} is Ready but {InvalidCount}/{Total} discovered models failed remote validation",
-                    container.Id, invalidCount, validated.Length);
-            }
-        }
-        else
-        {
-            foreach (var discoveredModel in discovered)
-            {
-                var modelDef = await CreateModelFromDiscoveredAsync(container.Id, discoveredModel, container.MappedPort.Value, isRemote, ct).ConfigureAwait(false);
-                models.Add(modelDef);
-            }
+            var modelDef = await CreateModelFromDiscoveredAsync(container.Id, discoveredModel, container.MappedPort.Value, isRemote, ct).ConfigureAwait(false);
+            models.Add(modelDef);
         }
 
         foreach (var modelDef in models)
@@ -615,108 +577,6 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         };
     }
 
-    /// <summary>
-    /// Validates a remotely-discovered model by running a short chat-completion smoke
-    /// through the agent's local container. The response is parsed as JSON and must
-    /// contain a non-empty "choices" array (mirroring the host ModelValidator's
-    /// identity/response checks) before the model is flipped to Ready. Any other
-    /// result — empty body, error-shaped 200 body, invalid JSON, transport failure —
-    /// flips the model to Invalid. Preserves Family/ParameterSize/Quantization/
-    /// ContextWindow (uses the same update branch as host validation).
-    /// </summary>
-    private async Task<ModelDefinition> ValidateRemoteModelAsync(
-        IRemoteDockerController remote,
-        ModelDefinition modelDef,
-        RegisteredContainer container,
-        DiscoveredModel discoveredModel,
-        CancellationToken ct)
-    {
-        if (!container.MappedPort.HasValue)
-            return modelDef;
-
-        var smokePayload = System.Text.Json.JsonSerializer.Serialize(new
-        {
-            model = discoveredModel.ModelId,
-            messages = new[] { new { role = "user", content = "hi" } },
-            max_tokens = 8
-        });
-
-        try
-        {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(_validateTimeout);
-            var raw = await remote.InferAsync(container.MappedPort.Value, smokePayload, timeoutCts.Token).ConfigureAwait(false);
-
-            var finalStatus = HasValidChatChoices(raw) ? ModelStatus.Ready : ModelStatus.Invalid;
-            if (finalStatus != ModelStatus.Ready)
-            {
-                _logger.LogWarning("Remote validation for model {ModelId} returned a non-compliant body; marking Invalid", discoveredModel.ModelId);
-            }
-
-            var updated = new ModelDefinition
-            {
-                Id = modelDef.Id,
-                Name = modelDef.Name,
-                Family = modelDef.Family,
-                ParameterSize = modelDef.ParameterSize,
-                Quantization = modelDef.Quantization,
-                Status = finalStatus,
-                ContextWindow = modelDef.ContextWindow,
-                ContainerImage = modelDef.ContainerImage,
-                SourceContainerId = modelDef.SourceContainerId,
-                CreatedAt = modelDef.CreatedAt,
-                UpdatedAt = _clock.UtcNow
-            };
-            return await _modelRegistry.UpdateAsync(modelDef.Id, updated, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Remote validation failed for model {ModelId}; marking Invalid", discoveredModel.ModelId);
-
-            var invalid = new ModelDefinition
-            {
-                Id = modelDef.Id,
-                Name = modelDef.Name,
-                Family = modelDef.Family,
-                ParameterSize = modelDef.ParameterSize,
-                Quantization = modelDef.Quantization,
-                Status = ModelStatus.Invalid,
-                ContextWindow = modelDef.ContextWindow,
-                ContainerImage = modelDef.ContainerImage,
-                SourceContainerId = modelDef.SourceContainerId,
-                CreatedAt = modelDef.CreatedAt,
-                UpdatedAt = _clock.UtcNow
-            };
-            return await _modelRegistry.UpdateAsync(modelDef.Id, invalid, ct).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
-    /// A remote validation response is only accepted when it parses as JSON with a
-    /// non-empty "choices" array. A 200-with-{"error":...} body, empty array, or
-    /// non-JSON body is NOT evidence of a working model.
-    /// </summary>
-    private static bool HasValidChatChoices(string raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw))
-            return false;
-        try
-        {
-            using var doc = System.Text.Json.JsonDocument.Parse(raw);
-            if (!doc.RootElement.TryGetProperty("choices", out var choices))
-                return false;
-            return choices.ValueKind == System.Text.Json.JsonValueKind.Array && choices.GetArrayLength() > 0;
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            return false;
-        }
-    }
-
     private async Task<ModelDefinition> CreateModelFromDiscoveredAsync(
         string registeredContainerId,
         DiscoveredModel discoveredModel,
@@ -726,126 +586,42 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     {
         var now = _clock.UtcNow;
 
-        // Remote agents: the discovery response is evidence but remote inference
-        // transport is a later phase, so models are created Validating (NOT Ready).
-        // A future phase will flip them to Ready once remote inference is verified.
-        if (isRemote)
-        {
-            var remoteModel = new ModelDefinition
-            {
-                Id = discoveredModel.ModelId,
-                Name = discoveredModel.ModelId,
-                ContainerImage = string.Empty,
-                SourceContainerId = registeredContainerId,
-                Status = ModelStatus.Validating,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            var remoteExisting = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
-            if (remoteExisting is null)
-            {
-                return await _modelRegistry.CreateAsync(remoteModel, ct).ConfigureAwait(false);
-            }
-
-            var remoteUpdated = new ModelDefinition
-            {
-                Id = remoteExisting.Id,
-                Name = discoveredModel.ModelId,
-                Family = remoteExisting.Family,
-                ParameterSize = remoteExisting.ParameterSize,
-                Quantization = remoteExisting.Quantization,
-                Status = ModelStatus.Validating,
-                ContextWindow = remoteExisting.ContextWindow,
-                ContainerImage = remoteExisting.ContainerImage,
-                SourceContainerId = registeredContainerId,
-                CreatedAt = remoteExisting.CreatedAt,
-                UpdatedAt = now
-            };
-            return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, remoteUpdated, ct).ConfigureAwait(false);
-        }
-
-        // Host: create/update then validate against the local port.
+        // Discovery IS validation: a model listed by the container's /v1/models
+        // endpoint is Ready. No smoke inference runs during registration.
         var modelDef = new ModelDefinition
         {
             Id = discoveredModel.ModelId,
             Name = discoveredModel.ModelId,
             ContainerImage = string.Empty,
             SourceContainerId = registeredContainerId,
-            Status = ModelStatus.Validating,
+            Status = ModelStatus.Ready,
             CreatedAt = now,
             UpdatedAt = now
         };
 
-        // Create or update the model
+        // Create or update the model, preserving existing metadata on update
+        // (Family/ParameterSize/Quantization/ContextWindow are never clobbered).
         var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
         if (existing is null)
         {
-            modelDef = await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
+            return await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
         }
-        else
+
+        modelDef = new ModelDefinition
         {
-            modelDef = new ModelDefinition
-            {
-                Id = existing.Id,
-                Name = discoveredModel.ModelId,
-                Family = existing.Family,
-                ParameterSize = existing.ParameterSize,
-                Quantization = existing.Quantization,
-                Status = ModelStatus.Validating,
-                ContextWindow = existing.ContextWindow,
-                ContainerImage = existing.ContainerImage,
-                SourceContainerId = registeredContainerId,
-                CreatedAt = existing.CreatedAt,
-                UpdatedAt = now
-            };
-            modelDef = await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
-        }
-
-        // Validate
-        try
-        {
-            var result = await _validator.ValidateAsync(port, discoveredModel.ModelId, ct).ConfigureAwait(false);
-            var finalStatus = result.IsSuccess ? ModelStatus.Ready : ModelStatus.Invalid;
-
-            modelDef = new ModelDefinition
-            {
-                Id = modelDef.Id,
-                Name = modelDef.Name,
-                Family = modelDef.Family,
-                ParameterSize = modelDef.ParameterSize,
-                Quantization = modelDef.Quantization,
-                Status = finalStatus,
-                ContextWindow = modelDef.ContextWindow,
-                ContainerImage = modelDef.ContainerImage,
-                SourceContainerId = modelDef.SourceContainerId,
-                CreatedAt = modelDef.CreatedAt,
-                UpdatedAt = _clock.UtcNow
-            };
-            modelDef = await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Validation failed for model {ModelId}; marking Invalid", discoveredModel.ModelId);
-
-            modelDef = new ModelDefinition
-            {
-                Id = modelDef.Id,
-                Name = modelDef.Name,
-                Family = modelDef.Family,
-                ParameterSize = modelDef.ParameterSize,
-                Quantization = modelDef.Quantization,
-                Status = ModelStatus.Invalid,
-                ContextWindow = modelDef.ContextWindow,
-                ContainerImage = modelDef.ContainerImage,
-                SourceContainerId = modelDef.SourceContainerId,
-                CreatedAt = modelDef.CreatedAt,
-                UpdatedAt = _clock.UtcNow
-            };
-            modelDef = await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
-        }
-
-        return modelDef;
+            Id = existing.Id,
+            Name = discoveredModel.ModelId,
+            Family = existing.Family,
+            ParameterSize = existing.ParameterSize,
+            Quantization = existing.Quantization,
+            Status = ModelStatus.Ready,
+            ContextWindow = existing.ContextWindow,
+            ContainerImage = existing.ContainerImage,
+            SourceContainerId = registeredContainerId,
+            CreatedAt = existing.CreatedAt,
+            UpdatedAt = now
+        };
+        return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
     }
 
     private async Task<RegisteredContainerWithModels> FailAsync(RegisteredContainer container, string errorMessage, CancellationToken ct)

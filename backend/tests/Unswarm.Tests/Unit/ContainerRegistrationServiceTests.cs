@@ -5,7 +5,6 @@ using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
-using Unswarm.Core.Services.Validation;
 using Unswarm.Tests.Fakes;
 
 namespace Unswarm.Tests.Unit;
@@ -69,7 +68,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
     private ContainerRegistrationService CreateService(
         ModelDiscoveryService? discoveryService = null,
-        ModelValidator? validator = null,
         FakeDockerControllerRouter? router = null,
         TimeSpan? remoteHealthTimeout = null,
         TimeSpan? remoteHealthPollInterval = null)
@@ -79,7 +77,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             router ?? _router,
             _healthChecker,
             discoveryService ?? new ModelDiscoveryService(new LoggerFactory().CreateLogger<ModelDiscoveryService>()),
-            validator ?? new ModelValidator(new LoggerFactory().CreateLogger<ModelValidator>()),
             _modelRegistry,
             _clock,
             _logger,
@@ -390,15 +387,12 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         // Remote health check was performed on the resolved mapped port
         Assert.Equal([9090], remote.HealthCheckedPorts);
 
-        // Remote models are created Validating, then flipped to Ready after the
-        // smoke inference over the agent succeeds (remote validation).
+        // Discovery IS validation: the model is Ready immediately, with ZERO smoke
+        // inference calls (no chat_completion during registration).
         var model = Assert.Single(result.DiscoveredModels);
         Assert.Equal("llama-3-8b", model.Id);
         Assert.Equal(ModelStatus.Ready, model.Status);
-
-        // Smoke inference was run through the remote controller on the mapped port
-        Assert.Single(remote.InferCalls);
-        Assert.Equal(9090, remote.InferCalls[0].Port);
+        Assert.Empty(remote.InferCalls);
 
         // Start + discovery went through the remote controller, not the host
         Assert.Empty(_docker.StartedContainerIds);
@@ -599,6 +593,34 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RegisterAsync_Host_DiscoveredModel_LandsReady_WithoutSmokeValidation()
+    {
+        // Discovery IS validation: a host-discovered model is created Ready directly,
+        // with no validator/smoke inference call during registration.
+        _docker.MappedPortOverride = StartDiscoveryServer(
+            """{"data":[{"id":"llama-3-8b","owned_by":"meta"}]}""");
+
+        var service = CreateService();
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "Host Discovered",
+            Image = "test:latest"
+        };
+
+        var result = await service.RegisterAsync(request);
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        var model = Assert.Single(result.DiscoveredModels);
+        Assert.Equal("llama-3-8b", model.Id);
+        Assert.Equal(ModelStatus.Ready, model.Status);
+
+        // The model is persisted Ready in the registry.
+        var persisted = await _modelRegistry.GetAsync("llama-3-8b");
+        Assert.NotNull(persisted);
+        Assert.Equal(ModelStatus.Ready, persisted!.Status);
+    }
+
+    [Fact]
     public async Task RegisterAsync_RemoteAgent_AmbiguousImageMatch_SetsError()
     {
         var remote = new FakeRemoteDockerController
@@ -644,193 +666,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Contains(
             "2 containers match image 'vllm-serve' on agent 'gpu1'; cannot determine runtime container",
             result.Container.ErrorMessage);
-    }
-
-    [Fact]
-    public async Task RegisterAsync_RemoteAgent_SmokeValidationFailure_MarksModelInvalid()
-    {
-        var remote = new FakeRemoteDockerController
-        {
-            StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ],
-            // Smoke inference fails → model must be Invalid
-            InferFunc = (port, body, ct) => throw new InvalidOperationException("smoke inference failed")
-        };
-
-        var router = new FakeDockerControllerRouter(
-            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
-
-        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var request = new ContainerRegistrationRequest
-        {
-            DisplayName = "Remote Invalid",
-            Image = "vllm-serve",
-            ContainerPort = 8000,
-            Agent = "gpu1"
-        };
-
-        var result = await service.RegisterAsync(request);
-
-        // Container still reaches Ready (discovery succeeded), model marked Invalid
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal("llama-3-8b", model.Id);
-        Assert.Equal(ModelStatus.Invalid, model.Status);
-
-        // Smoke inference was attempted once on the mapped port
-        var inferCall = Assert.Single(remote.InferCalls);
-        Assert.Equal(9090, inferCall.Port);
-        Assert.Contains("\"max_tokens\":8", inferCall.RequestJson);
-        Assert.Contains("llama-3-8b", inferCall.RequestJson);
-    }
-
-    [Fact]
-    public async Task RegisterAsync_RemoteAgent_SmokeValidationSuccess_MarksModelReady()
-    {
-        var remote = new FakeRemoteDockerController
-        {
-            StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ],
-            InferResult = """{"id":"smoke","choices":[{"message":{"role":"assistant","content":"hi"}}],"usage":{"completion_tokens":1}}"""
-        };
-
-        var router = new FakeDockerControllerRouter(
-            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
-
-        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var request = new ContainerRegistrationRequest
-        {
-            DisplayName = "Remote Ready",
-            Image = "vllm-serve",
-            ContainerPort = 8000,
-            Agent = "gpu1"
-        };
-
-        var result = await service.RegisterAsync(request);
-
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal(ModelStatus.Ready, model.Status);
-
-        var inferCall = Assert.Single(remote.InferCalls);
-        Assert.Equal(9090, inferCall.Port);
-    }
-
-    [Fact]
-    public async Task RegisterAsync_RemoteAgent_ErrorShaped200Body_MarksModelInvalid()
-    {
-        // D1: a 200-with-{"error":...} body must NOT be treated as validation success.
-        var remote = new FakeRemoteDockerController
-        {
-            StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ],
-            InferResult = """{"error":{"message":"model not loaded","type":"server_error"}}"""
-        };
-
-        var router = new FakeDockerControllerRouter(
-            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
-
-        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var request = new ContainerRegistrationRequest
-        {
-            DisplayName = "Remote ErrorBody",
-            Image = "vllm-serve",
-            ContainerPort = 8000,
-            Agent = "gpu1"
-        };
-
-        var result = await service.RegisterAsync(request);
-
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal(ModelStatus.Invalid, model.Status);
-    }
-
-    [Fact]
-    public async Task RegisterAsync_RemoteAgent_EmptyChoicesBody_MarksModelInvalid()
-    {
-        // D1: a 200 body with an empty choices array is not evidence of a working model.
-        var remote = new FakeRemoteDockerController
-        {
-            StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ],
-            InferResult = """{"id":"x","choices":[],"usage":{"completion_tokens":0}}"""
-        };
-
-        var router = new FakeDockerControllerRouter(
-            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
-
-        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var request = new ContainerRegistrationRequest
-        {
-            DisplayName = "Remote EmptyChoices",
-            Image = "vllm-serve",
-            ContainerPort = 8000,
-            Agent = "gpu1"
-        };
-
-        var result = await service.RegisterAsync(request);
-
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal(ModelStatus.Invalid, model.Status);
-    }
-
-    [Fact]
-    public async Task RegisterAsync_RemoteAgent_MultipleModels_ValidatedInParallel()
-    {
-        // D2a: multiple discovered models validate in parallel (Task.WhenAll), and a
-        // mix of Ready/Invalid outcomes is preserved while the container stays Ready.
-        var remote = new FakeRemoteDockerController
-        {
-            StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" },
-                new DiscoveredModel { ModelId = "mistral-7b", OwnedBy = "mistral" }
-            ],
-            InferFunc = (port, body, ct) => Task.FromResult(
-                body.Contains("llama-3-8b")
-                    ? """{"id":"ok","choices":[{"message":{"role":"assistant","content":"hi"}}]}"""
-                    : """{"error":{"message":"not loaded"}}""")
-        };
-
-        var router = new FakeDockerControllerRouter(
-            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
-
-        var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var request = new ContainerRegistrationRequest
-        {
-            DisplayName = "Remote Multi",
-            Image = "vllm-serve",
-            ContainerPort = 8000,
-            Agent = "gpu1"
-        };
-
-        var result = await service.RegisterAsync(request);
-
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.Equal(2, result.DiscoveredModels.Count);
-        Assert.Contains(result.DiscoveredModels, m => m.Id == "llama-3-8b" && m.Status == ModelStatus.Ready);
-        Assert.Contains(result.DiscoveredModels, m => m.Id == "mistral-7b" && m.Status == ModelStatus.Invalid);
-        Assert.Equal(2, remote.InferCalls.Count);
     }
 
     [Fact]

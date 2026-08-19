@@ -105,6 +105,11 @@ await using (var scope = app.Services.CreateAsyncScope())
     // have an EMPTY BenchmarkHistory table with the OLD schema (no Prompt/
     // TokensGenerated/Status/ErrorMessage). Add missing columns idempotently.
     await EnsureBenchmarkSchemaColumnsAsync(db);
+
+    // Model-status heal: the old smoke-validation path could strand rows in
+    // 'Validating' forever (a busy/cancelled smoke never flipped them). Discovery is
+    // now the sole validation, so any leftover 'Validating' row is treated as Ready.
+    await HealStrandedValidatingModelsAsync(db);
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────
@@ -230,4 +235,36 @@ static async Task<bool> IndexCoversModelIdAsync(System.Data.Common.DbConnection 
         // Best-effort: if we cannot inspect the index, conservatively leave it alone.
     }
     return false;
+}
+
+/// <summary>
+/// SQLite-only, idempotent heal for models stranded in 'Validating'. The old
+/// registration flow ran a smoke chat-completion after discovery; when the server was
+/// busy or the registration request was cancelled, that smoke hung and the already-
+/// persisted model row never flipped to Ready/Invalid. Discovery is now the sole
+/// validation, so any leftover 'Validating' row is flipped to 'Ready'. Non-fatal on
+/// failure (the row is healed on the next start).
+/// </summary>
+static async Task HealStrandedValidatingModelsAsync(UnswarmDbContext db)
+{
+    try
+    {
+        await using var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = "UPDATE Models SET Status = 'Ready' WHERE Status = 'Validating'";
+        await db.Database.OpenConnectionAsync();
+        var affected = await cmd.ExecuteNonQueryAsync();
+        if (affected > 0)
+        {
+            Console.WriteLine($"Healed {affected} stranded model(s) stuck in Validating → Ready");
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to heal stranded Validating models: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
 }
