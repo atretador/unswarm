@@ -59,6 +59,7 @@ builder.Services.AddScoped<ModelValidator>();
 builder.Services.AddScoped<IBenchmarkHistory, BenchmarkHistoryService>();
 builder.Services.AddScoped<IPromptStore, PromptStore>();
 builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
+builder.Services.AddSingleton<HostScriptRuntimeController>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
@@ -129,6 +130,12 @@ await using (var scope = app.Services.CreateAsyncScope())
     // the renamed RegisteredRuntimeId. Idempotent — harmless on fresh DBs.
     await EnsureRuntimeColumnsAsync(db);
 }
+
+// ── Adopt orphaned script processes ─────────────────────────────────────
+// If the server restarts while host script runtimes are alive, their PID files
+// survive on disk. Adopt them so IdleShutdown and StopScript can manage them.
+await app.Services.GetRequiredService<HostScriptRuntimeController>()
+    .AdoptOrphanedScriptsAsync();
 
 // ── Middleware ────────────────────────────────────────────────────────────
 app.UseCors();
