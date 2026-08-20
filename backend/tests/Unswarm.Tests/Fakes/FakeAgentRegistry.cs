@@ -97,7 +97,8 @@ public sealed class FakeAgentRegistry : IAgentRegistry
         GpuInfo = connection.GpuInfo,
         TotalMemoryMb = connection.TotalMemoryMb,
         CpuCores = connection.CpuCores,
-        Containers = connection.Containers
+        Containers = connection.Containers,
+        Scripts = connection.Scripts
     };
 
     public async Task<bool> SendAsync(string name, AgentMessage message, CancellationToken ct = default)

@@ -15,4 +15,5 @@ public sealed class AgentConnection
     public long TotalMemoryMb { get; set; }
     public int CpuCores { get; set; }
     public IReadOnlyList<AgentContainerStatus> Containers { get; set; } = [];
+    public IReadOnlyList<AgentScriptStatus> Scripts { get; set; } = [];
 }

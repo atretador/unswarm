@@ -71,7 +71,8 @@ public sealed class AgentsController : ControllerBase
             Hostname = Environment.MachineName,
             OsPlatform = Environment.OSVersion.Platform.ToString(),
             CpuCores = Environment.ProcessorCount,
-            Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList()
+            Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList(),
+            Scripts = [] // Host scripts are handled by the host script runtime (P2)
         };
     }
 
@@ -100,7 +101,8 @@ public sealed class AgentsController : ControllerBase
             CpuCores = info.CpuCores,
             Containers = info.Containers
                 .Where(c => registry.IsRegistered(c.ContainerId, c.ModelName))
-                .ToList()
+                .ToList(),
+            Scripts = info.Scripts
         };
     }
 
@@ -166,12 +168,12 @@ public sealed class AgentsController : ControllerBase
         }
 
         /// <summary>Host-list style entry: runtime id, model name/model id, and optional registry link.</summary>
-        public bool IsRegistered(string? containerId, string? modelName, string? modelId, string? registeredContainerId)
+        public bool IsRegistered(string? containerId, string? modelName, string? modelId, string? registeredRuntimeId)
         {
             // Preferred: the container carries its registered-container link — that is
             // authoritative evidence the container is managed by this agent.
-            if (!string.IsNullOrEmpty(registeredContainerId))
-                return _registeredWithRuntime.Contains(registeredContainerId);
+            if (!string.IsNullOrEmpty(registeredRuntimeId))
+                return _registeredWithRuntime.Contains(registeredRuntimeId);
 
             return IsRegistered(containerId, modelName)
                 || (!string.IsNullOrEmpty(modelId) && _imageNames.Contains(modelId));

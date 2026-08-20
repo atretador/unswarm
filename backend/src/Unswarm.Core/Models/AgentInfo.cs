@@ -15,4 +15,5 @@ public sealed class AgentInfo
     public long TotalMemoryMb { get; init; }
     public int CpuCores { get; init; }
     public IReadOnlyList<AgentContainerStatus> Containers { get; init; } = [];
+    public IReadOnlyList<AgentScriptStatus> Scripts { get; init; } = [];
 }

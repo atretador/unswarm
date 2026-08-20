@@ -1,9 +1,10 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
-import { Activity, Zap, Clock, AlertTriangle, RefreshCw } from "lucide-react";
+import { Activity, Zap, Clock, AlertTriangle, RefreshCw, ArrowLeftRight, Copy, Check } from "lucide-react";
 import { client } from "../../lib/query-client";
-import { Card, Skeleton, EmptyState, Button, Spinner } from "../../components/ui";
+import { BASE_URL } from "../../lib/api/httpClient";
+import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../components/ui";
 
 // Lazy-load recharts to keep the main bundle lean
 const LazyAreaChart = lazy(() =>
@@ -45,6 +46,50 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function CopyButton({ text, className = "" }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={`
+        inline-flex items-center gap-1 text-[10px] font-medium
+        px-1.5 py-0.5 rounded-[var(--radius-sm)]
+        text-[var(--color-text-muted)]
+        hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
+        transition-colors duration-[var(--duration-fast)] cursor-pointer
+        ${className}
+      `}
+    >
+      {copied ? (
+        <>
+          <Check className="size-3 text-[var(--color-status-running)]" />
+          <span className="text-[var(--color-status-running)]">Copied</span>
+        </>
+      ) : (
+        <>
+          <Copy className="size-3" />
+          <span>Copy</span>
+        </>
+      )}
+    </button>
+  );
+}
+
+const PROXY_ENDPOINTS = [
+  { method: "POST" as const, path: "/v1/chat/completions" },
+  { method: "POST" as const, path: "/v1/completions" },
+  { method: "GET" as const, path: "/v1/models" },
+];
+
 const fadeUp = {
   initial: { opacity: 0, y: 8 },
   animate: { opacity: 1, y: 0 },
@@ -65,8 +110,8 @@ function DashboardContent() {
   if (isLoading) {
     return (
       <div className="p-6 space-y-6 max-w-6xl">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }, (_, i) => (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }, (_, i) => (
             <Card key={i} padding="md">
               <Skeleton className="h-3 w-24 mb-2" />
               <Skeleton className="h-7 w-16" />
@@ -107,8 +152,8 @@ function DashboardContent() {
   if (!stats) {
     return (
       <div className="p-6 space-y-6 max-w-6xl">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }, (_, i) => (
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }, (_, i) => (
             <Card key={i} padding="md">
               <Skeleton className="h-3 w-24 mb-2" />
               <Skeleton className="h-7 w-16" />
@@ -148,6 +193,12 @@ function DashboardContent() {
       icon: AlertTriangle,
       color: stats.queueDepth > 5 ? "text-[var(--color-status-error)]" : "text-[var(--color-text-muted)]",
     },
+    {
+      label: "Avg switch",
+      value: stats.switchCount > 0 ? `${Math.round(stats.avgSwitchMs)}ms` : "—",
+      icon: ArrowLeftRight,
+      color: "text-[var(--color-text-muted)]",
+    },
   ];
 
   const hourLabels = stats.requestsPerMinute.map((_, i) => `${i}m`);
@@ -155,7 +206,7 @@ function DashboardContent() {
   return (
     <div className="p-6 space-y-6 max-w-6xl">
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {statCards.map((stat, i) => (
           <motion.div key={stat.label} variants={fadeUp} initial="initial" animate="animate" transition={{ delay: i * 0.05 }}>
             <Card padding="md">
@@ -170,6 +221,52 @@ function DashboardContent() {
           </motion.div>
         ))}
       </div>
+
+      {/* API endpoint info */}
+      <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.15 }}>
+        <Card padding="lg">
+          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-3">
+            API endpoint
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)] mb-4">
+            OpenAI-compatible proxy — point any OpenAI SDK client or harness at this base URL.
+            No authentication required.
+          </p>
+
+          {/* Base URL */}
+          <div className="flex items-center gap-2 mb-4 p-2.5 rounded-[var(--radius-md)] bg-[var(--color-bg-elevated)] border border-[var(--color-border)]">
+            <code className="flex-1 text-sm font-mono text-[var(--color-text-heading)] truncate">
+              {BASE_URL}
+            </code>
+            <CopyButton text={BASE_URL} />
+          </div>
+
+          {/* Endpoint rows */}
+          <div className="space-y-1.5">
+            {PROXY_ENDPOINTS.map((ep) => {
+              const fullUrl = `${BASE_URL}${ep.path}`;
+              return (
+                <div
+                  key={ep.path}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-[var(--radius-md)] hover:bg-[var(--color-bg-elevated)] transition-colors duration-[var(--duration-fast)]"
+                >
+                  <Badge
+                    variant={ep.method === "GET" ? "info" : "success"}
+                    size="sm"
+                    className="shrink-0 w-12 justify-center"
+                  >
+                    {ep.method}
+                  </Badge>
+                  <code className="flex-1 text-xs font-mono text-[var(--color-text)] truncate">
+                    {ep.path}
+                  </code>
+                  <CopyButton text={fullUrl} />
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </motion.div>
 
       {/* Requests per minute chart */}
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.2 }}>

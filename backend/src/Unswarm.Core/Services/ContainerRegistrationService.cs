@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Core.Services;
 
@@ -26,6 +27,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly ILogger<ContainerRegistrationService> _logger;
     private readonly TimeSpan _remoteHealthTimeout;
     private readonly TimeSpan _remoteHealthPollInterval;
+    private readonly HostScriptRuntimeController? _scriptController;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -36,7 +38,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         IClock clock,
         ILogger<ContainerRegistrationService> logger,
         TimeSpan? remoteHealthTimeout = null,
-        TimeSpan? remoteHealthPollInterval = null)
+        TimeSpan? remoteHealthPollInterval = null,
+        HostScriptRuntimeController? scriptController = null)
     {
         _registry = registry;
         _router = router;
@@ -47,6 +50,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _logger = logger;
         _remoteHealthTimeout = remoteHealthTimeout ?? DefaultRemoteHealthTimeout;
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
+        _scriptController = scriptController;
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -54,16 +58,39 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var now = _clock.UtcNow;
         var containerId = Guid.NewGuid().ToString("N");
 
+        var agent = string.IsNullOrWhiteSpace(request.Agent) ? "host" : request.Agent.Trim();
+
+        // Validate agent-hosted script targets are connected
+        if (request.RuntimeKind == RuntimeKind.Script && !string.Equals(agent, "host", StringComparison.OrdinalIgnoreCase))
+        {
+            var controller = GetController(new RegisteredRuntime { Id = "validate", Image = request.Image, Agent = agent });
+            if (controller is not RemoteAgentDockerController)
+                throw new InvalidOperationException($"Agent '{agent}' does not have a connected RemoteAgentDockerController");
+        }
+
+        // Validate script launcher path upfront
+        if (request.RuntimeKind == RuntimeKind.Script)
+        {
+            if (string.IsNullOrWhiteSpace(request.LauncherPath))
+                throw new ArgumentException("LauncherPath is required for Script runtimes");
+
+            // Remote scripts don't have a local file path to validate
+            if (string.Equals(agent, "host", StringComparison.OrdinalIgnoreCase) && !File.Exists(request.LauncherPath))
+                throw new ArgumentException($"Launcher script not found: {request.LauncherPath}");
+        }
+
         var container = new RegisteredRuntime
         {
             Id = containerId,
             DisplayName = string.IsNullOrEmpty(request.DisplayName) ? request.Image : request.DisplayName,
             Image = request.Image,
             ContainerPort = request.ContainerPort,
+            RuntimeKind = request.RuntimeKind,
+            LauncherPath = request.LauncherPath,
             GpuDevices = request.GpuDevices,
             MemoryLimitMb = request.MemoryLimitMb,
             ExtraLabels = request.ExtraLabels,
-            Agent = string.IsNullOrWhiteSpace(request.Agent) ? "host" : request.Agent.Trim(),
+            Agent = agent,
             CanRunAlongWith = request.CanRunAlongWith ?? [],
             Status = ContainerRegistrationStatus.Registered,
             CreatedAt = now,
@@ -71,7 +98,12 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         };
 
         container = await _registry.CreateAsync(container, ct).ConfigureAwait(false);
-        _logger.LogInformation("Registered container {Id} for image {Image}", containerId, request.Image);
+        _logger.LogInformation("Registered {Kind} {Id} for image {Image}", container.RuntimeKind, containerId, request.Image);
+
+        if (container.RuntimeKind == RuntimeKind.Script)
+        {
+            return await StartAndDiscoverScriptAsync(container, ct).ConfigureAwait(false);
+        }
 
         return await StartAndDiscoverAsync(container, ct).ConfigureAwait(false);
     }
@@ -93,6 +125,11 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         try
         {
+            if (container.RuntimeKind == RuntimeKind.Script)
+            {
+                return await StartScriptAsync(container, ct).ConfigureAwait(false);
+            }
+
             var controller = GetController(container);
             var isRemote = controller is IRemoteDockerController;
 
@@ -279,7 +316,26 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             ?? throw new InvalidOperationException($"Registered container {id} not found");
 
         // Stop and remove the runtime container if it exists
-        if (container.RuntimeContainerId is not null)
+        if (container.RuntimeKind == RuntimeKind.Script)
+        {
+            var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
+            if (!isHost && container.RuntimeProcessId.HasValue)
+            {
+                // Agent-hosted script: stop via RemoteAgentDockerController by PID
+                var controller = GetController(container);
+                if (controller is RemoteAgentDockerController remoteController)
+                {
+                    _logger.LogInformation("Stopping agent script runtime {Id} (PID {Pid}) on agent {Agent}", id, container.RuntimeProcessId.Value, container.Agent);
+                    await remoteController.StopScriptAsync(container.RuntimeProcessId.Value, ct).ConfigureAwait(false);
+                }
+            }
+            else if (isHost && _scriptController is not null && container.RuntimeProcessId.HasValue)
+            {
+                _logger.LogInformation("Stopping script runtime {Id} (PID {Pid})", id, container.RuntimeProcessId.Value);
+                await _scriptController.StopScriptAsync(id, ct).ConfigureAwait(false);
+            }
+        }
+        else if (container.RuntimeContainerId is not null)
         {
             var controller = GetController(container);
 
@@ -622,6 +678,159 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             UpdatedAt = now
         };
         return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Script-specific registration: start the script process, wait for health, discover models.
+    /// Supports both host scripts (via HostScriptRuntimeController) and agent-hosted scripts
+    /// (via RemoteAgentDockerController).
+    /// </summary>
+    private async Task<RegisteredRuntimeWithModels> StartAndDiscoverScriptAsync(RegisteredRuntime container, CancellationToken ct)
+    {
+        try
+        {
+            // Validate launcher path
+            if (string.IsNullOrWhiteSpace(container.LauncherPath))
+                return await FailAsync(container, "LauncherPath is required for Script runtimes", ct).ConfigureAwait(false);
+
+            var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
+
+            // Host scripts: validate local file exists
+            if (isHost && !File.Exists(container.LauncherPath))
+                return await FailAsync(container, $"Launcher script not found: {container.LauncherPath}", ct).ConfigureAwait(false);
+
+            container = await _registry.UpdateAsync(container.Id, container with
+            {
+                Status = ContainerRegistrationStatus.Starting
+            }, ct).ConfigureAwait(false);
+
+            int pid;
+            if (!isHost)
+            {
+                // Agent-hosted script: start via RemoteAgentDockerController
+                var controller = GetController(container);
+                if (controller is not RemoteAgentDockerController remoteController)
+                    return await FailAsync(container, $"Agent '{container.Agent}' does not have a connected RemoteAgentDockerController", ct).ConfigureAwait(false);
+
+                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // Host script: start via HostScriptRuntimeController
+                if (_scriptController is null)
+                    return await FailAsync(container, "HostScriptRuntimeController not available", ct).ConfigureAwait(false);
+
+                var startResult = await _scriptController.StartScriptAsync(
+                    container.Id, container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+
+                if (startResult.ErrorMessage is not null)
+                    return await FailAsync(container, startResult.ErrorMessage, ct).ConfigureAwait(false);
+
+                pid = startResult.Pid ?? 0;
+            }
+
+            // Script MappedPort = declared ContainerPort (no docker inspect needed)
+            var mappedPort = container.ContainerPort;
+
+            container = await _registry.UpdateAsync(container.Id, container with
+            {
+                RuntimeProcessId = pid,
+                MappedPort = mappedPort
+            }, ct).ConfigureAwait(false);
+
+            // Wait for health
+            await _healthChecker.WaitForReadyAsync(mappedPort, ct).ConfigureAwait(false);
+
+            container = await _registry.UpdateAsync(container.Id, container with
+            {
+                Status = ContainerRegistrationStatus.Healthy
+            }, ct).ConfigureAwait(false);
+
+            // Discover models
+            return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to register and start script {Id}", container.Id);
+            return await FailAsync(container, ex.Message, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Script-specific start (no re-discovery): start script, wait for health, return existing models.
+    /// Supports both host scripts (via HostScriptRuntimeController) and agent-hosted scripts
+    /// (via RemoteAgentDockerController).
+    /// </summary>
+    private async Task<RegisteredRuntimeWithModels> StartScriptAsync(RegisteredRuntime container, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(container.LauncherPath))
+            return await FailAsync(container, "LauncherPath is required for Script runtimes", ct).ConfigureAwait(false);
+
+        var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
+
+        // Host scripts: validate local file exists
+        if (isHost && !File.Exists(container.LauncherPath))
+            return await FailAsync(container, $"Launcher script not found: {container.LauncherPath}", ct).ConfigureAwait(false);
+
+        container = await _registry.UpdateAsync(container.Id, container with
+        {
+            Status = ContainerRegistrationStatus.Starting,
+            ErrorMessage = null
+        }, ct).ConfigureAwait(false);
+
+        int pid;
+        try
+        {
+            if (!isHost)
+            {
+                // Agent-hosted script: start via RemoteAgentDockerController
+                var controller = GetController(container);
+                if (controller is not RemoteAgentDockerController remoteController)
+                    return await FailAsync(container, $"Agent '{container.Agent}' does not have a connected RemoteAgentDockerController", ct).ConfigureAwait(false);
+
+                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // Host script: start via HostScriptRuntimeController
+                if (_scriptController is null)
+                    return await FailAsync(container, "HostScriptRuntimeController not available", ct).ConfigureAwait(false);
+
+                var startResult = await _scriptController.StartScriptAsync(
+                    container.Id, container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+
+                if (startResult.ErrorMessage is not null)
+                    return await FailAsync(container, startResult.ErrorMessage, ct).ConfigureAwait(false);
+
+                pid = startResult.Pid ?? 0;
+            }
+        }
+        catch (Exception ex)
+        {
+            return await FailAsync(container, $"Script start failed: {ex.Message}", ct).ConfigureAwait(false);
+        }
+
+        var mappedPort = container.ContainerPort;
+
+        container = await _registry.UpdateAsync(container.Id, container with
+        {
+            RuntimeProcessId = pid,
+            MappedPort = mappedPort
+        }, ct).ConfigureAwait(false);
+
+        await _healthChecker.WaitForReadyAsync(mappedPort, ct).ConfigureAwait(false);
+
+        container = await _registry.UpdateAsync(container.Id, container with
+        {
+            Status = ContainerRegistrationStatus.Ready,
+            UpdatedAt = _clock.UtcNow
+        }, ct).ConfigureAwait(false);
+
+        return new RegisteredRuntimeWithModels
+        {
+            Container = container,
+            DiscoveredModels = await LoadModelsForContainerAsync(container.Id, ct).ConfigureAwait(false)
+        };
     }
 
     private async Task<RegisteredRuntimeWithModels> FailAsync(RegisteredRuntime container, string errorMessage, CancellationToken ct)

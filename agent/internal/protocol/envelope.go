@@ -29,6 +29,12 @@ const (
 	CmdHealthCheck      = "health_check"
 	CmdDiscoverModels   = "discover_models"
 	CmdChatCompletion   = "chat_completion"
+
+	// Script management commands (Phase 3).
+	CmdListScripts   = "list_scripts"
+	CmdStartScript   = "start_script"
+	CmdStopScript    = "stop_script"
+	CmdGetScriptLogs = "get_script_logs"
 )
 
 // Envelope is the top-level JSON structure for every message.
@@ -53,17 +59,20 @@ type HelloAckPayload struct {
 
 // CommandPayload is sent by the backend to request an action on the agent.
 type CommandPayload struct {
-	Command               string            `json:"command"`
-	ContainerID           string            `json:"containerId,omitempty"`
-	Image                 string            `json:"image,omitempty"`
-	RegisteredContainerID string            `json:"registeredContainerId,omitempty"`
-	ContainerPort         int               `json:"containerPort,omitempty"`
-	GPUDevices            string            `json:"gpuDevices,omitempty"`
-	MemoryLimitMb         int               `json:"memoryLimitMb,omitempty"`
-	ExtraLabels           map[string]string `json:"extraLabels,omitempty"`
-	TailLines             int               `json:"tailLines,omitempty"`
-	Port                  int               `json:"port,omitempty"`
-	JsonBody              json.RawMessage   `json:"json,omitempty"`
+	Command             string            `json:"command"`
+	ContainerID         string            `json:"containerId,omitempty"`
+	Image               string            `json:"image,omitempty"`
+	RegisteredRuntimeID string            `json:"registeredRuntimeId,omitempty"` // P3: renamed from registeredContainerId
+	ContainerPort       int               `json:"containerPort,omitempty"`
+	GPUDevices          string            `json:"gpuDevices,omitempty"`
+	MemoryLimitMb       int               `json:"memoryLimitMb,omitempty"`
+	ExtraLabels         map[string]string `json:"extraLabels,omitempty"`
+	TailLines           int               `json:"tailLines,omitempty"`
+	Port                int               `json:"port,omitempty"`
+	JsonBody            json.RawMessage   `json:"json,omitempty"`
+	ScriptPath          string            `json:"scriptPath,omitempty"`
+	ScriptPort          int               `json:"scriptPort,omitempty"`
+	PID                 int               `json:"pid,omitempty"`
 }
 
 // CommandResultPayload is sent by the agent in response to a command.
@@ -81,6 +90,7 @@ type TelemetryPayload struct {
 	TotalMemoryMb int64                `json:"totalMemoryMb"`
 	CPUCores      int                  `json:"cpuCores"`
 	Containers    []ContainerTelemetry `json:"containers"`
+	Scripts       []ScriptTelemetry    `json:"scripts,omitempty"`
 }
 
 // ContainerTelemetry is per-container info inside a telemetry message.
@@ -92,6 +102,15 @@ type ContainerTelemetry struct {
 	Memory string `json:"memory,omitempty"`
 	CPU    string `json:"cpu,omitempty"`
 	Uptime string `json:"uptime,omitempty"`
+}
+
+// ScriptTelemetry is per-script process info inside a telemetry message.
+type ScriptTelemetry struct {
+	Path      string `json:"path"`
+	PID       int    `json:"pid"`
+	Status    string `json:"status"`
+	Port      int    `json:"port,omitempty"`
+	StartTime int64  `json:"startTime,omitempty"` // unix ms
 }
 
 // HeartbeatPayload is a keep-alive message (can be empty).

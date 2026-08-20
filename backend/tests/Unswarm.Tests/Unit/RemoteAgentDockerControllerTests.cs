@@ -439,4 +439,194 @@ public sealed class RemoteAgentDockerControllerTests
         // Pending slot cleaned up — a late reply must not resolve anything.
         Assert.Equal(0, controller.PendingCommandCount);
     }
+
+    // --- Phase 3: Script command tests ---
+
+    [Fact]
+    public async Task ListScripts_SendsCommandAndMapsResult()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new
+            {
+                scripts = new object[]
+                {
+                    new { path = "/opt/scripts/model-a.sh", name = "model-a.sh" },
+                    new { path = "/opt/scripts/model-b.sh", name = "model-b.sh" }
+                }
+            });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.ListScriptsAsync();
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal("/opt/scripts/model-a.sh", result[0].Path);
+        Assert.Equal("model-a.sh", result[0].Name);
+        Assert.Equal("/opt/scripts/model-b.sh", result[1].Path);
+
+        Assert.True(_registry.SentMessages.TryDequeue(out var sent));
+        Assert.Equal("list_scripts", sent.Payload!.Value.GetProperty("command").GetString());
+    }
+
+    [Fact]
+    public async Task ListScripts_EmptyResult()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new { scripts = Array.Empty<object>() });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.ListScriptsAsync();
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task StartScript_SendsCommandAndMapsPid()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new { ok = true, pid = 12345 });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var pid = await controller.StartScriptAsync("/opt/scripts/model-a.sh", 9000);
+
+        Assert.Equal(12345, pid);
+        Assert.True(_registry.SentMessages.TryDequeue(out var sent));
+        Assert.Equal("start_script", sent.Payload!.Value.GetProperty("command").GetString());
+        Assert.Equal("/opt/scripts/model-a.sh", sent.Payload!.Value.GetProperty("scriptPath").GetString());
+        Assert.Equal(9000, sent.Payload!.Value.GetProperty("scriptPort").GetInt32());
+    }
+
+    [Fact]
+    public async Task StartScript_ErrorResult_Throws()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new { ok = false, error = "path outside scripts_dir" });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.StartScriptAsync("/etc/passwd", 9000));
+        Assert.Contains("path outside scripts_dir", ex.Message);
+    }
+
+    [Fact]
+    public async Task StopScript_SendsCommand()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            controller.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = true }));
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        await controller.StopScriptAsync(12345);
+
+        Assert.True(_registry.SentMessages.TryDequeue(out var sent));
+        Assert.Equal("stop_script", sent.Payload!.Value.GetProperty("command").GetString());
+        Assert.Equal(12345, sent.Payload!.Value.GetProperty("pid").GetInt32());
+    }
+
+    [Fact]
+    public async Task GetScriptLogs_SendsCommandAndMapsResult()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new { logs = new[] { "line1", "line2", "line3" } });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.GetScriptLogsAsync("/opt/scripts/model-a.sh", tailLines: 50);
+
+        Assert.Equal(["line1", "line2", "line3"], result);
+        Assert.True(_registry.SentMessages.TryDequeue(out var sent));
+        Assert.Equal("get_script_logs", sent.Payload!.Value.GetProperty("command").GetString());
+        Assert.Equal("/opt/scripts/model-a.sh", sent.Payload!.Value.GetProperty("scriptPath").GetString());
+        Assert.Equal(50, sent.Payload!.Value.GetProperty("tailLines").GetInt32());
+    }
+
+    // --- Phase 3: registeredRuntimeId wire key ---
+
+    [Fact]
+    public async Task ListContainers_ParsesRegisteredRuntimeId_NewKey()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new
+            {
+                containers = new object[]
+                {
+                    new { id = "c1", modelName = "llama", status = "running", port = (int?)8080, registeredRuntimeId = (string?)"reg-1" }
+                }
+            });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.ListContainersAsync();
+
+        Assert.Single(result);
+        Assert.Equal("reg-1", result[0].RegisteredRuntimeId);
+    }
+
+    [Fact]
+    public async Task ListContainers_ParsesRegisteredRuntimeId_FallbackToOldKey()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new
+            {
+                containers = new object[]
+                {
+                    new { id = "c1", modelName = "llama", status = "running", port = (int?)8080, registeredContainerId = (string?)"reg-old" }
+                }
+            });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.ListContainersAsync();
+
+        Assert.Single(result);
+        Assert.Equal("reg-old", result[0].RegisteredRuntimeId);
+    }
+
+    [Fact]
+    public async Task ListContainers_ParsesRegisteredRuntimeId_NewKeyTakesPrecedence()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            var reply = MakeReply(msg.Id!, new
+            {
+                containers = new object[]
+                {
+                    new { id = "c1", modelName = "llama", status = "running", port = (int?)8080, registeredRuntimeId = (string?)"reg-new", registeredContainerId = (string?)"reg-old" }
+                }
+            });
+            controller.HandleIncomingMessage(reply);
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        var result = await controller.ListContainersAsync();
+
+        Assert.Single(result);
+        Assert.Equal("reg-new", result[0].RegisteredRuntimeId);
+    }
 }

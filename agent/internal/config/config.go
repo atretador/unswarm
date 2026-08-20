@@ -22,6 +22,7 @@ type Config struct {
 	APIKey       string          `yaml:"api_key"`
 	AgentName    string          `yaml:"agent_name"`
 	DockerSocket string          `yaml:"docker_socket"`
+	ScriptsDir   string          `yaml:"scripts_dir"`
 	Reconnect    ReconnectConfig `yaml:"reconnect"`
 }
 

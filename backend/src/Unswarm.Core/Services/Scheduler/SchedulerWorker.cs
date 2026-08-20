@@ -3,6 +3,7 @@ using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Core.Services.Scheduler;
@@ -33,6 +34,7 @@ public sealed class SchedulerWorker
     private readonly ILogger<SchedulerWorker> _logger;
     private readonly SchedulerSettings _settings;
     private readonly IContainerRegistry? _containerRegistry;
+    private readonly HostScriptRuntimeController? _scriptController;
 
     // Per-target state
     private readonly ConcurrentDictionary<string, TargetSlot> _slots = new(StringComparer.Ordinal);
@@ -56,7 +58,8 @@ public sealed class SchedulerWorker
         SchedulerSettings settings,
         IContainerRegistry? containerRegistry = null,
         IDockerControllerRouter? router = null,
-        IModelTargetResolver? resolver = null)
+        IModelTargetResolver? resolver = null,
+        HostScriptRuntimeController? scriptController = null)
     {
         _channel = channel;
         _hostDocker = docker;
@@ -70,6 +73,7 @@ public sealed class SchedulerWorker
         _containerRegistry = containerRegistry;
         _router = router ?? new HostOnlyDockerControllerRouter(docker);
         _resolver = resolver ?? new HostOnlyTargetResolver();
+        _scriptController = scriptController;
     }
 
     public void Start(CancellationToken ct)
@@ -397,6 +401,92 @@ public sealed class SchedulerWorker
             transition = transition with { Status = "starting" };
             _activeTransitions[transitionId] = transition;
 
+            // Script runtime: start via the appropriate controller instead of Docker
+            if (targetRegisteredContainer?.RuntimeKind == RuntimeKind.Script)
+            {
+                var launcherPath = targetRegisteredContainer.LauncherPath
+                    ?? throw new InvalidOperationException($"Script runtime {targetRegisteredContainer.Id} has no LauncherPath");
+
+                int scriptPid;
+                try
+                {
+                    var isHost = string.Equals(slot.TargetId, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
+                    if (!isHost)
+                    {
+                        // Agent-hosted script: start via RemoteAgentDockerController
+                        var scriptController = _router.GetController(slot.TargetId);
+                        if (scriptController is not RemoteAgentDockerController remoteScriptController)
+                        {
+                            throw new InvalidOperationException($"Agent target '{slot.TargetId}' does not have a connected RemoteAgentDockerController");
+                        }
+                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRegisteredContainer.ContainerPort, ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // Host script: start via HostScriptRuntimeController
+                        if (_scriptController is null)
+                            throw new InvalidOperationException("HostScriptRuntimeController not available");
+
+                        var scriptResult = await _scriptController.StartScriptAsync(
+                            targetRegisteredContainer.Id, launcherPath, targetRegisteredContainer.ContainerPort, ct).ConfigureAwait(false);
+
+                        if (scriptResult.ErrorMessage is not null)
+                        {
+                            _logStore.Enqueue(LogLevel.Error, "Scheduler",
+                                $"Script start failed on {slot.TargetId} for model {targetModel}: {scriptResult.ErrorMessage}");
+
+                            FailAllForModel(targetModel, $"Script start failed: {scriptResult.ErrorMessage}");
+
+                            transition = transition with { Status = "complete" };
+                            _activeTransitions[transitionId] = transition;
+                            return;
+                        }
+
+                        scriptPid = scriptResult.Pid ?? 0;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logStore.Enqueue(LogLevel.Error, "Scheduler",
+                        $"Script start failed on {slot.TargetId} for model {targetModel}: {ex.Message}");
+
+                    FailAllForModel(targetModel, $"Script start failed: {ex.Message}");
+
+                    transition = transition with { Status = "complete" };
+                    _activeTransitions[transitionId] = transition;
+                    return;
+                }
+
+                var scriptKey = $"script:{targetRegisteredContainer.Id}";
+                var scriptPort = targetRegisteredContainer.ContainerPort;
+
+                // Wait for health
+                await _healthChecker.WaitForReadyAsync(scriptPort, ct).ConfigureAwait(false);
+
+                slot.ResidentModel = targetModel;
+                slot.ResidentContainerId = scriptKey;
+                slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
+
+                var scriptRunningKey = targetRegisteredRuntimeId ?? scriptKey;
+                slot.RunningContainers[scriptRunningKey] = new RunningContainerInfo
+                {
+                    Key = scriptRunningKey,
+                    RegisteredRuntimeId = targetRegisteredRuntimeId,
+                    ContainerName = targetRegisteredContainer.DisplayName ?? targetRegisteredContainer.Image,
+                    ContainerId = scriptKey
+                };
+
+                var switchDurationScript = (_clock.UtcNow - switchStart).TotalMilliseconds;
+                _statsTracker.RecordSwitch(switchDurationScript);
+
+                transition = transition with { Status = "complete" };
+                _activeTransitions[transitionId] = transition;
+
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Script switch complete on {slot.TargetId}: now running {targetModel} on port {scriptPort} ({switchDurationScript:F0}ms)");
+                return;
+            }
+
             var controller = _router.GetController(slot.TargetId);
             var startResult = await controller.StartContainerAsync(targetModel, ct).ConfigureAwait(false);
 
@@ -513,7 +603,17 @@ public sealed class SchedulerWorker
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Stopping incompatible container {info.ContainerName} on {slot.TargetId}");
 
-            await controller.StopContainerAsync(info.ContainerId, ct).ConfigureAwait(false);
+            // Script runtimes: dispatch stop to the correct controller
+            if (info.ContainerId.StartsWith("script:", StringComparison.Ordinal)
+                && info.RegisteredRuntimeId is not null)
+            {
+                await StopScriptRuntimeAsync(slot.TargetId, info.RegisteredRuntimeId, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await controller.StopContainerAsync(info.ContainerId, ct).ConfigureAwait(false);
+            }
+
             slot.RunningContainers.Remove(key);
 
             if (slot.ResidentContainerId == info.ContainerId)
@@ -533,7 +633,17 @@ public sealed class SchedulerWorker
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Stopping container {kv.Value.ContainerName} on {slot.TargetId}");
 
-            await controller.StopContainerAsync(kv.Value.ContainerId, ct).ConfigureAwait(false);
+            // Script runtimes: dispatch stop to the correct controller
+            if (kv.Value.ContainerId.StartsWith("script:", StringComparison.Ordinal)
+                && kv.Value.RegisteredRuntimeId is not null)
+            {
+                await StopScriptRuntimeAsync(slot.TargetId, kv.Value.RegisteredRuntimeId, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                await controller.StopContainerAsync(kv.Value.ContainerId, ct).ConfigureAwait(false);
+            }
+
             slot.RunningContainers.Remove(kv.Key);
         }
 
@@ -547,6 +657,50 @@ public sealed class SchedulerWorker
         yield return container.Image;
         if (!string.IsNullOrEmpty(container.DisplayName))
             yield return container.DisplayName;
+    }
+
+    /// <summary>
+    /// Stops a script runtime using the appropriate controller for its target.
+    /// Host targets use HostScriptRuntimeController (by registration id).
+    /// Agent targets use RemoteAgentDockerController.StopScriptAsync (by PID).
+    /// </summary>
+    private async Task StopScriptRuntimeAsync(string targetId, string registeredRuntimeId, CancellationToken ct)
+    {
+        var isHost = string.Equals(targetId, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
+
+        if (isHost)
+        {
+            if (_scriptController is not null)
+            {
+                await _scriptController.StopScriptAsync(registeredRuntimeId, ct).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        // Agent target: look up the registered runtime to get the PID, then stop via RemoteAgentDockerController
+        if (_containerRegistry is null)
+        {
+            _logger.LogWarning("Cannot stop agent script {RegId}: no container registry available", registeredRuntimeId);
+            return;
+        }
+
+        var runtime = await _containerRegistry.GetAsync(registeredRuntimeId, ct).ConfigureAwait(false);
+        if (runtime is null || !runtime.RuntimeProcessId.HasValue)
+        {
+            _logger.LogWarning("Cannot stop agent script {RegId}: runtime not found or has no PID", registeredRuntimeId);
+            return;
+        }
+
+        var controller = _router.GetController(targetId);
+        if (controller is RemoteAgentDockerController remoteController)
+        {
+            await remoteController.StopScriptAsync(runtime.RuntimeProcessId.Value, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            _logger.LogWarning("Cannot stop agent script {RegId}: controller for target {Target} is not a RemoteAgentDockerController",
+                registeredRuntimeId, targetId);
+        }
     }
 
     private async Task DrainCurrentModelAsync(TargetSlot slot, CancellationToken ct)

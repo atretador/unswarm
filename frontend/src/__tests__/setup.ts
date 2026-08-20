@@ -1,8 +1,17 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 afterEach(() => cleanup());
+
+// ── Wire httpClient to mockClient in tests ─────────────────────
+// Components import `client` from query-client.ts which now points to httpClient.
+// Tests spy on mockClient methods, so we alias the httpClient export to the same
+// object reference so vi.spyOn works as before.
+vi.mock("../lib/api/httpClient", async () => {
+  const { mockClient } = await import("../lib/api/mock");
+  return { httpClient: mockClient, BASE_URL: "http://localhost:5014" };
+});
 
 // ── localStorage polyfill (jsdom 30+ doesn't auto-provide) ──
 if (typeof globalThis.localStorage === "undefined") {

@@ -259,6 +259,9 @@ public sealed class AgentController : ControllerBase
 
         if (root.TryGetProperty("containers", out var containers) && containers.ValueKind == JsonValueKind.Array)
             connection.Containers = ParseContainers(containers);
+
+        if (root.TryGetProperty("scripts", out var scripts) && scripts.ValueKind == JsonValueKind.Array)
+            connection.Scripts = ParseScripts(scripts);
     }
 
     private static string? FormatGpuSummary(JsonElement gpuArray)
@@ -326,6 +329,49 @@ public sealed class AgentController : ControllerBase
                 ModelName = modelName,
                 Status = status,
                 Port = port
+            });
+        }
+
+        return result;
+    }
+
+    private static List<AgentScriptStatus> ParseScripts(JsonElement scriptArray)
+    {
+        var result = new List<AgentScriptStatus>();
+        foreach (var element in scriptArray.EnumerateArray())
+        {
+            if (element.ValueKind != JsonValueKind.Object)
+                continue;
+
+            var path = element.TryGetProperty("path", out var pathProp) && pathProp.ValueKind == JsonValueKind.String
+                ? pathProp.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(path))
+                continue;
+
+            string status = element.TryGetProperty("status", out var statusProp) && statusProp.ValueKind == JsonValueKind.String
+                ? statusProp.GetString() ?? ""
+                : "";
+
+            int pid = element.TryGetProperty("pid", out var pidProp) && pidProp.ValueKind != JsonValueKind.Null && pidProp.TryGetInt32(out var pidVal)
+                ? pidVal
+                : 0;
+
+            int port = element.TryGetProperty("port", out var portProp) && portProp.ValueKind != JsonValueKind.Null && portProp.TryGetInt32(out var portVal)
+                ? portVal
+                : 0;
+
+            long startTime = element.TryGetProperty("startTime", out var stProp) && stProp.ValueKind != JsonValueKind.Null && stProp.TryGetInt64(out var stVal)
+                ? stVal
+                : 0;
+
+            result.Add(new AgentScriptStatus
+            {
+                Path = path,
+                PID = pid,
+                Status = status,
+                Port = port,
+                StartTime = startTime
             });
         }
 

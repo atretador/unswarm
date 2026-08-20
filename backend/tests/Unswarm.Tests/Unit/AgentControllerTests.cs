@@ -231,6 +231,10 @@ public sealed class AgentControllerTests : IDisposable
                 {
                     new { id = "abc123", name = "my-model", status = "running", port = 8080 },
                     new { id = "def456", name = "other-model", status = "exited", port = (int?)null }
+                },
+                scripts = new object[]
+                {
+                    new { path = "/opt/scripts/model-a.sh", pid = 5678, status = "running", port = 9000, startTime = (long)1700000000000 }
                 }
             }
         }, JsonOptions);
@@ -260,6 +264,14 @@ public sealed class AgentControllerTests : IDisposable
         Assert.Equal(8080, agent.Containers[0].Port);
         Assert.Equal("exited", agent.Containers[1].Status);
         Assert.Null(agent.Containers[1].Port);
+
+        // Phase 3: scripts parsed from telemetry
+        Assert.Single(agent.Scripts);
+        Assert.Equal("/opt/scripts/model-a.sh", agent.Scripts[0].Path);
+        Assert.Equal(5678, agent.Scripts[0].PID);
+        Assert.Equal("running", agent.Scripts[0].Status);
+        Assert.Equal(9000, agent.Scripts[0].Port);
+        Assert.Equal(1700000000000, agent.Scripts[0].StartTime);
 
         socket.EnqueueReceive(WebSocketMessageType.Close, []);
         await task;

@@ -55,6 +55,14 @@ public sealed class InferenceProxy : IInferenceProxy
             }
         }
 
+        // Script runtimes: use mapped port directly (they don't appear in docker ps)
+        if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
+        {
+            var scriptPort = registered.MappedPort ?? registered.ContainerPort;
+            await _healthChecker.WaitForReadyAsync(scriptPort, ct).ConfigureAwait(false);
+            return await ProxyToPortAsync(request, scriptPort, ct).ConfigureAwait(false);
+        }
+
         var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
         var running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
 
@@ -117,6 +125,37 @@ public sealed class InferenceProxy : IInferenceProxy
         {
             registeredContainerId = await _containerRegistry
                 .GetContainerIdForModelAsync(request.ModelName, ct).ConfigureAwait(false);
+        }
+
+        // Script runtimes on agents don't appear in docker ps. If the registered runtime
+        // is a script, use its port directly and skip the container listing entirely.
+        if (registeredContainerId is not null && _containerRegistry is not null)
+        {
+            var registered = await _containerRegistry.GetAsync(registeredContainerId, ct).ConfigureAwait(false);
+            if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
+            {
+                var scriptPort = registered.MappedPort ?? registered.ContainerPort;
+                string rawScriptBody;
+                try
+                {
+                    rawScriptBody = await remote.InferAsync(scriptPort, request.OriginalJson, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Remote script inference failed for model {Model} on target {Target} port {Port}",
+                        request.ModelName, targetId, scriptPort);
+                    return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+                }
+
+                var scriptTokens = TryParseCompletionTokens(rawScriptBody);
+                return new InferenceResponse
+                {
+                    StatusCode = 200,
+                    ContentType = "application/json",
+                    Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
+                    TokensGenerated = scriptTokens
+                };
+            }
         }
 
         IReadOnlyList<ContainerInfo> containers;

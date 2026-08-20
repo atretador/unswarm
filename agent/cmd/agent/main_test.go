@@ -27,7 +27,7 @@ func discardLogger() *slog.Logger {
 // TestDispatcherRegistersChatCompletion verifies the chat_completion command is
 // registered on the dispatcher so benchmark/validation inference can be proxied.
 func TestDispatcherRegistersChatCompletion(t *testing.T) {
-	disp := setupDispatcher(nil, discardLogger())
+	disp := setupDispatcher(nil, nil, discardLogger())
 	if !disp.HasCommand(protocol.CmdChatCompletion) {
 		t.Fatalf("dispatcher does not have %q registered", protocol.CmdChatCompletion)
 	}
@@ -148,7 +148,7 @@ func TestSessionJoinsGoroutinesOnDisconnect(t *testing.T) {
 
 	baseline := runtime.NumGoroutine()
 
-	err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, sc, logger)
+	err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, nil, sc, logger)
 	if err == nil {
 		t.Fatal("expected session to end with an error after the backend closed the connection")
 	}
@@ -182,14 +182,14 @@ func TestSessionReconnectNoStaleWrites(t *testing.T) {
 	sc := sessionConfig{telemetryInterval: 5 * time.Millisecond, heartbeatInterval: 5 * time.Millisecond}
 
 	// Session 1: backend closes it.
-	if err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, sc, logger); err == nil {
+	if err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, nil, sc, logger); err == nil {
 		t.Fatal("session 1 should end with an error")
 	}
 
 	// Session 2: must connect and handshake cleanly (the fake backend closes
 	// it after ~2s of reads, so an error is expected — but not a connect or
 	// handshake failure).
-	err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, sc, logger)
+	err := runSession(context.Background(), wsClient, bo, cfg, disp, msgRouter, telem, nil, nil, sc, logger)
 	if err == nil {
 		t.Fatal("session 2 should end with an error after backend close")
 	}

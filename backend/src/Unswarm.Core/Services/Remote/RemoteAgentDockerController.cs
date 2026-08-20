@@ -176,7 +176,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
                     CpuPercent = GetDouble(element, "cpuPercent") ?? 0,
                     Uptime = GetLong(element, "uptime") ?? 0,
                     ErrorMessage = GetString(element, "errorMessage"),
-                    RegisteredRuntimeId = GetString(element, "registeredContainerId")
+                    RegisteredRuntimeId = GetString(element, "registeredRuntimeId") ?? GetString(element, "registeredContainerId")
                 });
             }
         }
@@ -342,6 +342,112 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         return data;
     }
 
+    /// <summary>Lists launcher scripts available on the remote agent.</summary>
+    public async Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new { command = "list_scripts" }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var result = new List<AgentScriptInfo>();
+        var p = response.Payload;
+        if (p is null || !p.HasValue)
+            return result;
+
+        if (p.Value.TryGetProperty("scripts", out var array) && array.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in array.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.Object)
+                    continue;
+
+                var path = GetString(element, "path");
+                if (string.IsNullOrEmpty(path))
+                    continue;
+
+                result.Add(new AgentScriptInfo
+                {
+                    Path = path,
+                    Name = GetString(element, "name") ?? string.Empty
+                });
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Starts a launcher script on the remote agent. Returns the PID.</summary>
+    public async Task<int> StartScriptAsync(string path, int port, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "start_script",
+            scriptPath = path,
+            scriptPort = port
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var p = response.Payload;
+        if (p is null || !p.HasValue)
+            throw new InvalidOperationException($"Agent '{_agentName}' returned an empty start_script result");
+
+        var error = GetString(p.Value, "error");
+        if (error is not null)
+            throw new InvalidOperationException($"Agent '{_agentName}' start_script failed: {error}");
+
+        var ok = GetBool(p.Value, "ok");
+        if (ok == false)
+            throw new InvalidOperationException($"Agent '{_agentName}' start_script returned failure");
+
+        return GetInt(p.Value, "pid") ?? 0;
+    }
+
+    /// <summary>Stops a launcher script on the remote agent by PID.</summary>
+    public async Task StopScriptAsync(int pid, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "stop_script",
+            pid
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var p = response.Payload;
+        if (p.HasValue)
+        {
+            var error = GetString(p.Value, "error");
+            if (error is not null)
+                throw new InvalidOperationException($"Agent '{_agentName}' stop_script failed: {error}");
+        }
+    }
+
+    /// <summary>Gets log lines from a launcher script on the remote agent.</summary>
+    public async Task<IReadOnlyList<string>> GetScriptLogsAsync(string path, int tailLines = 100, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "get_script_logs",
+            scriptPath = path,
+            tailLines
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var result = new List<string>();
+        var p = response.Payload;
+        if (p is null || !p.HasValue)
+            return result;
+
+        if (p.Value.TryGetProperty("logs", out var array) && array.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var element in array.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.String)
+                    result.Add(element.GetString() ?? string.Empty);
+            }
+        }
+
+        return result;
+    }
+
     private async Task<ContainerStartResult> ExecuteStartAsync(string command, string containerName, int containerPort, CancellationToken ct)
     {
         var payload = JsonSerializer.SerializeToElement(new
@@ -470,4 +576,13 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         "exited" or "stopped" => ContainerStatus.Stopped,
         _ => ContainerStatus.Error
     };
+}
+
+/// <summary>
+/// Lightweight descriptor for a launcher script on a remote agent.
+/// </summary>
+public sealed record AgentScriptInfo
+{
+    public required string Path { get; init; }
+    public required string Name { get; init; }
 }

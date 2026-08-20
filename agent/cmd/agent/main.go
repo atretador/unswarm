@@ -20,6 +20,7 @@ import (
 	"unswarm/agent/internal/dispatch"
 	"unswarm/agent/internal/docker"
 	"unswarm/agent/internal/protocol"
+	"unswarm/agent/internal/scripts"
 	"unswarm/agent/internal/telemetry"
 )
 
@@ -67,8 +68,14 @@ func main() {
 		logger.Warn("continuing without Docker connectivity")
 	}
 
+	// Set up script manager
+	scriptMgr := scripts.NewManager(cfg.ScriptsDir)
+	if scriptMgr.IsEnabled() {
+		logger.Info("script support enabled", "scripts_dir", cfg.ScriptsDir)
+	}
+
 	// Set up command dispatcher
-	disp := setupDispatcher(dockerHandler, logger)
+	disp := setupDispatcher(dockerHandler, scriptMgr, logger)
 
 	// Set up the message router (extension point for future inference
 	// message types proxied over the WebSocket).
@@ -91,12 +98,13 @@ func main() {
 		select {
 		case <-ctx.Done():
 			logger.Info("shutting down agent")
+			scriptMgr.Shutdown()
 			wsClient.Close()
 			return
 		default:
 		}
 
-		if err := runSession(ctx, wsClient, bo, cfg, disp, msgRouter, telemCollector, dockerHandler, defaultSessionConfig(), logger); err != nil {
+		if err := runSession(ctx, wsClient, bo, cfg, disp, msgRouter, telemCollector, dockerHandler, scriptMgr, defaultSessionConfig(), logger); err != nil {
 			logger.Error("session ended", "error", err)
 		}
 
@@ -132,6 +140,7 @@ func runSession(
 	msgRouter *dispatch.Router,
 	telemCollector *telemetry.Collector,
 	dockerHandler *docker.Handler,
+	scriptMgr *scripts.Manager,
 	sc sessionConfig,
 	logger *slog.Logger,
 ) error {
@@ -172,6 +181,18 @@ func runSession(
 			}
 			return nil
 		})
+		// Add script statuses to telemetry.
+		if scriptMgr != nil && scriptMgr.IsEnabled() {
+			for _, s := range scriptMgr.GetStatuses() {
+				payload.Scripts = append(payload.Scripts, protocol.ScriptTelemetry{
+					Path:      s.Path,
+					PID:       s.PID,
+					Status:    s.Status,
+					Port:      s.Port,
+					StartTime: s.StartTime,
+				})
+			}
+		}
 		env := protocol.MustEnvelope(protocol.TypeTelemetry, nil, strPtr(cfg.AgentName), payload)
 		if err := wsClient.Send(ctx, env); err != nil {
 			logger.Error("send telemetry", "error", err)
@@ -329,7 +350,7 @@ func errorResult(msg string) protocol.CommandResultPayload {
 }
 
 // setupDispatcher registers all command handlers.
-func setupDispatcher(dh *docker.Handler, logger *slog.Logger) *dispatch.Dispatcher {
+func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slog.Logger) *dispatch.Dispatcher {
 	d := dispatch.New()
 
 	// start_container
@@ -419,6 +440,49 @@ func setupDispatcher(dh *docker.Handler, logger *slog.Logger) *dispatch.Dispatch
 	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("chat completion", "port", p.Port, "jsonBytes", len(p.JsonBody))
 		return docker.ChatCompletion(ctx, p.Port, p.JsonBody)
+	})
+
+	// list_scripts
+	d.Register(protocol.CmdListScripts, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"scripts": []interface{}{}}}
+		}
+		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"scripts": scriptMgr.ListScripts()}}
+	})
+
+	// start_script
+	d.Register(protocol.CmdStartScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		pid, err := scriptMgr.StartScript(p.ScriptPath, p.ScriptPort)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"pid": pid}}
+	})
+
+	// stop_script
+	d.Register(protocol.CmdStopScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil {
+			return errorResult("script support not enabled")
+		}
+		if err := scriptMgr.StopScript(p.PID); err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true}
+	})
+
+	// get_script_logs
+	d.Register(protocol.CmdGetScriptLogs, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled")
+		}
+		logs, err := scriptMgr.GetScriptLogs(p.ScriptPath, p.TailLines)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"logs": logs}}
 	})
 
 	return d

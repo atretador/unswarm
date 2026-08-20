@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
-import { mockClient } from "./api";
+import { httpClient } from "./api";
 
-export const client = mockClient;
+export const client = httpClient;
 
 export const queryClient = new QueryClient({
   defaultOptions: {

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.BackgroundServices;
@@ -63,6 +64,41 @@ public sealed class IdleShutdownService : BackgroundService
                                 $"Failed to stop idle container {container.Id[..12]}: {ex.Message}");
                         }
                     }
+                }
+
+                // Script runtimes: check idle scripts and stop them
+                try
+                {
+                    var scriptController = scope.ServiceProvider.GetService<HostScriptRuntimeController>();
+                    var registry = scope.ServiceProvider.GetService<IContainerRegistry>();
+
+                    if (scriptController is not null && registry is not null)
+                    {
+                        var allRuntimes = await registry.ListAllAsync(stoppingToken);
+                        foreach (var runtime in allRuntimes.Where(r => r.RuntimeKind == RuntimeKind.Script && r.RuntimeProcessId.HasValue))
+                        {
+                            var uptime = scriptController.GetUptime(runtime.Id);
+                            if (uptime.HasValue && uptime.Value > idleThreshold)
+                            {
+                                logStore.Enqueue(LogLevel.Info, "IdleShutdown",
+                                    $"Shutting down idle script {runtime.Id[..Math.Min(12, runtime.Id.Length)]} (model: {runtime.Image}, uptime: {uptime.Value.TotalSeconds:F0}s)");
+
+                                try
+                                {
+                                    await scriptController.StopScriptAsync(runtime.Id, stoppingToken);
+                                }
+                                catch (Exception ex)
+                                {
+                                    logStore.Enqueue(LogLevel.Error, "IdleShutdown",
+                                        $"Failed to stop idle script {runtime.Id[..Math.Min(12, runtime.Id.Length)]}: {ex.Message}");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Error checking idle script runtimes");
                 }
 
                 await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);

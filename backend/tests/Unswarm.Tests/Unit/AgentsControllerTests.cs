@@ -344,4 +344,39 @@ public sealed class AgentsControllerTests
         var container = Assert.Single(agents[0].Containers);
         Assert.Equal("c1", container.ContainerId);
     }
+
+    [Fact]
+    public async Task List_AgentScriptsPassedThrough()
+    {
+        var connection = MakeConnection("gpu1");
+        connection.Scripts =
+        [
+            new AgentScriptStatus { Path = "/opt/scripts/model-a.sh", PID = 1234, Status = "running", Port = 9000, StartTime = 1700000000000 }
+        ];
+        _registry.Register("gpu1", connection, new FakeWebSocket());
+
+        var result = await CreateController().List(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var agents = Assert.IsAssignableFrom<List<AgentInfo>>(ok.Value);
+
+        var agent = Assert.Single(agents, a => a.Name == "gpu1");
+        var script = Assert.Single(agent.Scripts);
+        Assert.Equal("/opt/scripts/model-a.sh", script.Path);
+        Assert.Equal(1234, script.PID);
+        Assert.Equal("running", script.Status);
+        Assert.Equal(9000, script.Port);
+    }
+
+    [Fact]
+    public async Task List_HostHasEmptyScripts()
+    {
+        var result = await CreateController().List(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var agents = Assert.IsAssignableFrom<List<AgentInfo>>(ok.Value);
+
+        var host = agents[0];
+        Assert.Empty(host.Scripts);
+    }
 }

@@ -27,6 +27,8 @@ describe("Dashboard", () => {
     expect(screen.getByText("142ms")).toBeInTheDocument();
     // Queue depth = 2; use getAllByText since "2" appears in multiple stats
     expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Avg switch")).toBeInTheDocument();
+    expect(screen.getByText("2850ms")).toBeInTheDocument();
   });
 
   it("renders chart sections", async () => {
@@ -105,6 +107,9 @@ describe("Dashboard", () => {
         requestsPerMinute: [1, 2, 3],
         errorsLast24h: 0,
         tokensPerSecond: [10, 20, 30],
+        switchCount: 0,
+        lastSwitchMs: 0,
+        avgSwitchMs: 0,
       });
 
     render(
