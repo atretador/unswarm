@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentScriptStatus,
   BenchmarkResult,
   Container,
   LogEntry,
@@ -41,6 +42,9 @@ export interface UnswarmClient {
 
   /** Containers running on a specific agent (used by the manage-containers picker). */
   listAgentContainers(agentName: string): Promise<Container[]>;
+
+  /** Available launcher scripts on an agent (from agent's scripts_dir). */
+  listAgentScripts(agentName: string): Promise<AgentScriptStatus[]>;
 
   /** Run a benchmark against a model. Optional prompt overrides the default. */
   runBenchmark(modelId: string, prompt?: string): Promise<BenchmarkResult>;

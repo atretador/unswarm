@@ -46,6 +46,19 @@ public sealed class AgentsController : ControllerBase
         return Ok(agents);
     }
 
+    [HttpGet("{name}/scripts")]
+    public IActionResult ListAgentScripts(string name)
+    {
+        if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
+            return Ok(Array.Empty<AgentScriptStatus>());
+
+        var info = _registry.GetInfo(name);
+        if (info is null)
+            return NotFound(new { error = $"Agent '{name}' not found" });
+
+        return Ok(info.Scripts ?? []);
+    }
+
     [HttpGet("{name}/containers")]
     public async Task<IActionResult> ListAgentContainers(string name, CancellationToken ct)
     {

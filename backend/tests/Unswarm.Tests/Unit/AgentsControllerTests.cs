@@ -379,4 +379,44 @@ public sealed class AgentsControllerTests
         var host = agents[0];
         Assert.Empty(host.Scripts);
     }
+
+    [Fact]
+    public void ListAgentScripts_HostReturnsEmpty()
+    {
+        var result = CreateController().ListAgentScripts("host");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var scripts = Assert.IsAssignableFrom<IReadOnlyList<AgentScriptStatus>>(ok.Value);
+        Assert.Empty(scripts);
+    }
+
+    [Fact]
+    public void ListAgentScripts_RemoteAgentReturnsScripts()
+    {
+        var connection = MakeConnection("gpu1");
+        connection.Scripts =
+        [
+            new AgentScriptStatus { Path = "/opt/scripts/model-a.sh", PID = 1234, Status = "running", Port = 9000, StartTime = 1700000000000 },
+            new AgentScriptStatus { Path = "/opt/scripts/model-b.sh", PID = 5678, Status = "stopped", Port = 9001, StartTime = 1700000000000 }
+        ];
+        _registry.Register("gpu1", connection, new FakeWebSocket());
+
+        var result = CreateController().ListAgentScripts("gpu1");
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var scripts = Assert.IsAssignableFrom<IReadOnlyList<AgentScriptStatus>>(ok.Value);
+        Assert.Equal(2, scripts.Count);
+        Assert.Equal("/opt/scripts/model-a.sh", scripts[0].Path);
+        Assert.Equal("running", scripts[0].Status);
+        Assert.Equal("/opt/scripts/model-b.sh", scripts[1].Path);
+        Assert.Equal("stopped", scripts[1].Status);
+    }
+
+    [Fact]
+    public void ListAgentScripts_UnknownAgentReturnsNotFound()
+    {
+        var result = CreateController().ListAgentScripts("nonexistent");
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
 }

@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentScriptStatus,
   BenchmarkResult,
   Container,
   LastBenchmarkResult,
@@ -390,6 +391,7 @@ const AGENTS: Agent[] = [
       { containerId: "c2", modelName: "mistral-large-2", status: "starting", port: null },
       { containerId: "c3", modelName: "gemma-2-27b", status: "stopped", port: null },
     ],
+    scripts: [],
   },
   {
     name: "edge-node-1",
@@ -405,6 +407,9 @@ const AGENTS: Agent[] = [
     totalMemoryMb: 16384,
     cpuCores: 8,
     containers: [],
+    scripts: [
+      { path: "/opt/scripts/run_vllm.sh", pid: 0, status: "stopped", port: 0, startTime: 0 },
+    ],
   },
 ];
 
@@ -766,6 +771,11 @@ export const mockClient: UnswarmClient = {
     await delay(rand(80, 200));
     const list = AGENT_CONTAINERS[agentName] ?? [];
     return list.map((c) => ({ ...c }));
+  },
+  async listAgentScripts(agentName: string) {
+    await delay(rand(80, 200));
+    const agent = AGENTS.find((a) => a.name === agentName);
+    return (agent?.scripts ?? []).map((s) => ({ ...s }));
   },
   async runBenchmark(modelId: string, prompt?: string) {
     await delay(rand(200, 500));

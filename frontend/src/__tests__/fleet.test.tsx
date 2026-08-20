@@ -103,7 +103,7 @@ describe("Fleet", () => {
     // Host is expanded by default (its registered containers are visible)
     expect(await screen.findByText("llama-server")).toBeInTheDocument();
     // Remote is collapsed — its empty state is hidden
-    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
+    expect(screen.queryByText("No runtimes registered")).not.toBeInTheDocument();
   });
 
   it("shows registered containers inside the host section", async () => {
@@ -155,7 +155,7 @@ describe("Fleet", () => {
     expect(screen.getByText("gemma-2-27b")).toBeInTheDocument();
   });
 
-  it("empty agent shows a Manage containers button once expanded", async () => {
+  it("empty agent shows a Manage runtimes button once expanded", async () => {
     seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
@@ -169,14 +169,14 @@ describe("Fleet", () => {
     });
 
     // edge-node-1 has no registered containers → empty state, hidden while collapsed
-    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
+    expect(screen.queryByText("No runtimes registered")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
 
     await waitFor(() => {
-      expect(screen.getByText("No containers registered")).toBeInTheDocument();
+      expect(screen.getByText("No runtimes registered")).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Manage containers" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage runtimes" })).toBeInTheDocument();
   });
 
   it("manage modal opens and lists the agent's running containers", async () => {
@@ -193,10 +193,10 @@ describe("Fleet", () => {
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
 
-    const manageButton = await screen.findByRole("button", { name: "Manage containers" });
+    const manageButton = await screen.findByRole("button", { name: "Manage runtimes" });
     await user.click(manageButton);
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     expect(dialog).toBeInTheDocument();
 
     await waitFor(() => {
@@ -219,9 +219,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
@@ -262,9 +262,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("container-1")).toBeInTheDocument();
     });
@@ -293,9 +293,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
@@ -328,9 +328,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
@@ -357,9 +357,9 @@ describe("Fleet", () => {
     });
 
     // Open the manage modal for the host via the header action
-    await user.click(screen.getByRole("button", { name: "Manage containers on host" }));
+    await user.click(screen.getByRole("button", { name: "Manage runtimes on host" }));
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on host/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
     await waitFor(() => {
       expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
     });
@@ -630,9 +630,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await user.keyboard("{Escape}");
     await waitFor(() => {
       expect(dialog).not.toBeInTheDocument();
@@ -655,8 +655,8 @@ describe("Fleet", () => {
     expect(document.body.style.overflow).not.toBe("hidden");
 
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
-    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
 
     // While open: background scroll locked
     expect(document.body.style.overflow).toBe("hidden");
@@ -683,11 +683,11 @@ describe("Fleet", () => {
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
 
-    const manageButton = await screen.findByRole("button", { name: "Manage containers" });
+    const manageButton = await screen.findByRole("button", { name: "Manage runtimes" });
     manageButton.focus();
     await user.click(manageButton);
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
@@ -786,9 +786,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
@@ -800,7 +800,7 @@ describe("Fleet", () => {
       expect(screen.getByText("Image not found")).toBeInTheDocument();
     });
     // Dialog stays open so the user can retry
-    expect(screen.getByRole("dialog", { name: /manage containers on edge-node-1/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: /manage runtimes on edge-node-1/i })).toBeInTheDocument();
   });
 
   it("shows a created-status container with the starting dot variant", async () => {
@@ -833,9 +833,9 @@ describe("Fleet", () => {
       expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
     });
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
-    await user.click(await screen.findByRole("button", { name: "Manage containers" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(within(dialog).getByText("spawn-me")).toBeInTheDocument();
     });
@@ -865,8 +865,8 @@ describe("Fleet", () => {
       expect(screen.getByText("llama-server")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "Manage containers on host" }));
-    const dialog = await screen.findByRole("dialog", { name: /manage containers on host/i });
+    await user.click(screen.getByRole("button", { name: "Manage runtimes on host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
     await waitFor(() => {
       expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
     });
@@ -953,6 +953,7 @@ describe("Fleet", () => {
           { containerId: "c2", modelName: "mistral-large-2", status: "starting", port: null },
           { containerId: "c3", modelName: "gemma-2-27b", status: "stopped", port: null },
         ],
+        scripts: [],
       },
     ]);
   }
@@ -1037,10 +1038,11 @@ describe("Fleet", () => {
         containers: [
           { containerId: "c1", modelName: "llama-3.1-70b", status: "stopped", port: null },
         ],
+        scripts: [],
       },
     ];
     vi.spyOn(mockClient, "listAgents").mockImplementation(async () =>
-      agents.map((a) => ({ ...a, containers: a.containers.map((c) => ({ ...c })) })),
+      agents.map((a) => ({ ...a, containers: a.containers.map((c) => ({ ...c })), scripts: a.scripts.map((s) => ({ ...s })) })),
     );
     // The mock keeps module state (prior tests may have removed rc1), so stub the
     // start directly: onSuccess only invalidates — the returned value is unused.
@@ -1139,6 +1141,7 @@ describe("Fleet", () => {
         containers: [
           { containerId: "cX", modelName: "some-other-container", status: "running", port: 9999 },
         ],
+        scripts: [],
       },
     ]);
     render(

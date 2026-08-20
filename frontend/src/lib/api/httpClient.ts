@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentScriptStatus,
   BenchmarkResult,
   Container,
   LogEntry,
@@ -160,6 +161,12 @@ export const httpClient: UnswarmClient = {
   listAgentContainers(agentName: string) {
     return request<Container[]>(
       `/api/agents/${encodeURIComponent(agentName)}/containers`,
+    );
+  },
+
+  listAgentScripts(agentName: string) {
+    return request<AgentScriptStatus[]>(
+      `/api/agents/${encodeURIComponent(agentName)}/scripts`,
     );
   },
 

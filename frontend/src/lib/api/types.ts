@@ -80,6 +80,9 @@ export interface RegisteredRuntime {
   createdAt: string;
   lastDiscoveredAt: string | null;
   discoveredModels: Model[];
+  runtimeKind?: 'container' | 'script';
+  launcherPath?: string | null;
+  runtimeProcessId?: number | null;
 }
 
 // ─── Fleet / Containers ───────────────────────────────────────────
@@ -118,6 +121,14 @@ export interface AgentContainerStatus {
   port: number | null;
 }
 
+export interface AgentScriptStatus {
+  path: string;
+  pid: number;
+  status: string; // "running" | "stopped"
+  port: number;
+  startTime: number; // unix ms
+}
+
 export interface Agent {
   name: string;
   connectionId: string | null;
@@ -132,6 +143,7 @@ export interface Agent {
   totalMemoryMb: number;
   cpuCores: number;
   containers: AgentContainerStatus[];
+  scripts: AgentScriptStatus[];
 }
 
 // ─── Queue ────────────────────────────────────────────────────────
