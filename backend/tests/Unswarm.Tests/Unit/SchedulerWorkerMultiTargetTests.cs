@@ -392,7 +392,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
     private async Task RegisterContainerAsync(string id, string image, IReadOnlyList<string> canRunAlongWith)
     {
-        await _containerRegistry.CreateAsync(new RegisteredContainer
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = id,
             DisplayName = image,

@@ -324,27 +324,27 @@ public sealed class SchedulerWorker
         try
         {
             // Resolve the target model's registered container (if any)
-            string? targetRegisteredContainerId = null;
-            RegisteredContainer? targetRegisteredContainer = null;
+            string? targetRegisteredRuntimeId = null;
+            RegisteredRuntime? targetRegisteredContainer = null;
             if (_containerRegistry is not null)
             {
-                targetRegisteredContainerId = await _containerRegistry
+                targetRegisteredRuntimeId = await _containerRegistry
                     .GetContainerIdForModelAsync(targetModel, ct).ConfigureAwait(false);
 
-                if (targetRegisteredContainerId is not null)
+                if (targetRegisteredRuntimeId is not null)
                 {
                     targetRegisteredContainer = await _containerRegistry
-                        .GetAsync(targetRegisteredContainerId, ct).ConfigureAwait(false);
+                        .GetAsync(targetRegisteredRuntimeId, ct).ConfigureAwait(false);
                 }
             }
 
             // Container-aware: same registered container as resident → instant switch
-            if (targetRegisteredContainerId is not null
-                && slot.ResidentRegisteredContainerId is not null
-                && targetRegisteredContainerId == slot.ResidentRegisteredContainerId)
+            if (targetRegisteredRuntimeId is not null
+                && slot.ResidentRegisteredRuntimeId is not null
+                && targetRegisteredRuntimeId == slot.ResidentRegisteredRuntimeId)
             {
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (same container {slot.ResidentRegisteredContainerId})");
+                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (same container {slot.ResidentRegisteredRuntimeId})");
 
                 slot.ResidentModel = targetModel;
 
@@ -360,15 +360,15 @@ public sealed class SchedulerWorker
             }
 
             // Target container already running on this target (compatible set) → instant
-            if (targetRegisteredContainerId is not null
-                && slot.RunningContainers.TryGetValue(targetRegisteredContainerId, out var alreadyRunning))
+            if (targetRegisteredRuntimeId is not null
+                && slot.RunningContainers.TryGetValue(targetRegisteredRuntimeId, out var alreadyRunning))
             {
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
                     $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
 
                 slot.ResidentModel = targetModel;
                 slot.ResidentContainerId = alreadyRunning.ContainerId;
-                slot.ResidentRegisteredContainerId = targetRegisteredContainerId;
+                slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
 
                 var switchDurationMs2 = (_clock.UtcNow - switchStart).TotalMilliseconds;
                 _statsTracker.RecordSwitch(switchDurationMs2);
@@ -421,13 +421,13 @@ public sealed class SchedulerWorker
 
             slot.ResidentModel = targetModel;
             slot.ResidentContainerId = startResult.ContainerId;
-            slot.ResidentRegisteredContainerId = targetRegisteredContainerId;
+            slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
 
-            var runningKey = targetRegisteredContainerId ?? $"legacy:{startResult.ContainerId}";
+            var runningKey = targetRegisteredRuntimeId ?? $"legacy:{startResult.ContainerId}";
             slot.RunningContainers[runningKey] = new RunningContainerInfo
             {
                 Key = runningKey,
-                RegisteredContainerId = targetRegisteredContainerId,
+                RegisteredRuntimeId = targetRegisteredRuntimeId,
                 ContainerName = targetRegisteredContainer?.Image ?? targetModel,
                 ContainerId = startResult.ContainerId
             };
@@ -460,7 +460,7 @@ public sealed class SchedulerWorker
     /// With no registry info (legacy path) or an empty canRunAlongWith set, behaves as
     /// single-container mode: every other running container on the target is stopped.
     /// </summary>
-    private async Task StopIncompatibleContainersAsync(TargetSlot slot, RegisteredContainer? targetContainer, CancellationToken ct)
+    private async Task StopIncompatibleContainersAsync(TargetSlot slot, RegisteredRuntime? targetContainer, CancellationToken ct)
     {
         // No registry or no mapping for the target model → conservative single-slot behavior
         if (_containerRegistry is null || targetContainer is null)
@@ -478,17 +478,17 @@ public sealed class SchedulerWorker
             var info = kv.Value;
 
             // Same registered container → never stop
-            if (info.RegisteredContainerId is not null && info.RegisteredContainerId == targetContainer.Id)
+            if (info.RegisteredRuntimeId is not null && info.RegisteredRuntimeId == targetContainer.Id)
                 continue;
 
             // Legacy running container (no registry info) → cannot prove compatibility → stop
-            if (info.RegisteredContainerId is null)
+            if (info.RegisteredRuntimeId is null)
             {
                 toStop.Add(kv.Key);
                 continue;
             }
 
-            var runningEntity = await _containerRegistry.GetAsync(info.RegisteredContainerId, ct).ConfigureAwait(false);
+            var runningEntity = await _containerRegistry.GetAsync(info.RegisteredRuntimeId, ct).ConfigureAwait(false);
             if (runningEntity is null)
             {
                 toStop.Add(kv.Key);
@@ -520,7 +520,7 @@ public sealed class SchedulerWorker
             {
                 slot.ResidentModel = null;
                 slot.ResidentContainerId = null;
-                slot.ResidentRegisteredContainerId = null;
+                slot.ResidentRegisteredRuntimeId = null;
             }
         }
     }
@@ -539,10 +539,10 @@ public sealed class SchedulerWorker
 
         slot.ResidentModel = null;
         slot.ResidentContainerId = null;
-        slot.ResidentRegisteredContainerId = null;
+        slot.ResidentRegisteredRuntimeId = null;
     }
 
-    private static IEnumerable<string> ContainerNames(RegisteredContainer container)
+    private static IEnumerable<string> ContainerNames(RegisteredRuntime container)
     {
         yield return container.Image;
         if (!string.IsNullOrEmpty(container.DisplayName))

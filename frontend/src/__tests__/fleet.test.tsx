@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Fleet from "../features/fleet";
-import type { RegisterContainerPayload, RegisteredContainer } from "../lib/api/types";
+import type { RegisterRuntimePayload, RegisteredRuntime } from "../lib/api/types";
 
 beforeEach(() => {
   setMockLatency(0);
@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 
 /** Registered containers seeded for the host agent (rc1 ready + rc2 starting). */
-const HOST_RCS: RegisteredContainer[] = [
+const HOST_RCS: RegisteredRuntime[] = [
   {
     id: "rc1",
     displayName: "llama-server",
@@ -37,7 +37,7 @@ const HOST_RCS: RegisteredContainer[] = [
         lastBenchmark: null,
         contextWindow: 128000,
         containerImage: "unswarm/llama3.1:70b-q4km",
-        sourceContainerId: "rc1",
+        sourceRuntimeId: "rc1",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -51,7 +51,7 @@ const HOST_RCS: RegisteredContainer[] = [
         lastBenchmark: null,
         contextWindow: 8192,
         containerImage: "unswarm/gemma2:27b-q4ks",
-        sourceContainerId: "rc1",
+        sourceRuntimeId: "rc1",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -75,16 +75,16 @@ const HOST_RCS: RegisteredContainer[] = [
 ];
 
 /** Restore the default registered-containers seed so tests stay independent. */
-function seedRegisteredContainers(rcs: RegisteredContainer[]) {
+function seedRegisteredRuntimes(rcs: RegisteredRuntime[]) {
   // The mock keeps module state; force a fresh value via the public API:
   // delete the real seed, then re-register the desired fixtures.
-  // Simpler: stub listRegisteredContainers for the test's lifetime.
-  vi.spyOn(mockClient, "listRegisteredContainers").mockResolvedValue([...rcs]);
+  // Simpler: stub listRegisteredRuntimes for the test's lifetime.
+  vi.spyOn(mockClient, "listRegisteredRuntimes").mockResolvedValue([...rcs]);
 }
 
 describe("Fleet", () => {
   it("renders agent sections with host first, remotes collapsed", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -107,7 +107,7 @@ describe("Fleet", () => {
   });
 
   it("shows registered containers inside the host section", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -122,7 +122,7 @@ describe("Fleet", () => {
   });
 
   it("shows registration statuses on cards", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -139,7 +139,7 @@ describe("Fleet", () => {
   });
 
   it("shows discovered model count and chips", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -156,7 +156,7 @@ describe("Fleet", () => {
   });
 
   it("empty agent shows a Manage containers button once expanded", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -180,7 +180,7 @@ describe("Fleet", () => {
   });
 
   it("manage modal opens and lists the agent's running containers", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -207,7 +207,7 @@ describe("Fleet", () => {
   });
 
   it("filter narrows the container list in the manage modal", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -234,7 +234,7 @@ describe("Fleet", () => {
   });
 
   it("manage modal shows pagination for many containers", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const manyContainers = Array.from({ length: 20 }, (_, i) => ({
       id: `c${i + 1}`,
       modelId: "",
@@ -279,9 +279,9 @@ describe("Fleet", () => {
   });
 
   it("selecting a container registers it with agent + prefilled image", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    const registerSpy = vi.spyOn(mockClient, "registerContainer");
+    const registerSpy = vi.spyOn(mockClient, "registerRuntime");
 
     render(
       <TestWrapper>
@@ -308,7 +308,7 @@ describe("Fleet", () => {
     await waitFor(() => {
       expect(registerSpy).toHaveBeenCalledTimes(1);
     });
-    const payload = registerSpy.mock.calls[0][0] as RegisterContainerPayload;
+    const payload = registerSpy.mock.calls[0][0] as RegisterRuntimePayload;
     expect(payload.agent).toBe("edge-node-1");
     expect(payload.image).toBe("vllm-serve");
     expect(payload.containerPort).toBe(8080);
@@ -316,7 +316,7 @@ describe("Fleet", () => {
   });
 
   it("modal closes after a successful registration", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -344,7 +344,7 @@ describe("Fleet", () => {
   });
 
   it("shows a registered badge for already-registered containers", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -369,10 +369,10 @@ describe("Fleet", () => {
     expect(within(dialog).getAllByText("registered").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("rediscover button calls rediscoverContainer", async () => {
-    seedRegisteredContainers(HOST_RCS);
+  it("rediscover button calls rediscoverRuntime", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    const rediscoverSpy = vi.spyOn(mockClient, "rediscoverContainer");
+    const rediscoverSpy = vi.spyOn(mockClient, "rediscoverRuntime");
 
     render(
       <TestWrapper>
@@ -394,9 +394,9 @@ describe("Fleet", () => {
   });
 
   it("rediscover failure renders inline error and can be dismissed", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    vi.spyOn(mockClient, "rediscoverContainer").mockRejectedValue(
+    vi.spyOn(mockClient, "rediscoverRuntime").mockRejectedValue(
       new Error("Model discovery failed: connection refused"),
     );
 
@@ -425,7 +425,7 @@ describe("Fleet", () => {
   });
 
   it("benchmark button calls runBenchmark with the first discovered model", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     const benchmarkSpy = vi.spyOn(mockClient, "runBenchmark");
 
@@ -451,7 +451,7 @@ describe("Fleet", () => {
   });
 
   it("benchmark result chip appears inline after running", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     vi.spyOn(mockClient, "runBenchmark").mockResolvedValueOnce({
       id: "b-test",
@@ -484,7 +484,7 @@ describe("Fleet", () => {
   });
 
   it("benchmark is disabled when no models discovered", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
         <Fleet />
@@ -522,7 +522,7 @@ describe("Fleet", () => {
           }
         : rc,
     );
-    seedRegisteredContainers(validatingRcs);
+    seedRegisteredRuntimes(validatingRcs);
     render(
       <TestWrapper>
         <Fleet />
@@ -596,7 +596,7 @@ describe("Fleet", () => {
   });
 
   it("add agent modal opens with connection instructions", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -618,7 +618,7 @@ describe("Fleet", () => {
   });
 
   it("esc closes the manage modal", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -640,7 +640,7 @@ describe("Fleet", () => {
   });
 
   it("locks body scroll while a modal is open and restores it on close", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -670,7 +670,7 @@ describe("Fleet", () => {
   });
 
   it("traps focus inside the dialog and restores focus to the trigger on close", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -719,9 +719,9 @@ describe("Fleet", () => {
   });
 
   it("delete requires confirmation: first click does not delete, confirm does", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    const deleteSpy = vi.spyOn(mockClient, "deleteRegisteredContainer");
+    const deleteSpy = vi.spyOn(mockClient, "deleteRuntime");
 
     render(
       <TestWrapper>
@@ -748,9 +748,9 @@ describe("Fleet", () => {
   });
 
   it("cancel resets the delete confirmation without deleting", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    const deleteSpy = vi.spyOn(mockClient, "deleteRegisteredContainer");
+    const deleteSpy = vi.spyOn(mockClient, "deleteRuntime");
 
     render(
       <TestWrapper>
@@ -772,9 +772,9 @@ describe("Fleet", () => {
   });
 
   it("shows an error message when registering a container fails", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
-    vi.spyOn(mockClient, "registerContainer").mockRejectedValueOnce(new Error("Image not found"));
+    vi.spyOn(mockClient, "registerRuntime").mockRejectedValueOnce(new Error("Image not found"));
 
     render(
       <TestWrapper>
@@ -804,7 +804,7 @@ describe("Fleet", () => {
   });
 
   it("shows a created-status container with the starting dot variant", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     vi.spyOn(mockClient, "listAgentContainers").mockResolvedValueOnce([
       {
@@ -853,7 +853,7 @@ describe("Fleet", () => {
     const caseRcs = HOST_RCS.map((rc) =>
       rc.id === "rc1" ? { ...rc, runtimeContainerId: "C1" } : rc,
     );
-    seedRegisteredContainers(caseRcs);
+    seedRegisteredRuntimes(caseRcs);
     const user = userEvent.setup();
     render(
       <TestWrapper>
@@ -889,7 +889,7 @@ describe("Fleet", () => {
           }
         : rc,
     );
-    seedRegisteredContainers([...edgeRcs, HOST_RCS[0]]);
+    seedRegisteredRuntimes([...edgeRcs, HOST_RCS[0]]);
     render(
       <TestWrapper initialEntries={["/fleet?focus=rc3"]}>
         <Fleet />
@@ -915,7 +915,7 @@ describe("Fleet", () => {
 
   it("deep link focus does not expand agents that do not own the container", async () => {
     // focus=rc1 belongs to host (already expanded by default) — edge-node-1 must stay collapsed.
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper initialEntries={["/fleet?focus=rc1"]}>
         <Fleet />
@@ -968,7 +968,7 @@ describe("Fleet", () => {
   }
 
   it("shows a red runtime dot and a Start button when the container is stopped", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     seedHostTelemetry("stopped");
     render(
       <TestWrapper>
@@ -991,11 +991,11 @@ describe("Fleet", () => {
     expect(within(card).queryByRole("button", { name: /^restart$/i })).not.toBeInTheDocument();
   });
 
-  it("clicking Start calls startRegisteredContainer with the registered id", async () => {
-    seedRegisteredContainers(HOST_RCS);
+  it("clicking Start calls startRegisteredRuntime with the registered id", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
     seedHostTelemetry("stopped");
     const user = userEvent.setup();
-    const startSpy = vi.spyOn(mockClient, "startRegisteredContainer");
+    const startSpy = vi.spyOn(mockClient, "startRegisteredRuntime");
 
     render(
       <TestWrapper>
@@ -1016,7 +1016,7 @@ describe("Fleet", () => {
   });
 
   it("refreshes the runtime dot after a successful start", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     // Shared, mutable agent telemetry: listAgents refetches this same array after
     // invalidation, so flipping the status here is what a live backend would report.
@@ -1044,7 +1044,7 @@ describe("Fleet", () => {
     );
     // The mock keeps module state (prior tests may have removed rc1), so stub the
     // start directly: onSuccess only invalidates — the returned value is unused.
-    vi.spyOn(mockClient, "startRegisteredContainer").mockImplementation(async (id) => {
+    vi.spyOn(mockClient, "startRegisteredRuntime").mockImplementation(async (id) => {
       agents[0].containers[0].status = "running";
       return HOST_RCS.find((rc) => rc.id === id) ?? HOST_RCS[0];
     });
@@ -1074,7 +1074,7 @@ describe("Fleet", () => {
   });
 
   it("shows a green runtime dot with Stop/Restart when the container is running", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     seedHostTelemetry("running");
     render(
       <TestWrapper>
@@ -1096,7 +1096,7 @@ describe("Fleet", () => {
   });
 
   it("shows a yellow dot for a transitional runtime status with no lifecycle buttons", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     seedHostTelemetry("starting");
     render(
       <TestWrapper>
@@ -1120,7 +1120,7 @@ describe("Fleet", () => {
   });
 
   it("shows a gray dot for unknown runtime status but still offers Start", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     // c1 not present in telemetry → no match → unknown
     vi.spyOn(mockClient, "listAgents").mockResolvedValue([
       {
@@ -1161,10 +1161,10 @@ describe("Fleet", () => {
   });
 
   it("rediscover failure on a stopped container shows the start-first hint", async () => {
-    seedRegisteredContainers(HOST_RCS);
+    seedRegisteredRuntimes(HOST_RCS);
     seedHostTelemetry("stopped");
     const user = userEvent.setup();
-    vi.spyOn(mockClient, "rediscoverContainer").mockRejectedValueOnce(new Error("Container is not responding"));
+    vi.spyOn(mockClient, "rediscoverRuntime").mockRejectedValueOnce(new Error("Container is not responding"));
 
     render(
       <TestWrapper>

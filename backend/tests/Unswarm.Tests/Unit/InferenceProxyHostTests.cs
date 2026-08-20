@@ -10,7 +10,7 @@ namespace Unswarm.Tests.Unit;
 
 /// <summary>
 /// Host-path inference proxy tests: a benchmark on a REGISTERED container must hit
-/// that container (via RegisteredContainerId label OR image/display-name fallback).
+/// that container (via RegisteredRuntimeId label OR image/display-name fallback).
 /// </summary>
 public sealed class InferenceProxyHostTests
 {
@@ -28,7 +28,7 @@ public sealed class InferenceProxyHostTests
         string image = "vllm-serve",
         string displayName = "vllm-serve")
     {
-        var reg = new RegisteredContainer
+        var reg = new RegisteredRuntime
         {
             Id = "reg-host-1",
             DisplayName = displayName,
@@ -68,11 +68,11 @@ public sealed class InferenceProxyHostTests
 
     /// <summary>
     /// G1: a host benchmark on a REGISTERED container must hit that container.
-    /// The fake's ListedContainers carries the RegisteredContainerId label (as the
+    /// The fake's ListedContainers carries the RegisteredRuntimeId label (as the
     /// real DockerController.ListContainersAsync would from the unswarm.registry label).
     /// </summary>
     [Fact]
-    public async Task InvokeAsync_HostRegisteredContainer_MatchesByRegisteredContainerId()
+    public async Task InvokeAsync_HostRegisteredContainer_MatchesByRegisteredRuntimeId()
     {
         var (regId, _) = await SeedHostRegisteredContainer();
 
@@ -91,7 +91,7 @@ public sealed class InferenceProxyHostTests
                 ModelName = "vllm-serve",
                 Status = ContainerStatus.Running,
                 Port = port,
-                RegisteredContainerId = regId
+                RegisteredRuntimeId = regId
             }
         ];
 
@@ -128,7 +128,7 @@ public sealed class InferenceProxyHostTests
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
 
-        // No RegisteredContainerId — label missing (e.g. pre-registration container).
+        // No RegisteredRuntimeId — label missing (e.g. pre-registration container).
         _host.ListedContainers =
         [
             new ContainerInfo

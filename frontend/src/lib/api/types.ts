@@ -40,7 +40,7 @@ export interface Model {
   lastBenchmark: LastBenchmarkResult | null;
   contextWindow: number;
   containerImage: string;
-  sourceContainerId: string | null;
+  sourceRuntimeId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -55,16 +55,18 @@ export type ContainerRegistrationStatus =
   | "ready"
   | "error";
 
-export interface RegisterContainerPayload {
+export interface RegisterRuntimePayload {
   displayName: string;
   image: string;   // container name (pre-provisioned)
   containerPort: number;
   agent?: string;   // "host" or agent name, default "host"
   canRunAlongWith?: string[];   // same-agent container names this may run with
   extraLabels?: Record<string, string>;
+  runtimeKind?: 'container' | 'script';
+  launcherPath?: string;
 }
 
-export interface RegisteredContainer {
+export interface RegisteredRuntime {
   id: string;
   displayName: string;
   image: string;

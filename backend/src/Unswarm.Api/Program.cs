@@ -121,6 +121,13 @@ await using (var scope = app.Services.CreateAsyncScope())
     // Prompt library table: EnsureCreated only creates when the DB is entirely new.
     // Existing installs that upgrade past the P9 cutoff need this table created here.
     await EnsurePromptsTableAsync(db);
+
+    // RegisteredContainers → RegisteredRuntimes column drift repair. Older installs
+    // may have the RegisteredContainers table without the RuntimeKind/LauncherPath/
+    // RuntimeProcessId columns (added when script runtimes were introduced), and may
+    // still have a RegisteredContainerId column in ContainerModelMappings instead of
+    // the renamed RegisteredRuntimeId. Idempotent — harmless on fresh DBs.
+    await EnsureRuntimeColumnsAsync(db);
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────
@@ -305,6 +312,79 @@ static async Task EnsurePromptsTableAsync(UnswarmDbContext db)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"Unswarm startup: failed to create Prompts table: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// SQLite-only, idempotent drift repair for the RegisteredContainers → RegisteredRuntimes
+/// schema evolution. Adds missing columns (RuntimeKind, LauncherPath, RuntimeProcessId)
+/// and renames RegisteredContainerId → RegisteredRuntimeId in ContainerModelMappings.
+/// Non-fatal on failure — repairs on the next start.
+/// </summary>
+static async Task EnsureRuntimeColumnsAsync(UnswarmDbContext db)
+{
+    try
+    {
+        var conn = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync();
+
+        // ── 1. RegisteredContainers: add columns if missing ──────────────
+        var rcColumns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(\"RegisteredContainers\")";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                rcColumns.Add(reader.GetString(1)); // column name
+            }
+        }
+
+        var rcAdds = new List<string>();
+        if (!rcColumns.Contains("RuntimeKind", StringComparer.OrdinalIgnoreCase))
+            rcAdds.Add("ADD COLUMN \"RuntimeKind\" TEXT NOT NULL DEFAULT 'Container'");
+        if (!rcColumns.Contains("LauncherPath", StringComparer.OrdinalIgnoreCase))
+            rcAdds.Add("ADD COLUMN \"LauncherPath\" TEXT NULL");
+        if (!rcColumns.Contains("RuntimeProcessId", StringComparer.OrdinalIgnoreCase))
+            rcAdds.Add("ADD COLUMN \"RuntimeProcessId\" INTEGER NULL");
+
+        foreach (var add in rcAdds)
+        {
+            Console.WriteLine($"RegisteredContainers schema repair: {add}");
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE \"RegisteredContainers\" {add}";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // ── 2. ContainerModelMappings: rename RegisteredContainerId → RegisteredRuntimeId ──
+        var cmmColumns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(\"ContainerModelMappings\")";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                cmmColumns.Add(reader.GetString(1));
+            }
+        }
+
+        if (cmmColumns.Contains("RegisteredContainerId", StringComparer.OrdinalIgnoreCase)
+            && !cmmColumns.Contains("RegisteredRuntimeId", StringComparer.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("ContainerModelMappings schema repair: RENAME COLUMN RegisteredContainerId → RegisteredRuntimeId");
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE \"ContainerModelMappings\" RENAME COLUMN \"RegisteredContainerId\" TO \"RegisteredRuntimeId\"";
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to repair runtime schema: {ex.Message}");
     }
     finally
     {

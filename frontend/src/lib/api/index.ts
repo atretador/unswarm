@@ -15,8 +15,8 @@ export type {
   QueueItem,
   QueueItemStatus,
   QueueSnapshot,
-  RegisterContainerPayload,
-  RegisteredContainer,
+  RegisterRuntimePayload,
+  RegisteredRuntime,
   Settings,
   StatsSummary,
 } from "./types";

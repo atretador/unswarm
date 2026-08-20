@@ -148,11 +148,11 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
 
         {/* Source container deep link */}
         <div className="ml-auto flex shrink-0 items-center gap-1">
-          {model.sourceContainerId ? (
-            <Tooltip content={`View ${model.sourceContainerId} on the Fleet page`}>
+          {model.sourceRuntimeId ? (
+            <Tooltip content={`View ${model.sourceRuntimeId} on the Fleet page`}>
               <Link
-                to={`/fleet?focus=${encodeURIComponent(model.sourceContainerId)}`}
-                aria-label={`View source container ${model.sourceContainerId} on the Fleet page`}
+                to={`/fleet?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
+                aria-label={`View source runtime ${model.sourceRuntimeId} on the Fleet page`}
                 className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
               >
                 <ExternalLink className="size-3.5" />

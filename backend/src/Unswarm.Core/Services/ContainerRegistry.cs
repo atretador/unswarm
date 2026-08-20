@@ -23,27 +23,27 @@ public sealed class ContainerRegistry : IContainerRegistry
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<RegisteredContainer>> ListAllAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<RegisteredRuntime>> ListAllAsync(CancellationToken ct = default)
     {
         await using var db = _dbFactory();
-        var entities = await db.RegisteredContainers
+        var entities = await db.RegisteredRuntimes
             .OrderBy(r => r.DisplayName)
             .ToListAsync(ct).ConfigureAwait(false);
         return entities.Select(MapToModel).ToList();
     }
 
-    public async Task<RegisteredContainer?> GetAsync(string id, CancellationToken ct = default)
+    public async Task<RegisteredRuntime?> GetAsync(string id, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
-        var entity = await db.RegisteredContainers.FindAsync([id], ct).ConfigureAwait(false);
+        var entity = await db.RegisteredRuntimes.FindAsync([id], ct).ConfigureAwait(false);
         return entity is null ? null : MapToModel(entity);
     }
 
-    public async Task<RegisteredContainer> CreateAsync(RegisteredContainer container, CancellationToken ct = default)
+    public async Task<RegisteredRuntime> CreateAsync(RegisteredRuntime container, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
         var now = _clock.UtcNow;
-        var entity = new RegisteredContainerEntity
+        var entity = new RegisteredRuntimeEntity
         {
             Id = container.Id,
             DisplayName = container.DisplayName,
@@ -54,6 +54,9 @@ public sealed class ContainerRegistry : IContainerRegistry
             ExtraLabelsJson = JsonSerializer.Serialize(container.ExtraLabels),
             Agent = string.IsNullOrWhiteSpace(container.Agent) ? "host" : container.Agent,
             CanRunAlongWithJson = JsonSerializer.Serialize(container.CanRunAlongWith ?? []),
+            RuntimeKind = container.RuntimeKind.ToString(),
+            LauncherPath = container.LauncherPath,
+            RuntimeProcessId = container.RuntimeProcessId,
             Status = nameof(ContainerRegistrationStatus.Registered),
             RuntimeContainerId = container.RuntimeContainerId,
             MappedPort = container.MappedPort,
@@ -62,21 +65,24 @@ public sealed class ContainerRegistry : IContainerRegistry
             UpdatedAt = now,
             LastDiscoveredAt = container.LastDiscoveredAt
         };
-        db.RegisteredContainers.Add(entity);
+        db.RegisteredRuntimes.Add(entity);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         _logger.LogInformation("Created registered container {DisplayName} ({Id})", entity.DisplayName, entity.Id);
         return MapToModel(entity);
     }
 
-    public async Task<RegisteredContainer> UpdateAsync(string id, RegisteredContainer container, CancellationToken ct = default)
+    public async Task<RegisteredRuntime> UpdateAsync(string id, RegisteredRuntime container, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
-        var entity = await db.RegisteredContainers.FindAsync([id], ct).ConfigureAwait(false)
+        var entity = await db.RegisteredRuntimes.FindAsync([id], ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {id} not found");
 
         entity.DisplayName = container.DisplayName;
         entity.Image = container.Image;
         entity.ContainerPort = container.ContainerPort;
+        entity.RuntimeKind = container.RuntimeKind.ToString();
+        entity.LauncherPath = container.LauncherPath;
+        entity.RuntimeProcessId = container.RuntimeProcessId;
         entity.GpuDevices = container.GpuDevices;
         entity.MemoryLimitMb = container.MemoryLimitMb;
         entity.ExtraLabelsJson = JsonSerializer.Serialize(container.ExtraLabels);
@@ -97,10 +103,10 @@ public sealed class ContainerRegistry : IContainerRegistry
     public async Task DeleteAsync(string id, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
-        var entity = await db.RegisteredContainers.FindAsync([id], ct).ConfigureAwait(false);
+        var entity = await db.RegisteredRuntimes.FindAsync([id], ct).ConfigureAwait(false);
         if (entity is not null)
         {
-            db.RegisteredContainers.Remove(entity);
+            db.RegisteredRuntimes.Remove(entity);
             await db.SaveChangesAsync(ct).ConfigureAwait(false);
             _logger.LogInformation("Deleted registered container {Id}", id);
         }
@@ -111,14 +117,14 @@ public sealed class ContainerRegistry : IContainerRegistry
         await using var db = _dbFactory();
 
         var exists = await db.ContainerModelMappings
-            .AnyAsync(cm => cm.RegisteredContainerId == registeredContainerId && cm.ModelId == modelId, ct)
+            .AnyAsync(cm => cm.RegisteredRuntimeId == registeredContainerId && cm.ModelId == modelId, ct)
             .ConfigureAwait(false);
         if (exists) return;
 
         var mapping = new ContainerModelMappingEntity
         {
             Id = Guid.NewGuid().ToString("N"),
-            RegisteredContainerId = registeredContainerId,
+            RegisteredRuntimeId = registeredContainerId,
             ModelId = modelId,
             DiscoveredAt = _clock.UtcNow
         };
@@ -131,7 +137,7 @@ public sealed class ContainerRegistry : IContainerRegistry
     {
         await using var db = _dbFactory();
         var mapping = await db.ContainerModelMappings
-            .FirstOrDefaultAsync(cm => cm.RegisteredContainerId == registeredContainerId && cm.ModelId == modelId, ct)
+            .FirstOrDefaultAsync(cm => cm.RegisteredRuntimeId == registeredContainerId && cm.ModelId == modelId, ct)
             .ConfigureAwait(false);
         if (mapping is not null)
         {
@@ -145,7 +151,7 @@ public sealed class ContainerRegistry : IContainerRegistry
     {
         await using var db = _dbFactory();
         return await db.ContainerModelMappings
-            .Where(cm => cm.RegisteredContainerId == registeredContainerId)
+            .Where(cm => cm.RegisteredRuntimeId == registeredContainerId)
             .Select(cm => cm.ModelId)
             .ToListAsync(ct).ConfigureAwait(false);
     }
@@ -159,21 +165,24 @@ public sealed class ContainerRegistry : IContainerRegistry
             .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.Model.Name == modelName, ct)
             .ConfigureAwait(false);
         if (mapping is not null)
-            return mapping.RegisteredContainerId;
+            return mapping.RegisteredRuntimeId;
 
-        // Fallback: check ModelEntity.SourceContainerId directly
+        // Fallback: check ModelEntity.SourceRuntimeId directly
         var model = await db.Models
             .FirstOrDefaultAsync(m => m.Name == modelName || m.Id == modelName, ct)
             .ConfigureAwait(false);
-        return model?.SourceContainerId;
+        return model?.SourceRuntimeId;
     }
 
-    private static RegisteredContainer MapToModel(RegisteredContainerEntity e) => new()
+    private static RegisteredRuntime MapToModel(RegisteredRuntimeEntity e) => new()
     {
         Id = e.Id,
         DisplayName = e.DisplayName,
         Image = e.Image,
         ContainerPort = e.ContainerPort,
+        RuntimeKind = Enum.TryParse<RuntimeKind>(e.RuntimeKind, out var rk) ? rk : RuntimeKind.Container,
+        LauncherPath = e.LauncherPath,
+        RuntimeProcessId = e.RuntimeProcessId,
         GpuDevices = e.GpuDevices,
         MemoryLimitMb = e.MemoryLimitMb,
         ExtraLabels = JsonSerializer.Deserialize<Dictionary<string, string>>(e.ExtraLabelsJson) ?? [],

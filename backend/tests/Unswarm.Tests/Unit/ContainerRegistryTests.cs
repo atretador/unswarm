@@ -51,7 +51,7 @@ public sealed class ContainerRegistryTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private static RegisteredContainer MakeContainer(
+    private static RegisteredRuntime MakeContainer(
         string? id = null,
         string displayName = "Test",
         string image = "test:latest") => new()

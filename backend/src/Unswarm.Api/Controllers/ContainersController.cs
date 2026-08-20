@@ -105,13 +105,13 @@ public sealed class ContainersController : ControllerBase
 
     [HttpPost("register")]
     public async Task<IActionResult> Register(
-        [FromBody] ContainerRegistrationRequestDto dto,
+        [FromBody] RegisterRuntimeRequestDto dto,
         CancellationToken ct)
     {
         try
         {
             var result = await _registrationService.RegisterAsync(dto.ToRequest(), ct);
-            return Ok(RegisteredContainerResponse.From(result.Container, result.DiscoveredModels));
+            return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
         catch (Exception ex)
         {
@@ -123,7 +123,7 @@ public sealed class ContainersController : ControllerBase
     public async Task<IActionResult> ListRegistered(CancellationToken ct)
     {
         var containers = await _containerRegistry.ListAllAsync(ct);
-        var responses = new List<RegisteredContainerResponse>();
+        var responses = new List<RegisteredRuntimeResponse>();
 
         foreach (var container in containers)
         {
@@ -144,11 +144,11 @@ public sealed class ContainersController : ControllerBase
     }
 
     /// <summary>
-    /// Builds a RegisteredContainerResponse, populating each discovered model's
+    /// Builds a RegisteredRuntimeResponse, populating each discovered model's
     /// LastBenchmark from the model's latest persisted benchmark (same pattern as
     /// ModelsController.List/Get).
     /// </summary>
-    private async Task<RegisteredContainerResponse> BuildRegisteredResponseAsync(RegisteredContainer container, CancellationToken ct)
+    private async Task<RegisteredRuntimeResponse> BuildRegisteredResponseAsync(RegisteredRuntime container, CancellationToken ct)
     {
         var modelIds = await _containerRegistry.GetModelIdsForContainerAsync(container.Id, ct);
         var models = new List<ModelResponse>();
@@ -162,7 +162,7 @@ public sealed class ContainersController : ControllerBase
             models.Add(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
         }
 
-        return new RegisteredContainerResponse
+        return new RegisteredRuntimeResponse
         {
             Id = container.Id,
             DisplayName = container.DisplayName,
@@ -186,7 +186,7 @@ public sealed class ContainersController : ControllerBase
         try
         {
             var result = await _registrationService.RediscoverAsync(id, ct);
-            return Ok(RegisteredContainerResponse.From(result.Container, result.DiscoveredModels));
+            return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
         catch (InvalidOperationException ex)
         {
@@ -197,7 +197,7 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("registered/{id}/start")]
     public async Task<IActionResult> StartRegistered(string id, CancellationToken ct)
     {
-        RegisteredContainerWithModels result;
+        RegisteredRuntimeWithModels result;
         try
         {
             result = await _registrationService.StartAsync(id, ct);

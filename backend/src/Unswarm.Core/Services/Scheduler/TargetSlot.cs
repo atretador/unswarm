@@ -24,7 +24,7 @@ public sealed class TargetSlot
     public string? ResidentContainerId { get; set; }
 
     /// <summary>Registered container id the resident model maps to (null for legacy models).</summary>
-    public string? ResidentRegisteredContainerId { get; set; }
+    public string? ResidentRegisteredRuntimeId { get; set; }
 
     /// <summary>
     /// Containers this scheduler has started on the target, keyed by registered container id
@@ -36,7 +36,7 @@ public sealed class TargetSlot
 public sealed record RunningContainerInfo
 {
     public required string Key { get; init; }
-    public string? RegisteredContainerId { get; init; }
+    public string? RegisteredRuntimeId { get; init; }
     public required string ContainerName { get; init; }
     public required string ContainerId { get; init; }
 }

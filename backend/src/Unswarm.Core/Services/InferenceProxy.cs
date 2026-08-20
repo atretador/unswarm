@@ -43,7 +43,7 @@ public sealed class InferenceProxy : IInferenceProxy
         // 2. Fallback: model name/image match against the registered container's
         //    Image/DisplayName (mirrors remote resolution semantics).
         // 3. Legacy: standalone model-name label path.
-        RegisteredContainer? registered = null;
+        RegisteredRuntime? registered = null;
         string? registeredContainerId = null;
         if (_containerRegistry is not null)
         {
@@ -62,7 +62,7 @@ public sealed class InferenceProxy : IInferenceProxy
         if (!string.IsNullOrEmpty(registeredContainerId))
         {
             // Match by registry label first.
-            container = running.FirstOrDefault(c => c.RegisteredContainerId == registeredContainerId);
+            container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
 
             // Fallback: match by runtime container id or by the registered container's
             // image/display name (the container name on docker ps).
@@ -87,7 +87,7 @@ public sealed class InferenceProxy : IInferenceProxy
         return await ProxyToPortAsync(request, port, ct).ConfigureAwait(false);
     }
 
-    private static IReadOnlySet<string> RegisteredContainerNames(RegisteredContainer registered)
+    private static IReadOnlySet<string> RegisteredContainerNames(RegisteredRuntime registered)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (!string.IsNullOrEmpty(registered.Image)) names.Add(registered.Image);
@@ -134,7 +134,7 @@ public sealed class InferenceProxy : IInferenceProxy
         if (!string.IsNullOrEmpty(registeredContainerId))
         {
             container = containers.FirstOrDefault(c =>
-                c.RegisteredContainerId == registeredContainerId
+                c.RegisteredRuntimeId == registeredContainerId
                 && c.Status == ContainerStatus.Running
                 && c.Port.HasValue);
         }

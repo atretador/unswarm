@@ -34,7 +34,7 @@ public sealed class InferenceProxyRemoteTests
 
     private async Task<(string RegId, string ModelId)> SeedRemoteModel()
     {
-        var reg = new RegisteredContainer
+        var reg = new RegisteredRuntime
         {
             Id = "reg-remote-1",
             DisplayName = "vllm-serve",
@@ -66,7 +66,7 @@ public sealed class InferenceProxyRemoteTests
                 ModelName = "vllm-serve",
                 Status = ContainerStatus.Running,
                 Port = 9090,
-                RegisteredContainerId = reg.Id
+                RegisteredRuntimeId = reg.Id
             }
         ];
 

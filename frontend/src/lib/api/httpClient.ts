@@ -6,8 +6,8 @@ import type {
   Model,
   Prompt,
   QueueSnapshot,
-  RegisterContainerPayload,
-  RegisteredContainer,
+  RegisterRuntimePayload,
+  RegisteredRuntime,
   Settings,
   StatsSummary,
 } from "./types";
@@ -92,38 +92,38 @@ export const httpClient: UnswarmClient = {
   },
 
   // ── Container Registration ───────────────────────────────────
-  registerContainer(data: RegisterContainerPayload) {
-    return request<RegisteredContainer>("/api/containers/register", {
+  registerRuntime(data: RegisterRuntimePayload) {
+    return request<RegisteredRuntime>("/api/containers/register", {
       method: "POST",
       body: JSON.stringify(data),
     });
   },
 
-  listRegisteredContainers() {
-    return request<RegisteredContainer[]>("/api/containers/registered");
+  listRegisteredRuntimes() {
+    return request<RegisteredRuntime[]>("/api/containers/registered");
   },
 
-  getRegisteredContainer(id: string) {
-    return request<RegisteredContainer>(
+  getRegisteredRuntime(id: string) {
+    return request<RegisteredRuntime>(
       `/api/containers/registered/${encodeURIComponent(id)}`,
     );
   },
 
-  rediscoverContainer(id: string) {
-    return request<RegisteredContainer>(
+  rediscoverRuntime(id: string) {
+    return request<RegisteredRuntime>(
       `/api/containers/registered/${encodeURIComponent(id)}/rediscover`,
       { method: "POST" },
     );
   },
 
-  startRegisteredContainer(id: string) {
-    return request<RegisteredContainer>(
+  startRegisteredRuntime(id: string) {
+    return request<RegisteredRuntime>(
       `/api/containers/registered/${encodeURIComponent(id)}/start`,
       { method: "POST" },
     );
   },
 
-  deleteRegisteredContainer(id: string, deleteModels = false) {
+  deleteRuntime(id: string, deleteModels = false) {
     const qs = deleteModels ? "?deleteModels=true" : "";
     return request<void>(
       `/api/containers/registered/${encodeURIComponent(id)}${qs}`,

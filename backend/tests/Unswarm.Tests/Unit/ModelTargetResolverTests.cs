@@ -16,7 +16,7 @@ public sealed class ModelTargetResolverTests
 
     private async Task RegisterContainerAsync(string id, string image, string agent = "host")
     {
-        await _registry.CreateAsync(new RegisteredContainer
+        await _registry.CreateAsync(new RegisteredRuntime
         {
             Id = id,
             DisplayName = image,

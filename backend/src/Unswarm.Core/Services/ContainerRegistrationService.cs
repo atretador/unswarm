@@ -49,12 +49,12 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
     }
 
-    public async Task<RegisteredContainerWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
+    public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
     {
         var now = _clock.UtcNow;
         var containerId = Guid.NewGuid().ToString("N");
 
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = containerId,
             DisplayName = string.IsNullOrEmpty(request.DisplayName) ? request.Image : request.DisplayName,
@@ -83,7 +83,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     /// On any start/health failure the container is persisted with Status=Error and the
     /// errored state is returned (consistent with RediscoverAsync's semantics).
     /// </summary>
-    public async Task<RegisteredContainerWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
+    public async Task<RegisteredRuntimeWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
     {
         var container = await _registry.GetAsync(registeredContainerId, ct).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"Registered container {registeredContainerId} not found");
@@ -160,7 +160,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 // discovery, not the last start.
             }, ct).ConfigureAwait(false);
 
-            return new RegisteredContainerWithModels
+            return new RegisteredRuntimeWithModels
             {
                 Container = container,
                 DiscoveredModels = await LoadModelsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false)
@@ -177,7 +177,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         }
     }
 
-    public async Task<RegisteredContainerWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
+    public async Task<RegisteredRuntimeWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
     {
         var container = await _registry.GetAsync(registeredContainerId, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {registeredContainerId} not found");
@@ -217,7 +217,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 ErrorMessage = $"Model discovery failed: {ex.Message}"
             }, ct).ConfigureAwait(false);
 
-            return new RegisteredContainerWithModels
+            return new RegisteredRuntimeWithModels
             {
                 Container = errored,
                 DiscoveredModels = []
@@ -266,7 +266,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             LastDiscoveredAt = _clock.UtcNow
         }, ct).ConfigureAwait(false);
 
-        return new RegisteredContainerWithModels
+        return new RegisteredRuntimeWithModels
         {
             Container = container,
             DiscoveredModels = models
@@ -316,7 +316,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                         Status = ModelStatus.Deprecated,
                         ContextWindow = model.ContextWindow,
                         ContainerImage = model.ContainerImage,
-                        SourceContainerId = null,
+                        SourceRuntimeId = null,
                         CreatedAt = model.CreatedAt,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -335,14 +335,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     /// Agent names are compared case-insensitively to stay consistent with
     /// ExecutionTarget.FromId (which parses "agent:&lt;name&gt;" case-insensitively).
     /// </summary>
-    private IDockerController GetController(RegisteredContainer container)
+    private IDockerController GetController(RegisteredRuntime container)
     {
         var isHost = string.IsNullOrWhiteSpace(container.Agent)
             || string.Equals(container.Agent, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
         return _router.GetController(isHost ? ExecutionTarget.HostId : ExecutionTarget.ForAgent(container.Agent!).Id);
     }
 
-    private async Task<RegisteredContainerWithModels> StartAndDiscoverAsync(RegisteredContainer container, CancellationToken ct)
+    private async Task<RegisteredRuntimeWithModels> StartAndDiscoverAsync(RegisteredRuntime container, CancellationToken ct)
     {
         try
         {
@@ -525,11 +525,11 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         throw new TimeoutException($"Container health check timed out on agent '{agentName}'");
     }
 
-    private async Task<RegisteredContainerWithModels> DiscoverAndRegisterModelsAsync(RegisteredContainer container, CancellationToken ct)
+    private async Task<RegisteredRuntimeWithModels> DiscoverAndRegisterModelsAsync(RegisteredRuntime container, CancellationToken ct)
     {
         if (!container.MappedPort.HasValue)
         {
-            return new RegisteredContainerWithModels
+            return new RegisteredRuntimeWithModels
             {
                 Container = container,
                 DiscoveredModels = []
@@ -570,7 +570,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         _logger.LogInformation("Container {Id} ready with {Count} discovered models", container.Id, models.Count);
 
-        return new RegisteredContainerWithModels
+        return new RegisteredRuntimeWithModels
         {
             Container = container,
             DiscoveredModels = models
@@ -593,7 +593,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Id = discoveredModel.ModelId,
             Name = discoveredModel.ModelId,
             ContainerImage = string.Empty,
-            SourceContainerId = registeredContainerId,
+            SourceRuntimeId = registeredContainerId,
             Status = ModelStatus.Ready,
             CreatedAt = now,
             UpdatedAt = now
@@ -617,14 +617,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Status = ModelStatus.Ready,
             ContextWindow = existing.ContextWindow,
             ContainerImage = existing.ContainerImage,
-            SourceContainerId = registeredContainerId,
+            SourceRuntimeId = registeredContainerId,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = now
         };
         return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
     }
 
-    private async Task<RegisteredContainerWithModels> FailAsync(RegisteredContainer container, string errorMessage, CancellationToken ct)
+    private async Task<RegisteredRuntimeWithModels> FailAsync(RegisteredRuntime container, string errorMessage, CancellationToken ct)
     {
         container = await _registry.UpdateAsync(container.Id, container with
         {
@@ -632,7 +632,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             ErrorMessage = errorMessage
         }, ct).ConfigureAwait(false);
 
-        return new RegisteredContainerWithModels
+        return new RegisteredRuntimeWithModels
         {
             Container = container,
             DiscoveredModels = []
@@ -666,7 +666,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         Status = status,
         ContextWindow = model.ContextWindow,
         ContainerImage = model.ContainerImage,
-        SourceContainerId = model.SourceContainerId,
+        SourceRuntimeId = model.SourceRuntimeId,
         CreatedAt = model.CreatedAt,
         UpdatedAt = model.UpdatedAt
     };

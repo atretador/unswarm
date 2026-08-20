@@ -5,26 +5,26 @@ namespace Unswarm.Tests.Fakes;
 
 public sealed class FakeContainerRegistry : IContainerRegistry
 {
-    private readonly Dictionary<string, RegisteredContainer> _containers = new();
+    private readonly Dictionary<string, RegisteredRuntime> _containers = new();
     private readonly Dictionary<string, HashSet<string>> _modelMappings = new();
     private readonly Dictionary<string, string> _modelToContainer = new();
 
-    public List<RegisteredContainer> CreatedContainers { get; } = [];
+    public List<RegisteredRuntime> CreatedContainers { get; } = [];
     public List<string> DeletedContainerIds { get; } = [];
 
-    public Task<IReadOnlyList<RegisteredContainer>> ListAllAsync(CancellationToken ct = default)
+    public Task<IReadOnlyList<RegisteredRuntime>> ListAllAsync(CancellationToken ct = default)
     {
         var list = _containers.Values.OrderBy(c => c.DisplayName).ToList();
-        return Task.FromResult<IReadOnlyList<RegisteredContainer>>(list);
+        return Task.FromResult<IReadOnlyList<RegisteredRuntime>>(list);
     }
 
-    public Task<RegisteredContainer?> GetAsync(string id, CancellationToken ct = default)
+    public Task<RegisteredRuntime?> GetAsync(string id, CancellationToken ct = default)
     {
         _containers.TryGetValue(id, out var container);
         return Task.FromResult(container);
     }
 
-    public Task<RegisteredContainer> CreateAsync(RegisteredContainer container, CancellationToken ct = default)
+    public Task<RegisteredRuntime> CreateAsync(RegisteredRuntime container, CancellationToken ct = default)
     {
         _containers[container.Id] = container;
         _modelMappings[container.Id] = [];
@@ -32,7 +32,7 @@ public sealed class FakeContainerRegistry : IContainerRegistry
         return Task.FromResult(container);
     }
 
-    public Task<RegisteredContainer> UpdateAsync(string id, RegisteredContainer container, CancellationToken ct = default)
+    public Task<RegisteredRuntime> UpdateAsync(string id, RegisteredRuntime container, CancellationToken ct = default)
     {
         _containers[id] = container;
         return Task.FromResult(container);

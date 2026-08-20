@@ -176,7 +176,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
                     CpuPercent = GetDouble(element, "cpuPercent") ?? 0,
                     Uptime = GetLong(element, "uptime") ?? 0,
                     ErrorMessage = GetString(element, "errorMessage"),
-                    RegisteredContainerId = GetString(element, "registeredContainerId")
+                    RegisteredRuntimeId = GetString(element, "registeredContainerId")
                 });
             }
         }

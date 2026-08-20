@@ -60,7 +60,7 @@ public sealed class AgentsController : ControllerBase
         return Ok(list.Select(ContainerResponse.FromContainerInfo).ToList());
     }
 
-    private async Task<AgentInfo> BuildHostInfoAsync(IReadOnlyList<RegisteredContainer> allRegistered, CancellationToken ct)
+    private async Task<AgentInfo> BuildHostInfoAsync(IReadOnlyList<RegisteredRuntime> allRegistered, CancellationToken ct)
     {
         var containers = await _router.GetController(ExecutionTarget.HostId).ListContainersAsync(ct).ConfigureAwait(false);
 
@@ -71,7 +71,7 @@ public sealed class AgentsController : ControllerBase
             Hostname = Environment.MachineName,
             OsPlatform = Environment.OSVersion.Platform.ToString(),
             CpuCores = Environment.ProcessorCount,
-            Containers = FilterRegisteredContainers(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList()
+            Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList()
         };
     }
 
@@ -80,7 +80,7 @@ public sealed class AgentsController : ControllerBase
     /// ContainerIds are matched case-insensitively against registered runtime ids;
     /// names are matched case-insensitively against registered images.
     /// </summary>
-    private static AgentInfo FilterAgentContainers(AgentInfo info, IReadOnlyList<RegisteredContainer> allRegistered)
+    private static AgentInfo FilterAgentContainers(AgentInfo info, IReadOnlyList<RegisteredRuntime> allRegistered)
     {
         var registry = new RegisteredContainerSet(allRegistered, info.Name);
 
@@ -109,15 +109,15 @@ public sealed class AgentsController : ControllerBase
     /// A container is kept if its Id matches a registered RuntimeContainerId, or if
     /// its ModelName/ModelId match a registered Image (container name).
     /// </summary>
-    private static IReadOnlyList<ContainerInfo> FilterRegisteredContainers(
+    private static IReadOnlyList<ContainerInfo> FilterRegisteredRuntimes(
         IReadOnlyList<ContainerInfo> containers,
-        IReadOnlyList<RegisteredContainer> allRegistered,
+        IReadOnlyList<RegisteredRuntime> allRegistered,
         string agentName)
     {
         var registry = new RegisteredContainerSet(allRegistered, agentName);
 
         return containers
-            .Where(c => registry.IsRegistered(c.Id, c.ModelName, c.ModelId, c.RegisteredContainerId))
+            .Where(c => registry.IsRegistered(c.Id, c.ModelName, c.ModelId, c.RegisteredRuntimeId))
             .ToList();
     }
 
@@ -136,7 +136,7 @@ public sealed class AgentsController : ControllerBase
         // Map: registered container id (case-insensitive) → has registered runtime id.
         private readonly HashSet<string> _registeredWithRuntime = new(StringComparer.OrdinalIgnoreCase);
 
-        public RegisteredContainerSet(IReadOnlyList<RegisteredContainer> allRegistered, string agentName)
+        public RegisteredContainerSet(IReadOnlyList<RegisteredRuntime> allRegistered, string agentName)
         {
             foreach (var registered in allRegistered)
             {
@@ -177,7 +177,7 @@ public sealed class AgentsController : ControllerBase
                 || (!string.IsNullOrEmpty(modelId) && _imageNames.Contains(modelId));
         }
 
-        private static bool MatchesAgent(RegisteredContainer registered, string agentName)
+        private static bool MatchesAgent(RegisteredRuntime registered, string agentName)
         {
             if (string.IsNullOrWhiteSpace(registered.Agent))
                 return string.Equals(agentName, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);

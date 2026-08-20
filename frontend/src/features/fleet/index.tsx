@@ -48,7 +48,7 @@ import type {
   Container,
   ContainerRegistrationStatus,
   Model,
-  RegisteredContainer,
+  RegisteredRuntime,
 } from "../../lib/api/types";
 
 // ─── Status semantics ─────────────────────────────────────────────
@@ -105,7 +105,7 @@ const RUNTIME_LABEL: Record<RuntimeSignal, string> = {
 /** Find the runtime telemetry status for a registered container on its agent. */
 function runtimeStatusFor(
   agentContainers: Agent["containers"],
-  rc: RegisteredContainer,
+  rc: RegisteredRuntime,
 ): string | null {
   const id = rc.runtimeContainerId?.toLowerCase();
   const image = rc.image.toLowerCase();
@@ -145,7 +145,7 @@ function relativeTime(iso: string | null): string {
 }
 
 /** A container counts as "already registered" when name/id matches image or runtimeContainerId (case-insensitive, matching backend OrdinalIgnoreCase). */
-function isContainerRegistered(rcs: RegisteredContainer[], agentName: string, c: Container): boolean {
+function isContainerRegistered(rcs: RegisteredRuntime[], agentName: string, c: Container): boolean {
   const name = c.modelName.toLowerCase();
   const id = c.id.toLowerCase();
   return rcs.some(
@@ -358,7 +358,7 @@ function ManageContainersModal({
   agentName: string;
   open: boolean;
   onClose: () => void;
-  registered: RegisteredContainer[];
+  registered: RegisteredRuntime[];
 }) {
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
@@ -381,7 +381,7 @@ function ManageContainersBody({
 }: {
   agentName: string;
   onClose: () => void;
-  registered: RegisteredContainer[];
+  registered: RegisteredRuntime[];
 }) {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
@@ -397,7 +397,7 @@ function ManageContainersBody({
 
   const registerMutation = useMutation({
     mutationFn: (payload: { displayName: string; image: string }) =>
-      client.registerContainer({
+      client.registerRuntime({
         displayName: payload.displayName,
         image: payload.image,
         containerPort: 8080,
@@ -749,7 +749,7 @@ function RegisteredContainerCard({
   highlight = false,
   runtimeStatus = null,
 }: {
-  container: RegisteredContainer;
+  container: RegisteredRuntime;
   /** When true, briefly ring the card (deep-link focus). */
   highlight?: boolean;
   /** Runtime docker status from the owning agent's telemetry (may be null = unknown). */
@@ -781,7 +781,7 @@ function RegisteredContainerCard({
   };
 
   const startMutation = useMutation({
-    mutationFn: (id: string) => client.startRegisteredContainer(id),
+    mutationFn: (id: string) => client.startRegisteredRuntime(id),
     onSuccess: invalidate,
   });
 
@@ -796,7 +796,7 @@ function RegisteredContainerCard({
   });
 
   const rediscoverMutation = useMutation({
-    mutationFn: (id: string) => client.rediscoverContainer(id),
+    mutationFn: (id: string) => client.rediscoverRuntime(id),
     onSuccess: () => {
       setRediscoverError(null);
       invalidate();
@@ -808,7 +808,7 @@ function RegisteredContainerCard({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.deleteRegisteredContainer(id),
+    mutationFn: (id: string) => client.deleteRuntime(id),
     onSuccess: invalidate,
   });
 
@@ -1089,7 +1089,7 @@ function AgentSection({
   onAddAgent,
 }: {
   agent: Agent;
-  registeredContainers: RegisteredContainer[];
+  registeredContainers: RegisteredRuntime[];
   defaultExpanded: boolean;
   /** When a registered container on this agent is the deep-link target. */
   focusContainerId: string | null;
@@ -1276,7 +1276,7 @@ export default function Fleet() {
 
   const { data: registeredContainers } = useQuery({
     queryKey: ["registered-containers"],
-    queryFn: () => client.listRegisteredContainers(),
+    queryFn: () => client.listRegisteredRuntimes(),
   });
 
   if (isLoading) {

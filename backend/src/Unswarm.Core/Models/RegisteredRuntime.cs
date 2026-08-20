@@ -10,13 +10,19 @@ public enum ContainerRegistrationStatus
     Error
 }
 
-public sealed record RegisteredContainer
+public sealed record RegisteredRuntime
 {
     public required string Id { get; init; }
     public string DisplayName { get; init; } = string.Empty;
     /// <summary>Container name to interact with (pre-provisioned container).</summary>
     public required string Image { get; init; }
     public int ContainerPort { get; init; } = 8080;
+    /// <summary>Discriminator: Container (default) or Script.</summary>
+    public RuntimeKind RuntimeKind { get; init; } = RuntimeKind.Container;
+    /// <summary>Filesystem path to a host script (only set when RuntimeKind = Script).</summary>
+    public string? LauncherPath { get; init; }
+    /// <summary>Process id when a Script runtime is running (null for Container runtimes).</summary>
+    public int? RuntimeProcessId { get; init; }
     public string? GpuDevices { get; init; }
     public long MemoryLimitMb { get; init; }
     public Dictionary<string, string> ExtraLabels { get; init; } = [];

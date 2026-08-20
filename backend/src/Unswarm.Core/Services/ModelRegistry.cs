@@ -56,7 +56,7 @@ public sealed class ModelRegistry : IModelRegistry
             Status = nameof(ModelStatus.Validating),
             ContextWindow = definition.ContextWindow,
             ContainerImage = definition.ContainerImage,
-            SourceContainerId = definition.SourceContainerId,
+            SourceRuntimeId = definition.SourceRuntimeId,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -78,7 +78,7 @@ public sealed class ModelRegistry : IModelRegistry
         entity.Quantization = definition.Quantization;
         entity.ContextWindow = definition.ContextWindow;
         entity.ContainerImage = definition.ContainerImage;
-        entity.SourceContainerId = definition.SourceContainerId;
+        entity.SourceRuntimeId = definition.SourceRuntimeId;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -137,7 +137,7 @@ public sealed class ModelRegistry : IModelRegistry
         Status = Enum.TryParse<ModelStatus>(e.Status, out var s) ? s : ModelStatus.Invalid,
         ContextWindow = e.ContextWindow,
         ContainerImage = e.ContainerImage,
-        SourceContainerId = e.SourceContainerId,
+        SourceRuntimeId = e.SourceRuntimeId,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

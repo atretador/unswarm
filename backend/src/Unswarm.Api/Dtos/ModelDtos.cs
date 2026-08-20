@@ -28,7 +28,7 @@ public sealed class ModelResponse
     public LastBenchmarkResponse? LastBenchmark { get; set; }
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = "";
-    public string? SourceContainerId { get; set; }
+    public string? SourceRuntimeId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -45,7 +45,7 @@ public sealed class ModelResponse
         LastBenchmark = lastBenchmark,
         ContextWindow = d.ContextWindow,
         ContainerImage = d.ContainerImage,
-        SourceContainerId = d.SourceContainerId,
+        SourceRuntimeId = d.SourceRuntimeId,
         CreatedAt = d.CreatedAt,
         UpdatedAt = d.UpdatedAt
     };

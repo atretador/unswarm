@@ -36,7 +36,7 @@ public sealed class AgentsControllerTests
         CpuCores = 8
     };
 
-    private static RegisteredContainer MakeRegistered(
+    private static RegisteredRuntime MakeRegistered(
         string id,
         string image,
         string agent = "host",
@@ -277,7 +277,7 @@ public sealed class AgentsControllerTests
                 ModelName = "other-name",
                 Status = ContainerStatus.Running,
                 Port = 8080,
-                RegisteredContainerId = "reg-1"
+                RegisteredRuntimeId = "reg-1"
             }
         ];
         // The container carries the registry label; its reported name differs from the

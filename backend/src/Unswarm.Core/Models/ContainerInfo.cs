@@ -14,5 +14,5 @@ public sealed class ContainerInfo
     public DateTimeOffset? LastHealthCheck { get; init; }
     public string? ErrorMessage { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
-    public string? RegisteredContainerId { get; init; }
+    public string? RegisteredRuntimeId { get; init; }
 }

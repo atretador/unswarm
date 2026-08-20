@@ -9,9 +9,9 @@ namespace Unswarm.Tests.Fakes;
 /// </summary>
 public sealed class FakeContainerRegistrationService : IContainerRegistrationService
 {
-    public RegisteredContainerWithModels DefaultResult { get; set; } = new()
+    public RegisteredRuntimeWithModels DefaultResult { get; set; } = new()
     {
-        Container = new RegisteredContainer
+        Container = new RegisteredRuntime
         {
             Id = "reg-default",
             DisplayName = "default",
@@ -25,17 +25,17 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
     public List<string> DeletedIds { get; } = [];
 
     /// <summary>Scriptable StartAsync result; when set, returned for any id.</summary>
-    public RegisteredContainerWithModels? StartResult { get; set; }
+    public RegisteredRuntimeWithModels? StartResult { get; set; }
 
     /// <summary>When set, StartAsync throws this exception instead of returning.</summary>
     public Exception? StartException { get; set; }
 
     public List<string> StartedIds { get; } = [];
 
-    public Task<RegisteredContainerWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
+    public Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
         => Task.FromResult(DefaultResult);
 
-    public Task<RegisteredContainerWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
+    public Task<RegisteredRuntimeWithModels> StartAsync(string registeredContainerId, CancellationToken ct = default)
     {
         StartedIds.Add(registeredContainerId);
         if (StartException is not null)
@@ -43,7 +43,7 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
         return Task.FromResult(StartResult ?? DefaultResult);
     }
 
-    public Task<RegisteredContainerWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
+    public Task<RegisteredRuntimeWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default)
         => Task.FromResult(DefaultResult);
 
     public Task DeleteAsync(string id, bool deleteModels, CancellationToken ct = default)

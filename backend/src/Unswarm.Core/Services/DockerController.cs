@@ -283,7 +283,7 @@ public sealed class DockerController : IDockerController
                 CpuPercent = 0,
                 Uptime = (long)(DateTimeOffset.UtcNow - new DateTimeOffset(c.Created)).TotalSeconds,
                 CreatedAt = new DateTimeOffset(c.Created),
-                RegisteredContainerId = registeredContainerId
+                RegisteredRuntimeId = registeredContainerId
             });
         }
 

@@ -6,8 +6,8 @@ import type {
   Model,
   Prompt,
   QueueSnapshot,
-  RegisterContainerPayload,
-  RegisteredContainer,
+  RegisterRuntimePayload,
+  RegisteredRuntime,
   Settings,
   StatsSummary,
 } from "./types";
@@ -25,13 +25,13 @@ export interface UnswarmClient {
   deleteModel(id: string): Promise<void>;
 
   // Container Registration
-  registerContainer(data: RegisterContainerPayload): Promise<RegisteredContainer>;
-  listRegisteredContainers(): Promise<RegisteredContainer[]>;
-  getRegisteredContainer(id: string): Promise<RegisteredContainer>;
-  rediscoverContainer(id: string): Promise<RegisteredContainer>;
-  /** Start the runtime container backing a registered container. */
-  startRegisteredContainer(id: string): Promise<RegisteredContainer>;
-  deleteRegisteredContainer(id: string, deleteModels?: boolean): Promise<void>;
+  registerRuntime(data: RegisterRuntimePayload): Promise<RegisteredRuntime>;
+  listRegisteredRuntimes(): Promise<RegisteredRuntime[]>;
+  getRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
+  rediscoverRuntime(id: string): Promise<RegisteredRuntime>;
+  /** Start the runtime container backing a registered runtime. */
+  startRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
+  deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
 
   // Fleet
   listContainers(): Promise<Container[]>;

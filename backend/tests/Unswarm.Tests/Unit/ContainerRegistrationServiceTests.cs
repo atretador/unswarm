@@ -253,7 +253,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     public async Task RediscoverAsync_NoMappedPort_Throws()
     {
         var service = CreateService();
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = "reg-noport",
             DisplayName = "NoPort",
@@ -294,7 +294,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     {
         // OOM-killed container: MappedPort present but port is dead. Rediscover must
         // set Status=Error + message and return (not throw, not flip back to Ready).
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = "reg-dead",
             DisplayName = "OomKilled",
@@ -712,7 +712,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         _docker.StartErrorMessage = "Container failed to start";
 
         var service = CreateService();
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = "reg-start-fail",
             DisplayName = "FailStart",
@@ -735,7 +735,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         _healthChecker.IsReady = false;
 
         var service = CreateService();
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = "reg-slow",
             DisplayName = "SlowStart",
@@ -777,7 +777,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
 
         var service = CreateService(router: router, remoteHealthPollInterval: TimeSpan.FromMilliseconds(5));
-        var container = new RegisteredContainer
+        var container = new RegisteredRuntime
         {
             Id = "reg-remote-start",
             DisplayName = "RemoteStart",

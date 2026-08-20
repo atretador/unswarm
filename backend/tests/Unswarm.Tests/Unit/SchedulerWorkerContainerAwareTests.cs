@@ -56,7 +56,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
     {
         // Register two models on the same container
         const string containerId = "registered-1";
-        await _containerRegistry.CreateAsync(new RegisteredContainer
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = containerId,
             DisplayName = "Multi-model",
@@ -106,12 +106,12 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
         // Register two models on different containers
         const string containerA = "registered-a";
         const string containerB = "registered-b";
-        await _containerRegistry.CreateAsync(new RegisteredContainer
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = containerA, DisplayName = "A", Image = "a:latest",
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
         });
-        await _containerRegistry.CreateAsync(new RegisteredContainer
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = containerB, DisplayName = "B", Image = "b:latest",
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
@@ -191,7 +191,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
     public async Task ThreeModels_SameContainer_OnlyOneDockerStart()
     {
         const string containerId = "shared-container";
-        await _containerRegistry.CreateAsync(new RegisteredContainer
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = containerId, DisplayName = "Shared", Image = "shared:latest",
             CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow

@@ -4,10 +4,10 @@ namespace Unswarm.Core.Contracts;
 
 public interface IContainerRegistry
 {
-    Task<IReadOnlyList<RegisteredContainer>> ListAllAsync(CancellationToken ct = default);
-    Task<RegisteredContainer?> GetAsync(string id, CancellationToken ct = default);
-    Task<RegisteredContainer> CreateAsync(RegisteredContainer container, CancellationToken ct = default);
-    Task<RegisteredContainer> UpdateAsync(string id, RegisteredContainer container, CancellationToken ct = default);
+    Task<IReadOnlyList<RegisteredRuntime>> ListAllAsync(CancellationToken ct = default);
+    Task<RegisteredRuntime?> GetAsync(string id, CancellationToken ct = default);
+    Task<RegisteredRuntime> CreateAsync(RegisteredRuntime container, CancellationToken ct = default);
+    Task<RegisteredRuntime> UpdateAsync(string id, RegisteredRuntime container, CancellationToken ct = default);
     Task DeleteAsync(string id, CancellationToken ct = default);
     Task AddModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default);
     Task RemoveModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default);

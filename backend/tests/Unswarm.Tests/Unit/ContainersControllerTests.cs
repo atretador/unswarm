@@ -24,7 +24,7 @@ public sealed class ContainersControllerTests
         _containerRegistry,
         _benchmarks);
 
-    private static RegisteredContainer MakeContainer(string id, string image = "test:latest") => new()
+    private static RegisteredRuntime MakeContainer(string id, string image = "test:latest") => new()
     {
         Id = id,
         DisplayName = image,
@@ -50,7 +50,7 @@ public sealed class ContainersControllerTests
         return model;
     }
 
-    private async Task<(RegisteredContainer Container, ModelDefinition Model)> SeedRegisteredWithModelAsync(
+    private async Task<(RegisteredRuntime Container, ModelDefinition Model)> SeedRegisteredWithModelAsync(
         string containerId,
         string modelId,
         string modelName)
@@ -71,7 +71,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().ListRegistered(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var containers = Assert.IsAssignableFrom<List<RegisteredContainerResponse>>(ok.Value);
+        var containers = Assert.IsAssignableFrom<List<RegisteredRuntimeResponse>>(ok.Value);
 
         var response = Assert.Single(containers);
         var discovered = Assert.Single(response.DiscoveredModels);
@@ -89,7 +89,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().ListRegistered(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var containers = Assert.IsAssignableFrom<List<RegisteredContainerResponse>>(ok.Value);
+        var containers = Assert.IsAssignableFrom<List<RegisteredRuntimeResponse>>(ok.Value);
 
         var response = Assert.Single(containers);
         var discovered = Assert.Single(response.DiscoveredModels);
@@ -109,7 +109,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().ListRegistered(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var containers = Assert.IsAssignableFrom<List<RegisteredContainerResponse>>(ok.Value);
+        var containers = Assert.IsAssignableFrom<List<RegisteredRuntimeResponse>>(ok.Value);
 
         // Both registered containers are listed; reg-a has two models.
         Assert.Equal(2, containers.Count);
@@ -130,7 +130,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().GetRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
 
         var discovered = Assert.Single(response.DiscoveredModels);
         Assert.Equal("model-1", discovered.Id);
@@ -147,7 +147,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().GetRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
 
         var discovered = Assert.Single(response.DiscoveredModels);
         Assert.Equal("model-1", discovered.Id);
@@ -170,7 +170,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().GetRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
         // Wire contract: status is lowercase ("ready"), not PascalCase ("Ready").
         Assert.Equal("ready", response.Status);
     }
@@ -185,7 +185,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().GetRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
 
         var discovered = Assert.Single(response.DiscoveredModels);
         Assert.NotNull(discovered.LastBenchmark);
@@ -200,7 +200,7 @@ public sealed class ContainersControllerTests
         await _benchmarks.AddAsync("model-1", "p1", 12.5, 300, 25, "completed", null);
 
         // Scripted StartAsync result: the container flips to Ready with a runtime id.
-        _registrationService.StartResult = new RegisteredContainerWithModels
+        _registrationService.StartResult = new RegisteredRuntimeWithModels
         {
             Container = container with
             {
@@ -214,7 +214,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().StartRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
 
         Assert.Equal("reg-1", response.Id);
         Assert.Equal("ready", response.Status);
@@ -244,7 +244,7 @@ public sealed class ContainersControllerTests
 
         // Scripted StartAsync failure: container persisted as Error with a message,
         // endpoint returns 200 (not an error status) so the fleet refetch shows it.
-        _registrationService.StartResult = new RegisteredContainerWithModels
+        _registrationService.StartResult = new RegisteredRuntimeWithModels
         {
             Container = container with
             {
@@ -257,7 +257,7 @@ public sealed class ContainersControllerTests
         var result = await CreateController().StartRegistered("reg-1", CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
-        var response = Assert.IsType<RegisteredContainerResponse>(ok.Value);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
         Assert.Equal("error", response.Status);
         Assert.Equal("Connection refused", response.ErrorMessage);
     }

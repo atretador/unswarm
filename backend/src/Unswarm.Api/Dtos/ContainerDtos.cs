@@ -43,11 +43,13 @@ public sealed class ContainerStartRequest
 /// <summary>
 /// DTO for creating a new container registration.
 /// </summary>
-public sealed class ContainerRegistrationRequestDto
+public sealed class RegisterRuntimeRequestDto
 {
     public string DisplayName { get; set; } = "";
     public required string Image { get; set; }
     public int ContainerPort { get; set; } = 8080;
+    public string? RuntimeKind { get; set; }
+    public string? LauncherPath { get; set; }
     public string Agent { get; set; } = "host";
     public List<string>? CanRunAlongWith { get; set; }
     public Dictionary<string, string>? ExtraLabels { get; set; }
@@ -56,6 +58,8 @@ public sealed class ContainerRegistrationRequestDto
     {
         DisplayName = DisplayName,
         Image = Image,
+        RuntimeKind = RuntimeKind?.ToLowerInvariant() == "script" ? Unswarm.Core.Models.RuntimeKind.Script : Unswarm.Core.Models.RuntimeKind.Container,
+        LauncherPath = LauncherPath,
         ContainerPort = ContainerPort,
         Agent = Agent,
         CanRunAlongWith = CanRunAlongWith ?? [],
@@ -66,13 +70,15 @@ public sealed class ContainerRegistrationRequestDto
 /// <summary>
 /// DTO for returning a registered container and its discovered models.
 /// </summary>
-public sealed class RegisteredContainerResponse
+public sealed class RegisteredRuntimeResponse
 {
     public string Id { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public string Image { get; set; } = "";
     public int ContainerPort { get; set; }
     public string Agent { get; set; } = "host";
+    public string RuntimeKind { get; set; } = "container";
+    public string? LauncherPath { get; set; }
     public List<string> CanRunAlongWith { get; set; } = [];
     public string Status { get; set; } = "";
     public string? RuntimeContainerId { get; set; }
@@ -82,8 +88,8 @@ public sealed class RegisteredContainerResponse
     public DateTimeOffset? LastDiscoveredAt { get; set; }
     public List<ModelResponse> DiscoveredModels { get; set; } = [];
 
-    public static RegisteredContainerResponse From(
-        RegisteredContainer container,
+    public static RegisteredRuntimeResponse From(
+        RegisteredRuntime container,
         IReadOnlyList<ModelDefinition> discoveredModels) => new()
     {
         Id = container.Id,
@@ -91,6 +97,8 @@ public sealed class RegisteredContainerResponse
         Image = container.Image,
         ContainerPort = container.ContainerPort,
         Agent = container.Agent,
+        RuntimeKind = container.RuntimeKind.ToString().ToLowerInvariant(),
+        LauncherPath = container.LauncherPath,
         CanRunAlongWith = (container.CanRunAlongWith ?? []).ToList(),
         Status = container.Status.ToString().ToLowerInvariant(),
         RuntimeContainerId = container.RuntimeContainerId,

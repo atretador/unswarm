@@ -7,8 +7,8 @@ import type {
   Model,
   Prompt,
   QueueSnapshot,
-  RegisterContainerPayload,
-  RegisteredContainer,
+  RegisterRuntimePayload,
+  RegisteredRuntime,
   Settings,
   StatsSummary,
 } from "./types";
@@ -215,7 +215,7 @@ const MODELS: Model[] = [
     lastBenchmark: lastBench(42.3, 120, 512),
     contextWindow: 128000,
     containerImage: "unswarm/llama3.1:70b-q4km",
-    sourceContainerId: "rc1",
+    sourceRuntimeId: "rc1",
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -229,7 +229,7 @@ const MODELS: Model[] = [
     lastBenchmark: lastBench(28.7, 185),
     contextWindow: 128000,
     containerImage: "unswarm/mistral-large:123b-q5km",
-    sourceContainerId: null,
+    sourceRuntimeId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -243,7 +243,7 @@ const MODELS: Model[] = [
     lastBenchmark: null,
     contextWindow: 32000,
     containerImage: "unswarm/codestral:22b-q6k",
-    sourceContainerId: null,
+    sourceRuntimeId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -257,7 +257,7 @@ const MODELS: Model[] = [
     lastBenchmark: lastBench(98.1, 32, 640),
     contextWindow: 128000,
     containerImage: "unswarm/phi3.5-mini:fp16",
-    sourceContainerId: null,
+    sourceRuntimeId: null,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -271,7 +271,7 @@ const MODELS: Model[] = [
     lastBenchmark: lastBench(55.0, 95, 448),
     contextWindow: 8192,
     containerImage: "unswarm/gemma2:27b-q4ks",
-    sourceContainerId: "rc1",
+    sourceRuntimeId: "rc1",
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -595,7 +595,7 @@ function stopLogStreamIfIdle() {
 let models = [...MODELS];
 let containers = [...CONTAINERS];
 let benchmarks = [...BENCHMARKS];
-let registeredContainers: RegisteredContainer[] = [
+let registeredRuntimes: RegisteredRuntime[] = [
   {
     id: "rc1",
     displayName: "llama-server",
@@ -610,8 +610,8 @@ let registeredContainers: RegisteredContainer[] = [
     createdAt: NOW,
     lastDiscoveredAt: NOW,
     discoveredModels: [
-      { ...MODELS[0], sourceContainerId: "rc1" },
-      { ...MODELS[4], sourceContainerId: "rc1" },
+      { ...MODELS[0], sourceRuntimeId: "rc1" },
+      { ...MODELS[4], sourceRuntimeId: "rc1" },
     ],
   },
   {
@@ -669,13 +669,13 @@ export const mockClient: UnswarmClient = {
   },
 
   // ── Container Registration ──────────────────────────────────
-  async registerContainer(data: RegisterContainerPayload) {
+  async registerRuntime(data: RegisterRuntimePayload) {
     await delay(rand(100, 300));
     const agentName = data.agent ?? "host";
     const runtime = (AGENT_CONTAINERS[agentName] ?? []).find(
       (c) => c.modelName === data.image || c.id === data.image,
     );
-    const rc: RegisteredContainer = {
+    const rc: RegisteredRuntime = {
       id: id(),
       displayName: data.displayName,
       image: data.image,
@@ -690,32 +690,32 @@ export const mockClient: UnswarmClient = {
       lastDiscoveredAt: null,
       discoveredModels: [],
     };
-    registeredContainers.push(rc);
+    registeredRuntimes.push(rc);
     return { ...rc, discoveredModels: [] };
   },
 
-  async listRegisteredContainers() {
+  async listRegisteredRuntimes() {
     await delay(rand(80, 200));
-    return registeredContainers.map((rc) => ({
+    return registeredRuntimes.map((rc) => ({
       ...rc,
       discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
     }));
   },
 
-  async getRegisteredContainer(containerId: string) {
+  async getRegisteredRuntime(runtimeId: string) {
     await delay(rand(60, 150));
-    const rc = registeredContainers.find((x) => x.id === containerId);
-    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
     return {
       ...rc,
       discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
     };
   },
 
-  async rediscoverContainer(containerId: string) {
+  async rediscoverRuntime(runtimeId: string) {
     await delay(rand(200, 500));
-    const rc = registeredContainers.find((x) => x.id === containerId);
-    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
     rc.status = "ready";
     rc.lastDiscoveredAt = new Date().toISOString();
     return {
@@ -724,10 +724,10 @@ export const mockClient: UnswarmClient = {
     };
   },
 
-  async startRegisteredContainer(containerId: string) {
+  async startRegisteredRuntime(runtimeId: string) {
     await delay(rand(200, 500));
-    const rc = registeredContainers.find((x) => x.id === containerId);
-    if (!rc) throw new Error(`Registered container ${containerId} not found`);
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
     // Flip the registration into the ready state — the runtime container is now live.
     rc.status = "ready";
     if (rc.runtimeContainerId) {
@@ -746,15 +746,15 @@ export const mockClient: UnswarmClient = {
     };
   },
 
-  async deleteRegisteredContainer(containerId: string, deleteModels = false) {
+  async deleteRuntime(runtimeId: string, deleteModels = false) {
     await delay(rand(60, 150));
-    const idx = registeredContainers.findIndex((x) => x.id === containerId);
-    if (idx === -1) throw new Error(`Registered container ${containerId} not found`);
+    const idx = registeredRuntimes.findIndex((x) => x.id === runtimeId);
+    if (idx === -1) throw new Error(`Registered runtime ${runtimeId} not found`);
     if (deleteModels) {
-      const modelIds = new Set(registeredContainers[idx].discoveredModels.map((m) => m.id));
+      const modelIds = new Set(registeredRuntimes[idx].discoveredModels.map((m) => m.id));
       models = models.filter((m) => !modelIds.has(m.id));
     }
-    registeredContainers.splice(idx, 1);
+    registeredRuntimes.splice(idx, 1);
   },
 
   // Fleet

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Core.Models;
 
@@ -13,12 +14,12 @@ public sealed class ModelEntity
     public string Status { get; set; } = nameof(ModelStatus.Validating);
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = string.Empty;
-    public string? SourceContainerId { get; set; }
+    public string? SourceRuntimeId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
     public BenchmarkHistoryEntity? LastBenchmark { get; set; }
-    public RegisteredContainerEntity? SourceContainer { get; set; }
+    public RegisteredRuntimeEntity? SourceRuntime { get; set; }
     public ICollection<ContainerModelMappingEntity> ContainerModelMappings { get; set; } = [];
 }
 
@@ -63,13 +64,26 @@ public sealed class SettingsEntity
     public int MaxConcurrentTargets { get; set; }
 }
 
-public sealed class RegisteredContainerEntity
+/// <summary>
+/// EF entity for the RegisteredContainers physical table. The class is named
+/// RegisteredRuntimeEntity to match the domain model rename, but the table
+/// stays "RegisteredContainers" via the [Table] attribute so EnsureCreated
+/// and existing data are unaffected.
+/// </summary>
+[Table("RegisteredContainers")]
+public sealed class RegisteredRuntimeEntity
 {
     public string Id { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     /// <summary>Container name to interact with (pre-provisioned container).</summary>
     public string Image { get; set; } = string.Empty;
     public int ContainerPort { get; set; } = 8080;
+    /// <summary>Discriminator: Container (default) or Script.</summary>
+    public string RuntimeKind { get; set; } = "Container";
+    /// <summary>Filesystem path to a host script (only set when RuntimeKind = Script).</summary>
+    public string? LauncherPath { get; set; }
+    /// <summary>Process id when a Script runtime is running (null for Container runtimes).</summary>
+    public int? RuntimeProcessId { get; set; }
     public string? GpuDevices { get; set; }
     public long MemoryLimitMb { get; set; }
     public string ExtraLabelsJson { get; set; } = "{}";
@@ -91,11 +105,11 @@ public sealed class RegisteredContainerEntity
 public sealed class ContainerModelMappingEntity
 {
     public string Id { get; set; } = string.Empty;
-    public string RegisteredContainerId { get; set; } = string.Empty;
+    public string RegisteredRuntimeId { get; set; } = string.Empty;
     public string ModelId { get; set; } = string.Empty;
     public DateTimeOffset DiscoveredAt { get; set; }
 
-    public RegisteredContainerEntity RegisteredContainer { get; set; } = null!;
+    public RegisteredRuntimeEntity RegisteredRuntime { get; set; } = null!;
     public ModelEntity Model { get; set; } = null!;
 }
 
@@ -114,7 +128,7 @@ public sealed class UnswarmDbContext : DbContext
     public DbSet<BenchmarkHistoryEntity> Benchmarks => Set<BenchmarkHistoryEntity>();
     public DbSet<LogEntity> Logs => Set<LogEntity>();
     public DbSet<SettingsEntity> Settings => Set<SettingsEntity>();
-    public DbSet<RegisteredContainerEntity> RegisteredContainers => Set<RegisteredContainerEntity>();
+    public DbSet<RegisteredRuntimeEntity> RegisteredRuntimes => Set<RegisteredRuntimeEntity>();
     public DbSet<ContainerModelMappingEntity> ContainerModelMappings => Set<ContainerModelMappingEntity>();
     public DbSet<PromptEntity> Prompts => Set<PromptEntity>();
 
@@ -132,9 +146,9 @@ public sealed class UnswarmDbContext : DbContext
             // FK here would create a UNIQUE constraint on Benchmarks.ModelId, which
             // conflicts with the benchmark-history list (newest-first, max 50).
             e.Ignore(m => m.LastBenchmark);
-            e.HasOne(m => m.SourceContainer)
+            e.HasOne(m => m.SourceRuntime)
              .WithMany()
-             .HasForeignKey(m => m.SourceContainerId)
+             .HasForeignKey(m => m.SourceRuntimeId)
              .OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -171,7 +185,7 @@ public sealed class UnswarmDbContext : DbContext
             });
         });
 
-        modelBuilder.Entity<RegisteredContainerEntity>(e =>
+        modelBuilder.Entity<RegisteredRuntimeEntity>(e =>
         {
             e.HasKey(r => r.Id);
         });
@@ -179,10 +193,10 @@ public sealed class UnswarmDbContext : DbContext
         modelBuilder.Entity<ContainerModelMappingEntity>(e =>
         {
             e.HasKey(cm => cm.Id);
-            e.HasIndex(cm => new { cm.RegisteredContainerId, cm.ModelId }).IsUnique();
-            e.HasOne(cm => cm.RegisteredContainer)
+            e.HasIndex(cm => new { cm.RegisteredRuntimeId, cm.ModelId }).IsUnique();
+            e.HasOne(cm => cm.RegisteredRuntime)
              .WithMany(rc => rc.ContainerModelMappings)
-             .HasForeignKey(cm => cm.RegisteredContainerId)
+             .HasForeignKey(cm => cm.RegisteredRuntimeId)
              .OnDelete(DeleteBehavior.Cascade);
             e.HasOne(cm => cm.Model)
              .WithMany(m => m.ContainerModelMappings)

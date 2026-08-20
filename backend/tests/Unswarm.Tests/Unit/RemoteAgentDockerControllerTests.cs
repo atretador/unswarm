@@ -145,7 +145,7 @@ public sealed class RemoteAgentDockerControllerTests
         Assert.Equal("llama", result[0].ModelName);
         Assert.Equal(ContainerStatus.Running, result[0].Status);
         Assert.Equal(8080, result[0].Port);
-        Assert.Equal("reg-1", result[0].RegisteredContainerId);
+        Assert.Equal("reg-1", result[0].RegisteredRuntimeId);
         Assert.Equal(ContainerStatus.Stopped, result[1].Status);
     }
 
