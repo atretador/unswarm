@@ -4,6 +4,7 @@ import type {
   Container,
   LogEntry,
   Model,
+  Prompt,
   QueueSnapshot,
   RegisterContainerPayload,
   RegisteredContainer,
@@ -215,6 +216,31 @@ export const httpClient: UnswarmClient = {
     return () => {
       es.close();
     };
+  },
+
+  // ── Prompt Library ────────────────────────────────────────────
+  listPrompts() {
+    return request<Prompt[]>("/api/prompts");
+  },
+
+  createPrompt(input: { name: string; text: string }) {
+    return request<Prompt>("/api/prompts", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  updatePrompt(id: string, input: { name: string; text: string }) {
+    return request<Prompt>(`/api/prompts/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+
+  deletePrompt(id: string) {
+    return request<void>(`/api/prompts/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 
   // ── Settings ──────────────────────────────────────────────────

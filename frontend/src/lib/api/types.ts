@@ -213,3 +213,13 @@ export interface Settings {
   lazyStop: boolean;
   maxQueueDepth: number;
 }
+
+// ─── Prompt Library ────────────────────────────────────────────────
+
+export interface Prompt {
+  id: string;
+  name: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}

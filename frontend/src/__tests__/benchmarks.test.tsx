@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
@@ -149,7 +149,77 @@ describe("Benchmarks", () => {
     expect(listSpy).toHaveBeenCalled();
   });
 
-  it("sends a custom typed prompt as the runBenchmark payload", async () => {
+  it("selecting a saved prompt sends its text to runBenchmark", async () => {
+    const user = userEvent.setup();
+    const runSpy = vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    // Wait for both model and prompt options to populate
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Target model" })).toHaveAttribute("aria-label", "Target model");
+    });
+    await waitFor(() => {
+      const promptCombo = screen.getByRole("combobox", { name: "Prompt (optional)" }) as HTMLSelectElement;
+      expect(promptCombo.options.length).toBeGreaterThan(1); // at least "Default prompt" + one saved
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+    // Select "Code review" prompt (id "p2")
+    await user.selectOptions(screen.getByRole("combobox", { name: "Prompt (optional)" }), "p2");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    await waitFor(() => {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(runSpy.mock.calls[0][0]).toBe("1");
+    // The Code review prompt text is sent
+    expect(runSpy.mock.calls[0][1]).toBe(
+      "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
+    );
+  });
+
+  it("persists the selected prompt text into the run history", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const promptCombo = screen.getByRole("combobox", { name: "Prompt (optional)" }) as HTMLSelectElement;
+      expect(promptCombo.options.length).toBeGreaterThan(1);
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
+    // Select "Creative rewrite" prompt (id "p3")
+    await user.selectOptions(screen.getByRole("combobox", { name: "Prompt (optional)" }), "p3");
+    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
+
+    // The new run appears in the history; its stored prompt must match what was selected.
+    await waitFor(() => {
+      expect(screen.getAllByRole("button", { name: /llama-3.1-70b/ }).length).toBeGreaterThan(0);
+    });
+    const rows = screen.getAllByRole("button", { name: /llama-3.1-70b/ });
+    await user.click(rows[0]);
+    expect(screen.getByText(/Rewrite the following text in a more engaging/)).toBeInTheDocument();
+  });
+
+  it("sends undefined prompt when Default prompt is selected", async () => {
     const user = userEvent.setup();
     const runSpy = vi.spyOn(mockClient, "runBenchmark");
 
@@ -168,53 +238,16 @@ describe("Benchmarks", () => {
       expect(combo.options.length).toBeGreaterThan(1);
     });
     await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
-
-    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
-    await user.type(promptInput, "Summarize the KV cache sizing trade-offs.");
+    // Default prompt is the first option (value ""), which is the default selection
     await user.click(screen.getByRole("button", { name: /run benchmark/i }));
 
     await waitFor(() => {
       expect(runSpy).toHaveBeenCalledTimes(1);
     });
-    expect(runSpy.mock.calls[0][0]).toBe("1");
-    expect(runSpy.mock.calls[0][1]).toBe("Summarize the KV cache sizing trade-offs.");
+    expect(runSpy.mock.calls[0][1]).toBeUndefined();
   });
 
-  it("persists the custom prompt into the run history after a run", async () => {
-    const user = userEvent.setup();
-
-    render(
-      <TestWrapper>
-        <Benchmarks />
-      </TestWrapper>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
-      expect(combo.options.length).toBeGreaterThan(1);
-    });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
-
-    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
-    await user.type(promptInput, "Persisted custom instruction.");
-    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
-
-    // The new run lands at the top of the history (newest-first); its stored
-    // prompt must be the one we typed, proving the run record persists it.
-    await waitFor(() => {
-      expect(screen.getAllByRole("button", { name: /llama-3.1-70b/ }).length).toBeGreaterThan(0);
-    });
-    // The prompt detail is behind the expandable row — open the newest (topmost) row.
-    const rows = screen.getAllByRole("button", { name: /llama-3.1-70b/ });
-    await user.click(rows[0]);
-    expect(screen.getByText("Persisted custom instruction.")).toBeInTheDocument();
-  });
-
-  it("resets the prompt input after a successful run", async () => {
+  it("keeps the prompt selection after a successful run", async () => {
     const user = userEvent.setup();
     vi.spyOn(mockClient, "runBenchmark");
 
@@ -229,48 +262,20 @@ describe("Benchmarks", () => {
     });
 
     await waitFor(() => {
-      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
-      expect(combo.options.length).toBeGreaterThan(1);
+      const promptCombo = screen.getByRole("combobox", { name: "Prompt (optional)" }) as HTMLSelectElement;
+      expect(promptCombo.options.length).toBeGreaterThan(1);
     });
+
     await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
-
-    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
-    await user.type(promptInput, "Some custom instruction");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Prompt (optional)" }), "p2");
     await user.click(screen.getByRole("button", { name: /run benchmark/i }));
-
-    await waitFor(() => {
-      expect(promptInput).toHaveValue("");
-    });
-  });
-
-  it("sends undefined prompt when the input is whitespace only", async () => {
-    const user = userEvent.setup();
-    const runSpy = vi.spyOn(mockClient, "runBenchmark");
-
-    render(
-      <TestWrapper>
-        <Benchmarks />
-      </TestWrapper>,
-    );
 
     await waitFor(() => {
       expect(screen.getByText("Benchmarks")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
-      expect(combo.options.length).toBeGreaterThan(1);
-    });
-    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "1");
-
-    const promptInput = screen.getByRole("textbox", { name: "Prompt (optional)" });
-    await user.type(promptInput, "   ");
-    await user.click(screen.getByRole("button", { name: /run benchmark/i }));
-
-    await waitFor(() => {
-      expect(runSpy).toHaveBeenCalledTimes(1);
-    });
-    expect(runSpy.mock.calls[0][1]).toBeUndefined();
+    // Prompt selection is retained after a successful run
+    expect(screen.getByRole("combobox", { name: "Prompt (optional)" })).toHaveValue("p2");
   });
 
   it("run button is disabled for non-ready models", async () => {
@@ -356,6 +361,259 @@ describe("Benchmarks", () => {
 
     await waitFor(() => {
       expect(screen.getByText("No benchmark runs yet")).toBeInTheDocument();
+    });
+  });
+
+  // ─── Prompt library tests ──────────────────────────────────────
+
+  it("run bar renders a prompt select and Manage prompts button", async () => {
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("combobox", { name: "Prompt (optional)" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /manage prompts/i })).toBeInTheDocument();
+  });
+
+  it("Manage prompts button opens the prompt library modal", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+    // Scope to the modal to avoid collisions with the run bar select
+    expect(within(dialog).getByText("Concise summary")).toBeInTheDocument();
+    expect(within(dialog).getByText("Code review")).toBeInTheDocument();
+    expect(within(dialog).getByText("Creative rewrite")).toBeInTheDocument();
+    expect(within(dialog).getByText("Long-form writing")).toBeInTheDocument();
+  });
+
+  it("prompt library modal traps focus, closes on Escape, and restores focus", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    const manageBtn = screen.getByRole("button", { name: /manage prompts/i });
+    await user.click(manageBtn);
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+    // Initial focus lands on the close button (the dialog shell's first focusable).
+    expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
+
+    // Tab from the last focusable wraps to the first inside the dialog.
+    const closeBtn = within(dialog).getByRole("button", { name: "Close" });
+    await user.tab();
+    // Cycle through focusables until we come back to the close button (wrapped).
+    let active = document.activeElement as HTMLElement;
+    const seen = new Set<HTMLElement>();
+    while (!seen.has(active)) {
+      seen.add(active);
+      await user.tab();
+      active = document.activeElement as HTMLElement;
+    }
+    expect(seen.has(closeBtn)).toBe(true);
+
+    // Escape closes the dialog and restores focus to the trigger.
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Prompt library" })).not.toBeInTheDocument();
+    expect(manageBtn).toHaveFocus();
+  });
+
+
+  it("selecting a prompt in the library shows it in the editor", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+    await user.click(within(dialog).getByText("Concise summary"));
+
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Concise summary");
+    expect((within(dialog).getByLabelText("Prompt text") as HTMLTextAreaElement).value).toContain("Summarize the input");
+  });
+
+  it("creating a new prompt calls createPrompt and shows in list", async () => {
+    const user = userEvent.setup();
+    const createSpy = vi.spyOn(mockClient, "createPrompt").mockResolvedValueOnce({
+      id: "new-1", name: "Test prompt", text: "Hello world",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // Click "+" to create new
+    await user.click(within(dialog).getByText("New prompt"));
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("");
+    expect((within(dialog).getByLabelText("Prompt text") as HTMLTextAreaElement).value).toBe("");
+
+    await user.type(within(dialog).getByLabelText("Name"), "Test prompt");
+    await user.type(within(dialog).getByLabelText("Prompt text"), "Hello world");
+    await user.click(within(dialog).getByRole("button", { name: /create/i }));
+
+    await waitFor(() => {
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(createSpy.mock.calls[0][0]).toEqual({ name: "Test prompt", text: "Hello world" });
+  });
+
+  it("editing and saving an existing prompt calls updatePrompt", async () => {
+    const user = userEvent.setup();
+    const updateSpy = vi.spyOn(mockClient, "updatePrompt").mockResolvedValueOnce({
+      id: "p1", name: "Better summary", text: "Updated text",
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+    await user.click(within(dialog).getByText("Concise summary"));
+
+    // Clear and retype the name
+    const nameInput = within(dialog).getByLabelText("Name");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Better summary");
+
+    await user.click(within(dialog).getByRole("button", { name: /save/i }));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(updateSpy.mock.calls[0][0]).toBe("p1");
+    expect(updateSpy.mock.calls[0][1]).toMatchObject({ name: "Better summary" });
+  });
+
+  it("delete requires confirmation then removes the prompt", async () => {
+    const user = userEvent.setup();
+    const deleteSpy = vi.spyOn(mockClient, "deletePrompt").mockResolvedValueOnce(undefined);
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // First click — arm confirmation
+    await user.click(within(dialog).getByLabelText("Delete Concise summary"));
+    expect(within(dialog).getByText("Delete")).toBeInTheDocument();
+
+    // Confirm
+    await user.click(within(dialog).getByText("Delete"));
+
+    await waitFor(() => {
+      expect(deleteSpy).toHaveBeenCalledWith("p1");
+    });
+  });
+
+  it("delete cancel reverts the confirmation", async () => {
+    const user = userEvent.setup();
+    const deleteSpy = vi.spyOn(mockClient, "deletePrompt");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // First click — arm confirmation
+    await user.click(within(dialog).getByLabelText("Delete Concise summary"));
+
+    // Cancel
+    await user.click(within(dialog).getByText("Cancel"));
+
+    // No delete call
+    expect(deleteSpy).not.toHaveBeenCalled();
+  });
+
+  it("closing the prompt library modal works", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+
+    await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // Close via X button
+    await user.click(screen.getByLabelText("Close"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Prompt library" })).not.toBeInTheDocument();
     });
   });
 });

@@ -4,6 +4,7 @@ import type {
   Container,
   LogEntry,
   Model,
+  Prompt,
   QueueSnapshot,
   RegisterContainerPayload,
   RegisteredContainer,
@@ -66,6 +67,12 @@ export interface UnswarmClient {
 
   /** Subscribe to a live stream of log entries. Returns an unsubscribe function. */
   subscribeLogs(callback: (entry: LogEntry) => void): () => void;
+
+  // Prompt Library
+  listPrompts(): Promise<Prompt[]>;
+  createPrompt(input: { name: string; text: string }): Promise<Prompt>;
+  updatePrompt(id: string, input: { name: string; text: string }): Promise<Prompt>;
+  deletePrompt(id: string): Promise<void>;
 
   // Settings
   getSettings(): Promise<Settings>;

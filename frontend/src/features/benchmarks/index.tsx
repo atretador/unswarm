@@ -1,12 +1,16 @@
-import { useState } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   ChevronDown,
   ChevronRight,
   Play,
+  Plus,
+  Trash2,
+  X,
   Zap,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
@@ -16,11 +20,10 @@ import {
   Button,
   Skeleton,
   EmptyState,
-  Input,
   Select,
   Tooltip,
 } from "../../components/ui";
-import type { BenchmarkResult, Model } from "../../lib/api/types";
+import type { BenchmarkResult, Model, Prompt } from "../../lib/api/types";
 
 // ─── Formatting helpers ───────────────────────────────────────────
 
@@ -46,6 +49,321 @@ function benchmarkDisabledReason(model: Model | undefined): string | null {
   if (model.status === "invalid") return `${model.name} is invalid — cannot benchmark`;
   if (model.status === "deprecated") return `${model.name} is deprecated — cannot benchmark`;
   return null;
+}
+
+// ─── Prompt Library Modal ─────────────────────────────────────────
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState("");
+  const [draftText, setDraftText] = useState("");
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
+  const saveRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    },
+    [onClose],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    previousFocusRef.current = document.activeElement as HTMLElement;
+    closeRef.current?.focus();
+    document.addEventListener("keydown", handleKeyDown);
+
+    // Lock background scroll while the dialog is open; restore on close.
+    const previousOverflow = document.body.style.overflow;
+    const previousTouchAction = document.body.style.touchAction;
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none";
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+      document.body.style.touchAction = previousTouchAction;
+      previousFocusRef.current?.focus();
+    };
+  }, [open, handleKeyDown]);
+
+
+  const { data: prompts, isLoading } = useQuery({
+    queryKey: ["prompts"],
+    queryFn: () => client.listPrompts(),
+    enabled: open,
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (input: { name: string; text: string }) => client.createPrompt(input),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["prompts"] });
+      setSelectedId(created.id);
+      setDraftName(created.name);
+      setDraftText(created.text);
+      setIsCreating(false);
+    },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, ...input }: { id: string; name: string; text: string }) =>
+      client.updatePrompt(id, input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prompts"] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => client.deletePrompt(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prompts"] });
+      setConfirmDeleteId(null);
+      if (selectedId) {
+        setSelectedId(null);
+        setDraftName("");
+        setDraftText("");
+      }
+    },
+  });
+
+  const handleSelectPrompt = useCallback(
+    (prompt: Prompt) => {
+      setSelectedId(prompt.id);
+      setDraftName(prompt.name);
+      setDraftText(prompt.text);
+      setIsCreating(false);
+      setConfirmDeleteId(null);
+    },
+    [],
+  );
+
+  const handleAddNew = () => {
+    setSelectedId(null);
+    setDraftName("");
+    setDraftText("");
+    setIsCreating(true);
+    setConfirmDeleteId(null);
+  };
+
+  const handleSave = () => {
+    const name = draftName.trim();
+    const text = draftText.trim();
+    if (!name || !text) return;
+    if (isCreating) {
+      createMutation.mutate({ name, text });
+    } else if (selectedId) {
+      updateMutation.mutate({ id: selectedId, name, text });
+    }
+  };
+
+  const handleDelete = (id: string) => {
+    if (confirmDeleteId === id) {
+      deleteMutation.mutate(id);
+    } else {
+      setConfirmDeleteId(id);
+    }
+  };
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={dialogRef}
+      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Prompt library"
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-4xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh]">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-5 py-4">
+          <h2 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">Prompt Library</h2>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex flex-1 min-h-0 flex-col sm:flex-row">
+          {/* Left: prompt list */}
+          <div className="w-full sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--color-border-subtle)] flex flex-col sm:max-h-[70vh]">
+            <div className="border-b border-[var(--color-border-subtle)] px-3 py-2">
+              <button
+                type="button"
+                onClick={handleAddNew}
+                className="flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
+              >
+                <Plus className="size-3.5" />
+                New prompt
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {isLoading ? (
+                <div className="space-y-1 p-3">
+                  {Array.from({ length: 4 }, (_, i) => (
+                    <Skeleton key={i} className="h-9 w-full rounded-[var(--radius-lg)]" />
+                  ))}
+                </div>
+              ) : prompts?.length === 0 ? (
+                <p className="p-3 text-center text-xs text-[var(--color-text-muted)]">No saved prompts</p>
+              ) : (
+                prompts?.map((p) => {
+                  const isSelected = p.id === selectedId;
+                  const isConfirmingDelete = confirmDeleteId === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      className={`flex items-center gap-1 border-b border-[var(--color-border-subtle)] px-3 last:border-0 ${isSelected ? "bg-[var(--color-primary-soft)]" : ""}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => handleSelectPrompt(p)}
+                        className={`flex-1 min-w-0 py-2 text-left text-xs truncate cursor-pointer transition-colors ${
+                          isSelected
+                            ? "font-medium text-[var(--color-text-heading)]"
+                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text-heading)]"
+                        }`}
+                      >
+                        {p.name}
+                      </button>
+                      {isConfirmingDelete ? (
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(p.id)}
+                            disabled={deleteMutation.isPending}
+                            className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] cursor-pointer"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] cursor-pointer"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(p.id);
+                          }}
+                          className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-status-error)] cursor-pointer"
+                          aria-label={`Delete ${p.name}`}
+                          title="Delete prompt"
+                        >
+                          <Trash2 className="size-3" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Right: editor */}
+          <div className="flex flex-1 min-h-0 flex-col p-5 gap-4 overflow-y-auto">
+            {!selectedId && !isCreating ? (
+              <div className="flex flex-1 items-center justify-center">
+                <p className="text-sm text-[var(--color-text-muted)]">Select a prompt to edit, or create a new one.</p>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <label htmlFor="prompt-name" className="text-xs font-medium text-[var(--color-text-muted)]">
+                    Name
+                  </label>
+                  <input
+                    id="prompt-name"
+                    type="text"
+                    value={draftName}
+                    onChange={(e) => setDraftName(e.target.value)}
+                    placeholder="Short, descriptive name"
+                    className="h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
+                  />
+                </div>
+                <div className="flex flex-1 min-h-[160px] flex-col space-y-1.5">
+                  <label htmlFor="prompt-text" className="text-xs font-medium text-[var(--color-text-muted)]">
+                    Prompt text
+                  </label>
+                  <textarea
+                    id="prompt-text"
+                    value={draftText}
+                    onChange={(e) => setDraftText(e.target.value)}
+                    placeholder="Write the prompt the model will follow — instructions, context, format, or constraints."
+                    rows={8}
+                    className="flex-1 min-h-[140px] w-full resize-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2.5 text-sm leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
+                  />
+                </div>
+                <div className="flex items-center justify-between gap-3 pt-1 border-t border-[var(--color-border-subtle)]">
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {draftText.length > 0 ? `${draftText.length} characters` : "No content yet"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {createMutation.isError || updateMutation.isError ? (
+                      <span className="text-xs text-[var(--color-status-error)]">
+                        {(createMutation.error ?? updateMutation.error)?.message ?? "Save failed"}
+                      </span>
+                    ) : null}
+                    {createMutation.isSuccess || updateMutation.isSuccess ? (
+                      <span className="text-xs text-[var(--color-status-running)] font-medium">Saved</span>
+                    ) : null}
+                    <Tooltip content={!draftName.trim() || !draftText.trim() ? "Name and prompt text are required" : undefined}>
+                      <span className="inline-flex">
+                        <Button
+                          ref={saveRef}
+                          size="sm"
+                          disabled={!draftName.trim() || !draftText.trim() || createMutation.isPending || updateMutation.isPending}
+                          loading={createMutation.isPending || updateMutation.isPending}
+                          onClick={handleSave}
+                        >
+                          {isCreating ? "Create" : "Save"}
+                        </Button>
+                      </span>
+                    </Tooltip>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── Benchmark row ────────────────────────────────────────────────
@@ -149,41 +467,53 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
 
 // ─── Run benchmark control ────────────────────────────────────────
 
-function RunBenchmarkBar() {
+function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
   const queryClient = useQueryClient();
   const [modelId, setModelId] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const [selectedPromptId, setSelectedPromptId] = useState("");
 
   const { data: models } = useQuery({
     queryKey: ["models"],
     queryFn: () => client.listModels(),
   });
 
+  const { data: prompts } = useQuery({
+    queryKey: ["prompts"],
+    queryFn: () => client.listPrompts(),
+  });
+
   const runMutation = useMutation({
     mutationFn: ({ modelId, prompt }: { modelId: string; prompt?: string }) =>
       client.runBenchmark(modelId, prompt),
     onSuccess: () => {
-      // New run lands at the top of the history; the model's lastBenchmark refreshes too.
       queryClient.invalidateQueries({ queryKey: ["benchmarks"] });
       queryClient.invalidateQueries({ queryKey: ["models"] });
-      setPrompt("");
+      // Keep prompt selection — user may want to run the same prompt again.
     },
   });
 
   const readyModels = (models ?? []).filter((m) => m.status === "ready");
-  const options = (models ?? []).map((m) => ({
+  const modelOptions = (models ?? []).map((m) => ({
     value: m.id,
     label: m.status === "ready" ? m.name : `${m.name} (${m.status})`,
   }));
 
+  const promptOptions = (prompts ?? []).map((p) => ({
+    value: p.id,
+    label: p.name,
+  }));
+
   const selected = (models ?? []).find((m) => m.id === modelId);
+  const selectedPrompt = (prompts ?? []).find((p) => p.id === selectedPromptId);
   const disabledReason = benchmarkDisabledReason(selected ?? undefined);
   const canRun = !!selected && selected.status === "ready";
 
   const run = () => {
     if (!canRun || runMutation.isPending) return;
-    // Empty prompt → backend default. Trim so whitespace-only input also falls back.
-    runMutation.mutate({ modelId, prompt: prompt.trim() || undefined });
+    runMutation.mutate({
+      modelId,
+      prompt: selectedPrompt?.text || undefined,
+    });
   };
 
   return (
@@ -196,20 +526,31 @@ function RunBenchmarkBar() {
           onChange={(e) => setModelId(e.target.value)}
           options={[
             { value: "", label: "Select a model…" },
-            ...options,
+            ...modelOptions,
           ]}
         />
       </div>
-      <div className="min-w-0 flex-[1.6]">
-        <Input
+      <div className="min-w-0 flex-1">
+        <Select
           label="Prompt (optional)"
           aria-label="Prompt (optional)"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          maxLength={2000}
-          placeholder="Describe what the model should do — empty uses the default benchmark prompt"
+          value={selectedPromptId}
+          onChange={(e) => setSelectedPromptId(e.target.value)}
+          options={[
+            { value: "", label: "Default prompt" },
+            ...promptOptions,
+          ]}
         />
       </div>
+      <Button
+        variant="secondary"
+        size="md"
+        onClick={onManagePrompts}
+        className="lg:self-end"
+      >
+        <BookOpen className="size-3.5" />
+        Manage prompts
+      </Button>
       <Tooltip content={disabledReason ?? "Run a benchmark against the selected model"}>
         <span className="inline-flex sm:shrink-0">
           <Button
@@ -235,6 +576,8 @@ function RunBenchmarkBar() {
 // ─── Main Benchmarks page ─────────────────────────────────────────
 
 export default function Benchmarks() {
+  const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+
   const {
     data: results,
     isLoading,
@@ -292,7 +635,7 @@ export default function Benchmarks() {
         </p>
       </div>
 
-      <RunBenchmarkBar />
+      <RunBenchmarkBar onManagePrompts={() => setShowPromptLibrary(true)} />
 
       {!results || results.length === 0 ? (
         <Card padding="none">
@@ -309,6 +652,11 @@ export default function Benchmarks() {
           ))}
         </Card>
       )}
+
+      <PromptLibraryModal
+        open={showPromptLibrary}
+        onClose={() => setShowPromptLibrary(false)}
+      />
     </div>
   );
 }

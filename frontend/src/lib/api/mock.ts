@@ -5,6 +5,7 @@ import type {
   LastBenchmarkResult,
   LogEntry,
   Model,
+  Prompt,
   QueueSnapshot,
   RegisterContainerPayload,
   RegisteredContainer,
@@ -165,6 +166,39 @@ const BENCHMARKS: BenchmarkResult[] = [
     timestamp: new Date(Date.now() - 9 * 86400_000).toISOString(),
     status: "completed",
     errorMessage: null,
+  },
+];
+
+// ─── Prompt Library Seed ─────────────────────────────────────────
+
+const PROMPTS: Prompt[] = [
+  {
+    id: "p1",
+    name: "Concise summary",
+    text: "Summarize the input in two sentences maximum, focusing on the key technical points. Use plain language without jargon.",
+    createdAt: NOW,
+    updatedAt: NOW,
+  },
+  {
+    id: "p2",
+    name: "Code review",
+    text: "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
+    createdAt: NOW,
+    updatedAt: NOW,
+  },
+  {
+    id: "p3",
+    name: "Creative rewrite",
+    text: "Rewrite the following text in a more engaging, conversational tone while preserving all technical accuracy and the original structure. Use short sentences and active voice. Add one concrete example where it clarifies the point.",
+    createdAt: NOW,
+    updatedAt: NOW,
+  },
+  {
+    id: "p4",
+    name: "Long-form writing",
+    text: "You are an experienced technical writer. Expand the following notes into a well-structured blog post with an introduction, three main sections, and a conclusion. Include practical tips, real-world examples, and potential pitfalls. Aim for approximately 800 words, maintain a professional but approachable tone, and ensure the content flows naturally from one section to the next.",
+    createdAt: NOW,
+    updatedAt: NOW,
   },
 ];
 
@@ -845,6 +879,49 @@ export const mockClient: UnswarmClient = {
       logSubscribers.delete(key);
       stopLogStreamIfIdle();
     };
+  },
+
+  // ── Prompt Library ────────────────────────────────────────────
+  async listPrompts() {
+    await delay(rand(60, 150));
+    // Return sorted by name ascending (wire contract).
+    return [...PROMPTS].sort((a, b) => a.name.localeCompare(b.name));
+  },
+
+  async createPrompt(input: { name: string; text: string }) {
+    await delay(rand(80, 200));
+    if (!input.name.trim() || !input.text.trim()) {
+      throw new Error("Name and text are required");
+    }
+    const prompt: Prompt = {
+      id: id(),
+      name: input.name.trim(),
+      text: input.text.trim(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    PROMPTS.push(prompt);
+    return { ...prompt };
+  },
+
+  async updatePrompt(promptId: string, input: { name: string; text: string }) {
+    await delay(rand(80, 200));
+    if (!input.name.trim() || !input.text.trim()) {
+      throw new Error("Name and text are required");
+    }
+    const prompt = PROMPTS.find((p) => p.id === promptId);
+    if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    prompt.name = input.name.trim();
+    prompt.text = input.text.trim();
+    prompt.updatedAt = new Date().toISOString();
+    return { ...prompt };
+  },
+
+  async deletePrompt(promptId: string) {
+    await delay(rand(60, 150));
+    const idx = PROMPTS.findIndex((p) => p.id === promptId);
+    if (idx === -1) throw new Error(`Prompt ${promptId} not found`);
+    PROMPTS.splice(idx, 1);
   },
 
   // Settings

@@ -57,6 +57,7 @@ builder.Services.AddScoped<IModelRegistry, ModelRegistry>();
 builder.Services.AddScoped<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<ModelValidator>();
 builder.Services.AddScoped<IBenchmarkHistory, BenchmarkHistoryService>();
+builder.Services.AddScoped<IPromptStore, PromptStore>();
 builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
@@ -116,6 +117,10 @@ await using (var scope = app.Services.CreateAsyncScope())
     // 'Validating' forever (a busy/cancelled smoke never flipped them). Discovery is
     // now the sole validation, so any leftover 'Validating' row is treated as Ready.
     await HealStrandedValidatingModelsAsync(db);
+
+    // Prompt library table: EnsureCreated only creates when the DB is entirely new.
+    // Existing installs that upgrade past the P9 cutoff need this table created here.
+    await EnsurePromptsTableAsync(db);
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────
@@ -267,6 +272,39 @@ static async Task HealStrandedValidatingModelsAsync(UnswarmDbContext db)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"Unswarm startup: failed to heal stranded Validating models: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// SQLite-only, idempotent drift repair for the Prompts table added in P9. EnsureCreated
+/// only runs when the DB is entirely new; existing installs that upgraded past P9 need
+/// this CREATE TABLE IF NOT EXISTS to get the table created.
+/// </summary>
+static async Task EnsurePromptsTableAsync(UnswarmDbContext db)
+{
+    try
+    {
+        await db.Database.OpenConnectionAsync();
+        await using var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS "Prompts" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_Prompts" PRIMARY KEY,
+                "Name" TEXT NOT NULL,
+                "Text" TEXT NOT NULL,
+                "CreatedAt" TEXT NOT NULL,
+                "UpdatedAt" TEXT NOT NULL
+            );
+            """;
+        await cmd.ExecuteNonQueryAsync();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to create Prompts table: {ex.Message}");
     }
     finally
     {

@@ -11,6 +11,7 @@ export type {
   Model,
   ModelStatus,
   ModelTransition,
+  Prompt,
   QueueItem,
   QueueItemStatus,
   QueueSnapshot,

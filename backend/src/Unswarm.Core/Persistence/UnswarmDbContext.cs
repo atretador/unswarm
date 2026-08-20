@@ -99,6 +99,15 @@ public sealed class ContainerModelMappingEntity
     public ModelEntity Model { get; set; } = null!;
 }
 
+public sealed class PromptEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Text { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public sealed class UnswarmDbContext : DbContext
 {
     public DbSet<ModelEntity> Models => Set<ModelEntity>();
@@ -107,6 +116,7 @@ public sealed class UnswarmDbContext : DbContext
     public DbSet<SettingsEntity> Settings => Set<SettingsEntity>();
     public DbSet<RegisteredContainerEntity> RegisteredContainers => Set<RegisteredContainerEntity>();
     public DbSet<ContainerModelMappingEntity> ContainerModelMappings => Set<ContainerModelMappingEntity>();
+    public DbSet<PromptEntity> Prompts => Set<PromptEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -178,6 +188,13 @@ public sealed class UnswarmDbContext : DbContext
              .WithMany(m => m.ContainerModelMappings)
              .HasForeignKey(cm => cm.ModelId)
              .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<PromptEntity>(e =>
+        {
+            e.HasKey(p => p.Id);
+            e.Property(p => p.Name).IsRequired();
+            e.Property(p => p.Text).IsRequired();
         });
     }
 }
