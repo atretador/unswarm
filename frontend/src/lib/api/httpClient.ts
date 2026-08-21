@@ -19,6 +19,19 @@ export const BASE_URL =
   (import.meta.env.VITE_API_URL as string | undefined) ||
   "http://localhost:5014";
 
+// ─── Helpers ──────────────────────────────────────────────────────
+
+/**
+ * Encode a path-like ID (e.g. `/models/Ling/Ling-3.0-tiny-Q4_0.gguf`)
+ * so that slashes are preserved but individual segments are safe for URLs.
+ */
+function encodePathId(id: string): string {
+  return id
+    .split("/")
+    .map((seg) => (seg ? encodeURIComponent(seg) : seg))
+    .join("/");
+}
+
 // ─── Request helper ──────────────────────────────────────────────
 
 async function request<T>(
@@ -71,7 +84,7 @@ export const httpClient: UnswarmClient = {
   },
 
   getModel(id: string) {
-    return request<Model>(`/api/models/${encodeURIComponent(id)}`);
+    return request<Model>(`/api/models/${encodePathId(id)}`);
   },
 
   createModel(data) {
@@ -82,14 +95,14 @@ export const httpClient: UnswarmClient = {
   },
 
   updateModel(id, data) {
-    return request<Model>(`/api/models/${encodeURIComponent(id)}`, {
+    return request<Model>(`/api/models/${encodePathId(id)}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
   },
 
   deleteModel(id) {
-    return request<void>(`/api/models/${encodeURIComponent(id)}`, {
+    return request<void>(`/api/models/${encodePathId(id)}`, {
       method: "DELETE",
     });
   },
@@ -249,6 +262,12 @@ export const httpClient: UnswarmClient = {
   deletePrompt(id: string) {
     return request<void>(`/api/prompts/${encodeURIComponent(id)}`, {
       method: "DELETE",
+    });
+  },
+
+  setDefaultPrompt(id: string) {
+    return request<Prompt>(`/api/prompts/${encodeURIComponent(id)}/default`, {
+      method: "POST",
     });
   },
 

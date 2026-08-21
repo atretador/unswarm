@@ -13,6 +13,7 @@ import {
   Skeleton,
   EmptyState,
   Tooltip,
+  ConfirmDialog,
 } from "../../components/ui";
 import type { Model, ModelStatus } from "../../lib/api/types";
 
@@ -86,13 +87,14 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
   const bench = model.lastBenchmark;
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const handleDelete = async () => {
-    if (!confirm(`Delete ${model.name}?`)) return;
     setDeleting(true);
     try {
       await client.deleteModel(model.id);
       queryClient.invalidateQueries({ queryKey: ["models"] });
+      setShowConfirm(false);
     } finally {
       setDeleting(false);
     }
@@ -176,16 +178,27 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
             <span className="text-[10px] italic text-[var(--color-text-muted)]">not registered</span>
           )}
           {model.status === "deprecated" && (
-            <Tooltip content="Remove deprecated model">
-              <button
-                onClick={handleDelete}
-                disabled={deleting}
-                aria-label={`Delete ${model.name}`}
-                className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
-              >
-                <Trash2 className="size-3.5" />
-              </button>
-            </Tooltip>
+            <>
+              <Tooltip content="Remove deprecated model">
+                <button
+                  onClick={() => setShowConfirm(true)}
+                  disabled={deleting}
+                  aria-label={`Delete ${model.name}`}
+                  className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </Tooltip>
+              <ConfirmDialog
+                open={showConfirm}
+                title={`Delete ${model.name}?`}
+                description="This will permanently remove the deprecated model from the registry."
+                confirmLabel="Delete"
+                loading={deleting}
+                onConfirm={handleDelete}
+                onCancel={() => setShowConfirm(false)}
+              />
+            </>
           )}
         </div>
       </div>
