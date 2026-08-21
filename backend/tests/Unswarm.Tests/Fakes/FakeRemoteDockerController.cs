@@ -1,5 +1,6 @@
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Tests.Fakes;
 
@@ -117,5 +118,18 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
         return InferFunc is not null
             ? InferFunc(port, requestJson, ct)
             : Task.FromResult(InferResult);
+    }
+
+    /// <summary>Scripts returned by ListScriptsAsync.</summary>
+    public List<AgentScriptInfo> ListedScripts { get; set; } = [];
+
+    /// <summary>If set, ListScriptsAsync throws this exception.</summary>
+    public Exception? ThrowOnListScripts { get; set; }
+
+    public Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default)
+    {
+        if (ThrowOnListScripts is not null)
+            throw ThrowOnListScripts;
+        return Task.FromResult<IReadOnlyList<AgentScriptInfo>>(ListedScripts.ToList());
     }
 }

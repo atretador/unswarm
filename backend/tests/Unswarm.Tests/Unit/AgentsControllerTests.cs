@@ -6,6 +6,7 @@ using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
+using Unswarm.Core.Services.Remote;
 using Unswarm.Tests.Fakes;
 
 namespace Unswarm.Tests.Unit;
@@ -419,5 +420,105 @@ public sealed class AgentsControllerTests
         var result = CreateController().ListAgentScripts("nonexistent");
 
         Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    // ── ListAvailableScripts endpoint tests ────────────────────────
+
+    [Fact]
+    public async Task ListAvailableScripts_Host_ReturnsBadRequest()
+    {
+        var result = await CreateController().ListAvailableScripts("host", CancellationToken.None);
+
+        var bad = Assert.IsType<BadRequestObjectResult>(result);
+        var error = bad.Value!;
+        var errorProp = error.GetType().GetProperty("error");
+        Assert.NotNull(errorProp);
+        Assert.Contains("Host scripts", (string)errorProp!.GetValue(error)!);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_UnknownAgent_ReturnsNotFound()
+    {
+        var result = await CreateController().ListAvailableScripts("ghost", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_Success_ReturnsScriptArray()
+    {
+        var fakeRemote = new FakeRemoteDockerController
+        {
+            ListedScripts =
+            [
+                new AgentScriptInfo { Path = "/opt/scripts/model-a.sh", Name = "model-a" },
+                new AgentScriptInfo { Path = "/opt/scripts/model-b.sh", Name = "model-b" }
+            ]
+        };
+
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+
+        var agentTarget = ExecutionTarget.ForAgent("gpu1").Id;
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController>
+            {
+                ["host"] = _docker,
+                [agentTarget] = fakeRemote
+            });
+
+        var result = await CreateController(router).ListAvailableScripts("gpu1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var scripts = Assert.IsAssignableFrom<IReadOnlyList<AgentScriptInfo>>(ok.Value);
+        Assert.Equal(2, scripts.Count);
+        Assert.Equal("/opt/scripts/model-a.sh", scripts[0].Path);
+        Assert.Equal("model-a", scripts[0].Name);
+        Assert.Equal("/opt/scripts/model-b.sh", scripts[1].Path);
+        Assert.Equal("model-b", scripts[1].Name);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_Unreachable_Returns503()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+
+        // Agent is registered but NOT in the reachable set
+        var agentTarget = ExecutionTarget.ForAgent("gpu1").Id;
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController>
+            {
+                ["host"] = _docker,
+                [agentTarget] = new FakeRemoteDockerController()
+            },
+            reachable: ["host"]); // gpu1 is NOT reachable
+
+        var result = await CreateController(router).ListAvailableScripts("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_CommandFailure_Returns503()
+    {
+        var fakeRemote = new FakeRemoteDockerController
+        {
+            ThrowOnListScripts = new InvalidOperationException("Agent 'gpu1' is not connected")
+        };
+
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+
+        var agentTarget = ExecutionTarget.ForAgent("gpu1").Id;
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController>
+            {
+                ["host"] = _docker,
+                [agentTarget] = fakeRemote
+            });
+
+        var result = await CreateController(router).ListAvailableScripts("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
     }
 }

@@ -1,4 +1,5 @@
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Core.Contracts;
 
@@ -17,4 +18,7 @@ public interface IRemoteDockerController : IDockerController
     /// response body is returned as a string.
     /// </summary>
     Task<string> InferAsync(int port, string requestJson, CancellationToken ct = default);
+
+    /// <summary>Lists launcher scripts available on the remote agent.</summary>
+    Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default);
 }

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Api.Controllers;
 
@@ -62,6 +63,38 @@ public sealed class AgentsController : ControllerBase
             return NotFound(new { error = $"Agent '{name}' not found" });
 
         return Ok(info.Scripts ?? []);
+    }
+
+    /// <summary>
+    /// Lists launcher scripts available on a remote agent by querying the agent
+    /// over WebSocket. Host is rejected (host scripts are registered by full path,
+    /// not discovered remotely).
+    /// </summary>
+    [HttpGet("{name}/scripts/available")]
+    public async Task<IActionResult> ListAvailableScripts(string name, CancellationToken ct)
+    {
+        if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { error = "Host scripts are registered by full path; use /api/agents/host/scripts instead" });
+
+        var info = _registry.GetInfo(name);
+        if (info is null)
+            return NotFound(new { error = $"Agent '{name}' not found" });
+
+        var targetId = ExecutionTarget.ForAgent(name).Id;
+        if (!_router.IsTargetReachable(targetId))
+            return StatusCode(503, new { error = $"Agent '{name}' is not reachable" });
+
+        try
+        {
+            var controller = _router.GetController(targetId);
+            var remote = (IRemoteDockerController)controller;
+            var scripts = await remote.ListScriptsAsync(ct).ConfigureAwait(false);
+            return Ok(scripts);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+        {
+            return StatusCode(503, new { error = $"Failed to list scripts on agent '{name}': {ex.Message}" });
+        }
     }
 
     [HttpGet("{name}/containers")]
