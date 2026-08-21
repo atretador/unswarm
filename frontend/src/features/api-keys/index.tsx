@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot } from "lucide-react";
 import { client } from "../../lib/query-client";
-import { Card, Skeleton, Button, Badge, EmptyState, Input } from "../../components/ui";
+import { Card, Skeleton, Button, Badge, EmptyState, Input, ConfirmDialog } from "../../components/ui";
 import type { ApiKeyCreateResponse, ApiKeyItem } from "../../lib/api/types";
 
 // ─── Copy-to-clipboard helper ──────────────────────────────────────────
@@ -181,10 +181,21 @@ function KeyRow({
 }) {
   const [rotating, setRotating] = useState(false);
   const [rotated, setRotated] = useState<ApiKeyCreateResponse | null>(null);
+  const [rotateError, setRotateError] = useState<string | null>(null);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<ApiKeyItem | null>(null);
 
   const revokeMutation = useMutation({
     mutationFn: () => client.revokeApiKey(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["api-keys"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+      setConfirmRevoke(null);
+      setRevokeError(null);
+    },
+    onError: (err: Error) => {
+      setConfirmRevoke(null);
+      setRevokeError(err.message || "Revocation failed");
+    },
   });
 
   const rotateMutation = useMutation({
@@ -193,6 +204,11 @@ function KeyRow({
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       setRotated(res);
       setRotating(false);
+      setRotateError(null);
+    },
+    onError: (err: Error) => {
+      setRotating(false);
+      setRotateError(err.message || "Rotation failed");
     },
   });
 
@@ -200,14 +216,14 @@ function KeyRow({
 
   const handleRotate = () => {
     setRotated(null);
+    setRotateError(null);
     setRotating(true);
     rotateMutation.mutate();
   };
 
   const handleRevoke = () => {
-    if (window.confirm(`Revoke "${name}"? Existing clients will lose access immediately.`)) {
-      revokeMutation.mutate();
-    }
+    setRevokeError(null);
+    setConfirmRevoke({ id, name, keyPrefix, scope, isActive, lastUsedAt, createdAt } as ApiKeyItem);
   };
 
   return (
@@ -257,6 +273,14 @@ function KeyRow({
         </div>
       </div>
 
+      {(rotateError || revokeError) && (
+        <div className="mb-3 pl-4 border-l-2 border-[color-mix(in_srgb,var(--color-status-error)_50%,var(--color-border))] rounded-r bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-4 py-3">
+          <p className="text-xs text-[var(--color-status-error)]">
+            {rotateError ?? revokeError}
+          </p>
+        </div>
+      )}
+
       {rotating && (
         <div className="mb-3 pl-4 border-l-2 border-[var(--color-border)] space-y-2">
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -279,6 +303,19 @@ function KeyRow({
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmRevoke !== null}
+        title={`Revoke "${confirmRevoke?.name ?? name}"?`}
+        description="Existing clients will lose access immediately."
+        confirmLabel="Revoke"
+        variant="danger"
+        loading={revokeMutation.isPending}
+        onConfirm={() => {
+          if (confirmRevoke) revokeMutation.mutate();
+        }}
+        onCancel={() => setConfirmRevoke(null)}
+      />
     </div>
   );
 }
@@ -416,13 +453,15 @@ export default function ApiKeys() {
       </Card>
 
       {/* Tab bar — same pattern as fleet ManageRuntimesModal */}
-      <div className="flex border-b border-[var(--color-border-subtle)]">
+      <div role="tablist" aria-label="Key scope" className="flex border-b border-[var(--color-border-subtle)]">
         {TABS.map((tab) => (
           <button
             key={tab.key}
             type="button"
             role="tab"
+            id={`apikeys-tab-${tab.key}`}
             aria-selected={activeTab === tab.key}
+            aria-controls="apikeys-panel"
             onClick={() => setActiveTab(tab.key)}
             className={`
               flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors
@@ -441,7 +480,7 @@ export default function ApiKeys() {
       </div>
 
       {/* Tab content */}
-      <div role="tabpanel">
+      <div role="tabpanel" id="apikeys-panel" aria-labelledby={`apikeys-tab-${activeTab}`}>
         <CreateKeySection queryClient={queryClient} scope={activeTab} />
         <div className="mt-6">
           <KeyList queryClient={queryClient} scope={activeTab} />

@@ -24,11 +24,11 @@ describe("Dashboard", () => {
 
     expect(screen.getByText("14,287")).toBeInTheDocument();
     expect(screen.getByText("24.9M")).toBeInTheDocument();
-    expect(screen.getByText("142ms")).toBeInTheDocument();
+    expect(screen.getByText("142 ms")).toBeInTheDocument();
     // Queue depth = 2; use getAllByText since "2" appears in multiple stats
     expect(screen.getAllByText("2").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Avg switch")).toBeInTheDocument();
-    expect(screen.getByText("2850ms")).toBeInTheDocument();
+    expect(screen.getByText("2850 ms")).toBeInTheDocument();
   });
 
   it("renders chart sections", async () => {

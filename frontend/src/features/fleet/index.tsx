@@ -578,7 +578,7 @@ function ConcurrencyModal({
             {/* Runs-alone hint */}
             {agentRcs.some((rc) => rc.canRunAlongWith.length === 0) && (
               <p className="mt-3 text-[10px] text-[var(--color-text-muted)]">
-                Runtimes with all cells off run in single-container mode and will not share resources.
+                Runtimes with all cells off run independently and will not share resources.
               </p>
             )}
           </>
@@ -618,9 +618,13 @@ function ManageRuntimesModal({
   return (
     <Modal open={open} onClose={onClose} label={`Manage runtimes on ${agentName}`}>
       {/* Tab bar */}
-      <div className="flex border-b border-[var(--color-border-subtle)]">
+      <div role="tablist" aria-label="Runtimes" className="flex border-b border-[var(--color-border-subtle)]">
         <button
           type="button"
+          role="tab"
+          id="fleet-tab-containers"
+          aria-selected={activeTab === "containers"}
+          aria-controls="fleet-panel-containers"
           onClick={() => setActiveTab("containers")}
           className={`
             flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
@@ -636,6 +640,10 @@ function ManageRuntimesModal({
         </button>
         <button
           type="button"
+          role="tab"
+          id="fleet-tab-scripts"
+          aria-selected={activeTab === "scripts"}
+          aria-controls="fleet-panel-scripts"
           onClick={() => setActiveTab("scripts")}
           className={`
             flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
@@ -652,19 +660,23 @@ function ManageRuntimesModal({
       </div>
 
       {activeTab === "containers" ? (
-        <ManageContainersBody
-          key={open ? `containers:${agentName}:${open}` : "closed"}
-          agentName={agentName}
-          onClose={onClose}
-          registered={registered}
-        />
+        <div role="tabpanel" id="fleet-panel-containers" aria-labelledby="fleet-tab-containers">
+          <ManageContainersBody
+            key={open ? `containers:${agentName}:${open}` : "closed"}
+            agentName={agentName}
+            onClose={onClose}
+            registered={registered}
+          />
+        </div>
       ) : (
-        <ManageScriptsBody
-          key={open ? `scripts:${agentName}:${open}` : "closed"}
-          agentName={agentName}
-          onClose={onClose}
-          registered={registered}
-        />
+        <div role="tabpanel" id="fleet-panel-scripts" aria-labelledby="fleet-tab-scripts">
+          <ManageScriptsBody
+            key={open ? `scripts:${agentName}:${open}` : "closed"}
+            agentName={agentName}
+            onClose={onClose}
+            registered={registered}
+          />
+        </div>
       )}
     </Modal>
   );

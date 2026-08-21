@@ -46,6 +46,10 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function formatMs(ms: number): string {
+  return `${Math.round(ms)} ms`;
+}
+
 function CopyButton({ text, className = "" }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -183,7 +187,7 @@ function DashboardContent() {
     },
     {
       label: "Avg latency",
-      value: `${stats.avgLatencyMs}ms`,
+      value: formatMs(stats.avgLatencyMs),
       icon: Clock,
       color: "text-[var(--color-status-warning)]",
     },
@@ -195,7 +199,7 @@ function DashboardContent() {
     },
     {
       label: "Avg switch",
-      value: stats.switchCount > 0 ? `${Math.round(stats.avgSwitchMs)}ms` : "—",
+      value: stats.switchCount > 0 ? formatMs(stats.avgSwitchMs) : "—",
       icon: ArrowLeftRight,
       color: "text-[var(--color-text-muted)]",
     },

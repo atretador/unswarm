@@ -1382,7 +1382,7 @@ describe("Fleet", () => {
     await screen.findByRole("dialog", { name: /concurrency on host/i });
 
     await waitFor(() => {
-      expect(screen.getByText(/single-container mode/i)).toBeInTheDocument();
+      expect(screen.getByText(/run independently and will not share resources/i)).toBeInTheDocument();
     });
   });
 
@@ -1422,7 +1422,7 @@ describe("Fleet", () => {
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
 
     // Switch to scripts tab
-    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+    await user.click(within(dialog).getByRole("tab", { name: /scripts/i }));
 
     // Mock returns 3 available scripts for edge-node-1
     await waitFor(() => {
@@ -1450,7 +1450,7 @@ describe("Fleet", () => {
     await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
-    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+    await user.click(within(dialog).getByRole("tab", { name: /scripts/i }));
 
     await waitFor(() => {
       expect(within(dialog).getByText("run_vllm.sh")).toBeInTheDocument();
@@ -1517,7 +1517,7 @@ describe("Fleet", () => {
     await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on gpu-node-1/i });
-    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+    await user.click(within(dialog).getByRole("tab", { name: /scripts/i }));
 
     await waitFor(() => {
       expect(within(dialog).getByText("No scripts found")).toBeInTheDocument();
@@ -1545,7 +1545,7 @@ describe("Fleet", () => {
     await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
-    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+    await user.click(within(dialog).getByRole("tab", { name: /scripts/i }));
 
     await waitFor(() => {
       expect(within(dialog).getByText("Couldn't reach edge-node-1 to list scripts.")).toBeInTheDocument();

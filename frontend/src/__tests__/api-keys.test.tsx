@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
@@ -84,8 +84,48 @@ describe("API Keys page", () => {
     });
   });
 
-  it("revoke disables the revoke button", async () => {
-    vi.spyOn(window, "confirm").mockReturnValue(true);
+  // NOTE: this test must run before the confirm-revoke test below — the mock
+  // client's API_KEYS store is module-level mutable state shared across tests,
+  // and revoking "Go agent" permanently deactivates it for later tests.
+  it("cancel on revoke dialog keeps the key active", async () => {
+    const user = userEvent.setup();
+    const revokeSpy = vi.spyOn(mockClient, "revokeApiKey");
+
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Go agent")).toBeInTheDocument();
+    });
+
+    // Click Revoke — opens the ConfirmDialog
+    await user.click(screen.getByRole("button", { name: "Revoke Go agent" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    // Click Cancel — dialog closes, no revoke call
+    await user.click(within(dialog).getByRole("button", { name: /Cancel/i }));
+
+    // ConfirmDialog keeps the <dialog> element mounted but unsets `open`
+    await waitFor(() => {
+      expect(dialog).not.toHaveAttribute("open");
+    });
+    expect(revokeSpy).not.toHaveBeenCalled();
+
+    // Revoke button is still active
+    expect(screen.getByRole("button", { name: "Revoke Go agent" })).not.toBeDisabled();
+  });
+
+  it("revoke opens a confirm dialog; confirm disables the key", async () => {
     const user = userEvent.setup();
 
     render(
@@ -104,8 +144,16 @@ describe("API Keys page", () => {
       expect(screen.getByText("Go agent")).toBeInTheDocument();
     });
 
-    // Revoke the seeded "Go agent" key — confirm dialog is stubbed to allow.
+    // Click Revoke — opens the ConfirmDialog
     await user.click(screen.getByRole("button", { name: "Revoke Go agent" }));
+
+    // ConfirmDialog appears with the key name
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Revoke "Go agent"\?/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Existing clients will lose access immediately/)).toBeInTheDocument();
+
+    // Click the destructive confirm button inside the dialog
+    await user.click(within(dialog).getByRole("button", { name: /Revoke/i }));
 
     await waitFor(() => {
       expect(
