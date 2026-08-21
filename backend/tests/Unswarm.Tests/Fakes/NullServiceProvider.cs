@@ -59,4 +59,7 @@ internal sealed class NullContainerRegistrationService : IContainerRegistrationS
 
     public Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default)
         => throw new NotSupportedException("Null service");
+
+    public Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default)
+        => Task.FromResult<RegisteredRuntime?>(null);
 }

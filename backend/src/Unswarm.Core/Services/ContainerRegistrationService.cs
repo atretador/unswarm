@@ -417,6 +417,60 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         return container;
     }
 
+    public async Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default)
+    {
+        var container = await _registry.GetAsync(id, ct).ConfigureAwait(false);
+        if (container is null)
+            return null;
+
+        _logger.LogInformation("Stopping registered runtime {Id} (kind {Kind}, agent {Agent})",
+            id, container.RuntimeKind, container.Agent);
+
+        try
+        {
+            if (container.RuntimeKind == RuntimeKind.Script)
+            {
+                // Stop script process
+                var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
+                if (isHost && _scriptController is not null)
+                {
+                    await _scriptController.StopScriptAsync(id, ct).ConfigureAwait(false);
+                }
+                else if (!isHost)
+                {
+                    var controller = GetController(container);
+                    if (controller is RemoteAgentDockerController remoteController && container.RuntimeProcessId.HasValue)
+                    {
+                        await remoteController.StopScriptAsync(container.RuntimeProcessId.Value, ct).ConfigureAwait(false);
+                    }
+                }
+            }
+            else
+            {
+                // Stop Docker container
+                if (container.RuntimeContainerId is not null)
+                {
+                    var controller = GetController(container);
+                    await controller.StopContainerAsync(container.RuntimeContainerId, ct).ConfigureAwait(false);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error stopping runtime {Id}; persisting stopped state anyway", id);
+        }
+
+        container = await _registry.UpdateAsync(id, container with
+        {
+            Status = ContainerRegistrationStatus.Error,
+            ErrorMessage = "Stopped by user",
+            RuntimeProcessId = null,
+            RuntimeContainerId = null
+        }, ct).ConfigureAwait(false);
+
+        return container;
+    }
+
     /// <summary>
     /// Resolves the controller for the container's execution target:
     /// "host" → local controller, anything else → "agent:&lt;name&gt;" via the router.
@@ -860,7 +914,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             MappedPort = mappedPort
         }, ct).ConfigureAwait(false);
 
-        await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
+        try
+        {
+            await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            return await FailAsync(container, $"Health check failed: {ex.Message}", ct).ConfigureAwait(false);
+        }
 
         container = await _registry.UpdateAsync(container.Id, container with
         {

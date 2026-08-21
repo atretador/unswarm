@@ -31,4 +31,5 @@ public interface IContainerRegistrationService
     Task<RegisteredRuntimeWithModels> RediscoverAsync(string registeredContainerId, CancellationToken ct = default);
     Task DeleteAsync(string id, bool deleteModels, CancellationToken ct = default);
     Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default);
+    Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default);
 }

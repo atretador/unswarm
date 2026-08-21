@@ -359,4 +359,124 @@ public sealed class ContainersControllerTests
         Assert.Equal("Peer-A", _registrationService.LastConcurrencyList[0]);
         Assert.Equal("peer-b", _registrationService.LastConcurrencyList[1]);
     }
+
+    // ── Stop endpoint tests ───────────────────────────────────────────
+
+    [Fact]
+    public async Task StopRegistered_Returns200_UpdatedRuntime()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        _registrationService.StopResult = container with
+        {
+            Status = ContainerRegistrationStatus.Error,
+            ErrorMessage = "Stopped by user",
+            RuntimeProcessId = null,
+            RuntimeContainerId = null
+        };
+
+        var result = await CreateController().StopRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("reg-1", response.Id);
+        Assert.Equal("error", response.Status);
+        Assert.Equal("Stopped by user", response.ErrorMessage);
+        Assert.Null(response.RuntimeProcessId);
+        Assert.Null(response.RuntimeContainerId);
+    }
+
+    [Fact]
+    public async Task StopRegistered_UnknownId_ReturnsNotFound()
+    {
+        _registrationService.StopResult = null;
+
+        var result = await CreateController().StopRegistered("nope", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task StopRegistered_StopPersistedViaFake()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        _registrationService.StopResult = container with
+        {
+            Status = ContainerRegistrationStatus.Error,
+            ErrorMessage = "Stopped by user"
+        };
+
+        await CreateController().StopRegistered("reg-1", CancellationToken.None);
+
+        Assert.Contains("reg-1", _registrationService.StoppedIds);
+    }
+
+    [Fact]
+    public async Task StopRegistered_ClearsProcessId()
+    {
+        var container = MakeContainer("reg-1") with { RuntimeProcessId = 42, RuntimeContainerId = "c1" };
+        await _containerRegistry.CreateAsync(container);
+
+        _registrationService.StopResult = container with
+        {
+            Status = ContainerRegistrationStatus.Error,
+            ErrorMessage = "Stopped by user",
+            RuntimeProcessId = null,
+            RuntimeContainerId = null
+        };
+
+        var result = await CreateController().StopRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Null(response.RuntimeProcessId);
+        Assert.Null(response.RuntimeContainerId);
+    }
+
+    // ── DTO completeness tests ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRegistered_ScriptRuntime_ShowsRuntimeKindLauncherPathRuntimeProcessId()
+    {
+        var container = MakeContainer("reg-script") with
+        {
+            RuntimeKind = RuntimeKind.Script,
+            LauncherPath = "/opt/scripts/model-a.sh",
+            RuntimeProcessId = 42,
+            MappedPort = 9000
+        };
+        await _containerRegistry.CreateAsync(container);
+
+        var result = await CreateController().GetRegistered("reg-script", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("script", response.RuntimeKind);
+        Assert.Equal("/opt/scripts/model-a.sh", response.LauncherPath);
+        Assert.Equal(42, response.RuntimeProcessId);
+        Assert.Equal(9000, response.MappedPort);
+    }
+
+    [Fact]
+    public async Task GetRegistered_ContainerRuntime_ShowsContainerKind()
+    {
+        var container = MakeContainer("reg-container") with
+        {
+            RuntimeKind = RuntimeKind.Container,
+            RuntimeContainerId = "docker-c1"
+        };
+        await _containerRegistry.CreateAsync(container);
+
+        var result = await CreateController().GetRegistered("reg-container", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("container", response.RuntimeKind);
+        Assert.Null(response.LauncherPath);
+        Assert.Null(response.RuntimeProcessId);
+        Assert.Equal("docker-c1", response.RuntimeContainerId);
+    }
 }

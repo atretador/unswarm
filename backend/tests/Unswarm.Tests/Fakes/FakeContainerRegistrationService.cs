@@ -71,4 +71,22 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
             return Task.FromResult<RegisteredRuntime?>(null);
         return Task.FromResult<RegisteredRuntime?>(UpdateConcurrencyResult);
     }
+
+    // ── StopAsync ──────────────────────────────────────────────────────
+
+    public List<string> StoppedIds { get; } = [];
+
+    /// <summary>Scriptable StopAsync result; when set, returned for any id.</summary>
+    public RegisteredRuntime? StopResult { get; set; }
+
+    /// <summary>When set, StopAsync throws this exception instead of returning.</summary>
+    public Exception? StopException { get; set; }
+
+    public Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default)
+    {
+        StoppedIds.Add(id);
+        if (StopException is not null)
+            throw StopException;
+        return Task.FromResult(StopResult);
+    }
 }

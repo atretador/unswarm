@@ -306,6 +306,97 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             await scriptController.StopScriptAsync("peer-script");
     }
 
+    [Fact]
+    public async Task StartAsync_ScriptKind_HealthTimeout_FailsWithMessage()
+    {
+        var script = CreateScript("sleep 30");
+        var scriptController = CreateScriptController();
+        _healthChecker.IsReady = false;
+        var service = CreateService(scriptController: scriptController);
+
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "HealthFailing",
+            Image = "health-fail:latest",
+            RuntimeKind = RuntimeKind.Script,
+            LauncherPath = script,
+            ContainerPort = 8080
+        };
+
+        var result = await service.RegisterAsync(request);
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+
+        // Cleanup
+        if (scriptController.IsScriptRunning(result.Container.Id))
+            await scriptController.StopScriptAsync(result.Container.Id);
+    }
+
+    [Fact]
+    public async Task StartAsync_ScriptKind_RestartHealthTimeout_FailsWithWrappedMessage()
+    {
+        var script = CreateScript("sleep 30");
+        var scriptController = CreateScriptController();
+        var service = CreateService(scriptController: scriptController);
+
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "RestartHealthFail",
+            Image = "restart-fail:latest",
+            RuntimeKind = RuntimeKind.Script,
+            LauncherPath = script,
+            ContainerPort = 8080
+        };
+
+        var regResult = await service.RegisterAsync(request);
+        var regId = regResult.Container.Id;
+
+        // Stop the script to simulate crash
+        await scriptController.StopScriptAsync(regId);
+
+        // Now set health checker to fail
+        _healthChecker.IsReady = false;
+
+        // StartAsync goes through StartScriptAsync which wraps health error
+        var result = await service.StartAsync(regId);
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.Contains("Health check failed", result.Container.ErrorMessage);
+
+        // Cleanup
+        if (scriptController.IsScriptRunning(regId))
+            await scriptController.StopScriptAsync(regId);
+    }
+
+    [Fact]
+    public async Task StartAsync_ScriptKind_HealthTimeout_TransitionFromStartingToError()
+    {
+        var script = CreateScript("sleep 30");
+        var scriptController = CreateScriptController();
+        var service = CreateService(scriptController: scriptController);
+
+        var request = new ContainerRegistrationRequest
+        {
+            DisplayName = "TimeoutScript",
+            Image = "timeout:latest",
+            RuntimeKind = RuntimeKind.Script,
+            LauncherPath = script,
+            ContainerPort = 8080
+        };
+
+        // Register and let it start
+        var result = await service.RegisterAsync(request);
+
+        // Health timeout should have failed the script
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+
+        // Cleanup
+        if (scriptController.IsScriptRunning(result.Container.Id))
+            await scriptController.StopScriptAsync(result.Container.Id);
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

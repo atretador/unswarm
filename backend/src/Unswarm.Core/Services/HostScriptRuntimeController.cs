@@ -42,14 +42,14 @@ public sealed class HostScriptRuntimeController
 
     public async Task<ScriptStartResult> StartScriptAsync(string regId, string launcherPath, int declaredPort, CancellationToken ct = default)
     {
-        // Duplicate guard
+        // Duplicate guard: return success with existing PID if already running.
         if (_processes.TryGetValue(regId, out var existing))
         {
             try
             {
                 if (!existing.Process.HasExited)
                 {
-                    return new ScriptStartResult { ErrorMessage = $"Script runtime {regId} is already running (PID {existing.Pid})" };
+                    return new ScriptStartResult { Pid = existing.Pid };
                 }
             }
             catch

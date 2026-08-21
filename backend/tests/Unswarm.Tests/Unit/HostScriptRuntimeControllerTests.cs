@@ -63,16 +63,18 @@ public sealed class HostScriptRuntimeControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task StartScriptAsync_DuplicateGuard_ReturnsError()
+    public async Task StartScriptAsync_DuplicateGuard_IdempotentSuccess()
     {
         var script = CreateScript("while true; do sleep 1; done");
 
         var result1 = await _controller.StartScriptAsync("test-dup", script, 8080);
         Assert.Null(result1.ErrorMessage);
+        Assert.NotNull(result1.Pid);
 
         var result2 = await _controller.StartScriptAsync("test-dup", script, 8081);
-        Assert.NotNull(result2.ErrorMessage);
-        Assert.Contains("already running", result2.ErrorMessage);
+        Assert.Null(result2.ErrorMessage);
+        Assert.NotNull(result2.Pid);
+        Assert.Equal(result1.Pid, result2.Pid);
 
         await _controller.StopScriptAsync("test-dup");
     }

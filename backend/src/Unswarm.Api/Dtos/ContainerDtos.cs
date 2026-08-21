@@ -90,6 +90,7 @@ public sealed class RegisteredRuntimeResponse
     public List<string> CanRunAlongWith { get; set; } = [];
     public string Status { get; set; } = "";
     public string? RuntimeContainerId { get; set; }
+    public int? RuntimeProcessId { get; set; }
     public int? MappedPort { get; set; }
     public string? ErrorMessage { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -110,6 +111,7 @@ public sealed class RegisteredRuntimeResponse
         CanRunAlongWith = (container.CanRunAlongWith ?? []).ToList(),
         Status = container.Status.ToString().ToLowerInvariant(),
         RuntimeContainerId = container.RuntimeContainerId,
+        RuntimeProcessId = container.RuntimeProcessId,
         MappedPort = container.MappedPort,
         ErrorMessage = container.ErrorMessage,
         CreatedAt = container.CreatedAt,

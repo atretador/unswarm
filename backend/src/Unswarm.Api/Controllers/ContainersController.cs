@@ -175,9 +175,12 @@ public sealed class ContainersController : ControllerBase
             Image = container.Image,
             ContainerPort = container.ContainerPort,
             Agent = container.Agent,
+            RuntimeKind = container.RuntimeKind.ToString().ToLowerInvariant(),
+            LauncherPath = container.LauncherPath,
             CanRunAlongWith = (container.CanRunAlongWith ?? []).ToList(),
             Status = container.Status.ToString().ToLowerInvariant(),
             RuntimeContainerId = container.RuntimeContainerId,
+            RuntimeProcessId = container.RuntimeProcessId,
             MappedPort = container.MappedPort,
             ErrorMessage = container.ErrorMessage,
             CreatedAt = container.CreatedAt,
@@ -253,5 +256,16 @@ public sealed class ContainersController : ControllerBase
             return NotFound(new { error = "Registered runtime not found" });
 
         return Ok(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpPost("registered/{id}/stop")]
+    public async Task<IActionResult> StopRegistered(string id, CancellationToken ct)
+    {
+        var result = await _registrationService.StopAsync(id, ct).ConfigureAwait(false);
+        if (result is null)
+            return NotFound(new { error = "Registered runtime not found" });
+
+        return Ok(await BuildRegisteredResponseAsync(result, ct).ConfigureAwait(false));
     }
 }

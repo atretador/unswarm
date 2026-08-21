@@ -86,8 +86,9 @@ func (m *Manager) ListScripts() []ScriptInfo {
 }
 
 // StartScript spawns a bash script in a new process group. The script must
-// reside inside the configured scriptsDir (whitelist check). Returns the PID
-// of the spawned process.
+// reside inside the configured scriptsDir (whitelist check). If the script is
+// already running (alive process), returns the existing PID without error
+// (idempotent). Returns the PID of the spawned process.
 func (m *Manager) StartScript(path string, port int) (int, error) {
 	resolved, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
@@ -124,10 +125,10 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Duplicate guard.
+	// Duplicate guard: return existing PID if process is alive (idempotent).
 	if proc, ok := m.processes[resolved]; ok {
 		if isProcessAlive(proc.PID) {
-			return 0, fmt.Errorf("script %q is already running (pid %d)", resolved, proc.PID)
+			return proc.PID, nil
 		}
 		// Stale entry — clean up.
 		m.cleanupProcess(proc)

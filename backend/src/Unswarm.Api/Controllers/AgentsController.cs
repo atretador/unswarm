@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services;
 using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Api.Controllers;
@@ -23,15 +24,21 @@ public sealed class AgentsController : ControllerBase
     private readonly IAgentRegistry _registry;
     private readonly IDockerControllerRouter _router;
     private readonly IContainerRegistry _containerRegistry;
+    private readonly HostScriptRuntimeController _scriptController;
+    private readonly IHealthChecker _healthChecker;
 
     public AgentsController(
         IAgentRegistry registry,
         IDockerControllerRouter router,
-        IContainerRegistry containerRegistry)
+        IContainerRegistry containerRegistry,
+        HostScriptRuntimeController scriptController,
+        IHealthChecker healthChecker)
     {
         _registry = registry;
         _router = router;
         _containerRegistry = containerRegistry;
+        _scriptController = scriptController;
+        _healthChecker = healthChecker;
     }
 
     [HttpGet]
@@ -53,10 +60,13 @@ public sealed class AgentsController : ControllerBase
     }
 
     [HttpGet("{name}/scripts")]
-    public IActionResult ListAgentScripts(string name)
+    public async Task<IActionResult> ListAgentScripts(string name, CancellationToken ct = default)
     {
         if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
-            return Ok(Array.Empty<AgentScriptStatus>());
+        {
+            var hostScripts = await BuildHostScriptsAsync(ct).ConfigureAwait(false);
+            return Ok(hostScripts);
+        }
 
         var info = _registry.GetInfo(name);
         if (info is null)
@@ -114,6 +124,7 @@ public sealed class AgentsController : ControllerBase
     private async Task<AgentInfo> BuildHostInfoAsync(IReadOnlyList<RegisteredRuntime> allRegistered, CancellationToken ct)
     {
         var containers = await _router.GetController(ExecutionTarget.HostId).ListContainersAsync(ct).ConfigureAwait(false);
+        var scripts = await BuildHostScriptsAsync(ct).ConfigureAwait(false);
 
         return new AgentInfo
         {
@@ -125,18 +136,107 @@ public sealed class AgentsController : ControllerBase
             TotalMemoryMb = GetHostMemoryMb(),
             CpuCores = Environment.ProcessorCount,
             Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList(),
-            Scripts = [] // Host scripts are handled by the host script runtime (P2)
+            Scripts = scripts
         };
+    }
+
+    /// <summary>
+    /// Builds the host scripts list from registered runtimes where RuntimeKind==Script
+    /// and Agent=="host". Each script's status is health-gated: process dead → "stopped",
+    /// alive AND health Ready/Healthy → "running", alive otherwise → "starting".
+    /// </summary>
+    private async Task<IReadOnlyList<AgentScriptStatus>> BuildHostScriptsAsync(CancellationToken ct)
+    {
+        var allRegistered = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+        var hostScripts = allRegistered
+            .Where(r => r.RuntimeKind == RuntimeKind.Script
+                && string.Equals(r.Agent, "host", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var result = new List<AgentScriptStatus>();
+        foreach (var script in hostScripts)
+        {
+            var pid = _scriptController.GetProcessId(script.Id);
+            var isAlive = pid.HasValue && _scriptController.IsScriptRunning(script.Id);
+
+            string status;
+            if (!isAlive)
+            {
+                status = "stopped";
+            }
+            else
+            {
+                // Health-gate: check if runtime is Ready/Healthy
+                var isHealthy = script.Status == ContainerRegistrationStatus.Ready
+                    || script.Status == ContainerRegistrationStatus.Healthy;
+                if (!isHealthy && script.MappedPort.HasValue)
+                {
+                    try
+                    {
+                        isHealthy = await _healthChecker.CheckAsync(script.MappedPort.Value, ct).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        isHealthy = false;
+                    }
+                }
+                status = isHealthy ? "running" : "starting";
+            }
+
+            result.Add(new AgentScriptStatus
+            {
+                Path = script.LauncherPath ?? script.Image,
+                PID = pid ?? 0,
+                Status = status,
+                Port = script.MappedPort ?? script.ContainerPort,
+                StartTime = 0
+            });
+        }
+
+        return result;
     }
 
     /// <summary>
     /// Applies the registered-container filter to an agent's telemetry containers.
     /// ContainerIds are matched case-insensitively against registered runtime ids;
     /// names are matched case-insensitively against registered images.
+    /// For scripts: if agent telemetry reports "running" but the matching registered
+    /// runtime (match by LauncherPath) is not Ready/Healthy, downgrade to "starting".
     /// </summary>
     private static AgentInfo FilterAgentContainers(AgentInfo info, IReadOnlyList<RegisteredRuntime> allRegistered)
     {
         var registry = new RegisteredContainerSet(allRegistered, info.Name);
+
+        var filteredScripts = info.Scripts
+            .Select(s =>
+            {
+                // Health-gate downgrade: if agent reports "running" but the matching
+                // registered runtime is not Ready/Healthy, downgrade to "starting".
+                if (string.Equals(s.Status, "running", StringComparison.OrdinalIgnoreCase))
+                {
+                    var matching = allRegistered.FirstOrDefault(r =>
+                        r.RuntimeKind == RuntimeKind.Script
+                        && string.Equals(r.Agent, info.Name, StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrEmpty(r.LauncherPath)
+                        && string.Equals(r.LauncherPath, s.Path, StringComparison.OrdinalIgnoreCase));
+
+                    if (matching is not null
+                        && matching.Status != ContainerRegistrationStatus.Ready
+                        && matching.Status != ContainerRegistrationStatus.Healthy)
+                    {
+                        return new AgentScriptStatus
+                        {
+                            Path = s.Path,
+                            PID = s.PID,
+                            Status = "starting",
+                            Port = s.Port,
+                            StartTime = s.StartTime
+                        };
+                    }
+                }
+                return s;
+            })
+            .ToList();
 
         return new AgentInfo
         {
@@ -155,7 +255,7 @@ public sealed class AgentsController : ControllerBase
             Containers = info.Containers
                 .Where(c => registry.IsRegistered(c.ContainerId, c.ModelName))
                 .ToList(),
-            Scripts = info.Scripts
+            Scripts = filteredScripts
         };
     }
 
