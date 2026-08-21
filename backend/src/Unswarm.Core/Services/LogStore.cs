@@ -77,12 +77,18 @@ public sealed class LogStore : ILogStore
             if (since.HasValue)
                 query = query.Where(l => l.Timestamp >= since.Value);
 
-            var entities = await query
-                .OrderByDescending(l => l.Timestamp)
-                .Take(limit)
+            // SQLite's EF provider cannot ORDER BY a DateTimeOffset column
+            // (NotSupportedException at query compile time), so filter in SQL,
+            // then order/limit on the client. Retention pruning keeps the
+            // filtered set bounded; revisit with a UnixMs column if volume grows.
+            var matched = await query
                 .ToListAsync(ct).ConfigureAwait(false);
 
-            return entities.Select(MapToEntry).ToList();
+            return matched
+                .OrderByDescending(l => l.Timestamp)
+                .Take(limit)
+                .Select(MapToEntry)
+                .ToList();
         }
         catch (Exception ex)
         {

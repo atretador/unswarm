@@ -122,7 +122,10 @@ builder.Services.AddSingleton<IHealthChecker, HealthChecker>();
 builder.Services.AddSingleton<IInferenceProxy, InferenceProxy>();
 builder.Services.AddSingleton<ModelDiscoveryService>();
 builder.Services.AddScoped<IModelRegistry, ModelRegistry>();
-builder.Services.AddScoped<ISettingsStore, SettingsStore>();
+        // Singleton: SettingsStore is stateless (Func<UnswarmDbContext> holder, fresh
+        // DbContext per call) and is consumed by singletons (SchedulerWorker, global
+        // channel factory). Scoped registration would fail DI scope validation.
+        builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<ModelValidator>();
 builder.Services.AddScoped<IBenchmarkHistory, BenchmarkHistoryService>();
 builder.Services.AddScoped<IPromptStore, PromptStore>();
