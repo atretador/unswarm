@@ -356,14 +356,22 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 await _scriptController.StopScriptAsync(id, ct).ConfigureAwait(false);
             }
         }
-        else if (container.RuntimeContainerId is not null)
+        else
         {
+            // Resolve the CURRENT runtime container by name before stopping/removing:
+            // a recreated container (same name, new id) would otherwise be missed when
+            // stopping by the stale persisted RuntimeContainerId.
             var controller = GetController(container);
+            var live = await ResolveLiveRuntimeContainerAsync(controller, container, ct).ConfigureAwait(false);
+            var targetId = live?.Id ?? container.RuntimeContainerId;
 
-            _logger.LogInformation("Stopping runtime container {RuntimeContainerId} for registered container {Id}",
-                container.RuntimeContainerId[..Math.Min(12, container.RuntimeContainerId.Length)], id);
-            await controller.StopContainerAsync(container.RuntimeContainerId, ct).ConfigureAwait(false);
-            await controller.RemoveContainerAsync(container.RuntimeContainerId, ct).ConfigureAwait(false);
+            if (targetId is not null)
+            {
+                _logger.LogInformation("Stopping runtime container {RuntimeContainerId} for registered container {Id}",
+                    targetId[..Math.Min(12, targetId.Length)], id);
+                await controller.StopContainerAsync(targetId, ct).ConfigureAwait(false);
+                await controller.RemoveContainerAsync(targetId, ct).ConfigureAwait(false);
+            }
         }
 
         // Remove model mappings
@@ -451,10 +459,34 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             }
             else
             {
-                // Stop Docker container
-                if (container.RuntimeContainerId is not null)
+                // Stop Docker container. Resolve the CURRENT runtime container by
+                // name first: the persisted RuntimeContainerId may be stale when the
+                // user recreated the docker container (same name, new id). Status and
+                // discovery paths already match by name, so stop must too.
+                var controller = GetController(container);
+                var live = await ResolveLiveRuntimeContainerAsync(controller, container, ct).ConfigureAwait(false);
+
+                if (live is not null)
                 {
-                    var controller = GetController(container);
+                    if (!string.Equals(live.Id, container.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _logger.LogInformation(
+                            "Runtime container for {Id} was recreated: refreshing id {Old} -> {New}",
+                            id, container.RuntimeContainerId, live.Id);
+
+                        container = await _registry.UpdateAsync(id, container with
+                        {
+                            RuntimeContainerId = live.Id
+                        }, ct).ConfigureAwait(false);
+                    }
+
+                    await controller.StopContainerAsync(live.Id, ct).ConfigureAwait(false);
+                }
+                else if (container.RuntimeContainerId is not null)
+                {
+                    // No container matching the registered name/id exists (e.g. it was
+                    // removed) — keep the previous behavior so the controller logs a
+                    // clear "No container found" warning for the stale id.
                     await controller.StopContainerAsync(container.RuntimeContainerId, ct).ConfigureAwait(false);
                 }
             }
@@ -1105,6 +1137,49 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
             if (NameMatches(c, peer.Image)) return c;
             if (!string.IsNullOrEmpty(peer.DisplayName) && NameMatches(c, peer.DisplayName)) return c;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves the LIVE runtime container for a registered runtime at operation time
+    /// (start/stop/delete). Matches by the persisted RuntimeContainerId first, then by
+    /// container name against the registered Image/DisplayName — the same name matching
+    /// used by discovery/status. Unlike <see cref="FindRunningRuntimeContainer"/> this
+    /// accepts containers in ANY state (docker list includes stopped containers), so a
+    /// recreated-but-stopped container is still found. Returns null when nothing matches;
+    /// callers then keep their existing behavior (clear error/warning for the stale id).
+    /// </summary>
+    private async Task<ContainerInfo?> ResolveLiveRuntimeContainerAsync(
+        IDockerController controller,
+        RegisteredRuntime container,
+        CancellationToken ct)
+    {
+        try
+        {
+            var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+            return FindRuntimeContainer(containers, container);
+        }
+        catch (Exception ex)
+        {
+            // Listing failed (e.g. agent unreachable) — fall back to the persisted id.
+            _logger.LogWarning(ex,
+                "Failed to list containers while resolving the live runtime container for {Id}; falling back to persisted id",
+                container.Id);
+            return null;
+        }
+    }
+
+    private static ContainerInfo? FindRuntimeContainer(IReadOnlyList<ContainerInfo> containers, RegisteredRuntime container)
+    {
+        foreach (var c in containers)
+        {
+            if (!string.IsNullOrEmpty(container.RuntimeContainerId) &&
+                string.Equals(c.Id, container.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+                return c;
+
+            if (NameMatches(c, container.Image)) return c;
+            if (!string.IsNullOrEmpty(container.DisplayName) && NameMatches(c, container.DisplayName)) return c;
         }
         return null;
     }

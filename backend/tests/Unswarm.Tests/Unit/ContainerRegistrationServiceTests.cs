@@ -915,6 +915,104 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal(["model-c"], remote.StartedImages);
     }
 
+    // ── Recreated container (same name, new docker id) ────────────────────────
+
+    [Fact]
+    public async Task StopAsync_RecreatedContainer_StopsNewId()
+    {
+        // The user recreated the docker container: same name, NEW id. The registry
+        // still holds the stale id. Stop must target the live container found by name.
+        await _registry.CreateAsync(MakeRuntime("reg-recreated", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id"
+        });
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "new-id",
+                ModelId = "localllama_gemma",
+                ModelName = "localllama_gemma",
+                Status = ContainerStatus.Running
+            }
+        ];
+
+        var service = CreateService();
+        var result = await service.StopAsync("reg-recreated");
+
+        Assert.NotNull(result);
+        Assert.Equal(["new-id"], _docker.StoppedContainerIds);
+        Assert.DoesNotContain("old-id", _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task StopAsync_NoMatchingContainer_FallsBackToStaleId()
+    {
+        // No container with the registered name exists anymore — keep the previous
+        // behavior (stop by persisted id; controller logs a clear warning).
+        await _registry.CreateAsync(MakeRuntime("reg-gone", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id"
+        });
+
+        _docker.ListedContainers = [];
+
+        var service = CreateService();
+        var result = await service.StopAsync("reg-gone");
+
+        Assert.NotNull(result);
+        Assert.Equal(["old-id"], _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RecreatedContainer_StopsNewId()
+    {
+        await _registry.CreateAsync(MakeRuntime("reg-del", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id"
+        });
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "new-id",
+                ModelId = "localllama_gemma",
+                ModelName = "localllama_gemma",
+                Status = ContainerStatus.Stopped
+            }
+        ];
+
+        var service = CreateService();
+        await service.DeleteAsync("reg-del", deleteModels: false);
+
+        Assert.Equal(["new-id"], _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task StartAsync_RecreatedContainer_PersistsNewRuntimeContainerId()
+    {
+        // Start resolves by name inside the controller and returns the LIVE container
+        // id — the registry must converge to it instead of keeping the stale one.
+        await _registry.CreateAsync(MakeRuntime("reg-start", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id",
+            MappedPort = 1234
+        });
+
+        var service = CreateService();
+        var result = await service.StartAsync("reg-start");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        var startedId = Assert.Single(_docker.StartedContainerIds);
+        Assert.NotEqual("old-id", startedId);
+
+        var persisted = await _registry.GetAsync("reg-start");
+        Assert.NotNull(persisted);
+        Assert.Equal(startedId, persisted!.RuntimeContainerId);
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

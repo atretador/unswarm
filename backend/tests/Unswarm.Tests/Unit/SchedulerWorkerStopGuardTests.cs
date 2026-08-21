@@ -184,6 +184,93 @@ public sealed class SchedulerWorkerStopGuardTests : IDisposable
         await ShutdownAsync();
     }
 
+    [Fact]
+    public async Task RecreatedContainer_IsStoppedByNewIdDuringSwitch()
+    {
+        // The docker container for reg-a was recreated outside the scheduler:
+        // same name "a:latest", NEW id. The slot bookkeeping still holds the id
+        // captured at start time — the stop must target the live container.
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-a", DisplayName = "A", Image = "a:latest",
+            RuntimeContainerId = "old-id",
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-b", DisplayName = "B", Image = "b:latest",
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _containerRegistry.AddModelMappingAsync("reg-b", "model-b");
+
+        var host = new FakeDockerController { IdPrefix = "host" };
+        host.ListedContainers.Add(new ContainerInfo
+        {
+            Id = "new-id",
+            ModelId = "a:latest",
+            ModelName = "a:latest",
+            Status = ContainerStatus.Running
+        });
+
+        CreateWorker(host, SingleHostRouter(host), HostResolver());
+
+        var allDone = new TaskCompletionSource();
+        var remaining = 2;
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (Interlocked.Decrement(ref remaining) == 0)
+                allDone.TrySetResult();
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
+        };
+
+        await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("model-b", id: "r2"));
+
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The incompatible container was stopped via its LIVE id, not the stale one.
+        var stopped = Assert.Single(host.StoppedContainerIds);
+        Assert.Equal("new-id", stopped);
+
+        await ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task SchedulerStart_RefreshesStalePersistedRuntimeContainerId()
+    {
+        // Registry holds a stale RuntimeContainerId; a scheduler-driven start resolves
+        // the live container by name and must persist the new id back to the registry.
+        await _containerRegistry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-a", DisplayName = "A", Image = "a:latest",
+            RuntimeContainerId = "old-id",
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+
+        var host = new FakeDockerController { IdPrefix = "host" };
+        CreateWorker(host, SingleHostRouter(host), HostResolver());
+
+        var allDone = new TaskCompletionSource();
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            allDone.TrySetResult();
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
+        };
+
+        await EnqueueAsync(MakeRequest("model-a", id: "r1"));
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var persisted = await _containerRegistry.GetAsync("reg-a");
+        Assert.NotNull(persisted);
+        var startedId = Assert.Single(host.StartedContainerIds);
+        Assert.NotEqual("old-id", startedId);
+        Assert.Equal(startedId, persisted!.RuntimeContainerId);
+
+        await ShutdownAsync();
+    }
+
     public void Dispose()
     {
     }

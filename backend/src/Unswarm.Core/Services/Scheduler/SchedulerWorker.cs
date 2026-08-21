@@ -663,6 +663,29 @@ public sealed class SchedulerWorker
             slot.ResidentContainerId = startResult.ContainerId;
             slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
 
+            // Persist the live container id so the registry converges when the docker
+            // container was recreated (same name, new id) outside this scheduler —
+            // otherwise stop/status paths keep operating on the stale id.
+            if (_containerRegistry is not null
+                && targetRegisteredContainer is not null
+                && !string.IsNullOrEmpty(startResult.ContainerId)
+                && !string.Equals(startResult.ContainerId, targetRegisteredContainer.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await _containerRegistry.UpdateAsync(targetRegisteredContainer.Id, targetRegisteredContainer with
+                    {
+                        RuntimeContainerId = startResult.ContainerId
+                    }, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex,
+                        "Failed to refresh RuntimeContainerId for registered runtime {RegId} after scheduler start",
+                        targetRegisteredContainer.Id);
+                }
+            }
+
             var runningKey = targetRegisteredRuntimeId ?? $"legacy:{startResult.ContainerId}";
             slot.RunningContainers[runningKey] = new RunningContainerInfo
             {
@@ -771,7 +794,8 @@ public sealed class SchedulerWorker
             }
             else
             {
-                await controller.StopContainerAsync(info.ContainerId, ct).ConfigureAwait(false);
+                var stopTargetId = await ResolveStopTargetIdAsync(controller, info, ct).ConfigureAwait(false);
+                await controller.StopContainerAsync(stopTargetId, ct).ConfigureAwait(false);
             }
 
             slot.RunningContainers.Remove(key);
@@ -801,7 +825,8 @@ public sealed class SchedulerWorker
             }
             else
             {
-                await controller.StopContainerAsync(kv.Value.ContainerId, ct).ConfigureAwait(false);
+                var stopTargetId = await ResolveStopTargetIdAsync(controller, kv.Value, ct).ConfigureAwait(false);
+                await controller.StopContainerAsync(stopTargetId, ct).ConfigureAwait(false);
             }
 
             slot.RunningContainers.Remove(kv.Key);
@@ -849,6 +874,42 @@ public sealed class SchedulerWorker
         yield return container.Image;
         if (!string.IsNullOrEmpty(container.DisplayName))
             yield return container.DisplayName;
+    }
+
+    /// <summary>
+    /// Resolves the container id to stop for a scheduler-tracked running entry.
+    /// The cached <see cref="RunningContainerInfo.ContainerId"/> may be stale when the
+    /// user recreated the docker container (same name, new id) outside the scheduler.
+    /// Re-lists the target's containers and prefers a live match by cached id or by
+    /// container name (same matching used by discovery/status); falls back to the cached
+    /// id when nothing matches or listing fails (the controller then logs a clear warning).
+    /// </summary>
+    private static async Task<string> ResolveStopTargetIdAsync(
+        IDockerController controller,
+        RunningContainerInfo info,
+        CancellationToken ct)
+    {
+        try
+        {
+            var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+            foreach (var c in containers)
+            {
+                if (!string.IsNullOrEmpty(info.ContainerId) &&
+                    string.Equals(c.Id, info.ContainerId, StringComparison.OrdinalIgnoreCase))
+                    return c.Id;
+
+                if (!string.IsNullOrEmpty(info.ContainerName) &&
+                    (string.Equals(c.ModelName, info.ContainerName, StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(c.ModelId, info.ContainerName, StringComparison.OrdinalIgnoreCase)))
+                    return c.Id;
+            }
+        }
+        catch
+        {
+            // Listing failed — fall back to the cached id below.
+        }
+
+        return info.ContainerId;
     }
 
     /// <summary>
