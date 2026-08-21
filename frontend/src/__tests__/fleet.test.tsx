@@ -1188,4 +1188,216 @@ describe("Fleet", () => {
     });
     expect(screen.getByText(/Container is not responding/)).toBeInTheDocument();
   });
+
+  // ─── Concurrency modal ──────────────────────────────────────
+
+  const CONCURRENCY_RCS: RegisteredRuntime[] = [
+    {
+      id: "rc1",
+      displayName: "llama-server",
+      image: "unswarm/llama3.1:70b-q4km",
+      containerPort: 8080,
+      agent: "host",
+      canRunAlongWith: [],
+      status: "ready",
+      runtimeContainerId: "c1",
+      mappedPort: 8081,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      lastDiscoveredAt: new Date().toISOString(),
+      discoveredModels: [
+        {
+          id: "1",
+          name: "llama-3.1-70b",
+          family: "Llama",
+          parameterSize: "70B",
+          quantization: "Q4_K_M",
+          status: "ready",
+          lastBenchmark: null,
+          contextWindow: 128000,
+          containerImage: "unswarm/llama3.1:70b-q4km",
+          sourceRuntimeId: "rc1",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    },
+    {
+      id: "rc2",
+      displayName: "mistral-server",
+      image: "unswarm/mistral-large:123b-q5km",
+      containerPort: 8080,
+      agent: "host",
+      canRunAlongWith: ["llama-server"],
+      status: "ready",
+      runtimeContainerId: "c2",
+      mappedPort: 8082,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      lastDiscoveredAt: new Date().toISOString(),
+      discoveredModels: [],
+    },
+    {
+      id: "rc3",
+      displayName: "vllm-script",
+      image: "run_vllm",
+      containerPort: 8080,
+      agent: "host",
+      canRunAlongWith: [],
+      status: "ready",
+      runtimeContainerId: null,
+      mappedPort: 8083,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      lastDiscoveredAt: null,
+      discoveredModels: [],
+      runtimeKind: "script",
+      launcherPath: "/opt/scripts/run_vllm.sh",
+    },
+  ];
+
+  it("agent header shows Concurrency button and opens the matrix dialog", async () => {
+    seedRegisteredRuntimes(CONCURRENCY_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    const concButton = screen.getByRole("button", { name: "Concurrency on host" });
+    expect(concButton).toBeInTheDocument();
+    await user.click(concButton);
+
+    const dialog = await screen.findByRole("dialog", { name: /concurrency on host/i });
+    expect(dialog).toBeInTheDocument();
+  });
+
+  it("matrix renders N x N switches for seeded runtimes including a script runtime", async () => {
+    seedRegisteredRuntimes(CONCURRENCY_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Concurrency on host" }));
+    const dialog = await screen.findByRole("dialog", { name: /concurrency on host/i });
+
+    await waitFor(() => {
+      expect(within(dialog).getAllByText("llama-server").length).toBeGreaterThanOrEqual(1);
+    });
+    expect(within(dialog).getAllByText("mistral-server").length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getAllByText("vllm-script").length).toBeGreaterThanOrEqual(1);
+
+    // Row and column headers: displayName appears at least twice (row + column)
+    const llamaHeaders = within(dialog).getAllByText("llama-server");
+    expect(llamaHeaders.length).toBeGreaterThanOrEqual(2);
+
+    // 3 runtimes => 6 off-diagonal switches
+    const switches = within(dialog).getAllByRole("switch");
+    expect(switches.length).toBe(6);
+
+    // Pre-existing: mistral-server.canRunAlongWith includes "llama-server"
+    const mistralWithLlama = within(dialog).getByRole("switch", {
+      name: /mistral-server with llama-server/i,
+    });
+    expect(mistralWithLlama).toBeChecked();
+
+    // Reverse (llama -> mistral) is OFF since llama-server.canRunAlongWith is empty
+    const llamaWithMistral = within(dialog).getByRole("switch", {
+      name: /llama-server with mistral-server/i,
+    });
+    expect(llamaWithMistral).not.toBeChecked();
+  });
+
+  it("toggling cell OFF->ON calls updateRuntimeConcurrency twice with symmetric payloads", async () => {
+    seedRegisteredRuntimes(CONCURRENCY_RCS);
+    const user = userEvent.setup();
+    const updateSpy = vi.spyOn(mockClient, "updateRuntimeConcurrency").mockImplementation(
+      async (id, payload) => {
+        const rc = CONCURRENCY_RCS.find((r) => r.id === id) ?? CONCURRENCY_RCS[0];
+        return { ...rc, canRunAlongWith: payload.canRunAlongWith };
+      },
+    );
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Concurrency on host" }));
+    await screen.findByRole("dialog", { name: /concurrency on host/i });
+
+    // Toggle llama-server <-> vllm-script from OFF to ON
+    const switchEl = screen.getByRole("switch", {
+      name: /llama-server with vllm-script/i,
+    });
+    expect(switchEl).not.toBeChecked();
+    await user.click(switchEl);
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // First call: llama-server gets vllm-script displayName appended
+    const [firstId, firstPayload] = updateSpy.mock.calls[0];
+    expect(firstId).toBe("rc1");
+    expect(firstPayload.canRunAlongWith).toContain("vllm-script");
+
+    // Second call: vllm-script gets llama-server displayName appended
+    const [secondId, secondPayload] = updateSpy.mock.calls[1];
+    expect(secondId).toBe("rc3");
+    expect(secondPayload.canRunAlongWith).toContain("llama-server");
+  });
+
+  it("empty-list runtime shows the runs-alone hint", async () => {
+    seedRegisteredRuntimes(CONCURRENCY_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Concurrency on host" }));
+    await screen.findByRole("dialog", { name: /concurrency on host/i });
+
+    await waitFor(() => {
+      expect(screen.getByText(/single-container mode/i)).toBeInTheDocument();
+    });
+  });
+
+  it("mock client updateRuntimeConcurrency returns the updated record", async () => {
+    // Register a fresh runtime so the module-level array has a known entry
+    const rc = await mockClient.registerRuntime({
+      displayName: "test-concurrency",
+      image: "test-image:latest",
+      containerPort: 9090,
+      agent: "host",
+    });
+    const result = await mockClient.updateRuntimeConcurrency(rc.id, {
+      canRunAlongWith: ["some-peer"],
+    });
+    expect(result.id).toBe(rc.id);
+    expect(result.canRunAlongWith).toEqual(["some-peer"]);
+  });
 });

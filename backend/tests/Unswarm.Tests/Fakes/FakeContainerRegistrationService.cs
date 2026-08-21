@@ -51,4 +51,24 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
         DeletedIds.Add(id);
         return Task.CompletedTask;
     }
+
+    public List<string> UpdatedConcurrencyIds { get; } = [];
+
+    /// <summary>The last canRunAlongWith list received by UpdateCanRunAlongWithAsync.</summary>
+    public List<string>? LastConcurrencyList { get; set; }
+
+    /// <summary>Scriptable UpdateCanRunAlongWithAsync result; when set, returned for any id.</summary>
+    public RegisteredRuntime? UpdateConcurrencyResult { get; set; }
+
+    /// <summary>When set, UpdateCanRunAlongWithAsync returns null (simulates unknown id).</summary>
+    public bool UpdateConcurrencyReturnsNull { get; set; }
+
+    public Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default)
+    {
+        UpdatedConcurrencyIds.Add(id);
+        LastConcurrencyList = canRunAlongWith.ToList();
+        if (UpdateConcurrencyReturnsNull)
+            return Task.FromResult<RegisteredRuntime?>(null);
+        return Task.FromResult<RegisteredRuntime?>(UpdateConcurrencyResult);
+    }
 }

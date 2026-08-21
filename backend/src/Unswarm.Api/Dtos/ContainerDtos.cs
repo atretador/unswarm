@@ -68,6 +68,14 @@ public sealed class RegisterRuntimeRequestDto
 }
 
 /// <summary>
+/// DTO for updating a registered runtime's concurrency allow-list.
+/// </summary>
+public sealed class UpdateRuntimeConcurrencyRequestDto
+{
+    public List<string>? CanRunAlongWith { get; set; }
+}
+
+/// <summary>
 /// DTO for returning a registered container and its discovered models.
 /// </summary>
 public sealed class RegisteredRuntimeResponse

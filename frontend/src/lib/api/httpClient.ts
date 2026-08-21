@@ -13,6 +13,7 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  UpdateRuntimeConcurrencyPayload,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -146,6 +147,13 @@ export const httpClient: UnswarmClient = {
     return request<void>(
       `/api/containers/registered/${encodeURIComponent(id)}${qs}`,
       { method: "DELETE" },
+    );
+  },
+
+  updateRuntimeConcurrency(id: string, payload: UpdateRuntimeConcurrencyPayload) {
+    return request<RegisteredRuntime>(
+      `/api/containers/registered/${encodeURIComponent(id)}/concurrency`,
+      { method: "PUT", body: JSON.stringify(payload) },
     );
   },
 

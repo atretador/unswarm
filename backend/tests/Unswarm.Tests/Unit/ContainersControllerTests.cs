@@ -261,4 +261,102 @@ public sealed class ContainersControllerTests
         Assert.Equal("error", response.Status);
         Assert.Equal("Connection refused", response.ErrorMessage);
     }
+
+    [Fact]
+    public async Task UpdateConcurrency_UpdatesList_ReturnsUpdatedRuntime()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        var updatedContainer = container with { CanRunAlongWith = ["peer-a", "Peer-B"] };
+        _registrationService.UpdateConcurrencyResult = updatedContainer;
+
+        var result = await CreateController().UpdateConcurrency("reg-1",
+            new UpdateRuntimeConcurrencyRequestDto { CanRunAlongWith = ["peer-a", "Peer-B"] },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("reg-1", response.Id);
+        Assert.Equal(2, response.CanRunAlongWith.Count);
+        Assert.Contains("peer-a", response.CanRunAlongWith);
+        Assert.Contains("Peer-B", response.CanRunAlongWith);
+        Assert.Contains("reg-1", _registrationService.UpdatedConcurrencyIds);
+    }
+
+    [Fact]
+    public async Task UpdateConcurrency_UnknownId_ReturnsNotFound()
+    {
+        _registrationService.UpdateConcurrencyReturnsNull = true;
+
+        var result = await CreateController().UpdateConcurrency("nope",
+            new UpdateRuntimeConcurrencyRequestDto { CanRunAlongWith = ["peer-a"] },
+            CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateConcurrency_EmptyArray_ClearsList()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        var updatedContainer = container with { CanRunAlongWith = [] };
+        _registrationService.UpdateConcurrencyResult = updatedContainer;
+
+        var result = await CreateController().UpdateConcurrency("reg-1",
+            new UpdateRuntimeConcurrencyRequestDto { CanRunAlongWith = [] },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Empty(response.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task UpdateConcurrency_NullBodyList_TreatedAsEmpty()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        var updatedContainer = container with { CanRunAlongWith = [] };
+        _registrationService.UpdateConcurrencyResult = updatedContainer;
+
+        var result = await CreateController().UpdateConcurrency("reg-1",
+            new UpdateRuntimeConcurrencyRequestDto { CanRunAlongWith = null },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Empty(response.CanRunAlongWith);
+        // Controller cleaned to empty list before passing to service
+        Assert.Contains("reg-1", _registrationService.UpdatedConcurrencyIds);
+    }
+
+    [Fact]
+    public async Task UpdateConcurrency_TrimDedupeCaseInsensitive()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+
+        var updatedContainer = container with { CanRunAlongWith = ["peer-a", "peer-b"] };
+        _registrationService.UpdateConcurrencyResult = updatedContainer;
+
+        var result = await CreateController().UpdateConcurrency("reg-1",
+            new UpdateRuntimeConcurrencyRequestDto
+            {
+                CanRunAlongWith = ["  Peer-A  ", "", "peer-a", "peer-b", "  ", "PEER-A"]
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        // Verify the controller cleaned the list before passing to the service.
+        // Trim + drop empties + OrdinalIgnoreCase dedupe → ["Peer-A", "peer-b"]
+        Assert.NotNull(_registrationService.LastConcurrencyList);
+        Assert.Equal(2, _registrationService.LastConcurrencyList!.Count);
+        // First occurrence after trim wins; dedupe is case-insensitive
+        Assert.Equal("Peer-A", _registrationService.LastConcurrencyList[0]);
+        Assert.Equal("peer-b", _registrationService.LastConcurrencyList[1]);
+    }
 }

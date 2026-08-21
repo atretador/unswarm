@@ -402,6 +402,21 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _logger.LogInformation("Deleted registered container {Id}", id);
     }
 
+    public async Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default)
+    {
+        var container = await _registry.GetAsync(id, ct).ConfigureAwait(false);
+        if (container is null)
+            return null;
+
+        container = await _registry.UpdateAsync(id, container with
+        {
+            CanRunAlongWith = canRunAlongWith
+        }, ct).ConfigureAwait(false);
+
+        _logger.LogInformation("Updated CanRunAlongWith for container {Id} ({Count} entries)", id, canRunAlongWith.Count);
+        return container;
+    }
+
     /// <summary>
     /// Resolves the controller for the container's execution target:
     /// "host" → local controller, anything else → "agent:&lt;name&gt;" via the router.

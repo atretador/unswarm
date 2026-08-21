@@ -837,6 +837,17 @@ export const mockClient: UnswarmClient = {
     registeredRuntimes.splice(idx, 1);
   },
 
+  async updateRuntimeConcurrency(runtimeId: string, payload: { canRunAlongWith: string[] }) {
+    await delay(rand(80, 200));
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
+    rc.canRunAlongWith = [...payload.canRunAlongWith];
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
   // Fleet
   async listContainers() {
     await delay(rand(80, 200));

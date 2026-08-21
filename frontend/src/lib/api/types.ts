@@ -71,6 +71,11 @@ export interface RegisterRuntimePayload {
   launcherPath?: string;
 }
 
+/** Full-replacement payload for updating a runtime's concurrency list. */
+export interface UpdateRuntimeConcurrencyPayload {
+  canRunAlongWith: string[];
+}
+
 export interface RegisteredRuntime {
   id: string;
   displayName: string;

@@ -17,6 +17,7 @@ import {
   ChevronRight,
   Cpu,
   FileCode,
+  Grid2x2,
   Gauge,
   Hash,
   KeyRound,
@@ -44,6 +45,7 @@ import {
   Skeleton,
   EmptyState,
   Input,
+  Switch,
   Tooltip,
 } from "../../components/ui";
 import type {
@@ -401,6 +403,192 @@ function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }
             Got it
           </Button>
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Concurrency matrix modal ─────────────────────────────────────
+
+function ConcurrencyModal({
+  agentName,
+  open,
+  onClose,
+  registered,
+}: {
+  agentName: string;
+  open: boolean;
+  onClose: () => void;
+  registered: RegisteredRuntime[];
+}) {
+  const queryClient = useQueryClient();
+  const agentRcs = registered.filter((rc) => rc.agent === agentName);
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
+  // Track pending toggle keys to disable the whole matrix while in-flight.
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
+    queryClient.invalidateQueries({ queryKey: ["agents"] });
+  };
+
+  /** Check if runtime A's list contains B (by displayName or image, case-insensitive). */
+  const isCompatible = (a: RegisteredRuntime, b: RegisteredRuntime): boolean => {
+    const lowerList = a.canRunAlongWith.map((n) => n.toLowerCase());
+    return lowerList.includes(b.displayName.toLowerCase()) || lowerList.includes(b.image.toLowerCase());
+  };
+
+  const toggleCell = async (a: RegisteredRuntime, b: RegisteredRuntime) => {
+    setToggleError(null);
+    const currentlyOn = isCompatible(a, b);
+    const key = `${a.id}:${b.id}`;
+    setPendingKey(key);
+    try {
+      // Compute the new lists for both peers symmetrically.
+      const newAList = currentlyOn
+        ? a.canRunAlongWith.filter(
+            (n) => n.toLowerCase() !== b.displayName.toLowerCase() && n.toLowerCase() !== b.image.toLowerCase(),
+          )
+        : [...a.canRunAlongWith, b.displayName];
+      const newBList = currentlyOn
+        ? b.canRunAlongWith.filter(
+            (n) => n.toLowerCase() !== a.displayName.toLowerCase() && n.toLowerCase() !== a.image.toLowerCase(),
+          )
+        : [...b.canRunAlongWith, a.displayName];
+
+      await Promise.all([
+        client.updateRuntimeConcurrency(a.id, { canRunAlongWith: newAList }),
+        client.updateRuntimeConcurrency(b.id, { canRunAlongWith: newBList }),
+      ]);
+      invalidate();
+    } catch (err) {
+      setToggleError(err instanceof Error ? err.message : "Failed to update concurrency");
+    } finally {
+      setPendingKey(null);
+    }
+  };
+
+  const busy = pendingKey !== null;
+
+  /** Build the label lines for an axis header. */
+  function axisLabel(rc: RegisteredRuntime) {
+    const models = rc.discoveredModels.map((m) => m.name);
+    const sub = models.length > 0
+      ? models.join(" · ")
+      : rc.runtimeKind === "script"
+        ? (rc.launcherPath ?? "script")
+        : rc.image;
+    return { primary: rc.displayName, secondary: sub };
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} label={`Concurrency on ${agentName}`}>
+      <div className="p-5">
+        {agentRcs.length === 0 ? (
+          <p className="text-xs text-[var(--color-text-muted)]">
+            No runtimes registered on this agent yet.
+          </p>
+        ) : (
+          <>
+            {/* Legend */}
+            <p className="mb-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
+              Toggle which runtimes may share resources on this agent. Each row/column is
+              a registered runtime — turning a cell ON allows both to run at the same time.
+              An empty row (all OFF) means the runtime runs alone.
+            </p>
+
+            {/* Matrix scroll wrapper */}
+            <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)]">
+              <table className="w-full border-collapse text-[11px]">
+                <thead>
+                  <tr>
+                    {/* Empty top-left corner */}
+                    <th className="sticky left-0 z-10 border-b border-r border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-2 py-2" />
+                    {agentRcs.map((colRc) => {
+                      const { primary, secondary } = axisLabel(colRc);
+                      return (
+                        <th
+                          key={colRc.id}
+                          className="min-w-[72px] border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-2 py-2 text-center"
+                        >
+                          <p className="truncate font-mono text-[10px] font-medium text-[var(--color-text-heading)]" title={primary}>
+                            {primary}
+                          </p>
+                          <p className="mt-0.5 truncate text-[9px] text-[var(--color-text-muted)]" title={secondary}>
+                            {secondary}
+                          </p>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {agentRcs.map((rowRc) => {
+                    const { primary, secondary } = axisLabel(rowRc);
+                    return (
+                      <tr key={rowRc.id}>
+                        {/* Row header (sticky first column) */}
+                        <th className="sticky left-0 z-10 border-r border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-2 py-2 text-left">
+                          <p className="truncate font-mono text-[10px] font-medium text-[var(--color-text-heading)]" title={primary}>
+                            {primary}
+                          </p>
+                          <p className="mt-0.5 truncate text-[9px] text-[var(--color-text-muted)]" title={secondary}>
+                            {secondary}
+                          </p>
+                        </th>
+                        {agentRcs.map((colRc) => {
+                          const isDiag = rowRc.id === colRc.id;
+                          const checked = isDiag || isCompatible(rowRc, colRc);
+                          const cellDisabled = busy && pendingKey === `${rowRc.id}:${colRc.id}`;
+
+                          if (isDiag) {
+                            return (
+                              <td
+                                key={colRc.id}
+                                className="border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-2 py-2 text-center opacity-40"
+                              >
+                                <span className="inline-block size-4 rounded-full bg-[var(--color-border-strong)]" />
+                              </td>
+                            );
+                          }
+
+                          return (
+                            <td
+                              key={colRc.id}
+                              className="border-b border-[var(--color-border-subtle)] px-2 py-2 text-center"
+                            >
+                              <Switch
+                                checked={checked}
+                                disabled={cellDisabled}
+                                onCheckedChange={() => toggleCell(rowRc, colRc)}
+                                aria-label={`${rowRc.displayName} with ${colRc.displayName}`}
+                              />
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Runs-alone hint */}
+            {agentRcs.some((rc) => rc.canRunAlongWith.length === 0) && (
+              <p className="mt-3 text-[10px] text-[var(--color-text-muted)]">
+                Runtimes with all cells off run in single-container mode and will not share resources.
+              </p>
+            )}
+          </>
+        )}
+
+        {toggleError && (
+          <div className="mt-3 flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
+            <AlertTriangle className="size-3 shrink-0" />
+            <span className="truncate">{toggleError}</span>
+          </div>
+        )}
       </div>
     </Modal>
   );
@@ -1547,6 +1735,7 @@ function AgentSection({
   defaultExpanded,
   focusContainerId,
   onManage,
+  onConcurrency,
 }: {
   agent: Agent;
   registeredContainers: RegisteredRuntime[];
@@ -1554,6 +1743,7 @@ function AgentSection({
   /** When a registered container on this agent is the deep-link target. */
   focusContainerId: string | null;
   onManage: (agentName: string) => void;
+  onConcurrency: (agentName: string) => void;
 }) {
   const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
   // Deep-link focus forces this section open even if it normally starts collapsed.
@@ -1661,6 +1851,16 @@ function AgentSection({
             <PackageOpen className="size-3.5" />
             Manage
           </button>
+          <button
+            type="button"
+            onClick={() => onConcurrency(agent.name)}
+            aria-label={`Concurrency on ${agent.name}`}
+            title="Configure concurrency"
+            className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1 text-sm text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+          >
+            <Grid2x2 className="size-3.5" />
+            Concurrency
+          </button>
         </div>
       </div>
 
@@ -1728,6 +1928,7 @@ function AgentSection({
 
 export default function Fleet() {
   const [manageAgent, setManageAgent] = useState<string | null>(null);
+  const [concurrencyAgent, setConcurrencyAgent] = useState<string | null>(null);
   const [showAddAgent, setShowAddAgent] = useState(false);
   const [searchParams] = useSearchParams();
   const focusContainerId = searchParams.get("focus");
@@ -1828,6 +2029,7 @@ export default function Fleet() {
               defaultExpanded={agent.name === "host"}
               focusContainerId={focusContainerId}
               onManage={(name) => setManageAgent(name)}
+              onConcurrency={(name) => setConcurrencyAgent(name)}
             />
           ))}
         </div>
@@ -1838,6 +2040,12 @@ export default function Fleet() {
         agentName={manageAgent ?? ""}
         open={manageAgent !== null}
         onClose={() => setManageAgent(null)}
+        registered={registeredContainers ?? []}
+      />
+      <ConcurrencyModal
+        agentName={concurrencyAgent ?? ""}
+        open={concurrencyAgent !== null}
+        onClose={() => setConcurrencyAgent(null)}
         registered={registeredContainers ?? []}
       />
       <AddAgentModal open={showAddAgent} onClose={() => setShowAddAgent(false)} />

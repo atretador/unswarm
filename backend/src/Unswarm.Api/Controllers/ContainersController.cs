@@ -234,4 +234,24 @@ public sealed class ContainersController : ControllerBase
             return NotFound(new { error = "Registered runtime not found" });
         }
     }
+
+    [Authorize(Roles = "Admin")]
+    [HttpPut("registered/{id}/concurrency")]
+    public async Task<IActionResult> UpdateConcurrency(string id, [FromBody] UpdateRuntimeConcurrencyRequestDto dto, CancellationToken ct)
+    {
+        var incoming = dto.CanRunAlongWith ?? [];
+
+        // Trim, drop empties, dedupe case-insensitively (OrdinalIgnoreCase).
+        var cleaned = incoming
+            .Select(s => s?.Trim() ?? "")
+            .Where(s => s.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var container = await _registrationService.UpdateCanRunAlongWithAsync(id, cleaned, ct).ConfigureAwait(false);
+        if (container is null)
+            return NotFound(new { error = "Registered runtime not found" });
+
+        return Ok(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
+    }
 }

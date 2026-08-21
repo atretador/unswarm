@@ -13,6 +13,7 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  UpdateRuntimeConcurrencyPayload,
   User,
 } from "./types";
 
@@ -36,6 +37,9 @@ export interface UnswarmClient {
   /** Start the runtime container backing a registered runtime. */
   startRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
   deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
+
+  /** Update the concurrency list for a registered runtime (full replacement). */
+  updateRuntimeConcurrency(id: string, payload: UpdateRuntimeConcurrencyPayload): Promise<RegisteredRuntime>;
 
   // Fleet
   listContainers(): Promise<Container[]>;
