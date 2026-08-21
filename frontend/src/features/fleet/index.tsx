@@ -1181,7 +1181,7 @@ function ManageScriptsBody({
         <EmptyState
           icon={<Terminal className="size-12" strokeWidth={1.5} />}
           title="No scripts found"
-          description={`No scripts found on ${agentName}. Add .sh files to the agent\u2019s scripts_dir.`}
+          description={`No scripts found on ${agentName}. Add .sh files to the agent's scripts_dir.`}
         />
       ) : (
         <>
