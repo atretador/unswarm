@@ -8,7 +8,7 @@ using Unswarm.Core.Models;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
-[AllowAnonymous]
+[Authorize]
 [Route("v1")]
 public sealed class OpenAIController : ControllerBase
 {
@@ -100,9 +100,9 @@ public sealed class OpenAIController : ControllerBase
         {
             return StatusCode(499);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(502, new { error = ex.Message });
+            return StatusCode(502, new { error = "Inference request failed" });
         }
 
         Response.StatusCode = inferenceResponse.StatusCode;

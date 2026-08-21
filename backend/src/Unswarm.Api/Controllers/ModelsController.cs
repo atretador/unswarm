@@ -45,6 +45,7 @@ public sealed class ModelsController : ControllerBase
         return Ok(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ModelCreateRequest request, CancellationToken ct)
     {
@@ -63,6 +64,7 @@ public sealed class ModelsController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = created.Id }, ModelResponse.FromDefinition(created));
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPut("{*id}")]
     public async Task<IActionResult> Update(string id, [FromBody] ModelUpdateRequest request, CancellationToken ct)
     {
@@ -89,6 +91,7 @@ public sealed class ModelsController : ControllerBase
         return Ok(ModelResponse.FromDefinition(result));
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{*id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {

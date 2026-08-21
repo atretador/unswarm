@@ -12,6 +12,8 @@ using Unswarm.Core.Services;
 using Unswarm.Core.Services.Scheduler;
 using Unswarm.Core.Services.Validation;
 using System.Threading.Channels;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -51,8 +53,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
         options.Password.RequiredUniqueChars = 1;
 
         // Lockout settings
-        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
-        options.Lockout.MaxFailedAccessAttempts = 10;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+        options.Lockout.MaxFailedAccessAttempts = 5;
         options.Lockout.AllowedForNewUsers = true;
 
         // User settings
@@ -71,7 +73,7 @@ builder.Services.ConfigureApplicationCookie(options =>
     options.Cookie.Name = ".Unswarm.Auth";
     options.Cookie.HttpOnly = true;
     options.Cookie.SameSite = SameSiteMode.Strict;
-    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
     options.ExpireTimeSpan = TimeSpan.FromDays(7);
     options.SlidingExpiration = true;
 
@@ -155,6 +157,20 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                QueueLimit = 0,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+});
+
 var app = builder.Build();
 
 // ── Initialize database ──────────────────────────────────────────────────
@@ -202,8 +218,13 @@ await app.Services.GetRequiredService<HostScriptRuntimeController>()
 app.UseCors("SpaCors");
 app.UseAuthentication();
 app.UseAuthorization();
-app.UseWebSockets();
+app.UseRateLimiter();
+app.UseWebSockets(new WebSocketOptions
+{
+    AllowedOrigins = { "http://localhost:3000", "http://localhost:5173" }
+});
 app.UseMiddleware<ApiKeyAuthMiddleware>();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 app.MapControllers();
 
 app.Run();
@@ -623,7 +644,13 @@ static async Task SeedAdminUserAsync(IServiceProvider services)
     if (userManager.Users.Any())
         return;
 
-    var defaultPassword = Environment.GetEnvironmentVariable("UNSWARM_ADMIN_PASSWORD") ?? "admin";
+    var defaultPassword = Environment.GetEnvironmentVariable("UNSWARM_ADMIN_PASSWORD");
+    if (string.IsNullOrWhiteSpace(defaultPassword))
+    {
+        defaultPassword = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+        Console.WriteLine($"UNSWARM_ADMIN_PASSWORD not set. Generated random admin password: {defaultPassword}");
+        Console.WriteLine("Save this password — you will need it to log in as admin.");
+    }
     var admin = new ApplicationUser
     {
         UserName = "admin",
@@ -639,5 +666,24 @@ static async Task SeedAdminUserAsync(IServiceProvider services)
     else
     {
         Console.Error.WriteLine($"Failed to seed admin user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+    }
+}
+
+/// <summary>
+/// Adds security headers: Content-Security-Policy, X-Content-Type-Options,
+/// X-Frame-Options, Referrer-Policy, and Permissions-Policy.
+/// </summary>
+sealed class SecurityHeadersMiddleware(RequestDelegate next)
+{
+    public async Task InvokeAsync(HttpContext context)
+    {
+        var headers = context.Response.Headers;
+        headers["X-Content-Type-Options"] = "nosniff";
+        headers["X-Frame-Options"] = "DENY";
+        headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+        headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
+        headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'";
+
+        await next(context);
     }
 }

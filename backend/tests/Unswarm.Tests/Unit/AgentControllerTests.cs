@@ -157,7 +157,7 @@ public sealed class AgentControllerTests : IDisposable
 
         await _controller.HandleConnectionAsync(socket, CancellationToken.None);
 
-        Assert.Contains(socket.SentMessages, m => m.Contains("hello payload must include 'name'"));
+        Assert.Contains(socket.SentMessages, m => m.Contains("hello payload must include: name"));
         Assert.Null(_registry.Get("any-agent"));
     }
 

@@ -1,7 +1,6 @@
 using System.IO;
 using System.Net.WebSockets;
 using System.Text;
-using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -17,8 +16,7 @@ public sealed class AgentController : ControllerBase
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
-        WriteIndented = false,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        WriteIndented = false
     };
 
     private readonly IAgentRegistry _registry;
@@ -65,13 +63,13 @@ public sealed class AgentController : ControllerBase
 
             if (msg is null || msg.Type != "hello")
             {
-                await SendError(socket, "First message must be type 'hello'", ct);
+                await SendError(socket, "First message must be type: hello", ct);
                 return;
             }
 
             if (msg.Payload is not { } payload || !payload.TryGetProperty("name", out var nameProp))
             {
-                await SendError(socket, "hello payload must include 'name'", ct);
+                await SendError(socket, "hello payload must include: name", ct);
                 return;
             }
 
@@ -135,6 +133,8 @@ public sealed class AgentController : ControllerBase
     }
 
     // M2: Reassembly loop — accumulate bytes until EndOfMessage
+    private const int MaxMessageSize = 1024 * 1024; // 1 MB
+
     private static async Task<string?> ReceiveFullMessageAsync(WebSocket socket, CancellationToken ct)
     {
         var buffer = new byte[4096];
@@ -149,6 +149,9 @@ public sealed class AgentController : ControllerBase
 
             if (result.Count > 0)
                 await ms.WriteAsync(buffer.AsMemory(0, result.Count), ct);
+
+            if (ms.Length > MaxMessageSize)
+                throw new InvalidOperationException($"WebSocket message exceeded {MaxMessageSize} bytes");
 
             if (result.EndOfMessage)
                 break;

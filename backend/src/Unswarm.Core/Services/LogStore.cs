@@ -19,6 +19,7 @@ public sealed class LogStore : ILogStore
     private readonly Channel<LogEntry> _liveChannel;
     private readonly List<Channel<LogEntry>> _subscribers = new();
     private readonly object _subscribersLock = new();
+    private const int MaxSubscribers = 10;
 
     public LogStore(Func<UnswarmDbContext> dbFactory, IClock clock, ILogger<LogStore> logger)
     {
@@ -100,6 +101,8 @@ public sealed class LogStore : ILogStore
 
         lock (_subscribersLock)
         {
+            if (_subscribers.Count >= MaxSubscribers)
+                throw new InvalidOperationException("Too many log subscribers");
             _subscribers.Add(channel);
         }
 

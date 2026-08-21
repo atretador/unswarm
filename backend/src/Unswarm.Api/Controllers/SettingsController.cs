@@ -22,6 +22,7 @@ public sealed class SettingsController : ControllerBase
         return Ok(SettingsResponse.FromSettings(settings));
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPut]
     public async Task<IActionResult> Update([FromBody] SettingsUpdateRequest request, CancellationToken ct)
     {

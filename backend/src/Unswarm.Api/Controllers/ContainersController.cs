@@ -41,6 +41,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(containers.Select(ContainerResponse.FromContainerInfo).ToList());
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("start")]
     public async Task<IActionResult> Start([FromBody] ContainerStartRequest request, CancellationToken ct)
     {
@@ -49,7 +50,7 @@ public sealed class ContainersController : ControllerBase
 
         var startResult = await _docker.StartContainerAsync(model.Name, ct);
         if (startResult.ErrorMessage is not null)
-            return StatusCode(500, new { error = startResult.ErrorMessage });
+            return StatusCode(500, new { error = "Failed to start container" });
 
         var inspect = await _docker.InspectContainerAsync(startResult.ContainerId, ct);
 
@@ -70,6 +71,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(response);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
@@ -77,12 +79,13 @@ public sealed class ContainersController : ControllerBase
         return NoContent();
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("{id}/restart")]
     public async Task<IActionResult> Restart(string id, CancellationToken ct)
     {
         var result = await _docker.RestartContainerAsync(id, ct);
         if (result.ErrorMessage is not null)
-            return StatusCode(500, new { error = result.ErrorMessage });
+            return StatusCode(500, new { error = "Failed to restart container" });
 
         var inspect = await _docker.InspectContainerAsync(result.ContainerId, ct);
 
@@ -105,6 +108,7 @@ public sealed class ContainersController : ControllerBase
 
     // ── Container-first registration endpoints ─────────────────────────────
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         [FromBody] RegisterRuntimeRequestDto dto,
@@ -115,9 +119,9 @@ public sealed class ContainersController : ControllerBase
             var result = await _registrationService.RegisterAsync(dto.ToRequest(), ct);
             return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            return StatusCode(500, new { error = ex.Message });
+            return StatusCode(500, new { error = "Failed to register runtime" });
         }
     }
 
@@ -182,6 +186,7 @@ public sealed class ContainersController : ControllerBase
         };
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("registered/{id}/rediscover")]
     public async Task<IActionResult> Rediscover(string id, CancellationToken ct)
     {
@@ -190,12 +195,13 @@ public sealed class ContainersController : ControllerBase
             var result = await _registrationService.RediscoverAsync(id, ct);
             return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new { error = "Registered runtime not found" });
         }
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost("registered/{id}/start")]
     public async Task<IActionResult> StartRegistered(string id, CancellationToken ct)
     {
@@ -206,7 +212,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = $"Registered container {id} not found" });
+            return NotFound(new { error = "Registered container not found" });
         }
 
         // Reuse the same response shape as GET /api/containers/registered/{id}
@@ -214,6 +220,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(await BuildRegisteredResponseAsync(result.Container, ct).ConfigureAwait(false));
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpDelete("registered/{id}")]
     public async Task<IActionResult> DeleteRegistered(string id, [FromQuery] bool deleteModels = false, CancellationToken ct = default)
     {
@@ -222,9 +229,9 @@ public sealed class ContainersController : ControllerBase
             await _registrationService.DeleteAsync(id, deleteModels, ct);
             return NoContent();
         }
-        catch (InvalidOperationException ex)
+        catch (InvalidOperationException)
         {
-            return NotFound(new { error = ex.Message });
+            return NotFound(new { error = "Registered runtime not found" });
         }
     }
 }

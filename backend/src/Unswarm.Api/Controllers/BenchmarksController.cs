@@ -50,6 +50,7 @@ public sealed class BenchmarksController : ControllerBase
         _history = history;
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<IActionResult> Run([FromQuery] string modelId, [FromBody] BenchmarkRunRequest? body, CancellationToken ct)
     {
