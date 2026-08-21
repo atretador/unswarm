@@ -135,11 +135,40 @@ builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>()
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
 
 // ── Scheduler ─────────────────────────────────────────────────────────────
-builder.Services.AddSingleton(Channel.CreateBounded<InferenceRequest>(
-    new BoundedChannelOptions(32) { FullMode = BoundedChannelFullMode.Wait }));
+// Global bounded channel: depth loaded from settings at first resolution.
+// Sync-over-async (GetAwaiter().GetResult()) is safe here because the
+// DbContext factory uses an in-process SQLite database with no real I/O.
+builder.Services.AddSingleton(sp =>
+{
+    var settingsStore = sp.GetRequiredService<ISettingsStore>();
+    // Load settings synchronously at startup — safe for in-process SQLite.
+    var settings = settingsStore.GetAsync().GetAwaiter().GetResult();
+    var depth = Math.Clamp(settings.MaxQueueDepth, 1, 10000);
+    return Channel.CreateBounded<InferenceRequest>(
+        new BoundedChannelOptions(depth) { FullMode = BoundedChannelFullMode.Wait });
+});
 builder.Services.AddSingleton<SchedulerSettings>();
 builder.Services.AddSingleton<SchedulerWorker>();
 builder.Services.AddSingleton<ISchedulerQueue, SchedulerQueue>();
+
+// ── Auto-benchmark ────────────────────────────────────────────────────────
+// Singleton so it can be captured by ContainerRegistrationService's fire-and-forget
+// background runner (which outlives the request scope that triggered registration).
+// The scoped stores it depends on are stateless Func<UnswarmDbContext> holders, so
+// resolving them once from a scope here is safe for long-lived background use.
+builder.Services.AddSingleton<Unswarm.Core.Services.Benchmarks.AutoBenchmarkService>(sp =>
+{
+    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
+    using var scope = scopeFactory.CreateScope();
+    return new Unswarm.Core.Services.Benchmarks.AutoBenchmarkService(
+        scope.ServiceProvider.GetRequiredService<ISettingsStore>(),
+        scope.ServiceProvider.GetRequiredService<IPromptStore>(),
+        sp.GetRequiredService<ISchedulerQueue>(),
+        scope.ServiceProvider.GetRequiredService<IBenchmarkHistory>(),
+        sp.GetRequiredService<IClock>(),
+        sp.GetRequiredService<ILogStore>(),
+        sp.GetRequiredService<ILogger<Unswarm.Core.Services.Benchmarks.AutoBenchmarkService>>());
+});
 
 // ── Controllers ───────────────────────────────────────────────────────────
 builder.Services.AddControllers()
@@ -171,6 +200,7 @@ builder.Services.AddHostedService<SchedulerHostedService>();
 // builder.Services.AddHostedService<HealthCheckService>();   // disabled: proxy handles container lifecycle on-demand
 // builder.Services.AddHostedService<IdleShutdownService>();   // disabled: proxy handles container lifecycle on-demand
 builder.Services.AddHostedService<LogRetentionService>();
+builder.Services.AddHostedService<ContainerLogProbe>();
 
 // ── CORS ──────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>

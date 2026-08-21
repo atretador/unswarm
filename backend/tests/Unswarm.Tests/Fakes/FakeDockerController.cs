@@ -14,6 +14,7 @@ public sealed class FakeDockerController : IDockerController
     public Func<string, CancellationToken, Task<ContainerStartResult>>? OnStart { get; set; }
     public Func<string, CancellationToken, Task>? OnStop { get; set; }
     public Func<string, CancellationToken, Task<ContainerStartResult>>? OnRestart { get; set; }
+    public Func<string, int, CancellationToken, Task<IReadOnlyList<string>>>? OnGetContainerLogs { get; set; }
 
     public List<string> StartedModels { get; } = [];
     public List<string> StartedContainerIds { get; } = [];
@@ -125,6 +126,8 @@ public sealed class FakeDockerController : IDockerController
 
     public Task<IReadOnlyList<string>> GetContainerLogsAsync(string id, int tailLines = 100, CancellationToken ct = default)
     {
+        if (OnGetContainerLogs is not null)
+            return OnGetContainerLogs(id, tailLines, ct);
         return Task.FromResult<IReadOnlyList<string>>([]);
     }
 
