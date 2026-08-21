@@ -630,7 +630,7 @@ function ManageContainersBody({
                     disabled={already}
                     aria-pressed={selectedCard}
                     className={`
-                      group relative flex flex-col gap-2 rounded-[var(--radius-xl)] border p-3 text-left
+                      group relative flex flex-col gap-2 overflow-hidden rounded-[var(--radius-xl)] border p-3 text-left
                       transition-all duration-[var(--duration-fast)]
                       focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
                       ${
@@ -643,7 +643,7 @@ function ManageContainersBody({
                     `}
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-mono text-xs text-[var(--color-text-heading)]">
+                      <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={c.modelName}>
                         {c.modelName}
                       </span>
                       {already ? (
@@ -748,8 +748,8 @@ function ManageContainersBody({
               transition={{ duration: 0.18 }}
               className="space-y-3 rounded-[var(--radius-xl)] border border-[var(--color-primary)] bg-[var(--color-bg-muted)] p-3.5"
             >
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs font-medium text-[var(--color-text-heading)]">
+              <div className="flex min-w-0 items-center justify-between gap-2">
+                <p className="truncate text-xs font-medium text-[var(--color-text-heading)]">
                   Register {selected.modelName}
                 </p>
                 <button
@@ -1008,7 +1008,7 @@ function ManageScriptsBody({
                   disabled={already}
                   aria-pressed={selected}
                   className={`
-                    group relative flex flex-col gap-2 rounded-[var(--radius-xl)] border p-3 text-left
+                    group relative flex flex-col gap-2 overflow-hidden rounded-[var(--radius-xl)] border p-3 text-left
                     transition-all duration-[var(--duration-fast)]
                     focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
                     ${
@@ -1021,7 +1021,7 @@ function ManageScriptsBody({
                   `}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]">
+                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.path.split("/").pop()}>
                       {s.path.split("/").pop()}
                     </span>
                     {already ? (
@@ -1042,7 +1042,7 @@ function ManageScriptsBody({
                       </Badge>
                     )}
                   </div>
-                  <p className="truncate text-[10px] text-[var(--color-text-muted)]">
+                  <p className="truncate text-[10px] text-[var(--color-text-muted)]" title={s.path}>
                     {s.path}
                   </p>
                 </button>
@@ -1263,7 +1263,7 @@ function RegisteredContainerCard({
       <Card
         padding="md"
         className={`
-          flex h-full flex-col gap-3 transition-shadow duration-500
+          flex h-full flex-col gap-3 overflow-hidden transition-shadow duration-500
           ${ringActive ? "ring-2 ring-[var(--color-primary)] shadow-[var(--shadow-glow)]" : ""}
         `}
         aria-live={ringActive ? "polite" : undefined}
@@ -1288,10 +1288,10 @@ function RegisteredContainerCard({
               </span>
             </Tooltip>
             <div className="min-w-0">
-              <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
+              <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]" title={container.displayName}>
                 {container.displayName}
               </p>
-              <p className="truncate text-[10px] text-[var(--color-text-muted)]">
+              <p className="truncate text-[10px] text-[var(--color-text-muted)]" title={isScript ? (container.launcherPath ?? container.image) : container.image}>
                 {isScript ? (container.launcherPath ?? container.image) : container.image}
               </p>
             </div>
@@ -1323,9 +1323,9 @@ function RegisteredContainerCard({
               {container.discoveredModels.length > 0 ? container.discoveredModels.length : "—"}
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[var(--color-text-muted)]">Discovered</p>
-            <p className="font-mono text-[var(--color-text-heading)]">
+            <p className="truncate font-mono text-[var(--color-text-heading)]" title={container.lastDiscoveredAt ?? undefined}>
               {relativeTime(container.lastDiscoveredAt)}
             </p>
           </div>
@@ -1686,7 +1686,7 @@ function AgentSection({
               ) : (
                 <Card
                   padding="md"
-                  className="flex flex-col items-center gap-3 border-dashed py-10 text-center"
+                  className="flex flex-col items-center gap-3 overflow-hidden border-dashed py-10 text-center"
                 >
                   <div className="flex size-10 items-center justify-center rounded-[var(--radius-xl)] bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]">
                     <Box className="size-5" strokeWidth={1.5} />
