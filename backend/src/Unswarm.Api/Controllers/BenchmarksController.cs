@@ -149,9 +149,11 @@ public sealed class BenchmarksController : ControllerBase
         var elapsedMs = sw.Elapsed.TotalMilliseconds;
 
         var tokensGenerated = response.TokensGenerated;
-        var tokensPerSec = elapsedMs > 0 && tokensGenerated > 0
-            ? tokensGenerated / (elapsedMs / 1000.0)
-            : 0;
+        var tokensPerSec = response.ServerTokensPerSec > 0
+            ? response.ServerTokensPerSec
+            : elapsedMs > 0 && tokensGenerated > 0
+                ? tokensGenerated / (elapsedMs / 1000.0)
+                : 0;
 
         var entry = await _history.AddAsync(
             model.Id,

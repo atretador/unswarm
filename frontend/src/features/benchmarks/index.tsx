@@ -32,6 +32,17 @@ function formatTokensPerSec(v: number): string {
   return `${v.toFixed(1)} tok/s`;
 }
 
+function formatLatency(ms: number): string {
+  if (!ms || ms <= 0) return "—";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+function formatTokens(count: number): string {
+  if (!count || count <= 0) return "—";
+  return `${count.toLocaleString()} tok`;
+}
+
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, {
@@ -407,7 +418,7 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
       transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
     >
       <div
-        className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-[var(--color-border-subtle)] px-4 py-3.5 transition-colors last:border-0 hover:bg-[var(--color-bg-muted)]"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border-subtle)] px-4 py-3 transition-colors last:border-0 hover:bg-[var(--color-bg-muted)]"
       >
         {/* Model + timestamp + prompt info */}
         <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
@@ -424,17 +435,33 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
           </div>
         </div>
 
-        {/* Metrics */}
-        <div className="flex min-w-0 basis-40 items-center gap-3">
-          <span className="flex items-center gap-1 font-mono text-xs text-[var(--color-text-heading)]">
-            <Zap className="size-3 shrink-0 text-[var(--color-text-muted)]" />
-            {formatTokensPerSec(result.tokensPerSec)}
+        {/* Metrics — throughput primary, latency + tokens secondary */}
+        <div className="grid shrink-0 grid-cols-[auto_4.5rem_4.5rem] items-center gap-x-3">
+          {/* Primary: throughput */}
+          <div
+            className="flex items-center gap-1.5 justify-self-start"
+            title={`Throughput: ${result.tokensPerSec ? result.tokensPerSec.toFixed(2) : "n/a"} tokens/sec`}
+          >
+            <Zap className="size-3.5 shrink-0 text-[var(--color-primary)]" />
+            <span className="whitespace-nowrap font-mono text-sm font-semibold tabular-nums text-[var(--color-primary)]">
+              {formatTokensPerSec(result.tokensPerSec)}
+            </span>
+          </div>
+
+          {/* Latency — secondary */}
+          <span
+            className="whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]"
+            title={result.latencyMs > 0 ? `Processing time: ${result.latencyMs.toLocaleString()} ms` : "No latency data"}
+          >
+            {formatLatency(result.latencyMs)}
           </span>
-          <span className="font-mono text-xs text-[var(--color-text-muted)]">
-            {result.latencyMs > 0 ? `${result.latencyMs}ms` : "—"}
-          </span>
-          <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-            {result.tokensGenerated > 0 ? `${result.tokensGenerated} tok` : "n/a"}
+
+          {/* Tokens generated — secondary */}
+          <span
+            className="whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]"
+            title={result.tokensGenerated > 0 ? `${result.tokensGenerated.toLocaleString()} tokens generated` : "No token data"}
+          >
+            {formatTokens(result.tokensGenerated)}
           </span>
         </div>
 

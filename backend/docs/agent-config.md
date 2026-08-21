@@ -12,7 +12,9 @@ The Go agent reads a YAML configuration file at startup. This document describes
 ### `api_key`
 - **Type:** `string`
 - **Default:** `""` (empty — auth disabled)
-- **Description:** API key used to authenticate with the backend. The agent sends this key in the `X-Api-Key` header (or `Authorization: Bearer <key>`). Must match the backend's `Auth.ApiKey` setting.
+- **Description:** API key used to authenticate with the backend. The agent sends this key in the `X-Api-Key` header (or `Authorization: Bearer <key>`). Must match the backend's `Auth.ApiKey` setting (or the `UNSWARM_API_KEY` environment variable).
+
+  This is the **remote-agent channel** key: it authenticates to `/api/agents` and `/ws/agent`, the surface that talks to the Go agent. It is distinct from **inference keys** — those authenticate to the OpenAI-compatible proxy (`/v1`) and are created through the *API Keys* page in the web dashboard. The single configured key above is provisioned into the backend's managed key store (with agent scope) at startup, so it is managed like every other key.
 
 ### `agent_name`
 - **Type:** `string`

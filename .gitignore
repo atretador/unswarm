@@ -18,3 +18,4 @@ unswarm-agent
 .env
 .env.*
 !.env.example
+unswarm.db

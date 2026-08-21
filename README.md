@@ -1,15 +1,15 @@
 # Unswarm
 
-A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (Ollama, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your fleet — all from a single dashboard.
+A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your fleet — all from a single dashboard.
 
 ## Why Unswarm?
 
-Running multiple LLM models on a single machine is expensive — most machines can only keep one or two models loaded in VRAM at a time. Unswarm solves this by turning your machine into a **model switcher**: you pre-provision one container per model (each running an inference server like Ollama), and Unswarm's scheduler loads and unloads them on demand.
+Running multiple LLM models on a single machine is expensive — most machines can only keep one or two models loaded in VRAM at a time. Unswarm solves this by turning your machine into a **model switcher**: you pre-provision one container per model (each running an inference server like llama.cpp), and Unswarm's scheduler loads and unloads them on demand.
 
-**Example:** A machine with 24 GB VRAM has 10 containers, each configured with a different model (Llama 3, Mistral, Qwen, etc.). Only one model fits in memory at a time. When a request comes in for a model that isn't loaded, Unswarm automatically:
+**Example:** A machine with 24 GB VRAM has 10 containers, each configured with a different model (Qwen, North Mini, Gemma, etc.). Only one model fits in memory at a time. When a request comes in for a model that isn't loaded, Unswarm automatically:
 
-1. Stops the currently running container
-2. Starts the container serving the requested model
+1. Stops the currently running container/runtime
+2. Starts the container/runtime serving the requested model
 3. Proxies the inference request to the freshly started server
 
 From the caller's perspective, it looks like all 10 models are available — the `/v1/chat/completions` endpoint handles the switching transparently. This enables **multi-agentic workflows** where different agents or tools can request different models through a single API endpoint, and Unswarm handles the lifecycle.
@@ -18,8 +18,8 @@ From the caller's perspective, it looks like all 10 models are available — the
 
 Not all models need to be exclusive. Unswarm supports **model groups** that control co-location:
 
-- **Exclusive groups** — Models that must be the only one running (e.g., large 70B models competing for VRAM). Only one model from the group can be active at a time.
-- **Co-located groups** — Models that can run simultaneously (e.g., a small 7B model alongside a vision model that fits in remaining memory).
+- **Exclusive groups** — Models that must be the only one running (e.g., large 27B models competing for VRAM). Only one model from the group can be active at a time.
+- **Co-located groups** — Models that can run simultaneously (e.g., a small 9B models).
 
 This lets you define which models compete for resources and which can coexist, matching your actual hardware constraints.
 
@@ -28,7 +28,7 @@ This lets you define which models compete for resources and which can coexist, m
 Model switching isn't free. There are inherent costs to this approach:
 
 - **Model loading time** — Starting an inference server and loading model weights into VRAM takes seconds to minutes depending on model size and storage speed. First-token latency for a cold model will include this startup cost.
-- **Context refill** — When a model is unloaded and reloaded, any in-flight conversation context is lost. The caller must re-send context (system prompts, conversation history) on each cold start.
+- **Cold-start prefill** — Inference servers hold computed prompt state (KV cache) only in memory, so the first request after a switch pays prefill cost again. This is a latency cost only: the Chat Completions API is stateless, so clients send the full message history on every request regardless, and no conversation data is lost across switches. Weight-loading time dominates cold starts.
 - **Hit rate** — Under concurrent workloads requesting different models, frequent switching reduces effective throughput. The scheduler mitigates this with an inference queue, but high model churn means more time spent loading and less time generating.
 
 These trade-offs are inherent to shared-VRAM scheduling. Unswarm is designed for workloads where you have many models but low concurrent demand per model — not for serving high-throughput traffic to a single model.

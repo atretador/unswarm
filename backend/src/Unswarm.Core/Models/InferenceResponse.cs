@@ -6,4 +6,5 @@ public sealed class InferenceResponse
     public string ContentType { get; init; } = "application/json";
     public Stream? Body { get; init; }
     public int TokensGenerated { get; init; }
+    public double ServerTokensPerSec { get; init; }
 }
