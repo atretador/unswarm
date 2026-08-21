@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
@@ -8,6 +9,7 @@ using Unswarm.Core.Models;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public sealed class BenchmarksController : ControllerBase
 {

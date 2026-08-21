@@ -11,6 +11,7 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  User,
 } from "./types";
 import type { UnswarmClient } from "./client";
 
@@ -27,6 +28,7 @@ async function request<T>(
   const url = `${BASE_URL}${path}`;
   const res = await fetch(url, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
@@ -259,6 +261,59 @@ export const httpClient: UnswarmClient = {
     return request<Settings>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+  },
+
+  // ── Auth ─────────────────────────────────────────────────────
+  login(username: string, password: string) {
+    return request<{ username: string; isTempPassword: boolean }>(
+      "/api/auth/login",
+      {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      },
+    );
+  },
+
+  logout() {
+    return request<void>("/api/auth/logout", { method: "POST" });
+  },
+
+  getMe() {
+    return request<{ username: string; isTempPassword: boolean }>(
+      "/api/auth/me",
+    );
+  },
+
+  changePassword(currentPassword: string, newPassword: string) {
+    return request<void>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  },
+
+  // ── User Management ────────────────────────────────────────
+  listUsers() {
+    return request<User[]>("/api/users");
+  },
+
+  createUser(username: string, password: string) {
+    return request<User>("/api/users", {
+      method: "POST",
+      body: JSON.stringify({ username, password }),
+    });
+  },
+
+  deleteUser(id: string) {
+    return request<void>(`/api/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  resetPassword(id: string, newPassword: string) {
+    return request<void>(`/api/users/${encodeURIComponent(id)}/reset-password`, {
+      method: "POST",
+      body: JSON.stringify({ newPassword }),
     });
   },
 };

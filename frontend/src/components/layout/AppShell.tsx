@@ -1,13 +1,16 @@
 import { useState, useCallback } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "motion/react";
+import { AlertTriangle } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Topbar, MobileDrawer } from "./Topbar";
+import { useAuth } from "../../lib/auth-context";
 
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/models": "Models",
   "/fleet": "Fleet",
+  "/benchmarks": "Benchmarks",
   "/queue": "Queue",
   "/logs": "Logs",
   "/settings": "Settings",
@@ -15,6 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const { user } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -46,6 +50,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           mobileOpen={mobileOpen}
           onMobileToggle={toggleMobile}
         />
+
+        {/* Temp password banner */}
+        {user?.isTempPassword && (
+          <div
+            className="
+              flex items-center gap-2 px-4 py-2
+              bg-[var(--color-status-warning)]/10 border-b border-[var(--color-status-warning)]/30
+              text-sm text-[var(--color-status-warning)]
+            "
+          >
+            <AlertTriangle className="size-4 shrink-0" />
+            <span>
+              You&apos;re using a temporary password.{" "}
+              <Link
+                to="/settings"
+                className="font-medium underline underline-offset-2 hover:text-[var(--color-text-heading)] transition-colors"
+              >
+                Change it in Settings
+              </Link>
+            </span>
+          </div>
+        )}
 
         <main className="flex-1 overflow-y-auto">
           <AnimatePresence mode="wait">

@@ -11,6 +11,7 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  User,
 } from "./types";
 
 /**
@@ -81,4 +82,16 @@ export interface UnswarmClient {
   // Settings
   getSettings(): Promise<Settings>;
   updateSettings(data: Partial<Settings>): Promise<Settings>;
+
+  // Auth
+  login(username: string, password: string): Promise<{ username: string; isTempPassword: boolean }>;
+  logout(): Promise<void>;
+  getMe(): Promise<{ username: string; isTempPassword: boolean }>;
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
+
+  // User Management
+  listUsers(): Promise<User[]>;
+  createUser(username: string, password: string): Promise<User>;
+  deleteUser(id: string): Promise<void>;
+  resetPassword(id: string, newPassword: string): Promise<void>;
 }

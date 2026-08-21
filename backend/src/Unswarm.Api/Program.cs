@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Api.Configuration;
 using Unswarm.Api.Middleware;
@@ -35,10 +36,57 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
     };
 });
 
-// ── Auth configuration ─────────────────────────────────────────────────────
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+// ── Identity + Auth ────────────────────────────────────────────────────────
+builder.Services.AddIdentityCore<ApplicationUser>(options =>
+    {
+        // Password settings (relaxed for self-hosted)
+        options.Password.RequireDigit = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireNonAlphanumeric = false;
+        options.Password.RequiredLength = 6;
+        options.Password.RequiredUniqueChars = 1;
 
-// Env override: if UNSWARM_API_KEY is set and non-empty, use it as the ApiKey
+        // Lockout settings
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(5);
+        options.Lockout.MaxFailedAccessAttempts = 10;
+        options.Lockout.AllowedForNewUsers = true;
+
+        // User settings
+        options.User.RequireUniqueEmail = false;
+        options.SignIn.RequireConfirmedEmail = false;
+    })
+    .AddRoles<IdentityRole>()
+    .AddEntityFrameworkStores<UnswarmDbContext>()
+    .AddDefaultTokenProviders();
+
+builder.Services.AddScoped<SignInManager<ApplicationUser>>();
+
+// Cookie authentication for SPA
+builder.Services.ConfigureApplicationCookie(options =>
+{
+    options.Cookie.Name = ".Unswarm.Auth";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.ExpireTimeSpan = TimeSpan.FromDays(7);
+    options.SlidingExpiration = true;
+
+    // For SPA: return 401/403 instead of redirecting to login
+    options.Events.OnRedirectToLogin = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = context =>
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
+});
+
+// API key auth (backward compat with agent WebSocket connections)
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 var envApiKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");
 if (!string.IsNullOrWhiteSpace(envApiKey))
 {
@@ -93,11 +141,14 @@ builder.Services.AddHostedService<LogRetentionService>();
 // ── CORS ──────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(policy =>
+    options.AddPolicy("SpaCors", policy =>
     {
-        policy.AllowAnyOrigin()
+        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? ["http://localhost:3000", "http://localhost:5173"];
+        policy.WithOrigins(allowedOrigins)
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 
@@ -129,7 +180,14 @@ await using (var scope = app.Services.CreateAsyncScope())
     // still have a RegisteredContainerId column in ContainerModelMappings instead of
     // the renamed RegisteredRuntimeId. Idempotent — harmless on fresh DBs.
     await EnsureRuntimeColumnsAsync(db);
+
+    // Identity tables: same pattern as above — EnsureCreated does nothing on existing DBs.
+    await EnsureIdentityTablesAsync(db);
 }
+
+// ── Seed roles and admin user ──────────────────────────────────────────
+await SeedRolesAsync(app.Services);
+await SeedAdminUserAsync(app.Services);
 
 // ── Adopt orphaned script processes ─────────────────────────────────────
 // If the server restarts while host script runtimes are alive, their PID files
@@ -138,7 +196,9 @@ await app.Services.GetRequiredService<HostScriptRuntimeController>()
     .AdoptOrphanedScriptsAsync();
 
 // ── Middleware ────────────────────────────────────────────────────────────
-app.UseCors();
+app.UseCors("SpaCors");
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseWebSockets();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.MapControllers();
@@ -418,5 +478,163 @@ static async Task EnsureRuntimeColumnsAsync(UnswarmDbContext db)
     {
         if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
             await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// Creates the ASP.NET Core Identity tables if they don't exist.
+/// EnsureCreated only creates tables when the DB is brand new; existing installs
+/// need this idempotent CREATE TABLE IF NOT EXISTS for each Identity table.
+/// </summary>
+static async Task EnsureIdentityTablesAsync(UnswarmDbContext db)
+{
+    try
+    {
+        await db.Database.OpenConnectionAsync();
+        var conn = db.Database.GetDbConnection();
+
+        var statements = new[]
+        {
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetRoles" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_AspNetRoles" PRIMARY KEY,
+                "Name" TEXT(256) NULL,
+                "NormalizedName" TEXT(256) NULL,
+                "ConcurrencyStamp" TEXT NULL
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetUsers" (
+                "Id" TEXT NOT NULL CONSTRAINT "PK_AspNetUsers" PRIMARY KEY,
+                "UserName" TEXT(256) NULL,
+                "NormalizedUserName" TEXT(256) NULL,
+                "Email" TEXT(256) NULL,
+                "NormalizedEmail" TEXT(256) NULL,
+                "EmailConfirmed" INTEGER NOT NULL DEFAULT 0,
+                "PasswordHash" TEXT NULL,
+                "SecurityStamp" TEXT NULL,
+                "ConcurrencyStamp" TEXT NULL,
+                "PhoneNumber" TEXT NULL,
+                "PhoneNumberConfirmed" INTEGER NOT NULL DEFAULT 0,
+                "TwoFactorEnabled" INTEGER NOT NULL DEFAULT 0,
+                "LockoutEnd" TEXT NULL,
+                "LockoutEnabled" INTEGER NOT NULL DEFAULT 0,
+                "AccessFailedCount" INTEGER NOT NULL DEFAULT 0,
+                "IsTempPassword" INTEGER NOT NULL DEFAULT 0
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetRoleClaims" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AspNetRoleClaims" PRIMARY KEY AUTOINCREMENT,
+                "RoleId" TEXT NOT NULL,
+                "ClaimType" TEXT NULL,
+                "ClaimValue" TEXT NULL,
+                CONSTRAINT "FK_AspNetRoleClaims_AspNetRoles_RoleId" FOREIGN KEY ("RoleId") REFERENCES "AspNetRoles" ("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetUserClaims" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_AspNetUserClaims" PRIMARY KEY AUTOINCREMENT,
+                "UserId" TEXT NOT NULL,
+                "ClaimType" TEXT NULL,
+                "ClaimValue" TEXT NULL,
+                CONSTRAINT "FK_AspNetUserClaims_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetUserLogins" (
+                "LoginProvider" TEXT NOT NULL,
+                "ProviderKey" TEXT NOT NULL,
+                "ProviderDisplayName" TEXT NULL,
+                "UserId" TEXT NOT NULL,
+                CONSTRAINT "PK_AspNetUserLogins" PRIMARY KEY ("LoginProvider", "ProviderKey"),
+                CONSTRAINT "FK_AspNetUserLogins_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetUserRoles" (
+                "UserId" TEXT NOT NULL,
+                "RoleId" TEXT NOT NULL,
+                CONSTRAINT "PK_AspNetUserRoles" PRIMARY KEY ("UserId", "RoleId"),
+                CONSTRAINT "FK_AspNetUserRoles_AspNetRoles_RoleId" FOREIGN KEY ("RoleId") REFERENCES "AspNetRoles" ("Id") ON DELETE CASCADE,
+                CONSTRAINT "FK_AspNetUserRoles_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
+            );
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS "AspNetUserTokens" (
+                "UserId" TEXT NOT NULL,
+                "LoginProvider" TEXT NOT NULL,
+                "Name" TEXT NOT NULL,
+                "Value" TEXT NULL,
+                CONSTRAINT "PK_AspNetUserTokens" PRIMARY KEY ("UserId", "LoginProvider", "Name"),
+                CONSTRAINT "FK_AspNetUserTokens_AspNetUsers_UserId" FOREIGN KEY ("UserId") REFERENCES "AspNetUsers" ("Id") ON DELETE CASCADE
+            );
+            """,
+            """CREATE INDEX IF NOT EXISTS "IX_AspNetRoleClaims_RoleId" ON "AspNetRoleClaims" ("RoleId");""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "RoleNameIndex" ON "AspNetRoles" ("NormalizedName");""",
+            """CREATE INDEX IF NOT EXISTS "IX_AspNetUserClaims_UserId" ON "AspNetUserClaims" ("UserId");""",
+            """CREATE INDEX IF NOT EXISTS "IX_AspNetUserLogins_UserId" ON "AspNetUserLogins" ("UserId");""",
+            """CREATE INDEX IF NOT EXISTS "IX_AspNetUserRoles_RoleId" ON "AspNetUserRoles" ("RoleId");""",
+            """CREATE INDEX IF NOT EXISTS "EmailIndex" ON "AspNetUsers" ("NormalizedEmail");""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UserNameIndex" ON "AspNetUsers" ("NormalizedUserName");""",
+        };
+
+        foreach (var sql in statements)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = sql;
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to ensure Identity tables: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+static async Task SeedRolesAsync(IServiceProvider services)
+{
+    using var scope = services.CreateScope();
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+
+    string[] roles = ["Admin", "User"];
+    foreach (var role in roles)
+    {
+        if (!await roleManager.RoleExistsAsync(role))
+        {
+            await roleManager.CreateAsync(new IdentityRole(role));
+        }
+    }
+}
+
+static async Task SeedAdminUserAsync(IServiceProvider services)
+{
+    using var scope = services.CreateScope();
+    var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
+
+    if (userManager.Users.Any())
+        return;
+
+    var defaultPassword = Environment.GetEnvironmentVariable("UNSWARM_ADMIN_PASSWORD") ?? "admin";
+    var admin = new ApplicationUser
+    {
+        UserName = "admin",
+        IsTempPassword = true
+    };
+
+    var result = await userManager.CreateAsync(admin, defaultPassword);
+    if (result.Succeeded)
+    {
+        await userManager.AddToRoleAsync(admin, "Admin");
+        Console.WriteLine("Created default admin user (username: admin). Change the password immediately.");
+    }
+    else
+    {
+        Console.Error.WriteLine($"Failed to seed admin user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
     }
 }

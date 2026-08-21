@@ -21,6 +21,13 @@ public sealed class ApiKeyAuthMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        // If user is already authenticated via Identity cookie, skip API key check
+        if (context.User.Identity?.IsAuthenticated == true)
+        {
+            await _next(context);
+            return;
+        }
+
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
             await _next(context);

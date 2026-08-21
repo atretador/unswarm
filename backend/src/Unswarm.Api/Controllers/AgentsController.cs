@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
@@ -11,6 +12,7 @@ namespace Unswarm.Api.Controllers;
 /// the registered set so unmanaged containers never surface.
 /// </summary>
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase
 {

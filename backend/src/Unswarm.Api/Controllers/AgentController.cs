@@ -3,12 +3,14 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
+[Authorize]
 public sealed class AgentController : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

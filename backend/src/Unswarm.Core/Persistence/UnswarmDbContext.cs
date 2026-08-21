@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Core.Models;
 
@@ -122,7 +123,7 @@ public sealed class PromptEntity
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
-public sealed class UnswarmDbContext : DbContext
+public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
 {
     public DbSet<ModelEntity> Models => Set<ModelEntity>();
     public DbSet<BenchmarkHistoryEntity> Benchmarks => Set<BenchmarkHistoryEntity>();

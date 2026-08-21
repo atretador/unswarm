@@ -237,3 +237,10 @@ export interface Prompt {
   createdAt: string;
   updatedAt: string;
 }
+
+// ─── Users ────────────────────────────────────────────────────────
+export interface User {
+  id: string;
+  username: string;
+  isTempPassword: boolean;
+}

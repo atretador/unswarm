@@ -945,4 +945,25 @@ export const mockClient: UnswarmClient = {
     return { ...settings };
   },
 
+  // ── Auth ─────────────────────────────────────────────────────
+  async login(username: string, _password: string) {
+    await delay(rand(80, 200));
+    if (!username) throw new Error("Invalid username or password");
+    return { username, isTempPassword: false };
+  },
+
+  async logout() {
+    await delay(rand(30, 80));
+  },
+
+  async getMe() {
+    await delay(rand(30, 80));
+    // Default: no user logged in (will throw 401 from backend, caught by auth context)
+    throw new Error("Not authenticated");
+  },
+
+  async changePassword(_currentPassword: string, _newPassword: string) {
+    await delay(rand(80, 200));
+  },
+
 };

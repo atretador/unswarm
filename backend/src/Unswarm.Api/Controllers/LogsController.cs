@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
@@ -9,6 +10,7 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public sealed class LogsController : ControllerBase
 {

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useCallback } from "react";
-import { Menu, X } from "lucide-react";
-import { NavLink, useLocation } from "react-router-dom";
+import { useEffect, useRef, useCallback, useState } from "react";
+import { Menu, X, LogOut, Settings, User } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "./ThemeToggle";
 import { StatusDot } from "../ui/StatusDot";
 import { NAV_ITEMS } from "../../lib/nav-items";
+import { useAuth } from "../../lib/auth-context";
 
 export interface TopbarProps {
   title: string;
@@ -11,7 +12,48 @@ export interface TopbarProps {
   onMobileToggle: () => void;
 }
 
+function UserAvatar({ username }: { username: string }) {
+  return (
+    <div className="flex items-center justify-center size-7 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-heading text-xs font-bold select-none">
+      {username.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
 export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleClick(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [menuOpen]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [menuOpen]);
+
+  async function handleSignOut() {
+    setMenuOpen(false);
+    await logout();
+    navigate("/login", { replace: true });
+  }
+
   return (
     <header
       className="
@@ -50,6 +92,78 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
         </div>
 
         <ThemeToggle />
+
+        {/* User menu */}
+        {user && (
+          <div className="relative" ref={menuRef}>
+            <button
+              onClick={() => setMenuOpen((p) => !p)}
+              className="
+                flex items-center justify-center
+                rounded-full transition-all duration-[var(--duration-fast)]
+                hover:ring-2 hover:ring-[var(--color-focus-ring)]
+                focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
+                cursor-pointer
+              "
+              aria-label="User menu"
+              aria-expanded={menuOpen}
+            >
+              <UserAvatar username={user.username} />
+            </button>
+
+            {menuOpen && (
+              <div
+                className="
+                  absolute right-0 top-full mt-1.5 w-52 z-50
+                  rounded-[var(--radius-lg)] border border-[var(--color-border)]
+                  bg-[var(--color-bg-surface)] shadow-lg
+                  py-1
+                "
+                style={{ animation: "fadeInDown 120ms ease-out" }}
+              >
+                <div className="px-3 py-2 border-b border-[var(--color-border)]">
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Signed in as
+                  </p>
+                  <p className="text-sm font-medium text-[var(--color-text-heading)] truncate">
+                    {user.username}
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setMenuOpen(false);
+                    navigate("/settings");
+                  }}
+                  className="
+                    flex items-center gap-2 w-full px-3 py-2
+                    text-sm text-[var(--color-text-muted)]
+                    hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
+                    transition-colors duration-[var(--duration-fast)]
+                    cursor-pointer
+                  "
+                >
+                  <Settings className="size-3.5" />
+                  Settings
+                </button>
+
+                <button
+                  onClick={handleSignOut}
+                  className="
+                    flex items-center gap-2 w-full px-3 py-2
+                    text-sm text-[var(--color-status-error)]
+                    hover:bg-[var(--color-status-error)]/10
+                    transition-colors duration-[var(--duration-fast)]
+                    cursor-pointer
+                  "
+                >
+                  <LogOut className="size-3.5" />
+                  Sign out
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );
@@ -62,6 +176,8 @@ export interface MobileDrawerProps {
 
 export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -110,6 +226,12 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
     }
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
+
+  async function handleSignOut() {
+    await logout();
+    onClose();
+    navigate("/login", { replace: true });
+  }
 
   if (!open) return null;
 
@@ -183,6 +305,33 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
             );
           })}
         </nav>
+
+        {/* User section */}
+        {user && (
+          <div className="border-t border-[var(--color-border)] p-3">
+            <div className="flex items-center gap-2.5 mb-2.5">
+              <div className="flex items-center justify-center size-7 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-heading text-xs font-bold select-none">
+                {user.username.charAt(0).toUpperCase()}
+              </div>
+              <span className="text-sm font-medium text-[var(--color-text-heading)] truncate">
+                {user.username}
+              </span>
+            </div>
+            <button
+              onClick={handleSignOut}
+              className="
+                flex items-center gap-2 w-full rounded-[var(--radius-lg)] px-3 py-1.5
+                text-sm text-[var(--color-status-error)]
+                hover:bg-[var(--color-status-error)]/10
+                transition-colors duration-[var(--duration-fast)]
+                cursor-pointer
+              "
+            >
+              <LogOut className="size-3.5" />
+              Sign out
+            </button>
+          </div>
+        )}
       </div>
     </>
   );
