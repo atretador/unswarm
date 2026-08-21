@@ -1,5 +1,7 @@
 import type {
   Agent,
+  ApiKeyCreateResponse,
+  ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
   Container,
@@ -36,6 +38,19 @@ function rand(min: number, max: number): number {
 let nextId = 100;
 function id(): string {
   return String(++nextId);
+}
+
+/**
+ * Deterministic-enough fake secret for the mock client. Mirrors the backend's
+ * base64url, no-padding shape without depending on a real CSPRNG global.
+ */
+function randomSecret(): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  let out = "";
+  for (let i = 0; i < 43; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
 }
 
 const NOW = new Date().toISOString();
@@ -234,6 +249,32 @@ const PROMPTS: Prompt[] = [
     currentVersion: 2,
     createdAt: NOW,
     updatedAt: NOW,
+  },
+];
+
+// ─── API Keys Seed ────────────────────────────────────────────────
+// Inference keys authenticate to the /v1 proxy; agent keys authenticate to the
+// agent channel (/api/agents + /ws/agent). They are NOT login credentials.
+// The Go agent's key is provisioned via config and seeded into the managed
+// store at startup — here we mirror that as a pre-existing managed row.
+const API_KEYS: ApiKeyItem[] = [
+  {
+    id: "ak-seed-0001",
+    name: "Go agent",
+    keyPrefix: "ak_7f3a9c",
+    scope: "agent",
+    isActive: true,
+    createdAt: new Date(Date.now() - 30 * 86400_000).toISOString(),
+    lastUsedAt: new Date(Date.now() - 12 * 3600_000).toISOString(),
+  },
+  {
+    id: "ak-seed-0002",
+    name: "Local dashboard test",
+    keyPrefix: "usk_2bd41e",
+    scope: "inference",
+    isActive: true,
+    createdAt: new Date(Date.now() - 7 * 86400_000).toISOString(),
+    lastUsedAt: null,
   },
 ];
 
@@ -1026,6 +1067,60 @@ export const mockClient: UnswarmClient = {
 
   async changePassword(_currentPassword: string, _newPassword: string) {
     await delay(rand(80, 200));
+  },
+
+  // ── API Keys ─────────────────────────────────────────────────
+  async createApiKey(name: string) {
+    await delay(rand(80, 180));
+    if (!name.trim()) {
+      throw new Error("Name is required.");
+    }
+    const scope: ApiKeyItem["scope"] = "inference";
+    const secret = `sk_${randomSecret()}`;
+    const created: ApiKeyCreateResponse = {
+      id: id(),
+      name: name.trim(),
+      keyPrefix: secret.slice(0, 11),
+      scope,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      secret,
+    };
+    API_KEYS.push(created);
+    return { ...created };
+  },
+
+  async listApiKeys() {
+    await delay(rand(60, 150));
+    return API_KEYS.map((k) => ({ ...k }));
+  },
+
+  async getApiKey(id: string) {
+    await delay(rand(60, 150));
+    const key = API_KEYS.find((k) => k.id === id);
+    if (!key) throw new Error(`API key ${id} not found.`);
+    return { ...key };
+  },
+
+  async revokeApiKey(id: string) {
+    await delay(rand(60, 150));
+    const key = API_KEYS.find((k) => k.id === id);
+    if (!key) throw new Error(`API key ${id} not found.`);
+    key.isActive = false;
+  },
+
+  async rotateApiKey(id: string) {
+    await delay(rand(80, 180));
+    const key = API_KEYS.find((k) => k.id === id);
+    if (!key) throw new Error(`API key ${id} not found.`);
+    const secret = `sk_${randomSecret()}`;
+    Object.assign(key, {
+      keyPrefix: secret.slice(0, 11),
+      isActive: true,
+      lastUsedAt: null,
+    });
+    return { ...key, secret };
   },
 
 };

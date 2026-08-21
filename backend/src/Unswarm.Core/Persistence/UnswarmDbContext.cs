@@ -139,6 +139,24 @@ public sealed class PromptVersionEntity
     public PromptEntity Prompt { get; set; } = null!;
 }
 
+/// <summary>
+/// Managed API key. Only a cryptographic hash of the secret is persisted; the
+/// plaintext is returned exactly once at creation and the KeyPrefix (first few
+/// characters) is what is ever shown afterwards. Scope decides which protected
+/// surface the key can authenticate (see <see cref="ApiKeyScope"/>).
+/// </summary>
+public sealed class ApiKeyEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string KeyHash { get; set; } = string.Empty;
+    public string KeyPrefix { get; set; } = string.Empty;
+    public ApiKeyScope Scope { get; set; } = ApiKeyScope.Inference;
+    public bool IsActive { get; set; } = true;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? LastUsedAt { get; set; }
+}
+
 public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
 {
     public DbSet<ModelEntity> Models => Set<ModelEntity>();
@@ -149,6 +167,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ContainerModelMappingEntity> ContainerModelMappings => Set<ContainerModelMappingEntity>();
     public DbSet<PromptEntity> Prompts => Set<PromptEntity>();
     public DbSet<PromptVersionEntity> PromptVersions => Set<PromptVersionEntity>();
+    public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -238,6 +257,16 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
              .HasForeignKey(pv => pv.PromptId)
              .OnDelete(DeleteBehavior.Cascade);
             e.Property(pv => pv.Text).IsRequired();
+        });
+
+        modelBuilder.Entity<ApiKeyEntity>(e =>
+        {
+            e.HasKey(k => k.Id);
+            e.Property(k => k.Name).IsRequired();
+            e.Property(k => k.KeyHash).IsRequired();
+            e.Property(k => k.KeyPrefix).IsRequired();
+            e.HasIndex(k => k.Scope);
+            e.HasIndex(k => k.IsActive);
         });
     }
 }

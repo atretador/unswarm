@@ -1,5 +1,7 @@
 import type {
   Agent,
+  ApiKeyCreateResponse,
+  ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
   Container,
@@ -95,4 +97,12 @@ export interface UnswarmClient {
   createUser(username: string, password: string): Promise<User>;
   deleteUser(id: string): Promise<void>;
   resetPassword(id: string, newPassword: string): Promise<void>;
+
+  // API Keys — manage inference keys that authenticate to the /v1 proxy.
+  // These are NOT login credentials.
+  createApiKey(name: string): Promise<ApiKeyCreateResponse>;
+  listApiKeys(): Promise<ApiKeyItem[]>;
+  getApiKey(id: string): Promise<ApiKeyItem>;
+  revokeApiKey(id: string): Promise<void>;
+  rotateApiKey(id: string): Promise<ApiKeyCreateResponse>;
 }

@@ -3,6 +3,7 @@ import {
   Box,
   Container,
   Gauge,
+  Key,
   ListOrdered,
   ScrollText,
   Settings,
@@ -22,5 +23,6 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/benchmarks", icon: Gauge, label: "Benchmarks" },
   { to: "/queue", icon: ListOrdered, label: "Queue" },
   { to: "/logs", icon: ScrollText, label: "Logs" },
+  { to: "/api-keys", icon: Key, label: "API Keys" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

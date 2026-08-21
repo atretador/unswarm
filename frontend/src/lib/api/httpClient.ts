@@ -1,5 +1,7 @@
 import type {
   Agent,
+  ApiKeyCreateResponse,
+  ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
   Container,
@@ -335,5 +337,34 @@ export const httpClient: UnswarmClient = {
       method: "POST",
       body: JSON.stringify({ newPassword }),
     });
+  },
+
+  // ── API Keys ────────────────────────────────────────────────
+  createApiKey(name: string) {
+    return request<ApiKeyCreateResponse>("/api/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  listApiKeys() {
+    return request<ApiKeyItem[]>("/api/api-keys");
+  },
+
+  getApiKey(id: string) {
+    return request<ApiKeyItem>(`/api/api-keys/${encodeURIComponent(id)}`);
+  },
+
+  revokeApiKey(id: string) {
+    return request<void>(`/api/api-keys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  rotateApiKey(id: string) {
+    return request<ApiKeyCreateResponse>(
+      `/api/api-keys/${encodeURIComponent(id)}/rotate`,
+      { method: "POST" },
+    );
   },
 };

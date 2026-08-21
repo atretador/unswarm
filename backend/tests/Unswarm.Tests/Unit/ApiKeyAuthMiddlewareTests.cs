@@ -1,8 +1,11 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Unswarm.Api.Configuration;
 using Unswarm.Api.Middleware;
+using Unswarm.Core.Contracts;
+using Unswarm.Core.Models;
 
 namespace Unswarm.Tests.Unit;
 
@@ -13,12 +16,14 @@ public sealed class ApiKeyAuthMiddlewareTests
         public bool Called { get; set; }
     }
 
-    private static (ApiKeyAuthMiddleware middleware, DefaultHttpContext context, NextTracker tracker) CreateSut(
+    private static (ApiKeyAuthMiddleware middleware, DefaultHttpContext context, NextTracker tracker, IApiKeyStore store) CreateSut(
         AuthOptions options,
+        IApiKeyStore? store = null,
         string path = "/api/agents",
         string? apiKeyHeader = null,
         string? authorizationHeader = null)
     {
+        var ctxStore = store ?? TestApiKeyStore.Create();
         var context = new DefaultHttpContext();
         context.Request.Path = path;
 
@@ -34,17 +39,25 @@ public sealed class ApiKeyAuthMiddlewareTests
             return Task.CompletedTask;
         };
 
-        var middleware = new ApiKeyAuthMiddleware(next, Options.Create(options), NullLogger<ApiKeyAuthMiddleware>.Instance);
-        return (middleware, context, tracker);
+        var middleware = new ApiKeyAuthMiddleware(
+            next, ctxStore, Options.Create(options), NullLogger<ApiKeyAuthMiddleware>.Instance);
+        return (middleware, context, tracker, ctxStore);
+    }
+
+    private static bool HasScopeClaim(HttpContext context, ApiKeyScope scope)
+    {
+        return context.User.Identities
+            .OfType<ClaimsIdentity>()
+            .Any(i => i.FindFirst(ApiKeyAuthMiddleware.ScopeClaimType)?.Value == scope.ToString());
     }
 
     [Fact]
-    public async Task ValidKey_ProtectedPath_CallsNext()
+    public async Task CookiePrincipal_PassesThrough_EvenWithoutKey()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents",
-            apiKeyHeader: "secret-key");
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] });
+
+        context.User = new ClaimsPrincipal(new ClaimsIdentity("Cookie"));
 
         await middleware.InvokeAsync(context);
 
@@ -53,38 +66,10 @@ public sealed class ApiKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task InvalidKey_ProtectedPath_Returns401()
+    public async Task NonProtectedPath_PassesThrough()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents",
-            apiKeyHeader: "wrong-key");
-
-        await middleware.InvokeAsync(context);
-
-        Assert.False(tracker.Called);
-        Assert.Equal(401, context.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task MissingKey_ProtectedPath_Returns401()
-    {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents");
-
-        await middleware.InvokeAsync(context);
-
-        Assert.False(tracker.Called);
-        Assert.Equal(401, context.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task AuthDisabled_EmptyKey_CallsNext()
-    {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents");
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/v1", "/api/agents", "/ws/agent"] });
 
         await middleware.InvokeAsync(context);
 
@@ -93,12 +78,12 @@ public sealed class ApiKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task NonProtectedPath_NoKey_CallsNext()
+    public async Task ProtectedPath_NoKey_NoKeyOfScope_ActivatesOptIn_PassesThrough()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/containers");
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] });
 
+        // No agent key seeded yet -> auth opt-in is off -> allow.
         await middleware.InvokeAsync(context);
 
         Assert.True(tracker.Called);
@@ -106,11 +91,14 @@ public sealed class ApiKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task SubPathOfProtected_IsAlsoProtected()
+    public async Task ProtectedPath_NoKey_KeyOfScope_Exists_Returns401()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents/abc123/status");
+        var store = TestApiKeyStore.Create();
+        await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, store,
+            path: "/ws/agent");
 
         await middleware.InvokeAsync(context);
 
@@ -119,69 +107,91 @@ public sealed class ApiKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task ValidBearerToken_ProtectedPath_CallsNext()
+    public async Task ValidAgentKey_WsAgent_PassesAndSetsScopeClaim()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/ws/agent"] },
-            path: "/ws/agent",
-            authorizationHeader: "Bearer secret-key");
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("machine-b", ApiKeyScope.Agent, "agent-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, store,
+            path: "/ws/agent", authorizationHeader: $"Bearer {created.Secret}");
 
         await middleware.InvokeAsync(context);
 
         Assert.True(tracker.Called);
         Assert.Equal(200, context.Response.StatusCode);
+
+        Assert.True(HasScopeClaim(context, ApiKeyScope.Agent));
+        var key = await store.GetAsync(created.Id);
+        Assert.NotNull(key?.LastUsedAt);
     }
 
     [Fact]
-    public async Task WrongBearerToken_ProtectedPath_Returns401()
+    public async Task ValidInferenceKey_V1_PassesAndSetsInferenceScope()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/ws/agent"] },
-            path: "/ws/agent",
-            authorizationHeader: "Bearer wrong");
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("ci", ApiKeyScope.Inference, "ci-secret");
 
-        await middleware.InvokeAsync(context);
-
-        Assert.False(tracker.Called);
-        Assert.Equal(401, context.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task PathPrefixMatch_CaseInsensitive_Returns401()
-    {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/API/AGENTS");
-
-        await middleware.InvokeAsync(context);
-
-        Assert.False(tracker.Called);
-        Assert.Equal(401, context.Response.StatusCode);
-    }
-
-    [Fact]
-    public async Task WhitespaceKey_TreatedAsDisabled_CallsNext()
-    {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "   ", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents");
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/v1"] }, store,
+            path: "/v1", apiKeyHeader: created.Secret);
 
         await middleware.InvokeAsync(context);
 
         Assert.True(tracker.Called);
+        Assert.Equal(200, context.Response.StatusCode);
+
+        Assert.True(HasScopeClaim(context, ApiKeyScope.Inference));
+    }
+
+    [Fact]
+    public async Task InvalidKey_Returns401()
+    {
+        var store = TestApiKeyStore.Create();
+        await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, store,
+            path: "/ws/agent", apiKeyHeader: "not-the-secret");
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(tracker.Called);
+        Assert.Equal(401, context.Response.StatusCode);
     }
 
     [Fact]
     public async Task XApiKeyTakesPrecedence_WhenBothHeadersPresent()
     {
-        var (middleware, context, tracker) = CreateSut(
-            new AuthOptions { ApiKey = "secret-key", ProtectedPaths = ["/api/agents"] },
-            path: "/api/agents",
-            apiKeyHeader: "secret-key",
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, store,
+            path: "/ws/agent",
+            apiKeyHeader: created.Secret,
             authorizationHeader: "Bearer wrong");
 
         await middleware.InvokeAsync(context);
 
         Assert.True(tracker.Called);
+        Assert.Equal(200, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RevokedKey_CannotAuthenticate()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-secret");
+        await store.RevokeAsync(created.Id);
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, store,
+            path: "/ws/agent", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(tracker.Called);
+        Assert.Equal(401, context.Response.StatusCode);
     }
 }

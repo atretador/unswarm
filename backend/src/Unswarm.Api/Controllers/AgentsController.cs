@@ -13,6 +13,8 @@ namespace Unswarm.Api.Controllers;
 /// the registered set so unmanaged containers never surface.
 /// </summary>
 [ApiController]
+// Execution-target listing. The admin cookie (dashboard) OR an agent API key
+// may call it; an inference key is rejected by the scope policy.
 [Authorize]
 [Route("api/[controller]")]
 public sealed class AgentsController : ControllerBase

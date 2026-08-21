@@ -9,7 +9,9 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
-[Authorize]
+// Remote-agent WebSocket channel. Only an agent-scoped API key may connect
+// (the dashboard's cookie carries no scope, so it is rejected here).
+[Authorize(Policy = "AgentKey")]
 public sealed class AgentController : ControllerBase
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

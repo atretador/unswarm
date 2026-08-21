@@ -251,3 +251,25 @@ export interface User {
   username: string;
   isTempPassword: boolean;
 }
+
+// ─── API Keys ──────────────────────────────────────────────────────
+// Managed keys authenticate to the inference proxy (/v1) and the agent
+// channel (/api/agents + /ws/agent). They are NOT login credentials — the
+// two auth surfaces are strictly separate. Login cookies never carry a scope.
+export type ApiKeyScope = "inference" | "agent";
+
+export interface ApiKeyItem {
+  id: string;
+  name: string;
+  /** Short human-readable marker of the key. Never the full secret. */
+  keyPrefix: string;
+  scope: ApiKeyScope;
+  isActive: boolean;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+/** Returned exactly once at create/rotate. Carries the raw `secret`. */
+export interface ApiKeyCreateResponse extends ApiKeyItem {
+  secret: string;
+}

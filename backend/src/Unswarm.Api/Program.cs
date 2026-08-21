@@ -126,6 +126,7 @@ builder.Services.AddScoped<ISettingsStore, SettingsStore>();
 builder.Services.AddScoped<ModelValidator>();
 builder.Services.AddScoped<IBenchmarkHistory, BenchmarkHistoryService>();
 builder.Services.AddScoped<IPromptStore, PromptStore>();
+builder.Services.AddSingleton<IApiKeyStore, ApiKeyStore>();
 builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
 builder.Services.AddSingleton<HostScriptRuntimeController>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
@@ -151,6 +152,17 @@ builder.Services.AddControllers()
         // with either casing keep working.
         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
     });
+
+// ── Authorization policies (path-scoped API keys) ─────────────────────
+// An API key carries an "unswarm:key-scope" claim set by ApiKeyAuthMiddleware.
+// The control plane is gated by the cookie principal + roles; inference and
+// agent surfaces are gated by their scope so a key can never cross surfaces.
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("Cookie", policy => policy.RequireAuthenticatedUser());
+    options.AddPolicy("InferenceKey", policy =>
+        policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.Inference.ToString()));
+});
 
 // ── Background services ──────────────────────────────────────────────────
 builder.Services.AddHostedService<SchedulerHostedService>();
@@ -231,6 +243,13 @@ await using (var scope = app.Services.CreateAsyncScope())
     await EnsureIdentityTablesAsync(db);
 }
 
+// ── Migrate the static API key into the managed key store ────────────
+// The single configured key (UNSWARM_API_KEY / Auth.ApiKey) is the remote agent's
+// credential for /api/agents and /ws/agent. Rather than keep it out-of-band, seed
+// it as an agent-scoped managed row so it authenticates through the same store as
+// newly generated keys. Idempotent.
+await SeedStaticApiKeyAsync(app.Services);
+
 // ── Seed roles and admin user ──────────────────────────────────────────
 await SeedRolesAsync(app.Services);
 await SeedAdminUserAsync(app.Services, adminSetupPassword);
@@ -244,6 +263,7 @@ await app.Services.GetRequiredService<HostScriptRuntimeController>()
 // ── Middleware ────────────────────────────────────────────────────────────
 app.UseCors("SpaCors");
 app.UseAuthentication();
+app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
 app.UseWebSockets(new WebSocketOptions
@@ -886,6 +906,33 @@ static async Task SeedAdminUserAsync(IServiceProvider services, string? adminSet
     {
         Console.Error.WriteLine($"Failed to create admin user: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
     }
+}
+
+/// <summary>
+/// Seed the configured static API key (UNSWARM_API_KEY / Auth.ApiKey) into the
+/// managed key store as an agent-scoped key, so the remote agent authenticates
+/// through the same store as generated keys. Idempotent: skips if a key matching
+/// the configured secret already exists.
+/// </summary>
+static async Task SeedStaticApiKeyAsync(IServiceProvider services)
+{
+    var config = services.GetRequiredService<IConfiguration>();
+    string? envKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");
+    string staticKey = (!string.IsNullOrWhiteSpace(envKey) ? envKey
+        : (config["Auth:ApiKey"] ?? string.Empty).Trim());
+
+    if (string.IsNullOrWhiteSpace(staticKey))
+        return;
+
+    var store = services.GetRequiredService<IApiKeyStore>();
+    if (await store.AuthenticateAsync(staticKey) is not null)
+        return; // already seeded
+
+    await store.CreateAsync(
+        "Static API key (UNSWARM_API_KEY / Auth.ApiKey)",
+        ApiKeyScope.Agent,
+        staticKey);
+    Console.WriteLine("Seeded static API key into managed key store (agent scope).");
 }
 
 /// <summary>

@@ -8,7 +8,10 @@ using Unswarm.Core.Models;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
-[Authorize]
+// Inference surface: an OpenAI-compatible proxy. A managed inference API key
+// authenticates here; the admin cookie is also accepted for local testing.
+[Authorize(Policy = "InferenceKey")]
+// [Authorize(Policy = "Cookie")]
 [Route("v1")]
 public sealed class OpenAIController : ControllerBase
 {
