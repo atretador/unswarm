@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Core.Services;
 
@@ -14,6 +15,7 @@ public sealed class InferenceProxy : IInferenceProxy
     private readonly IHealthChecker _healthChecker;
     private readonly IContainerRegistry? _containerRegistry;
     private readonly ILogger<InferenceProxy> _logger;
+    private readonly ILogStore? _logStore;
     private readonly IServiceProvider _serviceProvider;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _startLocks = new(StringComparer.Ordinal);
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
@@ -30,7 +32,8 @@ public sealed class InferenceProxy : IInferenceProxy
         ILogger<InferenceProxy> logger,
         IServiceProvider serviceProvider,
         IContainerRegistry? containerRegistry = null,
-        IDockerControllerRouter? router = null)
+        IDockerControllerRouter? router = null,
+        ILogStore? logStore = null)
     {
         _docker = docker;
         _healthChecker = healthChecker;
@@ -38,6 +41,7 @@ public sealed class InferenceProxy : IInferenceProxy
         _serviceProvider = serviceProvider;
         _containerRegistry = containerRegistry;
         _router = router ?? new HostOnlyDockerControllerRouter(docker);
+        _logStore = logStore;
     }
 
     public async Task<InferenceResponse> InvokeAsync(InferenceRequest request, CancellationToken ct = default)
@@ -182,6 +186,11 @@ public sealed class InferenceProxy : IInferenceProxy
         if (!string.IsNullOrEmpty(registered.Image)) names.Add(registered.Image);
         if (!string.IsNullOrEmpty(registered.DisplayName)) names.Add(registered.DisplayName);
         return names;
+    }
+
+    private void LogProxy(LogLevel level, string message)
+    {
+        _logStore?.Enqueue(level, "proxy", message);
     }
 
     private async Task<InferenceResponse> InvokeRemoteAsync(
@@ -463,11 +472,16 @@ public sealed class InferenceProxy : IInferenceProxy
     /// duration of the pipe. This enables true real-time streaming: chunks arrive
     /// on the client as soon as they are produced by the backend, without buffering
     /// the full response in memory.
+    ///
+    /// Exposes <see cref="Drained"/>: a Task that completes when the inner stream
+    /// reaches EOF (ReadAsync returns 0), the stream is disposed, or a fault occurs.
+    /// The scheduler awaits this before releasing the per-target worker slot.
     /// </summary>
     private sealed class HttpResponseMessageStream : Stream
     {
         private readonly HttpResponseMessage _response;
         private readonly Stream _inner;
+        private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private bool _disposed;
 
         public HttpResponseMessageStream(HttpResponseMessage response, Stream inner)
@@ -475,6 +489,12 @@ public sealed class InferenceProxy : IInferenceProxy
             _response = response;
             _inner = inner;
         }
+
+        /// <summary>
+        /// Completes when the inner stream has been fully consumed (EOF), disposed,
+        /// or faulted. The scheduler awaits this to prevent premature model switching.
+        /// </summary>
+        public Task Drained => _drained.Task;
 
         public override bool CanRead => _inner.CanRead;
         public override bool CanSeek => _inner.CanSeek;
@@ -496,14 +516,37 @@ public sealed class InferenceProxy : IInferenceProxy
             => await _inner.WriteAsync(buffer, offset, count, ct).ConfigureAwait(false);
 
         public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
-            => await _inner.ReadAsync(buffer, offset, count, ct).ConfigureAwait(false);
-
-        public override ValueTask DisposeAsync()
         {
+            var n = await _inner.ReadAsync(buffer, offset, count, ct).ConfigureAwait(false);
+            if (n == 0)
+                _drained.TrySetResult();
+            return n;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var n = await _inner.ReadAsync(buffer, ct).ConfigureAwait(false);
+            if (n == 0)
+                _drained.TrySetResult();
+            return n;
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (_disposed) return;
             _disposed = true;
-            _inner.DisposeAsync();
+            try
+            {
+                await _inner.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _drained.TrySetException(ex);
+                _response.Dispose();
+                return;
+            }
             _response.Dispose();
-            return default;
+            _drained.TrySetResult();
         }
 
         protected override void Dispose(bool disposing)
@@ -512,8 +555,18 @@ public sealed class InferenceProxy : IInferenceProxy
             _disposed = true;
             if (disposing)
             {
-                _inner.Dispose();
+                try
+                {
+                    _inner.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _drained.TrySetException(ex);
+                    _response.Dispose();
+                    return;
+                }
                 _response.Dispose();
+                _drained.TrySetResult();
             }
         }
     }
@@ -573,6 +626,8 @@ public sealed class InferenceProxy : IInferenceProxy
                 _logger.LogWarning(ex,
                     "Inference transport failure for model {Model} on port {Port}; runtime may still be warming up — retrying within hold window",
                     request.ModelName, port);
+                LogProxy(LogLevel.Warn,
+                    $"Transport error for model {request.ModelName} on port {port}: {ex.Message}; retrying");
                 await Task.Delay(RetryDelayMs, ct).ConfigureAwait(false);
                 // Re-verify readiness before the next attempt so a runtime that
                 // bounced (restart/loading) is given time to come back.
@@ -612,13 +667,25 @@ public sealed class InferenceProxy : IInferenceProxy
 
             var innerStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             // Wrap so the response is disposed when the stream pipe finishes.
-            var wrappedStream = new HttpResponseMessageStream(response, innerStream);
+            var responseStream = new HttpResponseMessageStream(response, innerStream);
+
+            var inferenceResponse = new InferenceResponse
+            {
+                StatusCode = statusCode,
+                ContentType = contentType,
+                Body = responseStream,
+                // BodyDrained is set after the tap stream wraps responseStream
+            };
+
+            // Tap the SSE stream to count tokens incrementally
+            var tapStream = new StreamingTokenTapStream(responseStream, inferenceResponse);
 
             return new InferenceResponse
             {
                 StatusCode = statusCode,
                 ContentType = contentType,
-                Body = wrappedStream
+                Body = tapStream,
+                BodyDrained = responseStream.Drained
             };
         }
 

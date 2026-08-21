@@ -360,18 +360,19 @@ public sealed class SchedulerWorkerTests : IDisposable
     public async Task QueueDepthExceeded_BoundedChannelBlocks()
     {
         // In the multi-target architecture, the dispatcher reads from the global
-        // channel and writes to per-target bounded channels (TargetQueueDepth=16).
+        // channel and writes to per-target bounded channels (MaxQueueDepth from settings).
         // When the target channel is full and inference is blocked, the dispatcher
         // stops draining the global channel, causing it to fill and writes to block.
         //
         // We use a small global channel (cap=2) so that once the target channel
         // fills up, just 2 more writes saturate the global channel.
         //
-        // Sequence: global cap=2, target cap=16.
+        // Sequence: global cap=2, target cap=16 (set via MaxQueueDepth).
         // After 16 items dispatched to target (full), dispatcher blocks.
         // We then flood the global channel and verify the final write blocks.
         var channel = Channel.CreateBounded<InferenceRequest>(2);
-        var worker = CreateWorker(channel);
+        var settings = new SchedulerSettings { MaxQueueDepth = 16, MaxContainerStartRetries = 1 };
+        var worker = CreateWorker(channel, settings);
         var cts = new CancellationTokenSource();
 
         var processingFirst = new TaskCompletionSource();

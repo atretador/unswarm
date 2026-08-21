@@ -20,7 +20,8 @@ namespace Unswarm.Core.Services.Scheduler;
 /// </summary>
 public sealed class SchedulerWorker
 {
-    private const int TargetQueueDepth = 16;
+    /// <summary>Default per-target channel capacity (used when store is unavailable).</summary>
+    private const int DefaultTargetQueueDepth = 16;
 
     private readonly Channel<InferenceRequest> _channel;
     private readonly IDockerController _hostDocker;
@@ -35,6 +36,7 @@ public sealed class SchedulerWorker
     private readonly SchedulerSettings _settings;
     private readonly IContainerRegistry? _containerRegistry;
     private readonly HostScriptRuntimeController? _scriptController;
+    private readonly ISettingsStore? _settingsStore;
 
     // Per-target state
     private readonly ConcurrentDictionary<string, TargetSlot> _slots = new(StringComparer.Ordinal);
@@ -59,7 +61,8 @@ public sealed class SchedulerWorker
         IContainerRegistry? containerRegistry = null,
         IDockerControllerRouter? router = null,
         IModelTargetResolver? resolver = null,
-        HostScriptRuntimeController? scriptController = null)
+        HostScriptRuntimeController? scriptController = null,
+        ISettingsStore? settingsStore = null)
     {
         _channel = channel;
         _hostDocker = docker;
@@ -74,7 +77,33 @@ public sealed class SchedulerWorker
         _router = router ?? new HostOnlyDockerControllerRouter(docker);
         _resolver = resolver ?? new HostOnlyTargetResolver();
         _scriptController = scriptController;
+        _settingsStore = settingsStore;
     }
+
+    /// <summary>
+    /// Returns live settings from the database when an ISettingsStore is available,
+    /// otherwise falls back to the injected snapshot. Called once per switch/slot-creation
+    /// (not per queued item) to avoid excessive DB reads.
+    /// </summary>
+    private async Task<SchedulerSettings> GetCurrentSettingsAsync(CancellationToken ct)
+    {
+        if (_settingsStore is null)
+            return _settings;
+
+        try
+        {
+            var live = await _settingsStore.GetAsync(ct).ConfigureAwait(false);
+            return SchedulerSettings.FromSettings(live);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to load live settings; falling back to snapshot");
+            return _settings;
+        }
+    }
+
+    /// <summary>Clamps a queue depth value to the valid range [1, 10000].</summary>
+    private static int ClampQueueDepth(int value) => Math.Clamp(value, 1, 10000);
 
     public void Start(CancellationToken ct)
     {
@@ -179,17 +208,24 @@ public sealed class SchedulerWorker
             return;
         }
 
-        var slot = GetOrCreateSlot(targetId);
+        var slot = await GetOrCreateSlotAsync(targetId, ct).ConfigureAwait(false);
         await slot.Channel.Writer.WriteAsync(request, ct).ConfigureAwait(false);
         EnsureSlotWorkerStarted(slot, ct);
     }
 
-    private TargetSlot GetOrCreateSlot(string targetId)
+    private async Task<TargetSlot> GetOrCreateSlotAsync(string targetId, CancellationToken ct)
     {
+        if (_slots.TryGetValue(targetId, out var existing))
+            return existing;
+
+        var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+        // Existing slots are not resized on settings change — acceptable trade-off.
+        var depth = ClampQueueDepth(currentSettings.MaxQueueDepth);
+
         return _slots.GetOrAdd(targetId, _ => new TargetSlot
         {
             TargetId = targetId,
-            Channel = Channel.CreateBounded<InferenceRequest>(new BoundedChannelOptions(TargetQueueDepth)
+            Channel = Channel.CreateBounded<InferenceRequest>(new BoundedChannelOptions(depth)
             {
                 FullMode = BoundedChannelFullMode.Wait
             })
@@ -283,17 +319,62 @@ public sealed class SchedulerWorker
                 return;
             }
 
-            var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
-            UpdateItem(queueItem with
+            // Signal the caller that the response headers are ready and the body
+            // stream is available. For streaming responses the body is still being
+            // consumed by the API controller at this point.
+            request.Tcs.TrySetResult(response);
+
+            // ── Stream-drain gating ──────────────────────────────────────────
+            // For streaming responses, await full body consumption BEFORE
+            // releasing the per-target worker slot. This prevents the next
+            // request from dequeuing and triggering a model switch that would
+            // kill the upstream container still serving the active stream.
+            if (response.BodyDrained is not null)
             {
-                Status = QueueItemStatus.Completed,
-                TokensGenerated = response.TokensGenerated,
-                ElapsedMs = waitMs,
-                WaitMs = waitMs
-            });
+                try
+                {
+                    await response.BodyDrained.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Drain cancelled (timeout or upstream gone) — log but do not
+                    // fail the request; the client already has the result.
+                    _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                        $"Stream drain cancelled for request {request.Id} on {slot.TargetId}");
+                }
+                catch (Exception ex)
+                {
+                    // Drain fault (upstream disconnect, etc.) — log and continue.
+                    // The request is already completed; this must not propagate.
+                    _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                        $"Stream drain faulted for request {request.Id} on {slot.TargetId}: {ex.Message}");
+                }
+
+                // Token counts are now final (written by the tap stream on EOF/dispose).
+                // Update the queue item with the final token count.
+                var finalTokens = response.TokensGenerated;
+                UpdateItem(queueItem with
+                {
+                    Status = QueueItemStatus.Completed,
+                    TokensGenerated = finalTokens
+                });
+            }
+            else
+            {
+                // Buffered (non-streaming) path: response body already consumed.
+                UpdateItem(queueItem with
+                {
+                    Status = QueueItemStatus.Completed,
+                    TokensGenerated = response.TokensGenerated
+                });
+            }
+
+            // Record completion AFTER drain so token counts are final.
+            var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
+            queueItem = queueItem with { ElapsedMs = waitMs, WaitMs = waitMs };
+            UpdateItem(queueItem);
 
             _statsTracker.RecordCompletion(request);
-            request.Tcs.TrySetResult(response);
 
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Request {request.Id} completed: {response.TokensGenerated} tokens in {waitMs}ms");
@@ -350,6 +431,9 @@ public sealed class SchedulerWorker
                 }
             }
 
+            // Load live settings once per switch for LazyStop / BatchDrain evaluation
+            var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+
             // Container-aware: same registered container as resident → instant switch
             if (targetRegisteredRuntimeId is not null
                 && slot.ResidentRegisteredRuntimeId is not null
@@ -390,8 +474,10 @@ public sealed class SchedulerWorker
                 return;
             }
 
-            // Drain: if LazyStop, batch-drain all requests for the current model first
-            if (_settings.LazyStop && slot.ResidentContainerId is not null && slot.ResidentModel is not null)
+            // Drain: if LazyStop, batch-drain all requests for the current model first.
+            // When BatchDrain=false, skip the drain and proceed with minimal stop/switch.
+            if (currentSettings.LazyStop && currentSettings.BatchDrain
+                && slot.ResidentContainerId is not null && slot.ResidentModel is not null)
             {
                 transition = transition with { Status = "draining" };
                 _activeTransitions[transitionId] = transition;
@@ -664,6 +750,16 @@ public sealed class SchedulerWorker
         foreach (var key in toStop)
         {
             var info = slot.RunningContainers[key];
+
+            // Registered-only stop guard: skip containers not known to the fleet
+            if (!await IsFleetRegisteredAsync(info, ct).ConfigureAwait(false))
+            {
+                _logger.LogWarning(
+                    "Skipping stop of unregistered container {ContainerId} on {Target} (not fleet-registered)",
+                    info.ContainerId, slot.TargetId);
+                continue;
+            }
+
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Stopping incompatible container {info.ContainerName} on {slot.TargetId}");
 
@@ -714,6 +810,38 @@ public sealed class SchedulerWorker
         slot.ResidentModel = null;
         slot.ResidentContainerId = null;
         slot.ResidentRegisteredRuntimeId = null;
+    }
+
+    /// <summary>
+    /// Checks whether a container is fleet-registered and therefore safe to stop.
+    /// A container is considered fleet-registered if it has a RegisteredRuntimeId
+    /// (scheduler-tracked), or if the IContainerRegistry knows its RuntimeContainerId.
+    /// When _containerRegistry is null (legacy tests), all containers are considered
+    /// safe to stop to preserve old behavior.
+    /// </summary>
+    private async Task<bool> IsFleetRegisteredAsync(RunningContainerInfo info, CancellationToken ct)
+    {
+        // Scheduler-tracked container — always safe to stop
+        if (!string.IsNullOrEmpty(info.RegisteredRuntimeId))
+            return true;
+
+        // No registry available — legacy behavior: allow stop
+        if (_containerRegistry is null)
+            return true;
+
+        // Check if any registered runtime claims this container id
+        try
+        {
+            var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+            if (allRuntimes.Any(r => r.RuntimeContainerId == info.ContainerId))
+                return true;
+        }
+        catch
+        {
+            // On error, fall through to skip (conservative)
+        }
+
+        return false;
     }
 
     private static IEnumerable<string> ContainerNames(RegisteredRuntime container)

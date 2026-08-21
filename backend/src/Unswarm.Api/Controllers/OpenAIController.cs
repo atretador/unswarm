@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.Controllers;
 
@@ -18,12 +19,14 @@ public sealed class OpenAIController : ControllerBase
     private readonly IModelRegistry _registry;
     private readonly ISchedulerQueue _scheduler;
     private readonly IClock _clock;
+    private readonly ILogStore _logStore;
 
-    public OpenAIController(IModelRegistry registry, ISchedulerQueue scheduler, IClock clock)
+    public OpenAIController(IModelRegistry registry, ISchedulerQueue scheduler, IClock clock, ILogStore logStore)
     {
         _registry = registry;
         _scheduler = scheduler;
         _clock = clock;
+        _logStore = logStore;
     }
 
     [HttpGet("models")]
@@ -81,6 +84,9 @@ public sealed class OpenAIController : ControllerBase
             return BadRequest(new { error = "Invalid JSON: 'model' field required" });
         }
 
+        _logStore.Enqueue(LogLevel.Info, "proxy",
+            $"Request start: model={modelName}, stream={isStream}");
+
         var request = new InferenceRequest
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -94,6 +100,7 @@ public sealed class OpenAIController : ControllerBase
             CancellationToken = ct
         };
 
+        var startTime = _clock.UtcNow;
         InferenceResponse inferenceResponse;
         try
         {
@@ -101,12 +108,21 @@ public sealed class OpenAIController : ControllerBase
         }
         catch (OperationCanceledException)
         {
+            _logStore.Enqueue(LogLevel.Warn, "proxy",
+                $"Request cancelled: model={modelName}");
             return StatusCode(499);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logStore.Enqueue(LogLevel.Error, "proxy",
+                $"Request failed: model={modelName}, error={ex.Message}");
             return StatusCode(502, new { error = "Inference request failed" });
         }
+
+        var elapsedMs = (long)(_clock.UtcNow - startTime).TotalMilliseconds;
+        _logStore.Enqueue(LogLevel.Info, "proxy",
+            $"Request complete: model={modelName}, status={inferenceResponse.StatusCode}, " +
+            $"tokens={inferenceResponse.TokensGenerated}, duration={elapsedMs}ms");
 
         Response.StatusCode = inferenceResponse.StatusCode;
 
