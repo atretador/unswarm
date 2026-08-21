@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Scheduler;
 using Unswarm.Tests.Fakes;
@@ -120,6 +121,154 @@ public sealed class SchedulerWorkerDrainGatingTests
         Assert.Equal(200, r2Result.StatusCode);
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
         Assert.Single(_docker.StoppedContainerIds);
+
+        cts.Cancel();
+        await worker.WaitForShutdownAsync();
+    }
+
+    [Fact]
+    public async Task DifferentTargets_ProcessConcurrently_AgentStreamDoesNotBlockHost()
+    {
+        // User scenario: agent A runs model-0 while host runs model-1.
+        // Queues are PER TARGET — an undrained agent stream must not delay host requests.
+        var channel = Channel.CreateUnbounded<InferenceRequest>();
+        var agentDocker = new FakeDockerController { IdPrefix = "agent" };
+        var hostDocker = new FakeDockerController { IdPrefix = "host" };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["agent-a"] = agentDocker,
+            ["host"] = hostDocker
+        });
+        var resolver = new FakeModelTargetResolver();
+        resolver.ResolveFunc = (model, ct) =>
+            Task.FromResult(model == "model-0" ? "agent-a" : "host");
+        var registry = new FakeContainerRegistry();
+
+        var worker = new SchedulerWorker(
+            channel, hostDocker, _inference, _healthChecker,
+            _logStore, _statsTracker, _clock, _logger,
+            new SchedulerSettings { MaxContainerStartRetries = 1 },
+            registry, router, resolver);
+        var cts = new CancellationTokenSource();
+        worker.Start(cts.Token);
+
+        var agentDrainTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var agentHeadersReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (req.ModelName == "model-0")
+            {
+                agentHeadersReady.TrySetResult();
+                return Task.FromResult(new InferenceResponse
+                {
+                    StatusCode = 200,
+                    TokensGenerated = 1,
+                    BodyDrained = agentDrainTcs.Task
+                });
+            }
+
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 2 });
+        };
+
+        // Agent A starts streaming model-0 and stays undrained.
+        var r1 = MakeRequest("model-0", "r1");
+        await channel.Writer.WriteAsync(r1);
+        await r1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await agentHeadersReady.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Host receives model-1: must run immediately despite the agent's active stream.
+        var r2 = MakeRequest("model-1", "r2");
+        await channel.Writer.WriteAsync(r2);
+        var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(200, r2Result.StatusCode);
+        Assert.Contains("model-1", hostDocker.StartedModels);
+        Assert.Empty(agentDocker.StoppedContainerIds);
+
+        // Release the agent stream and shut down.
+        agentDrainTcs.TrySetResult();
+        cts.Cancel();
+        await worker.WaitForShutdownAsync();
+    }
+
+    [Fact]
+    public async Task HostQueue_ModelSwitchWaitsForDrain_ThenStopsOldStartsNew()
+    {
+        // Exact user sequence on one target: model-1 runs; model-2 queues with its
+        // connection held; when model-1 finishes draining → stop model-1's container
+        // → start model-2 → process. Uses the container-aware switch path.
+        var channel = Channel.CreateUnbounded<InferenceRequest>();
+        var hostDocker = new FakeDockerController { IdPrefix = "host" };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = hostDocker
+        });
+        var resolver = new FakeModelTargetResolver();
+        resolver.ResolveFunc = (model, ct) => Task.FromResult("host");
+        var registry = new FakeContainerRegistry();
+
+        await registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-1",
+            DisplayName = "M1",
+            Image = "m1:latest",
+            RuntimeContainerId = "host-m1",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await registry.AddModelMappingAsync("reg-1", "model-1");
+        await registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-2",
+            DisplayName = "M2",
+            Image = "m2:latest",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await registry.AddModelMappingAsync("reg-2", "model-2");
+
+        var worker = new SchedulerWorker(
+            channel, hostDocker, _inference, _healthChecker,
+            _logStore, _statsTracker, _clock, _logger,
+            new SchedulerSettings { MaxContainerStartRetries = 1 },
+            registry, router, resolver);
+        var cts = new CancellationTokenSource();
+        worker.Start(cts.Token);
+
+        var drainTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (req.ModelName == "model-1")
+            {
+                return Task.FromResult(new InferenceResponse
+                {
+                    StatusCode = 200,
+                    TokensGenerated = 1,
+                    BodyDrained = drainTcs.Task
+                });
+            }
+
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 2 });
+        };
+
+        var r1 = MakeRequest("model-1", "r1");
+        await channel.Writer.WriteAsync(r1);
+        await r1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var r2 = MakeRequest("model-2", "r2");
+        await channel.Writer.WriteAsync(r2);
+
+        // While model-1's stream is unconsumed: nothing stopped, model-2 still waiting.
+        await Task.Delay(300);
+        Assert.Empty(hostDocker.StoppedContainerIds);
+        Assert.False(r2.Tcs.Task.IsCompleted, "model-2 must wait until model-1 fully drains");
+
+        drainTcs.TrySetResult();
+
+        var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(200, r2Result.StatusCode);
+        Assert.Single(hostDocker.StoppedContainerIds);
 
         cts.Cancel();
         await worker.WaitForShutdownAsync();
