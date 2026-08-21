@@ -31,10 +31,12 @@ public sealed class ModelsController : ControllerBase
         return Ok(responses);
     }
 
-    [HttpGet("{id}")]
+    [HttpGet("{*id}")]
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
         var model = await _registry.GetAsync(id, ct);
+        if (model is null && !string.IsNullOrEmpty(id) && id[0] != '/')
+            model = await _registry.GetAsync("/" + id, ct).ConfigureAwait(false);
         if (model is null) return NotFound();
 
         var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
@@ -59,10 +61,12 @@ public sealed class ModelsController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = created.Id }, ModelResponse.FromDefinition(created));
     }
 
-    [HttpPut("{id}")]
+    [HttpPut("{*id}")]
     public async Task<IActionResult> Update(string id, [FromBody] ModelUpdateRequest request, CancellationToken ct)
     {
         var existing = await _registry.GetAsync(id, ct);
+        if (existing is null && !string.IsNullOrEmpty(id) && id[0] != '/')
+            existing = await _registry.GetAsync("/" + id, ct).ConfigureAwait(false);
         if (existing is null) return NotFound();
 
         var updated = new ModelDefinition
@@ -79,17 +83,19 @@ public sealed class ModelsController : ControllerBase
             UpdatedAt = existing.UpdatedAt
         };
 
-        var result = await _registry.UpdateAsync(id, updated, ct);
+        var result = await _registry.UpdateAsync(existing.Id, updated, ct);
         return Ok(ModelResponse.FromDefinition(result));
     }
 
-    [HttpDelete("{id}")]
+    [HttpDelete("{*id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
         var existing = await _registry.GetAsync(id, ct);
+        if (existing is null && !string.IsNullOrEmpty(id) && id[0] != '/')
+            existing = await _registry.GetAsync("/" + id, ct).ConfigureAwait(false);
         if (existing is null) return NotFound();
 
-        await _registry.DeleteAsync(id, ct);
+        await _registry.DeleteAsync(existing.Id, ct);
         return NoContent();
     }
 }

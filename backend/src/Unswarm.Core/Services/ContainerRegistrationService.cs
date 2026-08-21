@@ -186,7 +186,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             }
             else
             {
-                await _healthChecker.WaitForReadyAsync(mappedPort.Value, ct).ConfigureAwait(false);
+                await _healthChecker.WaitForReadyAsync(mappedPort.Value, 120, ct).ConfigureAwait(false);
             }
 
             container = await _registry.UpdateAsync(registeredContainerId, container with
@@ -459,7 +459,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 }
                 else
                 {
-                    await _healthChecker.WaitForReadyAsync(mappedPort.Value, ct).ConfigureAwait(false);
+                    await _healthChecker.WaitForReadyAsync(mappedPort.Value, 120, ct).ConfigureAwait(false);
                 }
             }
 
@@ -739,7 +739,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             }, ct).ConfigureAwait(false);
 
             // Wait for health
-            await _healthChecker.WaitForReadyAsync(mappedPort, ct).ConfigureAwait(false);
+            await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
 
             container = await _registry.UpdateAsync(container.Id, container with
             {
@@ -818,7 +818,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             MappedPort = mappedPort
         }, ct).ConfigureAwait(false);
 
-        await _healthChecker.WaitForReadyAsync(mappedPort, ct).ConfigureAwait(false);
+        await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
 
         container = await _registry.UpdateAsync(container.Id, container with
         {

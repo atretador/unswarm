@@ -8,7 +8,7 @@ public sealed class FakeHealthChecker : IHealthChecker
     public Func<int, CancellationToken, Task<bool>>? CheckFunc { get; set; }
     public List<int> CheckedPorts { get; } = [];
 
-    public Task WaitForReadyAsync(int port, CancellationToken ct = default)
+    public Task WaitForReadyAsync(int port, int timeoutSeconds = 120, CancellationToken ct = default)
     {
         CheckedPorts.Add(port);
         if (!IsReady)

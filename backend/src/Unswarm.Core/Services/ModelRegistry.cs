@@ -53,7 +53,7 @@ public sealed class ModelRegistry : IModelRegistry
             Family = definition.Family,
             ParameterSize = definition.ParameterSize,
             Quantization = definition.Quantization,
-            Status = nameof(ModelStatus.Validating),
+            Status = definition.Status.ToString(),
             ContextWindow = definition.ContextWindow,
             ContainerImage = definition.ContainerImage,
             SourceRuntimeId = definition.SourceRuntimeId,
@@ -76,6 +76,7 @@ public sealed class ModelRegistry : IModelRegistry
         entity.Family = definition.Family;
         entity.ParameterSize = definition.ParameterSize;
         entity.Quantization = definition.Quantization;
+        entity.Status = definition.Status.ToString();
         entity.ContextWindow = definition.ContextWindow;
         entity.ContainerImage = definition.ContainerImage;
         entity.SourceRuntimeId = definition.SourceRuntimeId;

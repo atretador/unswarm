@@ -12,16 +12,16 @@ public sealed class HealthChecker : Contracts.IHealthChecker
         _logger = logger;
     }
 
-    public async Task WaitForReadyAsync(int port, CancellationToken ct = default)
+    public async Task WaitForReadyAsync(int port, int timeoutSeconds = 120, CancellationToken ct = default)
     {
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTimeOffset.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
             if (await CheckAsync(port, ct).ConfigureAwait(false)) return;
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
-        _logger.LogWarning("Health check timeout on port {Port}", port);
+        throw new TimeoutException($"Health check timed out on port {port} after {timeoutSeconds}s — container may still be loading the model");
     }
 
     public async Task<bool> CheckAsync(int port, CancellationToken ct = default)

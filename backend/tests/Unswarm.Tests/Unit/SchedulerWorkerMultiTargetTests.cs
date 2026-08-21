@@ -32,7 +32,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         SchedulerSettings? settings = null)
     {
         _channel = Channel.CreateUnbounded<InferenceRequest>();
-        settings ??= new SchedulerSettings();
+        settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
         _worker = new SchedulerWorker(
             _channel, new FakeDockerController(), _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
@@ -219,7 +219,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Both containers started, neither stopped (symmetric compatibility)
-        Assert.Equal(["model-a", "model-b"], host.StartedModels);
+        Assert.Equal(["container-a", "container-b"], host.StartedModels);
         Assert.Empty(host.StoppedContainerIds);
 
         await ShutdownAsync();
@@ -251,7 +251,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // Incompatible → old container stopped before starting the new one
-        Assert.Equal(["model-a", "model-b"], host.StartedModels);
+        Assert.Equal(["container-a", "container-b"], host.StartedModels);
         Assert.Single(host.StoppedContainerIds);
 
         await ShutdownAsync();
@@ -288,7 +288,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         // model-c is incompatible with both a and b → both stopped before c starts
-        Assert.Equal(["model-a", "model-b", "model-c"], host.StartedModels);
+        Assert.Equal(["container-a", "container-b", "container-c"], host.StartedModels);
         Assert.Equal(2, host.StoppedContainerIds.Count);
 
         await ShutdownAsync();
@@ -372,7 +372,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver(),
-            settings: new SchedulerSettings { MaxConcurrentTargets = 1 });
+            settings: new SchedulerSettings { MaxConcurrentTargets = 1, MaxContainerStartRetries = 1 });
 
         var r1 = MakeRequest("host-a", id: "r1");
         var r2 = MakeRequest("agent-a", id: "r2");

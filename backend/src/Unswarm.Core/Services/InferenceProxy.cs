@@ -59,7 +59,7 @@ public sealed class InferenceProxy : IInferenceProxy
         if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
         {
             var scriptPort = registered.MappedPort ?? registered.ContainerPort;
-            await _healthChecker.WaitForReadyAsync(scriptPort, ct).ConfigureAwait(false);
+            await _healthChecker.WaitForReadyAsync(scriptPort, 120, ct).ConfigureAwait(false);
             return await ProxyToPortAsync(request, scriptPort, ct).ConfigureAwait(false);
         }
 
@@ -91,7 +91,7 @@ public sealed class InferenceProxy : IInferenceProxy
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
         }
 
-        await _healthChecker.WaitForReadyAsync(port, ct).ConfigureAwait(false);
+        await _healthChecker.WaitForReadyAsync(port, 120, ct).ConfigureAwait(false);
         return await ProxyToPortAsync(request, port, ct).ConfigureAwait(false);
     }
 

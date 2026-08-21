@@ -461,7 +461,7 @@ public sealed class SchedulerWorker
                 var scriptPort = targetRegisteredContainer.ContainerPort;
 
                 // Wait for health
-                await _healthChecker.WaitForReadyAsync(scriptPort, ct).ConfigureAwait(false);
+                await _healthChecker.WaitForReadyAsync(scriptPort, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
 
                 slot.ResidentModel = targetModel;
                 slot.ResidentContainerId = scriptKey;
@@ -488,15 +488,71 @@ public sealed class SchedulerWorker
             }
 
             var controller = _router.GetController(slot.TargetId);
-            var startResult = await controller.StartContainerAsync(targetModel, ct).ConfigureAwait(false);
+            var maxRetries = _settings.MaxContainerStartRetries;
+            ContainerStartResult? startResult = null;
+            Exception? lastException = null;
 
-            if (startResult.ErrorMessage is not null)
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                // Start failed: fail ALL queued requests for this model
-                _logStore.Enqueue(LogLevel.Error, "Scheduler",
-                    $"Container start failed on {slot.TargetId} for model {targetModel}: {startResult.ErrorMessage}");
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    if (targetRegisteredContainer is not null)
+                    {
+                        startResult = await controller.StartRegisteredContainerAsync(
+                            targetRegisteredContainer.Id,
+                            targetRegisteredContainer.Image,
+                            targetRegisteredContainer.ContainerPort,
+                            targetRegisteredContainer.GpuDevices,
+                            targetRegisteredContainer.MemoryLimitMb,
+                            targetRegisteredContainer.ExtraLabels ?? new Dictionary<string, string>(),
+                            ct).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        // Legacy path: container name matches model name
+                        startResult = await controller.StartContainerAsync(targetModel, ct).ConfigureAwait(false);
+                    }
 
-                FailAllForModel(targetModel, $"Container start failed: {startResult.ErrorMessage}");
+                    if (startResult.ErrorMessage is null)
+                        break; // Success
+
+                    lastException = new InvalidOperationException(startResult.ErrorMessage);
+                    _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                        $"Container start attempt {attempt}/{maxRetries} failed on {slot.TargetId} for model {targetModel}: {startResult.ErrorMessage}");
+
+                    if (attempt < maxRetries)
+                    {
+                        var delaySec = (int)Math.Pow(2, attempt + 1); // 4s, 8s, 16s
+                        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                            $"Retrying container start in {delaySec}s...");
+                        await Task.Delay(TimeSpan.FromSeconds(delaySec), ct).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    lastException = ex;
+                    _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                        $"Container start attempt {attempt}/{maxRetries} threw on {slot.TargetId} for model {targetModel}: {ex.Message}");
+
+                    if (attempt < maxRetries)
+                    {
+                        var delaySec = (int)Math.Pow(2, attempt + 1);
+                        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                            $"Retrying container start in {delaySec}s...");
+                        await Task.Delay(TimeSpan.FromSeconds(delaySec), ct).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (startResult is null || startResult.ErrorMessage is not null)
+            {
+                // All retries exhausted
+                var errorMsg = lastException?.Message ?? "Unknown error";
+                _logStore.Enqueue(LogLevel.Error, "Scheduler",
+                    $"Container start failed after {maxRetries} attempts on {slot.TargetId} for model {targetModel}: {errorMsg}");
+
+                FailAllForModel(targetModel, $"Container start failed after {maxRetries} attempts: {errorMsg}");
 
                 transition = transition with { Status = "complete" };
                 _activeTransitions[transitionId] = transition;
@@ -506,7 +562,7 @@ public sealed class SchedulerWorker
             // Wait for health
             if (startResult.MappedPort.HasValue)
             {
-                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, ct).ConfigureAwait(false);
+                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
             }
 
             slot.ResidentModel = targetModel;

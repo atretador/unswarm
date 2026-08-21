@@ -172,7 +172,7 @@ export const httpClient: UnswarmClient = {
 
   runBenchmark(modelId: string, prompt?: string) {
     return request<BenchmarkResult>(
-      `/api/benchmarks/${encodeURIComponent(modelId)}`,
+      `/api/benchmarks?modelId=${encodeURIComponent(modelId)}`,
       {
         method: "POST",
         body: JSON.stringify(prompt ? { prompt } : {}),

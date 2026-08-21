@@ -68,6 +68,7 @@ public sealed class FakeDockerController : IDockerController
         Dictionary<string, string> extraLabels,
         CancellationToken ct = default)
     {
+        StartedModels.Add(image); // Track model starts for test assertions
         if (FailStart)
         {
             var failedId = NextId();

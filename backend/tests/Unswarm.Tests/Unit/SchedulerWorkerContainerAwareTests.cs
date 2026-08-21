@@ -29,7 +29,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
         SchedulerSettings? settings = null)
     {
         channel ??= Channel.CreateUnbounded<InferenceRequest>();
-        settings ??= new SchedulerSettings();
+        settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
         return new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
@@ -89,7 +89,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
 
         // First model: full Docker start + health check
         Assert.Single(_docker.StartedModels);
-        Assert.Equal("model-a", _docker.StartedModels[0]);
+        Assert.Equal("multi:latest", _docker.StartedModels[0]);
 
         // Second model: instant switch, NO Docker stop/start
         Assert.Empty(_docker.StoppedContainerIds);
@@ -141,8 +141,8 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
 
         // Two model starts (different containers → Docker stop + start)
         Assert.Equal(2, _docker.StartedModels.Count);
-        Assert.Equal("model-x", _docker.StartedModels[0]);
-        Assert.Equal("model-y", _docker.StartedModels[1]);
+        Assert.Equal("a:latest", _docker.StartedModels[0]);
+        Assert.Equal("b:latest", _docker.StartedModels[1]);
 
         // Container was stopped between switches
         Assert.Single(_docker.StoppedContainerIds);
@@ -156,7 +156,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
     {
         // When containerRegistry is null, switching always does Docker stop/start
         var channel = Channel.CreateUnbounded<InferenceRequest>();
-        var settings = new SchedulerSettings();
+        var settings = new SchedulerSettings { MaxContainerStartRetries = 1 };
         var worker = new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,

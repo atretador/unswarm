@@ -18,4 +18,6 @@ public sealed class Settings
 
     /// <summary>Max distinct execution targets the scheduler may run concurrently (0 = unlimited).</summary>
     public int MaxConcurrentTargets { get; init; }
+
+    public int HealthCheckTimeoutSeconds { get; init; } = 120;
 }

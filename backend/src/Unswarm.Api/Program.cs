@@ -388,6 +388,27 @@ static async Task EnsureRuntimeColumnsAsync(UnswarmDbContext db)
             cmd.CommandText = "ALTER TABLE \"ContainerModelMappings\" RENAME COLUMN \"RegisteredContainerId\" TO \"RegisteredRuntimeId\"";
             await cmd.ExecuteNonQueryAsync();
         }
+
+        // ── 3. Models: rename SourceContainerId → SourceRuntimeId ──
+        var modelColumns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(\"Models\")";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                modelColumns.Add(reader.GetString(1));
+            }
+        }
+
+        if (modelColumns.Contains("SourceContainerId", StringComparer.OrdinalIgnoreCase)
+            && !modelColumns.Contains("SourceRuntimeId", StringComparer.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("Models schema repair: RENAME COLUMN SourceContainerId → SourceRuntimeId");
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE \"Models\" RENAME COLUMN \"SourceContainerId\" TO \"SourceRuntimeId\"";
+            await cmd.ExecuteNonQueryAsync();
+        }
     }
     catch (Exception ex)
     {

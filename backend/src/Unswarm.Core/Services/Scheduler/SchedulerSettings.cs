@@ -13,6 +13,11 @@ public sealed class SchedulerSettings
     /// <summary>Max distinct execution targets that may run concurrently (0 = unlimited).</summary>
     public int MaxConcurrentTargets { get; init; }
 
+    public int HealthCheckTimeoutSeconds { get; init; } = 120;
+
+    /// <summary>Max retries when a container start fails (1 = no retries, default 3).</summary>
+    public int MaxContainerStartRetries { get; init; } = 3;
+
     public static SchedulerSettings FromSettings(Settings s) => new()
     {
         LazyStop = s.LazyStop,
@@ -20,6 +25,7 @@ public sealed class SchedulerSettings
         PriorityMode = s.PriorityMode,
         MaxQueueDepth = s.MaxQueueDepth,
         RequestTimeout = s.RequestTimeout,
-        MaxConcurrentTargets = s.MaxConcurrentTargets
+        MaxConcurrentTargets = s.MaxConcurrentTargets,
+        HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds
     };
 }

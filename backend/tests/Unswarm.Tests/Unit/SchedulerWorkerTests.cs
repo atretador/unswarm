@@ -23,7 +23,7 @@ public sealed class SchedulerWorkerTests : IDisposable
         SchedulerSettings? settings = null)
     {
         channel ??= Channel.CreateUnbounded<InferenceRequest>();
-        settings ??= new SchedulerSettings();
+        settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
         return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings);
     }
 
@@ -147,7 +147,7 @@ public sealed class SchedulerWorkerTests : IDisposable
     public async Task LazyStop_ContainerStaysRunningBetweenSameModelRequests()
     {
         var channel = Channel.CreateUnbounded<InferenceRequest>();
-        var settings = new SchedulerSettings { LazyStop = true };
+        var settings = new SchedulerSettings { LazyStop = true, MaxContainerStartRetries = 1 };
         var worker = CreateWorker(channel, settings);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);
@@ -180,7 +180,7 @@ public sealed class SchedulerWorkerTests : IDisposable
     public async Task BatchDrain_TransitionsThroughDrainingState()
     {
         var channel = Channel.CreateUnbounded<InferenceRequest>();
-        var settings = new SchedulerSettings { LazyStop = true, BatchDrain = true };
+        var settings = new SchedulerSettings { LazyStop = true, BatchDrain = true, MaxContainerStartRetries = 1 };
         var worker = CreateWorker(channel, settings);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);
@@ -219,7 +219,7 @@ public sealed class SchedulerWorkerTests : IDisposable
         // The channel-based worker processes items in FIFO (channel) order.
         // Priority only affects internal ordering/sorting, not channel dequeue order.
         var channel = Channel.CreateUnbounded<InferenceRequest>();
-        var settings = new SchedulerSettings { PriorityMode = "priority" };
+        var settings = new SchedulerSettings { PriorityMode = "priority", MaxContainerStartRetries = 1 };
         var worker = CreateWorker(channel, settings);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);

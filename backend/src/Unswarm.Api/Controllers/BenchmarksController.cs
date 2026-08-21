@@ -48,8 +48,8 @@ public sealed class BenchmarksController : ControllerBase
         _history = history;
     }
 
-    [HttpPost("{modelId}")]
-    public async Task<IActionResult> Run(string modelId, [FromBody] BenchmarkRunRequest? body, CancellationToken ct)
+    [HttpPost]
+    public async Task<IActionResult> Run([FromQuery] string modelId, [FromBody] BenchmarkRunRequest? body, CancellationToken ct)
     {
         var model = await _registry.GetAsync(modelId, ct);
         if (model is null) return NotFound(new { error = $"Model {modelId} not found" });
