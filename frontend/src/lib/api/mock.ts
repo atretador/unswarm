@@ -14,6 +14,7 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  User,
 } from "./types";
 import type { UnswarmClient } from "./client";
 
@@ -711,6 +712,13 @@ let registeredRuntimes: RegisteredRuntime[] = [
   },
 ];
 let settings = { ...SETTINGS };
+
+// ─── Users Seed ─────────────────────────────────────────────────
+
+const MOCK_USERS: User[] = [
+  { id: "u1", username: "admin", isTempPassword: false },
+  { id: "u2", username: "alice", isTempPassword: true },
+];
 // ─── Mock Client ──────────────────────────────────────────────────
 
 export const mockClient: UnswarmClient = {
@@ -1078,6 +1086,42 @@ export const mockClient: UnswarmClient = {
 
   async changePassword(_currentPassword: string, _newPassword: string) {
     await delay(rand(80, 200));
+  },
+
+  // ── User Management ──────────────────────────────────────────
+  async listUsers() {
+    await delay(rand(80, 200));
+    return [...MOCK_USERS];
+  },
+
+  async createUser(username: string, password: string) {
+    await delay(rand(100, 200));
+    if (!username.trim()) throw new Error("Username is required.");
+    if (password.length < 6) throw new Error("Password must be at least 6 characters.");
+    if (MOCK_USERS.some((u) => u.username === username.trim())) {
+      throw new Error("Username already exists.");
+    }
+    const user: User = {
+      id: id(),
+      username: username.trim(),
+      isTempPassword: true,
+    };
+    MOCK_USERS.push(user);
+    return { ...user };
+  },
+
+  async deleteUser(userId: string) {
+    await delay(rand(60, 150));
+    const idx = MOCK_USERS.findIndex((u) => u.id === userId);
+    if (idx === -1) throw new Error(`User ${userId} not found`);
+    MOCK_USERS.splice(idx, 1);
+  },
+
+  async resetPassword(userId: string, _newPassword: string) {
+    await delay(rand(80, 200));
+    const user = MOCK_USERS.find((u) => u.id === userId);
+    if (!user) throw new Error(`User ${userId} not found`);
+    user.isTempPassword = true;
   },
 
   // ── API Keys ─────────────────────────────────────────────────

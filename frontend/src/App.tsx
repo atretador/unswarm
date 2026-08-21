@@ -10,6 +10,7 @@ import Queue from "./features/queue";
 import Logs from "./features/logs";
 import ApiKeys from "./features/api-keys";
 import Settings from "./features/settings";
+import Profile from "./features/profile";
 import NotFound from "./features/not-found";
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/api-keys" element={<ApiKeys />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/profile" element={<Profile />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </AppShell>

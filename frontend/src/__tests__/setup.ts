@@ -26,6 +26,19 @@ if (typeof globalThis.localStorage === "undefined") {
   } as Storage;
 }
 
+// ── <dialog> polyfill (jsdom doesn't implement showModal/close) ──
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.setAttribute("open", "");
+    this.style.display = "block";
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.removeAttribute("open");
+    this.style.display = "";
+    this.dispatchEvent(new Event("close"));
+  };
+}
+
 // ── matchMedia polyfill (jsdom doesn't provide it) ──
 if (typeof globalThis.matchMedia === "undefined") {
   globalThis.matchMedia = function matchMedia(query: string) {

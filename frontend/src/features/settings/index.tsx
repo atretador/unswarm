@@ -1,10 +1,29 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Settings as SettingsIcon, Shield, Users } from "lucide-react";
+import { Settings as SettingsIcon, Shield, Users, Plus } from "lucide-react";
 import { client } from "../../lib/query-client";
-import { Card, Skeleton, Input, Switch, Button, Badge } from "../../components/ui";
-import { useAuth } from "../../lib/auth-context";
+import {
+  Card,
+  Skeleton,
+  Input,
+  Switch,
+  Button,
+  Badge,
+  Modal,
+  ConfirmDialog,
+} from "../../components/ui";
 import type { User } from "../../lib/api/types";
+
+// ─── Tab Definitions ────────────────────────────────────────────
+
+const TABS = [
+  { key: "general", label: "General", icon: SettingsIcon },
+  { key: "users", label: "Users", icon: Users },
+  { key: "scheduler", label: "Scheduler", icon: Shield },
+] as const;
+
+type TabKey = (typeof TABS)[number]["key"];
 
 // ─── Scheduler Policy Section ────────────────────────────────────
 
@@ -26,7 +45,9 @@ function SchedulerPolicySection() {
       <Card padding="lg">
         <Skeleton className="h-4 w-40 mb-4" />
         <div className="space-y-3">
-          {Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-8 w-full" />)}
+          {Array.from({ length: 3 }, (_, i) => (
+            <Skeleton key={i} className="h-8 w-full" />
+          ))}
         </div>
       </Card>
     );
@@ -97,7 +118,9 @@ function SchedulerPolicySection() {
             label="Max queue depth"
             type="number"
             value={String(settings.maxQueueDepth)}
-            onChange={(e) => updateMutation.mutate({ maxQueueDepth: Number(e.target.value) || 0 })}
+            onChange={(e) =>
+              updateMutation.mutate({ maxQueueDepth: Number(e.target.value) || 0 })
+            }
           />
         </div>
       </div>
@@ -105,226 +128,260 @@ function SchedulerPolicySection() {
   );
 }
 
-// ─── Change Password Section ────────────────────────────────────
+// ─── Add User Modal ─────────────────────────────────────────────
 
-function ChangePasswordSection() {
-  const { user, changePassword } = useAuth();
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+function AddUserModal({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const createMutation = useMutation({
+    mutationFn: ({
+      username: u,
+      password: p,
+    }: {
+      username: string;
+      password: string;
+    }) => client.createUser(u, p),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["users"] });
+      setUsername("");
+      setPassword("");
+      setError(null);
+      onClose();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setUsername("");
+      setPassword("");
+      setError(null);
+    }
+  }, [open]);
+
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setSuccess(false);
 
-    if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters.");
+    if (!username.trim()) {
+      setError("Username is required.");
       return;
     }
-    if (newPassword !== confirmPassword) {
-      setError("New passwords do not match.");
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
-
-    setSubmitting(true);
-    try {
-      await changePassword(currentPassword, newPassword);
-      setSuccess(true);
-      setCurrentPassword("");
-      setNewPassword("");
-      setConfirmPassword("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password.");
-    } finally {
-      setSubmitting(false);
-    }
+    createMutation.mutate({ username: username.trim(), password });
   };
 
   return (
-    <Card padding="lg">
-      <div className="flex items-center gap-2 mb-4">
-        <Shield className="size-4 text-[var(--color-text-muted)]" />
-        <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Change Password
-        </p>
-      </div>
-
-      {user?.isTempPassword && (
-        <div className="mb-4 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--color-status-warning)_30%,transparent)] px-4 py-3">
-          <p className="text-sm text-[var(--color-status-warning)] font-medium">
-            You&apos;re using a temporary password. Please change it now.
-          </p>
-        </div>
-      )}
-
+    <Modal open={open} onClose={onClose}>
+      <h3 className="text-sm font-semibold text-[var(--color-text-heading)] mb-4">
+        Add User
+      </h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="Current password"
-          type="password"
-          value={currentPassword}
-          onChange={(e) => setCurrentPassword(e.target.value)}
-          autoComplete="current-password"
+          label="Username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value)}
+          autoFocus
         />
         <Input
-          label="New password"
+          label="Password"
           type="password"
-          value={newPassword}
-          onChange={(e) => setNewPassword(e.target.value)}
-          autoComplete="new-password"
-        />
-        <Input
-          label="Confirm new password"
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
           autoComplete="new-password"
         />
 
         {error && (
           <p className="text-sm text-[var(--color-status-error)]">{error}</p>
         )}
-        {success && (
-          <p className="text-sm text-[var(--color-status-running)]">
-            Password changed successfully.
-          </p>
-        )}
 
-        <Button type="submit" variant="primary" size="md" loading={submitting}>
-          Change Password
-        </Button>
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            loading={createMutation.isPending}
+          >
+            Add User
+          </Button>
+        </div>
       </form>
-    </Card>
+    </Modal>
   );
 }
 
-// ─── User Management Section ────────────────────────────────────
+// ─── Reset Password Modal ───────────────────────────────────────
 
-function UserRow({
-  user: u,
-  client,
-  queryClient,
+function ResetPasswordModal({
+  open,
+  onClose,
+  user: targetUser,
 }: {
-  user: User;
-  client: typeof import("../../lib/query-client").client;
-  queryClient: ReturnType<typeof useQueryClient>;
+  open: boolean;
+  onClose: () => void;
+  user: User | null;
 }) {
-  const [resetting, setResetting] = useState(false);
-  const [resetPw, setResetPw] = useState("");
-  const [resetConfirm, setResetConfirm] = useState("");
-  const [resetError, setResetError] = useState<string | null>(null);
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => client.deleteUser(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
-  });
+  const queryClient = useQueryClient();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const resetMutation = useMutation({
-    mutationFn: ({ id, pw }: { id: string; pw: string }) => client.resetPassword(id, pw),
+    mutationFn: ({ id, pw }: { id: string; pw: string }) =>
+      client.resetPassword(id, pw),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
-      setResetting(false);
-      setResetPw("");
-      setResetConfirm("");
-      setResetError(null);
+      onClose();
     },
-    onError: (err: Error) => setResetError(err.message),
+    onError: (err: Error) => setError(err.message),
   });
 
-  const handleDelete = () => {
-    if (!window.confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
-    deleteMutation.mutate(u.id);
-  };
+  useEffect(() => {
+    if (!open) {
+      setPassword("");
+      setConfirm("");
+      setError(null);
+    }
+  }, [open]);
 
-  const handleResetSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setResetError(null);
-    if (resetPw.length < 6) {
-      setResetError("Password must be at least 6 characters.");
+    setError(null);
+    if (!targetUser) return;
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
-    if (resetPw !== resetConfirm) {
-      setResetError("Passwords do not match.");
+    if (password !== confirm) {
+      setError("Passwords do not match.");
       return;
     }
-    resetMutation.mutate({ id: u.id, pw: resetPw });
+    resetMutation.mutate({ id: targetUser.id, pw: password });
   };
 
   return (
-    <div className="border-t border-[var(--color-border)] first:border-t-0">
-      <div className="flex items-center justify-between py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-[var(--color-text)]">{u.username}</span>
-          {u.isTempPassword && (
-            <Badge variant="warning" size="sm">
-              temp
-            </Badge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {!resetting && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setResetting(true);
-                setResetError(null);
-              }}
-            >
-              Reset Password
-            </Button>
-          )}
-          <Button variant="danger" size="sm" onClick={handleDelete} loading={deleteMutation.isPending}>
-            Delete
+    <Modal open={open} onClose={onClose}>
+      <h3 className="text-sm font-semibold text-[var(--color-text-heading)] mb-1">
+        Reset Password
+      </h3>
+      {targetUser && (
+        <p className="text-xs text-[var(--color-text-muted)] mb-4">
+          Set a new password for <span className="font-medium text-[var(--color-text)]">{targetUser.username}</span>.
+        </p>
+      )}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Input
+          label="New password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+          autoComplete="new-password"
+        />
+        <Input
+          label="Confirm new password"
+          type="password"
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          autoComplete="new-password"
+        />
+
+        {error && (
+          <p className="text-sm text-[var(--color-status-error)]">{error}</p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            loading={resetMutation.isPending}
+          >
+            Set Password
           </Button>
         </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ─── User Table Row ─────────────────────────────────────────────
+
+function UserRow({
+  user: u,
+  onDelete,
+  onResetPassword,
+}: {
+  user: User;
+  onDelete: (user: User) => void;
+  onResetPassword: (user: User) => void;
+}) {
+  const letter = u.username?.charAt(0)?.toUpperCase() ?? "?";
+
+  return (
+    <div className="flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)]">
+      {/* User identity */}
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="flex items-center justify-center size-8 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-heading text-xs font-bold select-none shrink-0">
+          {letter}
+        </div>
+        <span className="text-sm text-[var(--color-text)] truncate">
+          {u.username}
+        </span>
       </div>
 
-      {resetting && (
-        <form onSubmit={handleResetSubmit} className="mb-3 space-y-2 pl-4 border-l-2 border-[var(--color-border)]">
-          <Input
-            label="New password"
-            type="password"
-            value={resetPw}
-            onChange={(e) => setResetPw(e.target.value)}
-          />
-          <Input
-            label="Confirm new password"
-            type="password"
-            value={resetConfirm}
-            onChange={(e) => setResetConfirm(e.target.value)}
-          />
-          {resetError && (
-            <p className="text-xs text-[var(--color-status-error)]">{resetError}</p>
-          )}
-          <div className="flex items-center gap-2">
-            <Button type="submit" variant="primary" size="sm" loading={resetMutation.isPending}>
-              Set Password
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setResetting(false);
-                setResetPw("");
-                setResetConfirm("");
-                setResetError(null);
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
+      {/* Status */}
+      <div className="shrink-0">
+        {u.isTempPassword && (
+          <Badge variant="warning" size="sm">
+            temp password
+          </Badge>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 shrink-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onResetPassword(u)}
+        >
+          Reset Password
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={() => onDelete(u)}
+        >
+          Delete
+        </Button>
+      </div>
     </div>
   );
 }
 
-function UserManagementSection() {
+// ─── Users Tab ──────────────────────────────────────────────────
+
+function UsersTab() {
   const queryClient = useQueryClient();
 
   const {
@@ -334,113 +391,120 @@ function UserManagementSection() {
   } = useQuery({
     queryKey: ["users"],
     queryFn: () => client.listUsers(),
-    // Silently handle 403 — section just won't appear
     retry: false,
   });
 
-  const [newUsername, setNewUsername] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [createError, setCreateError] = useState<string | null>(null);
-  const [createSuccess, setCreateSuccess] = useState(false);
-
-  const createMutation = useMutation({
-    mutationFn: ({ username, password }: { username: string; password: string }) =>
-      client.createUser(username, password),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["users"] });
-      setNewUsername("");
-      setNewPassword("");
-      setCreateError(null);
-      setCreateSuccess(true);
-      setTimeout(() => setCreateSuccess(false), 3000);
-    },
-    onError: (err: Error) => setCreateError(err.message),
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => client.deleteUser(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["users"] }),
   });
 
-  const handleCreate = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreateError(null);
-    setCreateSuccess(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
+  const [resetTarget, setResetTarget] = useState<User | null>(null);
 
-    if (!newUsername.trim()) {
-      setCreateError("Username is required.");
-      return;
-    }
-    if (newPassword.length < 6) {
-      setCreateError("Password must be at least 6 characters.");
-      return;
-    }
-    createMutation.mutate({ username: newUsername.trim(), password: newPassword });
-  };
-
-  // Hide section entirely on 403 (not admin)
+  // 403 detection — non-admin
   if (error && (error as Error).message?.includes("403")) {
     return null;
   }
 
   return (
-    <Card padding="lg">
-      <div className="flex items-center gap-2 mb-4">
-        <Users className="size-4 text-[var(--color-text-muted)]" />
-        <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          User Management
-        </p>
-      </div>
-
-      {isLoading ? (
-        <div className="space-y-3">
-          {Array.from({ length: 2 }, (_, i) => (
-            <Skeleton key={i} className="h-10 w-full" />
-          ))}
-        </div>
-      ) : (
-        <>
-          {/* User list */}
-          {users && users.length > 0 ? (
-            <div className="mb-4">
-              {users.map((u) => (
-                <UserRow key={u.id} user={u} client={client} queryClient={queryClient} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-[var(--color-text-muted)] mb-4">No users found.</p>
-          )}
-
-          {/* Add user form */}
-          <div className="border-t border-[var(--color-border)] pt-4">
-            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-3">
-              Add User
+    <>
+      <Card padding="none">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border-subtle)]">
+          <div className="flex items-center gap-2">
+            <Users className="size-4 text-[var(--color-text-muted)]" />
+            <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+              Users
             </p>
-            <form onSubmit={handleCreate} className="space-y-3">
-              <Input
-                label="Username"
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-              />
-              <Input
-                label="Password"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-              />
-
-              {createError && (
-                <p className="text-sm text-[var(--color-status-error)]">{createError}</p>
-              )}
-              {createSuccess && (
-                <p className="text-sm text-[var(--color-status-running)]">
-                  User created successfully.
-                </p>
-              )}
-
-              <Button type="submit" variant="primary" size="md" loading={createMutation.isPending}>
-                Add User
-              </Button>
-            </form>
           </div>
-        </>
-      )}
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setAddModalOpen(true)}
+          >
+            <Plus className="size-3.5" />
+            Add User
+          </Button>
+        </div>
+
+        {/* Table */}
+        {isLoading ? (
+          <div className="p-4 space-y-3">
+            {Array.from({ length: 2 }, (_, i) => (
+              <Skeleton key={i} className="h-10 w-full" />
+            ))}
+          </div>
+        ) : users && users.length > 0 ? (
+          <div>
+            {/* Column headers */}
+            <div className="flex items-center gap-4 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/30">
+              <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider min-w-0 flex-1">
+                User
+              </span>
+              <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0">
+                Status
+              </span>
+              <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[200px] text-right">
+                Actions
+              </span>
+            </div>
+
+            {users.map((u) => (
+              <UserRow
+                key={u.id}
+                user={u}
+                onDelete={setDeleteTarget}
+                onResetPassword={setResetTarget}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="px-4 py-8 text-center">
+            <p className="text-sm text-[var(--color-text-muted)]">No users found.</p>
+          </div>
+        )}
+      </Card>
+
+      <AddUserModal open={addModalOpen} onClose={() => setAddModalOpen(false)} />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete user"
+        description={`Delete user "${deleteTarget?.username ?? ""}"? This cannot be undone.`}
+        confirmLabel="Delete"
+        variant="danger"
+        loading={deleteMutation.isPending}
+        onConfirm={() => {
+          if (deleteTarget) {
+            deleteMutation.mutate(deleteTarget.id);
+            setDeleteTarget(null);
+          }
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ResetPasswordModal
+        open={resetTarget !== null}
+        onClose={() => setResetTarget(null)}
+        user={resetTarget}
+      />
+    </>
+  );
+}
+
+// ─── General Tab ────────────────────────────────────────────────
+
+function GeneralTab() {
+  return (
+    <Card padding="md">
+      <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
+        Theme
+      </p>
+      <p className="text-sm text-[var(--color-text)]">
+        Theme is controlled from the topbar toggle (light / dark / system).
+      </p>
     </Card>
   );
 }
@@ -448,8 +512,35 @@ function UserManagementSection() {
 // ─── Main Settings Page ─────────────────────────────────────────
 
 export default function Settings() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") as TabKey | null;
+  const activeTab: TabKey =
+    tabParam && TABS.some((t) => t.key === tabParam) ? tabParam : "general";
+
+  // Admin gate: only needed for users tab
+  const { error: usersError } = useQuery({
+    queryKey: ["users"],
+    queryFn: () => client.listUsers(),
+    retry: false,
+  });
+  const isAdmin = !(usersError && (usersError as Error).message?.includes("403"));
+
+  const visibleTabs = TABS.filter((t) => {
+    if (t.key === "users" && !isAdmin) return false;
+    return true;
+  });
+
+  // If the active tab was "users" but user isn't admin, fall back
+  const effectiveTab =
+    activeTab === "users" && !isAdmin ? "general" : activeTab;
+
+  const setTab = (tab: TabKey) => {
+    setSearchParams({ tab });
+  };
+
   return (
     <div className="p-6 space-y-6 max-w-3xl">
+      {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
           Settings
@@ -459,19 +550,37 @@ export default function Settings() {
         </p>
       </div>
 
-      {/* Theme note */}
-      <Card padding="md">
-        <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-          Theme
-        </p>
-        <p className="text-sm text-[var(--color-text)]">
-          Theme is controlled from the topbar toggle (light / dark / system).
-        </p>
-      </Card>
+      {/* Tab bar */}
+      <div className="flex gap-1 p-1 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] border border-[var(--color-border-subtle)]">
+        {visibleTabs.map((tab) => {
+          const Icon = tab.icon;
+          const isActive = effectiveTab === tab.key;
+          return (
+            <button
+              key={tab.key}
+              onClick={() => setTab(tab.key)}
+              className={`
+                flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius-md)] text-xs font-medium
+                transition-all duration-[var(--duration-fast)]
+                cursor-pointer
+                ${
+                  isActive
+                    ? "bg-[var(--color-bg-surface)] text-[var(--color-text-heading)] shadow-sm"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-surface)]/50"
+                }
+              `}
+            >
+              <Icon className="size-3.5" />
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
-      <ChangePasswordSection />
-      <UserManagementSection />
-      <SchedulerPolicySection />
+      {/* Tab content */}
+      {effectiveTab === "general" && <GeneralTab />}
+      {effectiveTab === "users" && <UsersTab />}
+      {effectiveTab === "scheduler" && <SchedulerPolicySection />}
     </div>
   );
 }

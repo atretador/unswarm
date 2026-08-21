@@ -14,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/queue": "Queue",
   "/logs": "Logs",
   "/settings": "Settings",
+  "/profile": "Profile",
 };
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -64,10 +65,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span>
               You&apos;re using a temporary password.{" "}
               <Link
-                to="/settings"
+                to="/profile"
                 className="font-medium underline underline-offset-2 hover:text-[var(--color-text-heading)] transition-colors"
               >
-                Change it in Settings
+                Change it in Profile
               </Link>
             </span>
           </div>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Menu, X, LogOut, Settings, User } from "lucide-react";
-import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Menu, X, LogOut, Settings, User, ChevronDown } from "lucide-react";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "./ThemeToggle";
 import { StatusDot } from "../ui/StatusDot";
 import { NAV_ITEMS } from "../../lib/nav-items";
@@ -94,75 +94,87 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
 
         <ThemeToggle />
 
-        {/* User menu */}
+        {/* User chip + menu */}
         {user && (
-          <div className="relative" ref={menuRef}>
-            <button
-              onClick={() => setMenuOpen((p) => !p)}
+          <div className="flex items-center gap-1">
+            {/* Clickable user chip → navigates to /profile */}
+            <Link
+              to="/profile"
               className="
-                flex items-center justify-center
+                flex items-center gap-2
                 rounded-full transition-all duration-[var(--duration-fast)]
                 hover:ring-2 hover:ring-[var(--color-focus-ring)]
                 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
-                cursor-pointer
               "
-              aria-label="User menu"
-              aria-expanded={menuOpen}
+              aria-label="Go to profile"
             >
               <UserAvatar username={user.username} />
-            </button>
+              <span className="hidden sm:inline text-sm font-medium text-[var(--color-text-heading)] truncate max-w-[8rem]">
+                {user.username}
+              </span>
+            </Link>
 
-            {menuOpen && (
-              <div
+            {/* Chevron → opens dropdown with Settings + Sign out */}
+            <div className="relative" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen((p) => !p)}
                 className="
-                  absolute right-0 top-full mt-1.5 w-52 z-50
-                  rounded-[var(--radius-lg)] border border-[var(--color-border)]
-                  bg-[var(--color-bg-surface)] shadow-lg
-                  py-1
+                  flex items-center justify-center size-7
+                  rounded-[var(--radius-md)]
+                  text-[var(--color-text-muted)]
+                  hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
+                  transition-colors duration-[var(--duration-fast)]
+                  cursor-pointer
                 "
-                style={{ animation: "fadeInDown 120ms ease-out" }}
+                aria-label="User menu"
+                aria-expanded={menuOpen}
               >
-                <div className="px-3 py-2 border-b border-[var(--color-border)]">
-                  <p className="text-xs text-[var(--color-text-muted)]">
-                    Signed in as
-                  </p>
-                  <p className="text-sm font-medium text-[var(--color-text-heading)] truncate">
-                    {user.username}
-                  </p>
+                <ChevronDown className="size-3.5" />
+              </button>
+
+              {menuOpen && (
+                <div
+                  className="
+                    absolute right-0 top-full mt-1.5 w-48 z-50
+                    rounded-[var(--radius-lg)] border border-[var(--color-border)]
+                    bg-[var(--color-bg-surface)] shadow-lg
+                    py-1
+                  "
+                  style={{ animation: "fadeInDown 120ms ease-out" }}
+                >
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      navigate("/settings");
+                    }}
+                    className="
+                      flex items-center gap-2 w-full px-3 py-2
+                      text-sm text-[var(--color-text-muted)]
+                      hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
+                      transition-colors duration-[var(--duration-fast)]
+                      cursor-pointer
+                    "
+                  >
+                    <Settings className="size-3.5" />
+                    Settings
+                  </button>
+
+                  <button
+                    onClick={handleSignOut}
+                    className="
+                      flex items-center gap-2 w-full px-3 py-2
+                      text-sm text-[var(--color-status-error)]
+                      hover:bg-[var(--color-status-error)]/10
+                      transition-colors duration-[var(--duration-fast)]
+                      cursor-pointer
+                    "
+                  >
+                    <LogOut className="size-3.5" />
+                    Sign out
+                  </button>
                 </div>
-
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    navigate("/settings");
-                  }}
-                  className="
-                    flex items-center gap-2 w-full px-3 py-2
-                    text-sm text-[var(--color-text-muted)]
-                    hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
-                    transition-colors duration-[var(--duration-fast)]
-                    cursor-pointer
-                  "
-                >
-                  <Settings className="size-3.5" />
-                  Settings
-                </button>
-
-                <button
-                  onClick={handleSignOut}
-                  className="
-                    flex items-center gap-2 w-full px-3 py-2
-                    text-sm text-[var(--color-status-error)]
-                    hover:bg-[var(--color-status-error)]/10
-                    transition-colors duration-[var(--duration-fast)]
-                    cursor-pointer
-                  "
-                >
-                  <LogOut className="size-3.5" />
-                  Sign out
-                </button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -318,19 +330,37 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
                 {user.username}
               </span>
             </div>
-            <button
-              onClick={handleSignOut}
-              className="
-                flex items-center gap-2 w-full rounded-[var(--radius-lg)] px-3 py-1.5
-                text-sm text-[var(--color-status-error)]
-                hover:bg-[var(--color-status-error)]/10
-                transition-colors duration-[var(--duration-fast)]
-                cursor-pointer
-              "
-            >
-              <LogOut className="size-3.5" />
-              Sign out
-            </button>
+            <div className="space-y-0.5">
+              <button
+                onClick={() => {
+                  onClose();
+                  navigate("/profile");
+                }}
+                className="
+                  flex items-center gap-2 w-full rounded-[var(--radius-lg)] px-3 py-1.5
+                  text-sm text-[var(--color-text-muted)]
+                  hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]
+                  transition-colors duration-[var(--duration-fast)]
+                  cursor-pointer
+                "
+              >
+                <User className="size-3.5" />
+                Profile
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="
+                  flex items-center gap-2 w-full rounded-[var(--radius-lg)] px-3 py-1.5
+                  text-sm text-[var(--color-status-error)]
+                  hover:bg-[var(--color-status-error)]/10
+                  transition-colors duration-[var(--duration-fast)]
+                  cursor-pointer
+                "
+              >
+                <LogOut className="size-3.5" />
+                Sign out
+              </button>
+            </div>
           </div>
         )}
       </div>
