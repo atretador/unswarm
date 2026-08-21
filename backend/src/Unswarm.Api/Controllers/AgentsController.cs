@@ -64,7 +64,8 @@ public sealed class AgentsController : ControllerBase
     {
         if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
         {
-            var hostScripts = await BuildHostScriptsAsync(ct).ConfigureAwait(false);
+            var allRegistered = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+            var hostScripts = await BuildHostScriptsAsync(allRegistered, ct).ConfigureAwait(false);
             return Ok(hostScripts);
         }
 
@@ -124,7 +125,7 @@ public sealed class AgentsController : ControllerBase
     private async Task<AgentInfo> BuildHostInfoAsync(IReadOnlyList<RegisteredRuntime> allRegistered, CancellationToken ct)
     {
         var containers = await _router.GetController(ExecutionTarget.HostId).ListContainersAsync(ct).ConfigureAwait(false);
-        var scripts = await BuildHostScriptsAsync(ct).ConfigureAwait(false);
+        var scripts = await BuildHostScriptsAsync(allRegistered, ct).ConfigureAwait(false);
 
         return new AgentInfo
         {
@@ -145,9 +146,9 @@ public sealed class AgentsController : ControllerBase
     /// and Agent=="host". Each script's status is health-gated: process dead → "stopped",
     /// alive AND health Ready/Healthy → "running", alive otherwise → "starting".
     /// </summary>
-    private async Task<IReadOnlyList<AgentScriptStatus>> BuildHostScriptsAsync(CancellationToken ct)
+    private async Task<IReadOnlyList<AgentScriptStatus>> BuildHostScriptsAsync(
+        IReadOnlyList<RegisteredRuntime> allRegistered, CancellationToken ct)
     {
-        var allRegistered = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
         var hostScripts = allRegistered
             .Where(r => r.RuntimeKind == RuntimeKind.Script
                 && string.Equals(r.Agent, "host", StringComparison.OrdinalIgnoreCase))

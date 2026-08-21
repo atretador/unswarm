@@ -27,8 +27,8 @@ public sealed class ApiKeyController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { error = "Name is required." });
 
-        // Only inference keys are created through this management surface.
-        // (Agent keys are provisioned via config and seeded at startup.)
+        // Inference-scope key creation. Agent-scoped keys are created
+        // through POST api/api-keys/agent below.
         var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.Inference, ct: ct);
         return Ok(Map(created));
     }
