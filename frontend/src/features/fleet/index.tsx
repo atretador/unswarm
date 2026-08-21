@@ -18,6 +18,7 @@ import {
   Cpu,
   FileCode,
   Gauge,
+  Hash,
   KeyRound,
   MemoryStick,
   Monitor,
@@ -137,6 +138,52 @@ function formatMb(mb: number): string {
   if (!mb) return "—";
   if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
   return `${mb} MB`;
+}
+
+function formatOsPlatform(platform: string): string {
+  const lower = platform.toLowerCase();
+  if (lower.includes("linux")) return "Linux";
+  if (lower.includes("windows")) return "Windows";
+  if (lower.includes("darwin") || lower.includes("mac")) return "macOS";
+  return platform;
+}
+
+function OsIcon({ platform, className }: { platform: string; className?: string }) {
+  const lower = platform.toLowerCase();
+  if (lower.includes("linux")) {
+    // Penguin
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="5" />
+        <path d="M7 13.5c0 2.5 2 5 5 5s5-2.5 5-5" />
+        <circle cx="10" cy="7" r="1" fill="currentColor" stroke="none" />
+        <circle cx="14" cy="7" r="1" fill="currentColor" stroke="none" />
+        <path d="M11 9.5h2" />
+        <path d="M8.5 2.5L7 5" />
+        <path d="M15.5 2.5L17 5" />
+      </svg>
+    );
+  }
+  if (lower.includes("windows")) {
+    // Windows logo
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M3 5.5L10.5 4.5V11.5H3V5.5Z" />
+        <path d="M11.5 4.3L21 3V11.5H11.5V4.3Z" />
+        <path d="M3 12.5H10.5V19.5L3 18.5V12.5Z" />
+        <path d="M11.5 12.5H21V21L11.5 19.7V12.5Z" />
+      </svg>
+    );
+  }
+  if (lower.includes("darwin") || lower.includes("mac")) {
+    // Apple logo
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+        <path d="M18.71 19.5C17.88 20.74 17 21.95 15.66 21.97C14.32 22 13.89 21.18 12.37 21.18C10.84 21.18 10.37 21.95 9.1 22C7.79 22.05 6.8 20.68 5.96 19.47C4.25 16.56 2.93 11.3 4.7 7.72C5.57 5.94 7.36 4.86 9.28 4.84C10.56 4.81 11.78 5.72 12.57 5.72C13.36 5.72 14.85 4.62 16.4 4.8C17.06 4.83 18.87 5.06 20.01 6.77C19.88 6.84 17.75 8.07 17.78 10.62C17.81 13.67 20.47 14.7 20.5 14.71C20.47 14.79 20.07 16.19 18.71 19.5ZM13 3.5C13.73 2.67 14.94 2.04 15.94 2C16.07 3.17 15.6 4.35 14.9 5.19C14.21 6.04 13.07 6.7 11.95 6.61C11.8 5.46 12.36 4.26 13 3.5Z" />
+      </svg>
+    );
+  }
+  return <Monitor className={className} />;
 }
 
 function agentConnectivity(agent: Agent): AgentConnectivity {
@@ -1488,7 +1535,6 @@ function AgentSection({
   defaultExpanded,
   focusContainerId,
   onManage,
-  onAddAgent,
 }: {
   agent: Agent;
   registeredContainers: RegisteredRuntime[];
@@ -1496,7 +1542,6 @@ function AgentSection({
   /** When a registered container on this agent is the deep-link target. */
   focusContainerId: string | null;
   onManage: (agentName: string) => void;
-  onAddAgent: () => void;
 }) {
   const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
   // Deep-link focus forces this section open even if it normally starts collapsed.
@@ -1548,9 +1593,15 @@ function AgentSection({
           {isHost && <Badge variant="outline">host</Badge>}
 
           <div className="hidden min-w-0 items-center gap-3 text-[10px] text-[var(--color-text-muted)] md:flex">
+            {agent.osPlatform && (
+              <span className="flex min-w-0 items-center gap-1" title={agent.osPlatform}>
+                <OsIcon platform={agent.osPlatform} className="size-3 shrink-0" />
+                <span className="truncate">{formatOsPlatform(agent.osPlatform)}</span>
+              </span>
+            )}
             {agent.hostname && (
               <span className="flex min-w-0 items-center gap-1">
-                <Monitor className="size-3 shrink-0" />
+                <Server className="size-3 shrink-0" />
                 <span className="truncate">{agent.hostname}</span>
               </span>
             )}
@@ -1568,8 +1619,8 @@ function AgentSection({
             )}
             {agent.cpuCores > 0 && (
               <span className="flex shrink-0 items-center gap-1">
-                <Server className="size-3 shrink-0" />
-                {agent.cpuCores} cores
+                <Hash className="size-3 shrink-0" />
+                {agent.cpuCores} threads
               </span>
             )}
           </div>
@@ -1593,18 +1644,11 @@ function AgentSection({
             onClick={() => onManage(agent.name)}
             aria-label={`Manage runtimes on ${agent.name}`}
             title="Manage runtimes"
-            className="flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+            className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1 text-sm text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
           >
             <PackageOpen className="size-3.5" />
+            Manage
           </button>
-          {isHost && (
-            <Tooltip content="Run the agent binary on another machine and it joins this fleet.">
-              <Button variant="ghost" size="sm" onClick={onAddAgent} className="shrink-0">
-                <Plus className="size-3" />
-                Add agent
-              </Button>
-            </Tooltip>
-          )}
         </div>
       </div>
 
@@ -1772,7 +1816,6 @@ export default function Fleet() {
               defaultExpanded={agent.name === "host"}
               focusContainerId={focusContainerId}
               onManage={(name) => setManageAgent(name)}
-              onAddAgent={() => setShowAddAgent(true)}
             />
           ))}
         </div>

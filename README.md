@@ -83,6 +83,14 @@ dotnet run --project src/Unswarm.Api
 
 The API starts on `http://localhost:5014` by default. The SQLite database is created automatically at `~/.config/unswarm/unswarm.db`.
 
+On first run, you'll need to create an admin user:
+
+```bash
+dotnet run --project src/Unswarm.Api -- --admin-setup 'your-password'
+```
+
+The `--admin-setup` flag also works to reset the admin password at any time.
+
 ### 2. Start the Frontend
 
 ```bash

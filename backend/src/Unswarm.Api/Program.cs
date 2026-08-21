@@ -15,6 +15,17 @@ using System.Threading.Channels;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
 
+// ── CLI args ───────────────────────────────────────────────────────────────
+string? adminSetupPassword = null;
+for (int i = 0; i < args.Length - 1; i++)
+{
+    if (args[i] == "--admin-setup")
+    {
+        adminSetupPassword = args[i + 1];
+        break;
+    }
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Database ──────────────────────────────────────────────────────────────
@@ -66,6 +77,10 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 builder.Services.AddScoped<SignInManager<ApplicationUser>>();
+
+// Register the authentication scheme so SignInAsync has a handler to call
+builder.Services.AddAuthentication(IdentityConstants.ApplicationScheme)
+    .AddCookie(IdentityConstants.ApplicationScheme);
 
 // Cookie authentication for SPA
 builder.Services.ConfigureApplicationCookie(options =>
@@ -139,8 +154,8 @@ builder.Services.AddControllers()
 
 // ── Background services ──────────────────────────────────────────────────
 builder.Services.AddHostedService<SchedulerHostedService>();
-builder.Services.AddHostedService<HealthCheckService>();
-builder.Services.AddHostedService<IdleShutdownService>();
+// builder.Services.AddHostedService<HealthCheckService>();   // disabled: proxy handles container lifecycle on-demand
+// builder.Services.AddHostedService<IdleShutdownService>();   // disabled: proxy handles container lifecycle on-demand
 builder.Services.AddHostedService<LogRetentionService>();
 
 // ── CORS ──────────────────────────────────────────────────────────────────
@@ -206,7 +221,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 
 // ── Seed roles and admin user ──────────────────────────────────────────
 await SeedRolesAsync(app.Services);
-await SeedAdminUserAsync(app.Services);
+await SeedAdminUserAsync(app.Services, adminSetupPassword);
 
 // ── Adopt orphaned script processes ─────────────────────────────────────
 // If the server restarts while host script runtimes are alive, their PID files
@@ -636,36 +651,58 @@ static async Task SeedRolesAsync(IServiceProvider services)
     }
 }
 
-static async Task SeedAdminUserAsync(IServiceProvider services)
+static async Task SeedAdminUserAsync(IServiceProvider services, string? adminSetupPassword)
 {
     using var scope = services.CreateScope();
     var userManager = scope.ServiceProvider.GetRequiredService<UserManager<ApplicationUser>>();
 
-    if (userManager.Users.Any())
-        return;
+    var existingAdmin = await userManager.FindByNameAsync("admin");
 
-    var defaultPassword = Environment.GetEnvironmentVariable("UNSWARM_ADMIN_PASSWORD");
-    if (string.IsNullOrWhiteSpace(defaultPassword))
+    // No --admin-setup flag: skip (print instructions if no admin exists)
+    if (string.IsNullOrWhiteSpace(adminSetupPassword))
     {
-        defaultPassword = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
-        Console.WriteLine($"UNSWARM_ADMIN_PASSWORD not set. Generated random admin password: {defaultPassword}");
-        Console.WriteLine("Save this password — you will need it to log in as admin.");
+        if (existingAdmin == null)
+        {
+            Console.WriteLine("No admin user exists. Run with --admin-setup <password> to create one:");
+            Console.WriteLine("  unswarm --admin-setup 'your-password'");
+        }
+        return;
     }
+
+    // Admin exists — reset their password
+    if (existingAdmin != null)
+    {
+        var token = await userManager.GeneratePasswordResetTokenAsync(existingAdmin);
+        var result = await userManager.ResetPasswordAsync(existingAdmin, token, adminSetupPassword);
+        if (result.Succeeded)
+        {
+            existingAdmin.IsTempPassword = true;
+            await userManager.UpdateAsync(existingAdmin);
+            Console.WriteLine("Admin password has been reset.");
+        }
+        else
+        {
+            Console.Error.WriteLine($"Failed to reset admin password: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+        }
+        return;
+    }
+
+    // First run — create admin user
     var admin = new ApplicationUser
     {
         UserName = "admin",
         IsTempPassword = true
     };
 
-    var result = await userManager.CreateAsync(admin, defaultPassword);
-    if (result.Succeeded)
+    var createResult = await userManager.CreateAsync(admin, adminSetupPassword);
+    if (createResult.Succeeded)
     {
         await userManager.AddToRoleAsync(admin, "Admin");
-        Console.WriteLine("Created default admin user (username: admin). Change the password immediately.");
+        Console.WriteLine("Created admin user (username: admin). Change the password immediately.");
     }
     else
     {
-        Console.Error.WriteLine($"Failed to seed admin user: {string.Join(", ", result.Errors.Select(e => e.Description))}");
+        Console.Error.WriteLine($"Failed to create admin user: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
     }
 }
 

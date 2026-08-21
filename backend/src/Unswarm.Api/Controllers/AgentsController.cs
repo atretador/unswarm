@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
@@ -84,7 +85,9 @@ public sealed class AgentsController : ControllerBase
             Name = ExecutionTarget.HostId,
             IsConnected = true,
             Hostname = Environment.MachineName,
-            OsPlatform = Environment.OSVersion.Platform.ToString(),
+            OsPlatform = RuntimeInformation.OSDescription,
+            GpuInfo = DetectHostGpu(),
+            TotalMemoryMb = GetHostMemoryMb(),
             CpuCores = Environment.ProcessorCount,
             Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList(),
             Scripts = [] // Host scripts are handled by the host script runtime (P2)
@@ -209,4 +212,58 @@ public sealed class AgentsController : ControllerBase
         Status = container.Status.ToString().ToLowerInvariant(),
         Port = container.Port
     };
+
+    private static string? DetectHostGpu()
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("nvidia-smi",
+                "--query-gpu=name,memory.total --format=csv,noheader,nounits")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null) return null;
+            var output = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(3000);
+            var line = output.Trim();
+            if (string.IsNullOrEmpty(line)) return null;
+            // "NVIDIA GeForce RTX 4090, 24564" -> "NVIDIA GeForce RTX 4090 (24564 MB)"
+            var parts = line.Split(',', 2);
+            return parts.Length == 2
+                ? parts[0].Trim() + " (" + parts[1].Trim() + " MB)"
+                : line;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static long GetHostMemoryMb()
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && System.IO.File.Exists("/proc/meminfo"))
+            {
+                foreach (var line in System.IO.File.ReadLines("/proc/meminfo"))
+                {
+                    if (line.StartsWith("MemTotal:"))
+                    {
+                        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2 && long.TryParse(parts[1], out var kb))
+                            return kb / 1024;
+                    }
+                }
+            }
+            // Fallback: use GC memory info
+            return GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / (1024 * 1024);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
 }

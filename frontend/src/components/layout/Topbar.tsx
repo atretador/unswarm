@@ -12,10 +12,11 @@ export interface TopbarProps {
   onMobileToggle: () => void;
 }
 
-function UserAvatar({ username }: { username: string }) {
+function UserAvatar({ username }: { username?: string }) {
+  const letter = username?.charAt(0)?.toUpperCase() ?? "?";
   return (
     <div className="flex items-center justify-center size-7 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-heading text-xs font-bold select-none">
-      {username.charAt(0).toUpperCase()}
+      {letter}
     </div>
   );
 }
@@ -311,7 +312,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
           <div className="border-t border-[var(--color-border)] p-3">
             <div className="flex items-center gap-2.5 mb-2.5">
               <div className="flex items-center justify-center size-7 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-heading text-xs font-bold select-none">
-                {user.username.charAt(0).toUpperCase()}
+                {user.username?.charAt(0)?.toUpperCase() ?? "?"}
               </div>
               <span className="text-sm font-medium text-[var(--color-text-heading)] truncate">
                 {user.username}

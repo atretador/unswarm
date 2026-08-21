@@ -250,11 +250,11 @@ public sealed class AgentController : ControllerBase
         if (root.TryGetProperty("hostname", out var hostname))
             connection.Hostname = hostname.ValueKind == JsonValueKind.String ? hostname.GetString() : null;
 
-        if (root.TryGetProperty("os", out var os))
+        if (root.TryGetProperty("osPlatform", out var os))
             connection.OsPlatform = os.ValueKind == JsonValueKind.String ? os.GetString() : null;
 
-        if (root.TryGetProperty("gpu", out var gpu) && gpu.ValueKind == JsonValueKind.Array)
-            connection.GpuInfo = FormatGpuSummary(gpu);
+        if (root.TryGetProperty("gpuInfo", out var gpuInfo))
+            connection.GpuInfo = gpuInfo.ValueKind == JsonValueKind.String ? gpuInfo.GetString() : null;
 
         if (root.TryGetProperty("totalMemoryMb", out var mem) && mem.ValueKind != JsonValueKind.Null && mem.TryGetInt64(out var memValue))
             connection.TotalMemoryMb = memValue;
