@@ -33,6 +33,16 @@ public sealed class ApiKeyController : ControllerBase
         return Ok(Map(created));
     }
 
+    [HttpPost("agent")]
+    public async Task<IActionResult> CreateAgent([FromBody] CreateApiKeyRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(new { error = "Name is required." });
+
+        var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.Agent, ct: ct);
+        return Ok(Map(created));
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
