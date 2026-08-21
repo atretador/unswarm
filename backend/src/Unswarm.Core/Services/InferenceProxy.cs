@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
@@ -16,6 +17,12 @@ public sealed class InferenceProxy : IInferenceProxy
     private readonly IServiceProvider _serviceProvider;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _startLocks = new(StringComparer.Ordinal);
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
+
+    // Readiness + hold budgets: a request holds the connection while its target
+    // runtime starts/warms up instead of surfacing transient states as failures.
+    private const int ReadyTimeoutSeconds = 120;
+    private const int ProxyHoldSeconds = 180;
+    private const int RetryDelayMs = 500;
 
     public InferenceProxy(
         IDockerController docker,
@@ -61,12 +68,31 @@ public sealed class InferenceProxy : IInferenceProxy
             }
         }
 
-        // Script runtimes: use mapped port directly (they don't appear in docker ps)
+        // Script runtimes: use mapped port directly (they don't appear in docker ps).
+        // A dead script is restarted through its owner instead of failing the caller —
+        // the connection is held until the runtime is ready and serving.
         if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
         {
             var scriptPort = registered.MappedPort ?? registered.ContainerPort;
-            await _healthChecker.WaitForReadyAsync(scriptPort, 120, ct).ConfigureAwait(false);
-            return await ProxyToPortAsync(request, scriptPort, ct).ConfigureAwait(false);
+            if (!await _healthChecker.CheckAsync(scriptPort, ct).ConfigureAwait(false))
+            {
+                var startLock = _startLocks.GetOrAdd(registeredContainerId!, _ => new SemaphoreSlim(1, 1));
+                await startLock.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    // Double-check: another request may have restarted it while we waited.
+                    if (!await _healthChecker.CheckAsync(scriptPort, ct).ConfigureAwait(false))
+                    {
+                        var startError = await StartOnDemandAsync(registeredContainerId!, request.ModelName, ct).ConfigureAwait(false);
+                        if (startError is not null) return startError;
+                    }
+                }
+                finally
+                {
+                    startLock.Release();
+                }
+            }
+            return await WaitReadyAndProxyAsync(request, scriptPort, ct).ConfigureAwait(false);
         }
 
         var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
@@ -94,92 +120,50 @@ public sealed class InferenceProxy : IInferenceProxy
         // If no running container found but a registered container exists, start it on demand
         if (container?.Port is not { } port && registeredContainerId is not null && registered is not null)
         {
-            // Skip on-demand start if the container is already starting/ready (race guard)
-            if (registered.Status != ContainerRegistrationStatus.Starting &&
-                registered.Status != ContainerRegistrationStatus.Ready)
+            var startLock = _startLocks.GetOrAdd(registeredContainerId, _ => new SemaphoreSlim(1, 1));
+            await startLock.WaitAsync(ct).ConfigureAwait(false);
+            try
             {
-                var startLock = _startLocks.GetOrAdd(registeredContainerId, _ => new SemaphoreSlim(1, 1));
-                await startLock.WaitAsync(ct).ConfigureAwait(false);
-                try
+                // Double-check: another request may have started it while we waited
+                containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+                running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
+                container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
+
+                if (container?.Port is null)
                 {
-                    // Double-check: another request may have started it while we waited
+                    // Coexistence + start are owned by ContainerRegistrationService.StartAsync:
+                    // it stops every runtime on this agent that is not in the target's allow
+                    // list, confirms each one stopped, then starts the requested runtime.
+                    // The registry Status is deliberately NOT consulted here — a stale Ready
+                    // must not skip an actually-not-running container.
+                    _logger.LogInformation(
+                        "On-demand starting container {Id} for model {Model}",
+                        registeredContainerId[..Math.Min(12, registeredContainerId.Length)], request.ModelName);
+
+                    await using var scope = _serviceProvider.CreateAsyncScope();
+                    var registrationService = scope.ServiceProvider.GetRequiredService<IContainerRegistrationService>();
+                    var result = await registrationService.StartAsync(registeredContainerId, ct).ConfigureAwait(false);
+
+                    if (result.Container.Status != ContainerRegistrationStatus.Ready &&
+                        result.Container.Status != ContainerRegistrationStatus.Healthy)
+                    {
+                        _logger.LogWarning(
+                            "Failed to start container {Id} for model {Model}: {Error}",
+                            registeredContainerId[..Math.Min(12, registeredContainerId.Length)],
+                            request.ModelName,
+                            result.Container.ErrorMessage ?? "unknown error");
+                        return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
+                    }
+
+                    // Re-resolve: the container should now be running
                     containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
                     running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
                     container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
-
-                    if (container?.Port is null)
-                    {
-                        // Stop any running managed containers that can't coexist with this one.
-                        if (_containerRegistry is not null)
-                        {
-                            var allRegistered = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
-                            var requested = allRegistered.FirstOrDefault(r => r.Id == registeredContainerId);
-                            if (requested is not null)
-                            {
-                                var runningManaged = running.Where(c => c.RegisteredRuntimeId is not null && c.RegisteredRuntimeId != registeredContainerId).ToList();
-                                foreach (var rm in runningManaged)
-                                {
-                                    var otherRuntime = allRegistered.FirstOrDefault(r => r.Id == rm.RegisteredRuntimeId);
-                                    if (otherRuntime is null) continue;
-
-                                    // Check coexistence: can requested run along with other?
-                                    bool requestedAllowsOther = requested.CanRunAlongWith.Count == 0 ||
-                                        requested.CanRunAlongWith.Any(n =>
-                                            string.Equals(n, otherRuntime.Image, StringComparison.OrdinalIgnoreCase) ||
-                                            string.Equals(n, otherRuntime.DisplayName, StringComparison.OrdinalIgnoreCase));
-                                    bool otherAllowsRequested = otherRuntime.CanRunAlongWith.Count == 0 ||
-                                        otherRuntime.CanRunAlongWith.Any(n =>
-                                            string.Equals(n, requested.Image, StringComparison.OrdinalIgnoreCase) ||
-                                            string.Equals(n, requested.DisplayName, StringComparison.OrdinalIgnoreCase));
-
-                                    // If either side doesn't list the other, they can't coexist
-                                    if (!requestedAllowsOther || !otherAllowsRequested)
-                                    {
-                                        _logger.LogInformation(
-                                            "Stopping incompatible container {Id} ({Image}) to make room for {Requested}",
-                                            rm.Id[..Math.Min(12, rm.Id.Length)], otherRuntime.Image, requested.Image);
-                                        try
-                                        {
-                                            await _docker.StopContainerAsync(rm.Id, ct).ConfigureAwait(false);
-                                        }
-                                        catch (Exception ex)
-                                        {
-                                            _logger.LogWarning(ex, "Failed to stop incompatible container {Id}", rm.Id[..Math.Min(12, rm.Id.Length)]);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        _logger.LogInformation(
-                            "On-demand starting container {Id} for model {Model}",
-                            registeredContainerId[..Math.Min(12, registeredContainerId.Length)], request.ModelName);
-
-                        await using var scope = _serviceProvider.CreateAsyncScope();
-                        var registrationService = scope.ServiceProvider.GetRequiredService<IContainerRegistrationService>();
-                        var result = await registrationService.StartAsync(registeredContainerId, ct).ConfigureAwait(false);
-
-                        if (result.Container.Status != ContainerRegistrationStatus.Ready &&
-                            result.Container.Status != ContainerRegistrationStatus.Healthy)
-                        {
-                            _logger.LogWarning(
-                                "Failed to start container {Id} for model {Model}: {Error}",
-                                registeredContainerId[..Math.Min(12, registeredContainerId.Length)],
-                                request.ModelName,
-                                result.Container.ErrorMessage ?? "unknown error");
-                            return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
-                        }
-
-                        // Re-resolve: the container should now be running
-                        containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
-                        running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
-                        container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
-                    }
                 }
-                finally
-                {
-                    startLock.Release();
-                }
+            }
+            finally
+            {
+                startLock.Release();
             }
         }
 
@@ -189,8 +173,7 @@ public sealed class InferenceProxy : IInferenceProxy
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
         }
 
-        await _healthChecker.WaitForReadyAsync(resolvedPort, 120, ct).ConfigureAwait(false);
-        return await ProxyToPortAsync(request, resolvedPort, ct).ConfigureAwait(false);
+        return await WaitReadyAndProxyAsync(request, resolvedPort, ct).ConfigureAwait(false);
     }
 
     private static IReadOnlySet<string> RegisteredContainerNames(RegisteredRuntime registered)
@@ -227,32 +210,68 @@ public sealed class InferenceProxy : IInferenceProxy
 
         // Script runtimes on agents don't appear in docker ps. If the registered runtime
         // is a script, use its port directly and skip the container listing entirely.
+        // A dead agent script is restarted through its owner instead of failing the
+        // caller — the connection is held until the runtime is ready and serving.
         if (registeredContainerId is not null && _containerRegistry is not null)
         {
             var registered = await _containerRegistry.GetAsync(registeredContainerId, ct).ConfigureAwait(false);
             if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
             {
                 var scriptPort = registered.MappedPort ?? registered.ContainerPort;
-                string rawScriptBody;
-                try
+                if (!await remote.HealthCheckAsync(scriptPort, ct).ConfigureAwait(false))
                 {
-                    rawScriptBody = await remote.InferAsync(scriptPort, request.OriginalJson, ct).ConfigureAwait(false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Remote script inference failed for model {Model} on target {Target} port {Port}",
-                        request.ModelName, targetId, scriptPort);
-                    return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+                    var startLock = _startLocks.GetOrAdd(registeredContainerId, _ => new SemaphoreSlim(1, 1));
+                    await startLock.WaitAsync(ct).ConfigureAwait(false);
+                    try
+                    {
+                        // Double-check: another request may have restarted it while we waited.
+                        if (!await remote.HealthCheckAsync(scriptPort, ct).ConfigureAwait(false))
+                        {
+                            var startError = await StartOnDemandAsync(registeredContainerId, request.ModelName, ct).ConfigureAwait(false);
+                            if (startError is not null) return startError;
+                        }
+                    }
+                    finally
+                    {
+                        startLock.Release();
+                    }
                 }
 
-                var scriptTokens = TryParseCompletionTokens(rawScriptBody);
-                return new InferenceResponse
+                // Bounded retry while the backend finishes warming up.
+                var holdDeadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+                while (true)
                 {
-                    StatusCode = 200,
-                    ContentType = "application/json",
-                    Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
-                    TokensGenerated = scriptTokens
-                };
+                    string rawScriptBody;
+                    try
+                    {
+                        rawScriptBody = await remote.InferAsync(scriptPort, request.OriginalJson, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException && DateTime.UtcNow < holdDeadline)
+                    {
+                        _logger.LogWarning(ex,
+                            "Remote script inference failed for model {Model} on target {Target} port {Port}; runtime may still be warming up — retrying within hold window",
+                            request.ModelName, targetId, scriptPort);
+                        await Task.Delay(RetryDelayMs, ct).ConfigureAwait(false);
+                        continue;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Remote script inference failed for model {Model} on target {Target} port {Port}",
+                            request.ModelName, targetId, scriptPort);
+                        return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+                    }
+
+                    var scriptTokens = TryParseCompletionTokens(rawScriptBody);
+                    var scriptServerTps = TryParseServerTokensPerSec(rawScriptBody);
+                    return new InferenceResponse
+                    {
+                        StatusCode = 200,
+                        ContentType = "application/json",
+                        Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
+                        TokensGenerated = scriptTokens,
+                        ServerTokensPerSec = scriptServerTps
+                    };
+                }
             }
         }
 
@@ -335,27 +354,42 @@ public sealed class InferenceProxy : IInferenceProxy
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
         }
 
-        string rawBody;
-        try
+        // Bounded retry while the backend finishes warming up.
+        var containerHoldDeadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+        while (true)
         {
-            rawBody = await remote.InferAsync(resolvedPort, request.OriginalJson, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Remote inference failed for model {Model} on target {Target} port {Port}",
-                request.ModelName, targetId, resolvedPort);
-            return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
-        }
+            string rawBody;
+            try
+            {
+                rawBody = await remote.InferAsync(resolvedPort, request.OriginalJson, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException && DateTime.UtcNow < containerHoldDeadline)
+            {
+                _logger.LogWarning(ex,
+                    "Remote inference failed for model {Model} on target {Target} port {Port}; runtime may still be warming up — retrying within hold window",
+                    request.ModelName, targetId, resolvedPort);
+                await Task.Delay(RetryDelayMs, ct).ConfigureAwait(false);
+                continue;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Remote inference failed for model {Model} on target {Target} port {Port}",
+                    request.ModelName, targetId, resolvedPort);
+                return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+            }
 
-        var tokens = TryParseCompletionTokens(rawBody);
+            var tokens = TryParseCompletionTokens(rawBody);
+            var serverTps = TryParseServerTokensPerSec(rawBody);
 
-        return new InferenceResponse
-        {
-            StatusCode = 200,
-            ContentType = "application/json",
-            Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
-            TokensGenerated = tokens
-        };
+            return new InferenceResponse
+            {
+                StatusCode = 200,
+                ContentType = "application/json",
+                Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
+                TokensGenerated = tokens,
+                ServerTokensPerSec = serverTps
+            };
+        }
     }
 
     private static int TryParseCompletionTokens(string body)
@@ -378,56 +412,239 @@ public sealed class InferenceProxy : IInferenceProxy
         return 0;
     }
 
-    private async Task<InferenceResponse> ProxyToPortAsync(InferenceRequest request, int port, CancellationToken ct)
+    /// <summary>
+    /// Best-effort extraction of the server-reported token generation throughput.
+    /// Returns the predicted tokens/sec when the server exposes timing data,
+    /// otherwise 0. Checks:
+    ///   1. llama.cpp OpenAI-compatible: root <c>timings</c> → <c>predicted_per_second</c>
+    ///   2. Ollama-style: root <c>eval_count</c> / <c>eval_duration</c> (ns)
+    /// </summary>
+    private static double TryParseServerTokensPerSec(string body)
     {
-        var url = request.IsStreaming
-            ? $"http://127.0.0.1:{port}/v1/chat/completions"
-            : $"http://127.0.0.1:{port}/v1/chat/completions";
-
         try
         {
-            using var httpContent = new StringContent(
-                request.OriginalJson,
-                System.Text.Encoding.UTF8,
-                "application/json");
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
 
-            using var response = await SharedHttp.PostAsync(url, httpContent, ct)
+            // 1. llama.cpp OpenAI-compatible: timings.predicted_per_second
+            if (root.TryGetProperty("timings", out var timings)
+                && timings.TryGetProperty("predicted_per_second", out var pps)
+                && pps.ValueKind == System.Text.Json.JsonValueKind.Number
+                && pps.TryGetDouble(out var rate)
+                && rate > 0)
+            {
+                return rate;
+            }
+
+            // 2. Ollama-style: eval_count / (eval_duration_ns / 1e9)
+            if (root.TryGetProperty("eval_count", out var evalCount)
+                && evalCount.ValueKind == System.Text.Json.JsonValueKind.Number
+                && root.TryGetProperty("eval_duration", out var evalDur)
+                && evalDur.ValueKind == System.Text.Json.JsonValueKind.Number
+                && evalDur.TryGetDouble(out var durNs)
+                && durNs > 0)
+            {
+                if (evalCount.TryGetDouble(out var count) && count > 0)
+                {
+                    return count / (durNs / 1_000_000_000.0);
+                }
+            }
+        }
+        catch
+        {
+            // best-effort; 0 means fall back to stopwatch-derived value
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Stream wrapper that disposes the <see cref="HttpResponseMessage"/> when the
+    /// underlying stream is closed/disposed, keeping the response alive only for the
+    /// duration of the pipe. This enables true real-time streaming: chunks arrive
+    /// on the client as soon as they are produced by the backend, without buffering
+    /// the full response in memory.
+    /// </summary>
+    private sealed class HttpResponseMessageStream : Stream
+    {
+        private readonly HttpResponseMessage _response;
+        private readonly Stream _inner;
+        private bool _disposed;
+
+        public HttpResponseMessageStream(HttpResponseMessage response, Stream inner)
+        {
+            _response = response;
+            _inner = inner;
+        }
+
+        public override bool CanRead => _inner.CanRead;
+        public override bool CanSeek => _inner.CanSeek;
+        public override bool CanWrite => _inner.CanWrite;
+        public override long Length => _inner.Length;
+        public override long Position
+        {
+            get => _inner.Position;
+            set => _inner.Position = value;
+        }
+
+        public override void Flush() => _inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => _inner.Read(buffer, offset, count);
+        public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+        public override void SetLength(long value) => _inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+
+        public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => await _inner.WriteAsync(buffer, offset, count, ct).ConfigureAwait(false);
+
+        public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => await _inner.ReadAsync(buffer, offset, count, ct).ConfigureAwait(false);
+
+        public override ValueTask DisposeAsync()
+        {
+            _disposed = true;
+            _inner.DisposeAsync();
+            _response.Dispose();
+            return default;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (disposing)
+            {
+                _inner.Dispose();
+                _response.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Starts (or restarts) a registered runtime through ContainerRegistrationService.
+    /// The service owns coexistence enforcement, the real start, and the readiness
+    /// wait. Returns null on success, or a 503 response when the start failed.
+    /// Callers hold their own per-runtime start lock and double-check liveness first.
+    /// </summary>
+    private async Task<InferenceResponse?> StartOnDemandAsync(string registeredContainerId, string modelName, CancellationToken ct)
+    {
+        await using var scope = _serviceProvider.CreateAsyncScope();
+        var registrationService = scope.ServiceProvider.GetRequiredService<IContainerRegistrationService>();
+
+        _logger.LogInformation(
+            "On-demand starting runtime {Id} for model {Model}",
+            registeredContainerId[..Math.Min(12, registeredContainerId.Length)], modelName);
+
+        var result = await registrationService.StartAsync(registeredContainerId, ct).ConfigureAwait(false);
+        if (result.Container.Status != ContainerRegistrationStatus.Ready &&
+            result.Container.Status != ContainerRegistrationStatus.Healthy)
+        {
+            _logger.LogWarning(
+                "Failed to start runtime {Id} for model {Model}: {Error}",
+                registeredContainerId[..Math.Min(12, registeredContainerId.Length)],
+                modelName,
+                result.Container.ErrorMessage ?? "unknown error");
+            return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Holds the connection until the runtime on <paramref name="port"/> is ready
+    /// and actually serving: waits for health, then proxies with bounded retries
+    /// on transport-level failures (a backend that answered HTTP is returned
+    /// as-is). Only timeout or cancellation surfaces as failure.
+    /// </summary>
+    private async Task<InferenceResponse> WaitReadyAndProxyAsync(InferenceRequest request, int port, CancellationToken ct)
+    {
+        await _healthChecker.WaitForReadyAsync(port, ReadyTimeoutSeconds, ct).ConfigureAwait(false);
+
+        var deadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+        while (true)
+        {
+            try
+            {
+                return await ProxyToPortCoreAsync(request, port, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (
+                ex is HttpRequestException or IOException or SocketException
+                && ex is not OperationCanceledException
+                && DateTime.UtcNow < deadline)
+            {
+                _logger.LogWarning(ex,
+                    "Inference transport failure for model {Model} on port {Port}; runtime may still be warming up — retrying within hold window",
+                    request.ModelName, port);
+                await Task.Delay(RetryDelayMs, ct).ConfigureAwait(false);
+                // Re-verify readiness before the next attempt so a runtime that
+                // bounced (restart/loading) is given time to come back.
+                await _healthChecker.WaitForReadyAsync(port, ReadyTimeoutSeconds, ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task<InferenceResponse> ProxyToPortCoreAsync(InferenceRequest request, int port, CancellationToken ct)
+    {
+        var url = $"http://127.0.0.1:{port}/v1/chat/completions";
+
+        using var httpContent = new StringContent(
+            request.OriginalJson,
+            System.Text.Encoding.UTF8,
+            "application/json");
+
+        var isStreaming = request.IsStreaming;
+
+        // For streaming: use SendAsync with ResponseHeadersRead so the content
+        // stream stays open for real-time piping. The response is disposed
+        // automatically by HttpResponseMessageStream once the pipe is drained.
+        if (isStreaming)
+        {
+            var sendRequest = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = httpContent
+            };
+            var response = await SharedHttp.SendAsync(
+                sendRequest,
+                HttpCompletionOption.ResponseHeadersRead,
+                ct)
                 .ConfigureAwait(false);
 
             var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/json";
             var statusCode = (int)response.StatusCode;
 
-            if (request.IsStreaming)
-            {
-                var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-                return new InferenceResponse
-                {
-                    StatusCode = statusCode,
-                    ContentType = contentType,
-                    Body = stream
-                };
-            }
+            var innerStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            // Wrap so the response is disposed when the stream pipe finishes.
+            var wrappedStream = new HttpResponseMessageStream(response, innerStream);
 
-            var bodyStr = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            var tokens = 0;
-            if (statusCode >= 200 && statusCode < 300)
-            {
-                tokens = TryParseCompletionTokens(bodyStr);
-                if (tokens == 0)
-                    _logger.LogWarning("Inference response for model {Model} on port {Port} returned no usage.completion_tokens; benchmark metrics will be n/a", request.ModelName, port);
-            }
             return new InferenceResponse
             {
                 StatusCode = statusCode,
                 ContentType = contentType,
-                Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
-                TokensGenerated = tokens
+                Body = wrappedStream
             };
         }
-        catch (Exception ex)
+
+        using var response2 = await SharedHttp.PostAsync(url, httpContent, ct)
+            .ConfigureAwait(false);
+
+        var contentType2 = response2.Content.Headers.ContentType?.MediaType ?? "application/json";
+        var statusCode2 = (int)response2.StatusCode;
+
+        var bodyStr = await response2.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var tokens = 0;
+        var serverTps = 0.0;
+        if (statusCode2 >= 200 && statusCode2 < 300)
         {
-            _logger.LogError(ex, "Inference invocation failed for model {Model} on port {Port}", request.ModelName, port);
-            return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
+            tokens = TryParseCompletionTokens(bodyStr);
+            serverTps = TryParseServerTokensPerSec(bodyStr);
+            if (tokens == 0)
+                _logger.LogWarning("Inference response for model {Model} on port {Port} returned no usage.completion_tokens; benchmark metrics will be n/a", request.ModelName, port);
         }
+        return new InferenceResponse
+        {
+            StatusCode = statusCode2,
+            ContentType = contentType2,
+            Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
+            TokensGenerated = tokens,
+            ServerTokensPerSec = serverTps
+        };
     }
 }

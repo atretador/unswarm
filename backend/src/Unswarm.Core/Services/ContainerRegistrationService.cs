@@ -125,6 +125,12 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         try
         {
+            // Coexistence gate: before anything is started, stop every running
+            // runtime on the same agent/host that is not in this runtime's allow
+            // list, and confirm each one actually stopped. Purely allow-list based —
+            // port mappings play no role here.
+            await EnforceCoexistenceAsync(container, ct).ConfigureAwait(false);
+
             if (container.RuntimeKind == RuntimeKind.Script)
             {
                 return await StartScriptAsync(container, ct).ConfigureAwait(false);
@@ -168,9 +174,20 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                     ct).ConfigureAwait(false);
             }
 
-            if (!mappedPort.HasValue)
+            if (!mappedPort.HasValue && isRemote)
             {
                 return await FailAsync(container, "Could not determine mapped port", ct).ConfigureAwait(false);
+            }
+
+            if (!mappedPort.HasValue)
+            {
+                // Host container without a published port binding (e.g. host
+                // networking): fall back to the declared container port instead of
+                // failing the start — the runtime is still reachable on that port.
+                mappedPort = container.ContainerPort;
+                _logger.LogInformation(
+                    "No published port binding on container {Id}; using declared port {Port}",
+                    registeredContainerId, mappedPort);
             }
 
             container = await _registry.UpdateAsync(registeredContainerId, container with
@@ -442,6 +459,16 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             if (!mappedPort.HasValue && isRemote)
             {
                 return await FailAsync(container, "Could not determine mapped port for remote container", ct).ConfigureAwait(false);
+            }
+
+            if (!mappedPort.HasValue)
+            {
+                // Host container without a published port binding (e.g. host
+                // networking): fall back to the declared container port.
+                mappedPort = container.ContainerPort;
+                _logger.LogInformation(
+                    "No published port binding on container {Id}; using declared port {Port}",
+                    container.Id, mappedPort);
             }
 
             container = await _registry.UpdateAsync(container.Id, container with
@@ -831,6 +858,171 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Container = container,
             DiscoveredModels = await LoadModelsForContainerAsync(container.Id, ct).ConfigureAwait(false)
         };
+    }
+
+    /// <summary>
+    /// Stops every running runtime on the target's agent/host that is not allowed to
+    /// coexist with <paramref name="target"/> per its <see cref="RegisteredRuntime.CanRunAlongWith"/>
+    /// list, and waits until each one is fully stopped before returning.
+    /// Compatibility is decided purely by allow-list membership; running containers
+    /// are located by runtime container id or name match regardless of published ports.
+    /// An empty allow list means the target runs alone: everything else on its agent stops.
+    /// </summary>
+    private async Task EnforceCoexistenceAsync(RegisteredRuntime target, CancellationToken ct)
+    {
+        var allRuntimes = await _registry.ListAllAsync(ct).ConfigureAwait(false);
+        var peers = allRuntimes
+            .Where(r => !string.Equals(r.Id, target.Id, StringComparison.OrdinalIgnoreCase)
+                        && SameAgent(r.Agent, target.Agent))
+            .ToList();
+
+        if (peers.Count == 0) return;
+
+        var controller = GetController(target);
+
+        foreach (var peer in peers)
+        {
+            if (IsAllowedToCoexist(target, peer)) continue;
+
+            if (peer.RuntimeKind == RuntimeKind.Script)
+            {
+                await StopPeerScriptAsync(target, peer, ct).ConfigureAwait(false);
+                continue;
+            }
+
+            // Locate the peer's runtime container on this agent — port-agnostic.
+            var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+            var runningPeerContainer = FindRunningRuntimeContainer(containers, peer);
+            if (runningPeerContainer is null) continue; // not running → nothing to stop
+
+            _logger.LogInformation(
+                "Stopping incompatible container {ContainerId} ({Image}) — not in allow list of {Requested}",
+                runningPeerContainer.Id[..Math.Min(12, runningPeerContainer.Id.Length)], peer.Image, target.Image);
+
+            await controller.StopContainerAsync(runningPeerContainer.Id, ct).ConfigureAwait(false);
+
+            // Confirm stopped before handing the agent/host to the requested runtime.
+            if (!await WaitUntilContainerStoppedAsync(controller, runningPeerContainer.Id, ct).ConfigureAwait(false))
+            {
+                throw new TimeoutException(
+                    $"Incompatible container '{peer.Image}' did not stop in time; aborting start of '{target.Image}'");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stops an incompatible script runtime and relies on the process holder's
+    /// synchronous confirmation: the host script controller and the remote agent
+    /// both block until the process group is dead (SIGTERM → grace period →
+    /// force kill) before returning. A holder that no longer tracks the script
+    /// is treated as already stopped. Any other failure propagates and aborts
+    /// the start.
+    /// </summary>
+    private async Task StopPeerScriptAsync(RegisteredRuntime target, RegisteredRuntime peer, CancellationToken ct)
+    {
+        if (!peer.RuntimeProcessId.HasValue) return;
+
+        _logger.LogInformation(
+            "Stopping incompatible script runtime {Id} ({Image}) — not in allow list of {Requested}",
+            peer.Id, peer.Image, target.Image);
+
+        try
+        {
+            if (SameAgent(peer.Agent, ExecutionTarget.HostId))
+            {
+                if (_scriptController is null)
+                    throw new InvalidOperationException("HostScriptRuntimeController not available");
+                await _scriptController.StopScriptAsync(peer.Id, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                var controller = GetController(peer);
+                if (controller is not RemoteAgentDockerController remoteController)
+                    throw new InvalidOperationException($"Agent '{peer.Agent}' does not have a connected RemoteAgentDockerController");
+                await remoteController.StopScriptAsync(peer.RuntimeProcessId.Value, ct).ConfigureAwait(false);
+            }
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("no tracked script", StringComparison.Ordinal))
+        {
+            // The agent restarted and lost tracking — it holds no such process,
+            // so there is nothing running to stop.
+            _logger.LogWarning(
+                "Script runtime {Id} ({Image}) is not tracked by its holder; treating as already stopped",
+                peer.Id, peer.Image);
+        }
+    }
+
+    private static bool SameAgent(string? left, string? right)
+    {
+        static string Normalize(string? agent) =>
+            string.IsNullOrWhiteSpace(agent) ? ExecutionTarget.HostId : agent.Trim();
+        return string.Equals(Normalize(left), Normalize(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Allow-list membership test: <paramref name="other"/> may coexist with
+    /// <paramref name="target"/> only when its image or display name appears in the
+    /// target's CanRunAlongWith list. Empty list = runs alone.
+    /// </summary>
+    private static bool IsAllowedToCoexist(RegisteredRuntime target, RegisteredRuntime other)
+    {
+        if (target.CanRunAlongWith.Count == 0) return false;
+        return target.CanRunAlongWith.Any(n =>
+            string.Equals(n, other.Image, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrEmpty(other.DisplayName) &&
+             string.Equals(n, other.DisplayName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// Finds the peer's currently-running container among the agent's containers,
+    /// matching by runtime container id first, then by container name against the
+    /// registered image/display name. Deliberately ignores ports.
+    /// </summary>
+    private static ContainerInfo? FindRunningRuntimeContainer(IReadOnlyList<ContainerInfo> containers, RegisteredRuntime peer)
+    {
+        foreach (var c in containers)
+        {
+            if (c.Status != ContainerStatus.Running) continue;
+
+            if (!string.IsNullOrEmpty(peer.RuntimeContainerId) &&
+                string.Equals(c.Id, peer.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+                return c;
+
+            if (NameMatches(c, peer.Image)) return c;
+            if (!string.IsNullOrEmpty(peer.DisplayName) && NameMatches(c, peer.DisplayName)) return c;
+        }
+        return null;
+    }
+
+    private static bool NameMatches(ContainerInfo container, string name) =>
+        string.Equals(container.ModelName, name, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(container.ModelId, name, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Polls until the container reports a non-running state (or no longer exists).
+    /// Returns false when it is still running after 30 seconds.
+    /// </summary>
+    private async Task<bool> WaitUntilContainerStoppedAsync(IDockerController controller, string containerId, CancellationToken ct)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        while (DateTime.UtcNow < deadline)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var inspect = await controller.InspectContainerAsync(containerId, ct).ConfigureAwait(false);
+                if (inspect is null ||
+                    !string.Equals(inspect.Status, "running", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch
+            {
+                return true; // container no longer exists
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false);
+        }
+        return false;
     }
 
     private async Task<RegisteredRuntimeWithModels> FailAsync(RegisteredRuntime container, string errorMessage, CancellationToken ct)

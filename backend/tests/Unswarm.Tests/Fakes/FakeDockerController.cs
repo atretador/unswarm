@@ -109,9 +109,11 @@ public sealed class FakeDockerController : IDockerController
 
     public Task<ContainerInspectResult?> InspectContainerAsync(string id, CancellationToken ct = default)
     {
+        // Reflect stop state so confirm-stopped polling observes real transitions.
+        var status = StoppedContainerIds.Contains(id) ? "exited" : "running";
         return Task.FromResult<ContainerInspectResult?>(new ContainerInspectResult
         {
-            Status = "running",
+            Status = status,
             Pid = 1234
         });
     }

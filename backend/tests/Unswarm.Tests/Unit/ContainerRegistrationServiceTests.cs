@@ -810,6 +810,111 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             () => service.StartAsync("nonexistent"));
     }
 
+    // ── Coexistence gate ──────────────────────────────────────────────────────
+
+    private static RegisteredRuntime MakeRuntime(
+        string id,
+        string image,
+        IReadOnlyList<string>? canRunAlongWith = null,
+        string agent = "host") => new()
+    {
+        Id = id,
+        DisplayName = image,
+        Image = image,
+        Agent = agent,
+        CanRunAlongWith = canRunAlongWith ?? [],
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow
+    };
+
+    [Fact]
+    public async Task StartAsync_StopsIncompatibleRunningContainer_BeforeStart()
+    {
+        // Target runs alone (empty allow list): any other running runtime on the
+        // same host must be stopped first. The peer deliberately has NO mapped
+        // port — compatibility must not depend on ports.
+        await _registry.CreateAsync(MakeRuntime("reg-alone", "model-a"));
+        await _registry.CreateAsync(MakeRuntime("reg-peer", "model-b"));
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "peer-c1",
+                ModelId = "model-b",
+                ModelName = "model-b",
+                Status = ContainerStatus.Running,
+                Port = null
+            }
+        ];
+
+        var service = CreateService();
+        var result = await service.StartAsync("reg-alone");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Contains("peer-c1", _docker.StoppedContainerIds);
+        // The requested runtime was started after the sweep.
+        Assert.Equal(["model-a"], _docker.StartedModels);
+    }
+
+    [Fact]
+    public async Task StartAsync_PeerInAllowList_KeptRunning()
+    {
+        await _registry.CreateAsync(MakeRuntime("reg-social", "model-a", canRunAlongWith: ["model-b"]));
+        await _registry.CreateAsync(MakeRuntime("reg-peer", "model-b"));
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "peer-c1",
+                ModelId = "model-b",
+                ModelName = "model-b",
+                Status = ContainerStatus.Running,
+                Port = null
+            }
+        ];
+
+        var service = CreateService();
+        var result = await service.StartAsync("reg-social");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Empty(_docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task StartAsync_IncompatiblePeerOnOtherAgent_NotTouched()
+    {
+        // The allow list is scoped per agent/host: an incompatible runtime running
+        // on a DIFFERENT agent must stay untouched.
+        var remote = new FakeRemoteDockerController(); // healthy defaults
+
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
+
+        await _registry.CreateAsync(MakeRuntime("reg-agent", "model-c", agent: "gpu1"));
+        await _registry.CreateAsync(MakeRuntime("reg-host-peer", "model-b", agent: "host"));
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "host-peer-c1",
+                ModelId = "model-b",
+                ModelName = "model-b",
+                Status = ContainerStatus.Running,
+                Port = 8081
+            }
+        ];
+
+        var service = CreateService(router: router);
+        var result = await service.StartAsync("reg-agent");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Empty(_docker.StoppedContainerIds);
+        Assert.Equal(["model-c"], remote.StartedImages);
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

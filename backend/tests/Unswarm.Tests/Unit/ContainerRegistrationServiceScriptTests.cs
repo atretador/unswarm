@@ -253,6 +253,59 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
         Assert.Equal(_docker.MappedPortOverride, result.Container.MappedPort);
     }
 
+    [Fact]
+    public async Task StartAsync_IncompatibleScriptPeer_StoppedByHolder_BeforeContainerStart()
+    {
+        // A running host SCRIPT runtime that is not in the target's allow list
+        // must be stopped by its holder (synchronous kill) before a container
+        // runtime may start.
+        var script = CreateScript("sleep 60");
+        var scriptController = CreateScriptController();
+        var service = CreateService(scriptController: scriptController);
+
+        // Start a real script process tracked by the holder.
+        var start = await scriptController.StartScriptAsync("peer-script", script, declaredPort: 9999);
+        Assert.NotNull(start.Pid);
+        Assert.True(scriptController.IsScriptRunning("peer-script"));
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "peer-script",
+            DisplayName = "model-script",
+            Image = "model-script",
+            Agent = "host",
+            RuntimeKind = RuntimeKind.Script,
+            RuntimeProcessId = start.Pid,
+            CanRunAlongWith = [],
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-target",
+            DisplayName = "model-target",
+            Image = "model-target",
+            Agent = "host",
+            RuntimeKind = RuntimeKind.Container,
+            CanRunAlongWith = [],
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+
+        _docker.MappedPortOverride = 9090;
+
+        var result = await service.StartAsync("reg-target");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        // The holder killed the script synchronously before the start proceeded.
+        Assert.False(scriptController.IsScriptRunning("peer-script"));
+        Assert.Equal(["model-target"], _docker.StartedModels);
+
+        // Defensive cleanup in case of failure above.
+        if (scriptController.IsScriptRunning("peer-script"))
+            await scriptController.StopScriptAsync("peer-script");
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)
