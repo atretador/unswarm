@@ -49,14 +49,25 @@ public sealed class IdleShutdownService : BackgroundService
 
                 var registry = scope.ServiceProvider.GetRequiredService<IContainerRegistry>();
                 var registeredContainers = await registry.ListAllAsync(stoppingToken);
+                // Build membership set from two sources:
+                // 1. RuntimeContainerId: the container id known to the registry
+                // 2. ContainerInfo.RegisteredRuntimeId: docker label path (already set by registration)
                 var managedIds = new HashSet<string>(
                     registeredContainers
                         .Where(r => r.RuntimeContainerId is not null)
                         .Select(r => r.RuntimeContainerId!)
                 );
 
-                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running && managedIds.Contains(c.Id)))
+                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running))
                 {
+                    // Accept membership via RuntimeContainerId OR via the docker-label path
+                    // (ContainerInfo.RegisteredRuntimeId) which is set during container registration.
+                    bool isManaged = managedIds.Contains(container.Id)
+                        || !string.IsNullOrEmpty(container.RegisteredRuntimeId);
+
+                    if (!isManaged)
+                        continue;
+
                     if (container.Uptime > 0 && TimeSpan.FromSeconds(container.Uptime) > idleThreshold)
                     {
                         logStore.Enqueue(LogLevel.Info, "IdleShutdown",

@@ -41,7 +41,7 @@ public sealed class SettingsController : ControllerBase
             PriorityMode = request.PriorityMode ?? current.PriorityMode,
             BatchDrain = request.BatchDrain ?? current.BatchDrain,
             LazyStop = request.LazyStop ?? current.LazyStop,
-            MaxQueueDepth = request.MaxQueueDepth ?? current.MaxQueueDepth
+            MaxQueueDepth = Math.Clamp(request.MaxQueueDepth ?? current.MaxQueueDepth, 1, 10000)
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

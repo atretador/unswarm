@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Benchmarks;
 using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Core.Services;
@@ -28,6 +29,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly TimeSpan _remoteHealthTimeout;
     private readonly TimeSpan _remoteHealthPollInterval;
     private readonly HostScriptRuntimeController? _scriptController;
+    private readonly AutoBenchmarkService? _autoBenchmark;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -39,7 +41,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         ILogger<ContainerRegistrationService> logger,
         TimeSpan? remoteHealthTimeout = null,
         TimeSpan? remoteHealthPollInterval = null,
-        HostScriptRuntimeController? scriptController = null)
+        HostScriptRuntimeController? scriptController = null,
+        AutoBenchmarkService? autoBenchmark = null)
     {
         _registry = registry;
         _router = router;
@@ -51,6 +54,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _remoteHealthTimeout = remoteHealthTimeout ?? DefaultRemoteHealthTimeout;
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
         _scriptController = scriptController;
+        _autoBenchmark = autoBenchmark;
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -722,11 +726,46 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         _logger.LogInformation("Container {Id} ready with {Count} discovered models", container.Id, models.Count);
 
+        KickOffAutoBenchmarks(models);
+
         return new RegisteredRuntimeWithModels
         {
             Container = container,
             DiscoveredModels = models
         };
+    }
+
+    /// <summary>
+    /// Fire-and-forget sequential auto-benchmark of the models that were just
+    /// registered. Deliberately NOT awaited: registration must never block on (or
+    /// fail because of) benchmarking, and the runner is fully self-contained — every
+    /// exception is caught and logged inside the background task. Models are run one
+    /// at a time so a multi-model runtime cannot flood the scheduler queue.
+    /// </summary>
+    private void KickOffAutoBenchmarks(IReadOnlyList<ModelDefinition> models)
+    {
+        if (_autoBenchmark is null || models.Count == 0)
+            return;
+
+        var pending = models.ToList();
+        _ = Task.Run(async () =>
+        {
+            foreach (var model in pending)
+            {
+                try
+                {
+                    _logger.LogInformation("Auto-benchmark starting for model {ModelId}", model.Id);
+                    await _autoBenchmark.RunDefaultBenchmarkAsync(model, CancellationToken.None).ConfigureAwait(false);
+                    _logger.LogInformation("Auto-benchmark finished for model {ModelId}", model.Id);
+                }
+                catch (Exception ex)
+                {
+                    // RunDefaultBenchmarkAsync already contains its failures; this is a
+                    // final backstop so nothing ever escapes into the thread pool.
+                    _logger.LogWarning(ex, "Auto-benchmark crashed for model {ModelId}", model.Id);
+                }
+            }
+        });
     }
 
     private async Task<ModelDefinition> CreateModelFromDiscoveredAsync(

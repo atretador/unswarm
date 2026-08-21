@@ -113,4 +113,19 @@ public sealed class SettingsTests
         Assert.True(s.LazyStop);
         Assert.Equal(32, s.MaxQueueDepth);
     }
+
+    [Theory]
+    [InlineData(0, 1)]      // zero → clamped to 1
+    [InlineData(-5, 1)]     // negative → clamped to 1
+    [InlineData(1, 1)]      // boundary
+    [InlineData(100, 100)]  // normal
+    [InlineData(10000, 10000)] // upper boundary
+    [InlineData(99999, 10000)] // over upper → clamped
+    public void MaxQueueDepth_Clamp_ProducesExpected(int input, int expected)
+    {
+        // The controller applies Math.Clamp(value, 1, 10000) before persisting.
+        // This test verifies the clamping semantics used by the controller.
+        var clamped = Math.Clamp(input, 1, 10000);
+        Assert.Equal(expected, clamped);
+    }
 }

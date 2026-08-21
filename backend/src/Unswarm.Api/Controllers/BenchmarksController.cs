@@ -1,10 +1,10 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Api.Controllers;
 
@@ -19,25 +19,9 @@ public sealed class BenchmarksController : ControllerBase
     private readonly IBenchmarkHistory _history;
     private readonly IPromptStore _prompts;
 
-    private const int MaxTokens = 256;
-
-    /// <summary>
-    /// A LONGER, realistic instruction prompt so benchmarks measure real generation
-    /// work, not a one-word smoke reply.
-    /// </summary>
-    private const string DefaultBenchmarkPrompt =
-        "Write a detailed summary of the following text, covering the main arguments, " +
-        "key supporting evidence, and any notable caveats. Keep the summary between " +
-        "150 and 250 words, use clear paragraph structure, and end with a one-sentence " +
-        "conclusion that states the overall significance of the text.\n\n" +
-        "The rapid adoption of large language models has transformed how software is built, " +
-        "from code generation to documentation. However, their deployment introduces new " +
-        "operational concerns, including latency, cost, and the need for careful evaluation " +
-        "against domain-specific benchmarks. Teams must balance model capability with " +
-        "practical infrastructure constraints such as GPU availability, memory footprint, " +
-        "and request concurrency. As models become more capable, the line between " +
-        "assistive tooling and autonomous agents blurs, raising questions about oversight " +
-        "and accountability in automated pipelines.";
+    // Shared built-in prompt + max-token cap live in BenchmarkDefaults (Core) so the
+    // automatic post-registration benchmark uses the exact same values.
+    private const int MaxTokens = BenchmarkDefaults.MaxTokens;
 
     public BenchmarksController(
         IModelRegistry registry,
@@ -94,12 +78,12 @@ public sealed class BenchmarksController : ControllerBase
             }
             else
             {
-                prompt = DefaultBenchmarkPrompt;
+                prompt = BenchmarkDefaults.DefaultBenchmarkPrompt;
                 // built-in const — no identity
             }
         }
 
-        var requestJson = BuildChatPayload(model.Id, prompt);
+        var requestJson = BenchmarkDefaults.BuildChatPayload(model.Id, prompt);
 
         var request = new InferenceRequest
         {
@@ -186,20 +170,6 @@ public sealed class BenchmarksController : ControllerBase
             items.Add(item);
         }
         return Ok(items);
-    }
-
-    private static string BuildChatPayload(string modelId, string prompt)
-    {
-        var payload = new
-        {
-            model = modelId,
-            messages = new[]
-            {
-                new { role = "user", content = prompt }
-            },
-            max_tokens = MaxTokens
-        };
-        return JsonSerializer.Serialize(payload);
     }
 }
 
