@@ -36,6 +36,9 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
     };
 });
 
+builder.Services.AddDataProtection();
+builder.Services.AddHttpContextAccessor();
+
 // ── Identity + Auth ────────────────────────────────────────────────────────
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
