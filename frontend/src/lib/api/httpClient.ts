@@ -8,6 +8,7 @@ import type {
   LogEntry,
   Model,
   Prompt,
+  PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -142,6 +143,13 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  stopRegisteredRuntime(id: string) {
+    return request<RegisteredRuntime>(
+      `/api/containers/registered/${encodeURIComponent(id)}/stop`,
+      { method: "POST" },
+    );
+  },
+
   deleteRuntime(id: string, deleteModels = false) {
     const qs = deleteModels ? "?deleteModels=true" : "";
     return request<void>(
@@ -192,6 +200,12 @@ export const httpClient: UnswarmClient = {
   listAgentScripts(agentName: string) {
     return request<AgentScriptStatus[]>(
       `/api/agents/${encodeURIComponent(agentName)}/scripts`,
+    );
+  },
+
+  listAvailableScripts(agentName: string) {
+    return request<AgentAvailableScript[]>(
+      `/api/agents/${encodeURIComponent(agentName)}/scripts/available`,
     );
   },
 
@@ -282,6 +296,23 @@ export const httpClient: UnswarmClient = {
     });
   },
 
+  listPromptVersions(promptId: string) {
+    return request<PromptVersion[]>(`/api/prompts/${encodeURIComponent(promptId)}/versions`);
+  },
+
+  getPromptVersion(promptId: string, version: number) {
+    return request<PromptVersion>(
+      `/api/prompts/${encodeURIComponent(promptId)}/versions/${version}`,
+    );
+  },
+
+  rollbackPrompt(promptId: string, version: number) {
+    return request<Prompt>(`/api/prompts/${encodeURIComponent(promptId)}/rollback`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    });
+  },
+
   // ── Settings ──────────────────────────────────────────────────
   getSettings() {
     return request<Settings>("/api/settings");
@@ -350,6 +381,13 @@ export const httpClient: UnswarmClient = {
   // ── API Keys ────────────────────────────────────────────────
   createApiKey(name: string) {
     return request<ApiKeyCreateResponse>("/api/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+
+  createAgentApiKey(name: string) {
+    return request<ApiKeyCreateResponse>("/api/api-keys/agent", {
       method: "POST",
       body: JSON.stringify({ name }),
     });

@@ -1,6 +1,7 @@
 export type {
   Agent,
   AgentContainerStatus,
+  AgentAvailableScript,
   BenchmarkResult,
   Container,
   ContainerRegistrationStatus,

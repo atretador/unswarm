@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentAvailableScript,
   ApiKeyCreateResponse,
   ApiKeyItem,
   AgentScriptStatus,
@@ -9,6 +10,7 @@ import type {
   LogEntry,
   Model,
   Prompt,
+  PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -253,6 +255,63 @@ const PROMPTS: Prompt[] = [
   },
 ];
 
+// ─── Prompt Version History Seed ─────────────────────────────────
+
+const PROMPT_VERSIONS: PromptVersion[] = [
+  // p1 (Concise summary) — 3 versions
+  {
+    id: "pv-p1-1",
+    promptId: "p1",
+    version: 1,
+    text: "Summarize the input in two sentences maximum.",
+    createdAt: new Date(Date.now() - 14 * 86400_000).toISOString(),
+  },
+  {
+    id: "pv-p1-2",
+    promptId: "p1",
+    version: 2,
+    text: "Summarize the input in two sentences maximum, focusing on the key technical points.",
+    createdAt: new Date(Date.now() - 7 * 86400_000).toISOString(),
+  },
+  {
+    id: "pv-p1-3",
+    promptId: "p1",
+    version: 3,
+    text: "Summarize the input in two sentences maximum, focusing on the key technical points. Use plain language without jargon.",
+    createdAt: NOW,
+  },
+  // p4 (Long-form writing) — 2 versions
+  {
+    id: "pv-p4-1",
+    promptId: "p4",
+    version: 1,
+    text: "Expand the following notes into a well-structured blog post. Aim for approximately 600 words.",
+    createdAt: new Date(Date.now() - 10 * 86400_000).toISOString(),
+  },
+  {
+    id: "pv-p4-2",
+    promptId: "p4",
+    version: 2,
+    text: "You are an experienced technical writer. Expand the following notes into a well-structured blog post with an introduction, three main sections, and a conclusion. Include practical tips, real-world examples, and potential pitfalls. Aim for approximately 800 words, maintain a professional but approachable tone, and ensure the content flows naturally from one section to the next.",
+    createdAt: NOW,
+  },
+  // p2 and p3 — only version 1 (currentVersion: 1)
+  {
+    id: "pv-p2-1",
+    promptId: "p2",
+    version: 1,
+    text: "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
+    createdAt: NOW,
+  },
+  {
+    id: "pv-p3-1",
+    promptId: "p3",
+    version: 1,
+    text: "Rewrite the following text in a more engaging, conversational tone while preserving all technical accuracy and the original structure. Use short sentences and active voice. Add one concrete example where it clarifies the point.",
+    createdAt: NOW,
+  },
+];
+
 // ─── API Keys Seed ────────────────────────────────────────────────
 // Inference keys authenticate to the /v1 proxy; agent keys authenticate to the
 // agent channel (/api/agents + /ws/agent). They are NOT login credentials.
@@ -488,6 +547,17 @@ const AGENTS: Agent[] = [
     ],
   },
 ];
+
+/** Available .sh files on each agent's scripts_dir (returned by listAvailableScripts). */
+const AGENT_AVAILABLE_SCRIPTS: Record<string, AgentAvailableScript[]> = {
+  "edge-node-1": [
+    { path: "/home/user/scripts/run_llama.sh", name: "run_llama.sh" },
+    { path: "/home/user/scripts/run_vllm.sh", name: "run_vllm.sh" },
+    { path: "/home/user/scripts/start_api.sh", name: "start_api.sh" },
+  ],
+  // "gpu-node-1" returns [] to exercise empty state
+  "gpu-node-1": [],
+};
 
 const QUEUE_SNAPSHOT: QueueSnapshot = {
   currentSlot: {
@@ -777,6 +847,8 @@ export const mockClient: UnswarmClient = {
       createdAt: new Date().toISOString(),
       lastDiscoveredAt: null,
       discoveredModels: [],
+      ...(data.runtimeKind ? { runtimeKind: data.runtimeKind } : {}),
+      ...(data.launcherPath ? { launcherPath: data.launcherPath } : {}),
     };
     registeredRuntimes.push(rc);
     return { ...rc, discoveredModels: [] };
@@ -834,6 +906,27 @@ export const mockClient: UnswarmClient = {
     };
   },
 
+  async stopRegisteredRuntime(runtimeId: string) {
+    await delay(rand(200, 500));
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
+    // For scripts, flip back to "registered" so the card shows Start again.
+    rc.status = "registered";
+    if (rc.runtimeContainerId) {
+      const runtime = containers.find((c) => c.id === rc.runtimeContainerId);
+      if (runtime) runtime.status = "stopped";
+      const agent = AGENTS.find((a) => a.name === rc.agent);
+      const telemetry = agent?.containers.find(
+        (t) => t.containerId === rc.runtimeContainerId,
+      );
+      if (telemetry) telemetry.status = "stopped";
+    }
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
   async deleteRuntime(runtimeId: string, deleteModels = false) {
     await delay(rand(60, 150));
     const idx = registeredRuntimes.findIndex((x) => x.id === runtimeId);
@@ -870,6 +963,10 @@ export const mockClient: UnswarmClient = {
     await delay(rand(80, 200));
     const agent = AGENTS.find((a) => a.name === agentName);
     return (agent?.scripts ?? []).map((s) => ({ ...s }));
+  },
+  async listAvailableScripts(agentName: string) {
+    await delay(rand(80, 200));
+    return (AGENT_AVAILABLE_SCRIPTS[agentName] ?? []).map((s) => ({ ...s }));
   },
   async runBenchmark(modelId: string, opts?: { promptId?: string }) {
     await delay(rand(200, 500));
@@ -1056,6 +1153,54 @@ export const mockClient: UnswarmClient = {
     return { ...prompt };
   },
 
+  async listPromptVersions(promptId: string) {
+    await delay(rand(60, 150));
+    const prompt = PROMPTS.find((p) => p.id === promptId);
+    if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    return PROMPT_VERSIONS
+      .filter((v) => v.promptId === promptId)
+      .sort((a, b) => b.version - a.version)
+      .map((v) => ({ ...v }));
+  },
+
+  async getPromptVersion(promptId: string, version: number) {
+    await delay(rand(60, 150));
+    const prompt = PROMPTS.find((p) => p.id === promptId);
+    if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    const v = PROMPT_VERSIONS.find(
+      (pv) => pv.promptId === promptId && pv.version === version,
+    );
+    if (!v) throw new Error(`Version ${version} not found for prompt ${promptId}`);
+    return { ...v };
+  },
+
+  async rollbackPrompt(promptId: string, version: number) {
+    await delay(rand(80, 200));
+    const prompt = PROMPTS.find((p) => p.id === promptId);
+    if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    const v = PROMPT_VERSIONS.find(
+      (pv) => pv.promptId === promptId && pv.version === version,
+    );
+    if (!v) throw new Error(`Version ${version} not found for prompt ${promptId}`);
+
+    // Restore text from the target version
+    prompt.text = v.text;
+    prompt.currentVersion = (prompt.currentVersion ?? 1) + 1;
+    prompt.updatedAt = new Date().toISOString();
+
+    // Create a new version record for the rollback (audit trail)
+    const newVersion: PromptVersion = {
+      id: `pv-${promptId}-${prompt.currentVersion}`,
+      promptId,
+      version: prompt.currentVersion,
+      text: v.text,
+      createdAt: new Date().toISOString(),
+    };
+    PROMPT_VERSIONS.push(newVersion);
+
+    return { ...prompt };
+  },
+
   // Settings
   async getSettings() {
     await delay(rand(50, 100));
@@ -1132,6 +1277,27 @@ export const mockClient: UnswarmClient = {
     }
     const scope: ApiKeyItem["scope"] = "inference";
     const secret = `sk_${randomSecret()}`;
+    const created: ApiKeyCreateResponse = {
+      id: id(),
+      name: name.trim(),
+      keyPrefix: secret.slice(0, 11),
+      scope,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      secret,
+    };
+    API_KEYS.push(created);
+    return { ...created };
+  },
+
+  async createAgentApiKey(name: string) {
+    await delay(rand(80, 180));
+    if (!name.trim()) {
+      throw new Error("Name is required.");
+    }
+    const scope: ApiKeyItem["scope"] = "agent";
+    const secret = `ak_${randomSecret()}`;
     const created: ApiKeyCreateResponse = {
       id: id(),
       name: name.trim(),

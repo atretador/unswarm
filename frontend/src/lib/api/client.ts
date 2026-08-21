@@ -8,6 +8,7 @@ import type {
   LogEntry,
   Model,
   Prompt,
+  PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -36,6 +37,8 @@ export interface UnswarmClient {
   rediscoverRuntime(id: string): Promise<RegisteredRuntime>;
   /** Start the runtime container backing a registered runtime. */
   startRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
+  /** Stop a registered runtime (script or container) by registration id. */
+  stopRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
   deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
 
   /** Update the concurrency list for a registered runtime (full replacement). */
@@ -85,6 +88,9 @@ export interface UnswarmClient {
   updatePrompt(id: string, input: { name: string; text: string }): Promise<Prompt>;
   deletePrompt(id: string): Promise<void>;
   setDefaultPrompt(id: string): Promise<Prompt>;
+  listPromptVersions(promptId: string): Promise<PromptVersion[]>;
+  getPromptVersion(promptId: string, version: number): Promise<PromptVersion>;
+  rollbackPrompt(promptId: string, version: number): Promise<Prompt>;
 
   // Settings
   getSettings(): Promise<Settings>;
@@ -105,6 +111,8 @@ export interface UnswarmClient {
   // API Keys — manage inference keys that authenticate to the /v1 proxy.
   // These are NOT login credentials.
   createApiKey(name: string): Promise<ApiKeyCreateResponse>;
+  /** Create an agent-scoped API key (authenticates to the agent channel). */
+  createAgentApiKey(name: string): Promise<ApiKeyCreateResponse>;
   listApiKeys(): Promise<ApiKeyItem[]>;
   getApiKey(id: string): Promise<ApiKeyItem>;
   revokeApiKey(id: string): Promise<void>;

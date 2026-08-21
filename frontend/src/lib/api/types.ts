@@ -139,6 +139,11 @@ export interface AgentScriptStatus {
   startTime: number; // unix ms
 }
 
+export interface AgentAvailableScript {
+  path: string;
+  name: string;
+}
+
 export interface Agent {
   name: string;
   connectionId: string | null;
@@ -248,6 +253,14 @@ export interface Prompt {
   currentVersion?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PromptVersion {
+  id: string;
+  promptId: string;
+  version: number;
+  text: string;
+  createdAt: string;
 }
 
 // ─── Users ────────────────────────────────────────────────────────

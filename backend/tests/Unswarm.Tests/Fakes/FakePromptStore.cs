@@ -84,4 +84,14 @@ public sealed class FakePromptStore : IPromptStore
         var entry = _prompts.Values.FirstOrDefault(p => p.IsDefault);
         return Task.FromResult(entry);
     }
+
+    public Task<IReadOnlyList<PromptVersion>> ListVersionsAsync(string promptId, CancellationToken ct = default)
+    {
+        return Task.FromResult<IReadOnlyList<PromptVersion>>([]);
+    }
+
+    public Task<PromptVersion?> GetVersionAsync(string promptId, int version, CancellationToken ct = default)
+    {
+        return Task.FromResult<PromptVersion?>(null);
+    }
 }

@@ -140,4 +140,34 @@ public sealed class PromptStore : IPromptStore
         var entity = await db.Prompts.FirstOrDefaultAsync(p => p.IsDefault, ct).ConfigureAwait(false);
         return entity is null ? null : Map(entity);
     }
+
+    public async Task<IReadOnlyList<PromptVersion>> ListVersionsAsync(string promptId, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entities = await db.PromptVersions
+            .Where(v => v.PromptId == promptId)
+            .ToListAsync(ct).ConfigureAwait(false);
+        return entities
+            .OrderByDescending(v => v.Version)
+            .Select(MapVersion)
+            .ToList();
+    }
+
+    public async Task<PromptVersion?> GetVersionAsync(string promptId, int version, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.PromptVersions
+            .FirstOrDefaultAsync(v => v.PromptId == promptId && v.Version == version, ct)
+            .ConfigureAwait(false);
+        return entity is null ? null : MapVersion(entity);
+    }
+
+    private static PromptVersion MapVersion(PromptVersionEntity e) => new()
+    {
+        Id = e.Id,
+        PromptId = e.PromptId,
+        Version = e.Version,
+        Text = e.Text,
+        CreatedAt = e.CreatedAt
+    };
 }

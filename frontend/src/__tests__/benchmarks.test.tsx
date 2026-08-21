@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
@@ -614,6 +614,183 @@ describe("Benchmarks", () => {
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Prompt library" })).not.toBeInTheDocument();
+    });
+  });
+
+  // ─── Prompt version history tests ───────────────────────────────
+
+  it("shows history button next to prompt version", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // History icon buttons should be present for each prompt
+    const historyButtons = within(dialog).getAllByRole("button", { name: /version history for/i });
+    expect(historyButtons.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("fetches and displays version list when history is opened", async () => {
+    const user = userEvent.setup();
+    const listVersionsSpy = vi.spyOn(mockClient, "listPromptVersions");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // Click the history button for "Concise summary" (p1)
+    await user.click(within(dialog).getByRole("button", { name: /version history for concise summary/i }));
+
+    await waitFor(() => {
+      expect(listVersionsSpy).toHaveBeenCalledWith("p1");
+    });
+
+    // Version list should appear — v3 appears both as left-panel badge and right-panel header
+    // so we check all occurrences exist; at minimum the version history panel has v3, v2, v1
+    await waitFor(() => {
+      expect(within(dialog).getAllByText("v3").length).toBeGreaterThanOrEqual(1);
+    });
+    expect(within(dialog).getAllByText("v2").length).toBeGreaterThanOrEqual(1);
+    expect(within(dialog).getAllByText("v1").length).toBeGreaterThanOrEqual(1);
+
+    // "Back to Editor" link should be visible
+    expect(within(dialog).getByText(/back to editor/i)).toBeInTheDocument();
+  });
+
+  it("shows text preview when view button is clicked", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "listPromptVersions");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // Open history for p1
+    await user.click(within(dialog).getByRole("button", { name: /version history for concise summary/i }));
+
+    // Wait for version history heading
+    await waitFor(() => {
+      expect(within(dialog).getByText("Version History", { exact: false })).toBeInTheDocument();
+    });
+
+    // Click the first view button (v3) to show its preview
+    const viewBtn = within(dialog).getByRole("button", { name: "View version 3" });
+    fireEvent.click(viewBtn);
+
+    // Preview area should show the v3 text (exact mock data for p1 v3)
+    await waitFor(() => {
+      expect(
+        within(dialog).getByText(/Use plain language without jargon/i),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("calls rollbackPrompt on confirm", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "listPromptVersions");
+    const rollbackSpy = vi.spyOn(mockClient, "rollbackPrompt");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: /manage prompts/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
+
+    // Open history for p1
+    await user.click(within(dialog).getByRole("button", { name: /version history for concise summary/i }));
+
+    // Wait for version history heading
+    await waitFor(() => {
+      expect(within(dialog).getByText("Version History", { exact: false })).toBeInTheDocument();
+    });
+
+    // Click rollback button for v1 (not current version — has rollback button)
+    const rollbackBtn = within(dialog).getByRole("button", { name: "Rollback to version 1" });
+    fireEvent.click(rollbackBtn);
+
+    // Confirmation dialog should appear — find the ConfirmDialog by its title text
+    await screen.findByText("Restore this version?");
+    expect(screen.getByText(/this will create a new version/i)).toBeInTheDocument();
+
+    // Confirm the rollback — find the primary "Restore" button
+    await user.click(screen.getByRole("button", { name: /restore/i }));
+
+    await waitFor(() => {
+      expect(rollbackSpy).toHaveBeenCalledWith("p1", 1);
+    });
+  });
+
+  // ─── Historic button tests ──────────────────────────────────────
+
+  it("renders history button on each benchmark row", async () => {
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    // Each benchmark row should have a "View historic results" button
+    const historyButtons = screen.getAllByRole("button", { name: /historic results/i });
+    expect(historyButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("opens model results modal when history button is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    // Click the first history button
+    const historyButtons = screen.getAllByRole("button", { name: /historic results/i });
+    await user.click(historyButtons[0]);
+
+    // ModelResultsModal should open with the correct model name
+    await waitFor(() => {
+      expect(screen.getByRole("dialog", { name: /benchmark results$/i })).toBeInTheDocument();
     });
   });
 });

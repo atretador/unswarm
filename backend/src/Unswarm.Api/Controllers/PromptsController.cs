@@ -72,4 +72,40 @@ public sealed class PromptsController : ControllerBase
         if (entry is null) return NotFound();
         return Ok(PromptResponse.From(entry));
     }
+
+    [HttpGet("{id}/versions")]
+    public async Task<IActionResult> ListVersions(string id, CancellationToken ct)
+    {
+        var entry = await _prompts.GetAsync(id, ct);
+        if (entry is null) return NotFound();
+
+        var versions = await _prompts.ListVersionsAsync(id, ct);
+        return Ok(versions.Select(PromptVersionResponse.From).ToList());
+    }
+
+    [HttpGet("{id}/versions/{version:int}")]
+    public async Task<IActionResult> GetVersion(string id, int version, CancellationToken ct)
+    {
+        var entry = await _prompts.GetAsync(id, ct);
+        if (entry is null) return NotFound();
+
+        var v = await _prompts.GetVersionAsync(id, version, ct);
+        if (v is null) return NotFound();
+        return Ok(PromptVersionResponse.From(v));
+    }
+
+    [HttpPost("{id}/rollback")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> Rollback(string id, [FromBody] PromptRollbackRequest request, CancellationToken ct)
+    {
+        var entry = await _prompts.GetAsync(id, ct);
+        if (entry is null) return NotFound();
+
+        var version = await _prompts.GetVersionAsync(id, request.Version, ct);
+        if (version is null) return NotFound(new { error = $"Version {request.Version} not found" });
+
+        var updated = await _prompts.UpdateAsync(id, entry.Name, version.Text, ct);
+        if (updated is null) return NotFound();
+        return Ok(PromptResponse.From(updated));
+    }
 }

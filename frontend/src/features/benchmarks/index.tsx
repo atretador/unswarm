@@ -5,9 +5,11 @@ import {
   Activity,
   AlertTriangle,
   BookOpen,
+  Eye,
   History,
   Play,
   Plus,
+  RotateCcw,
   Star,
   Trash2,
   X,
@@ -18,12 +20,13 @@ import {
   Card,
   Badge,
   Button,
+  ConfirmDialog,
   Skeleton,
   EmptyState,
   Select,
   Tooltip,
 } from "../../components/ui";
-import type { BenchmarkResult, Model, Prompt } from "../../lib/api/types";
+import type { BenchmarkResult, Model, Prompt, PromptVersion } from "../../lib/api/types";
 
 // ─── Formatting helpers ───────────────────────────────────────────
 
@@ -53,6 +56,22 @@ function formatTimestamp(iso: string): string {
   });
 }
 
+function formatRelativeTime(iso: string): string {
+  const now = Date.now();
+  const then = new Date(iso).getTime();
+  const diffMs = now - then;
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 /** Model statuses that are safe to benchmark — matches the fleet card semantics. */
 function benchmarkDisabledReason(model: Model | undefined): string | null {
   if (!model) return "No models available yet";
@@ -74,6 +93,10 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
   const [draftText, setDraftText] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [versions, setVersions] = useState<PromptVersion[]>([]);
+  const [selectedVersion, setSelectedVersion] = useState<PromptVersion | null>(null);
+  const [confirmRollbackVersion, setConfirmRollbackVersion] = useState<PromptVersion | null>(null);
   const saveRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -165,6 +188,33 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prompts"] }),
   });
 
+  const rollbackMutation = useMutation({
+    mutationFn: ({ promptId, version }: { promptId: string; version: number }) =>
+      client.rollbackPrompt(promptId, version),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["prompts"] });
+      setConfirmRollbackVersion(null);
+      setShowHistory(false);
+      setSelectedVersion(null);
+    },
+  });
+
+  // Fetch version history when history view is opened for a selected prompt
+  useEffect(() => {
+    if (!showHistory || !selectedId) {
+      setVersions([]);
+      setSelectedVersion(null);
+      return;
+    }
+    let cancelled = false;
+    client.listPromptVersions(selectedId).then((v) => {
+      if (!cancelled) setVersions(v);
+    }).catch(() => {
+      if (!cancelled) setVersions([]);
+    });
+    return () => { cancelled = true; };
+  }, [showHistory, selectedId]);
+
   const handleSelectPrompt = useCallback(
     (prompt: Prompt) => {
       setSelectedId(prompt.id);
@@ -172,6 +222,18 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
       setDraftText(prompt.text);
       setIsCreating(false);
       setConfirmDeleteId(null);
+      setShowHistory(false);
+      setSelectedVersion(null);
+    },
+    [],
+  );
+
+  const handleShowHistory = useCallback(
+    (e: React.MouseEvent, promptId: string) => {
+      e.stopPropagation();
+      setSelectedId(promptId);
+      setShowHistory(true);
+      setSelectedVersion(null);
     },
     [],
   );
@@ -275,6 +337,18 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                           <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-primary)]">default</span>
                         )}
                         <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{p.currentVersion ?? 1}</span>
+                        {p.id === selectedId && showHistory && (
+                          <span className="ml-1 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">history</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleShowHistory(e, p.id)}
+                        className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
+                        aria-label={`Version history for ${p.name}`}
+                        title="Version history"
+                      >
+                        <History className="size-3" />
                       </button>
                       <button
                         type="button"
@@ -334,13 +408,113 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
             </div>
           </div>
 
-          {/* Right: editor */}
+          {/* Right: editor or version history */}
           <div className="flex flex-1 min-h-0 flex-col p-5 gap-4 overflow-y-auto">
             {!selectedId && !isCreating ? (
               <div className="flex flex-1 items-center justify-center">
                 <p className="text-sm text-[var(--color-text-muted)]">Select a prompt to edit, or create a new one.</p>
               </div>
+            ) : showHistory ? (
+              /* ── Version history view ── */
+              <>
+                <div className="flex items-center justify-between">
+                  <h3 className="font-heading text-xs font-semibold text-[var(--color-text-heading)]">
+                    Version History — {draftName || "Untitled"}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => { setShowHistory(false); setSelectedVersion(null); }}
+                    className="text-[10px] font-medium text-[var(--color-primary)] hover:underline cursor-pointer"
+                  >
+                    ← Back to Editor
+                  </button>
+                </div>
+
+                {versions.length === 0 ? (
+                  <div className="flex flex-1 items-center justify-center">
+                    <p className="text-xs text-[var(--color-text-muted)]">No version history available.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Version list */}
+                    <div className="space-y-1">
+                      {versions.map((v) => {
+                        const isCurrent = v.version === (prompts?.find((p) => p.id === selectedId)?.currentVersion ?? 1);
+                        const isPreviewing = selectedVersion?.id === v.id;
+                        return (
+                          <div
+                            key={v.id}
+                            className={`flex items-center gap-2 rounded-[var(--radius-md)] px-3 py-2 text-xs transition-colors ${
+                              isPreviewing
+                                ? "bg-[var(--color-primary-soft)] ring-1 ring-[var(--color-primary)]"
+                                : "hover:bg-[var(--color-bg-muted)]"
+                            }`}
+                          >
+                            <span className="shrink-0 font-mono font-semibold text-[var(--color-text-heading)]">
+                              v{v.version}
+                            </span>
+                            {isCurrent && (
+                              <span className="shrink-0 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">
+                                current
+                              </span>
+                            )}
+                            <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
+                              {formatRelativeTime(v.createdAt)}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-[var(--color-text-muted)]">
+                              {v.text.length > 60 ? v.text.slice(0, 60) + "…" : v.text}
+                            </span>
+                            <div className="flex shrink-0 items-center gap-0.5">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedVersion(isPreviewing ? null : v)}
+                                className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-heading)] cursor-pointer"
+                                aria-label={`View version ${v.version}`}
+                                title="View this version"
+                              >
+                                <Eye className="size-3" />
+                              </button>
+                              {!isCurrent && (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmRollbackVersion(v)}
+                                  className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-status-error)] cursor-pointer"
+                                  aria-label={`Rollback to version ${v.version}`}
+                                  title="Restore this version"
+                                >
+                                  <RotateCcw className="size-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Preview area */}
+                    {selectedVersion && (
+                      <div className="flex flex-1 min-h-[120px] flex-col space-y-1.5">
+                        <label className="text-xs font-medium text-[var(--color-text-muted)]">
+                          v{selectedVersion.version} text
+                          {selectedVersion.version === (prompts?.find((p) => p.id === selectedId)?.currentVersion ?? 1) && (
+                            <span className="ml-1.5 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">
+                              ← current
+                            </span>
+                          )}
+                        </label>
+                        <div className="flex-1 min-h-[100px] w-full resize-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2.5 text-sm leading-relaxed text-[var(--color-text)] overflow-y-auto whitespace-pre-wrap">
+                          {selectedVersion.text}
+                        </div>
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          {selectedVersion.text.length} characters · {formatRelativeTime(selectedVersion.createdAt)}
+                        </span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
             ) : (
+              /* ── Normal editor view ── */
               <>
                 <div className="space-y-1.5">
                   <label htmlFor="prompt-name" className="text-xs font-medium text-[var(--color-text-muted)]">
@@ -401,13 +575,29 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmRollbackVersion !== null}
+        title="Restore this version?"
+        description="This will create a new version with the previous text."
+        confirmLabel="Restore"
+        cancelLabel="Cancel"
+        variant="primary"
+        loading={rollbackMutation.isPending}
+        onConfirm={() => {
+          if (confirmRollbackVersion && selectedId) {
+            rollbackMutation.mutate({ promptId: selectedId, version: confirmRollbackVersion.version });
+          }
+        }}
+        onCancel={() => setConfirmRollbackVersion(null)}
+      />
     </div>
   );
 }
 
 // ─── Benchmark row ────────────────────────────────────────────────
 
-function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: number }) {
+function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResult; index: number; onShowHistory?: (modelId: string, modelName: string) => void }) {
   const isError = result.status === "error";
 
   return (
@@ -465,8 +655,17 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
           </span>
         </div>
 
-        {/* Status */}
-        <div className="ml-auto shrink-0">
+        {/* Status + history */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onShowHistory?.(result.modelId, result.modelName)}
+            className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
+            aria-label={`Historic results for ${result.modelName}`}
+            title="View historic results"
+          >
+            <History className="size-3.5" />
+          </button>
           {isError ? (
             <Badge variant="error">error</Badge>
           ) : (
@@ -739,6 +938,7 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
 export default function Benchmarks() {
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [resultsModal, setResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
+  const [historyModal, setHistoryModal] = useState<{ modelId: string; modelName: string } | null>(null);
 
   const {
     data: results,
@@ -813,7 +1013,12 @@ export default function Benchmarks() {
       ) : (
         <Card padding="none">
           {results.map((r, i) => (
-            <BenchmarkRow key={r.id} result={r} index={i} />
+            <BenchmarkRow
+              key={r.id}
+              result={r}
+              index={i}
+              onShowHistory={(modelId, modelName) => setHistoryModal({ modelId, modelName })}
+            />
           ))}
         </Card>
       )}
@@ -827,6 +1032,12 @@ export default function Benchmarks() {
         modelName={resultsModal?.modelName ?? ""}
         open={resultsModal !== null}
         onClose={() => setResultsModal(null)}
+      />
+      <ModelResultsModal
+        modelId={historyModal?.modelId ?? ""}
+        modelName={historyModal?.modelName ?? ""}
+        open={historyModal !== null}
+        onClose={() => setHistoryModal(null)}
       />
     </div>
   );
