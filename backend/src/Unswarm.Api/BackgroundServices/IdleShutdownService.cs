@@ -47,7 +47,15 @@ public sealed class IdleShutdownService : BackgroundService
                 var containers = await docker.ListContainersAsync(stoppingToken);
                 var idleThreshold = TimeSpan.FromSeconds(settings.IdleTimeout);
 
-                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running))
+                var registry = scope.ServiceProvider.GetRequiredService<IContainerRegistry>();
+                var registeredContainers = await registry.ListAllAsync(stoppingToken);
+                var managedIds = new HashSet<string>(
+                    registeredContainers
+                        .Where(r => r.RuntimeContainerId is not null)
+                        .Select(r => r.RuntimeContainerId!)
+                );
+
+                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running && managedIds.Contains(c.Id)))
                 {
                     if (container.Uptime > 0 && TimeSpan.FromSeconds(container.Uptime) > idleThreshold)
                     {
@@ -70,9 +78,8 @@ public sealed class IdleShutdownService : BackgroundService
                 try
                 {
                     var scriptController = scope.ServiceProvider.GetService<HostScriptRuntimeController>();
-                    var registry = scope.ServiceProvider.GetService<IContainerRegistry>();
 
-                    if (scriptController is not null && registry is not null)
+                    if (scriptController is not null)
                     {
                         var allRuntimes = await registry.ListAllAsync(stoppingToken);
                         foreach (var runtime in allRuntimes.Where(r => r.RuntimeKind == RuntimeKind.Script && r.RuntimeProcessId.HasValue))

@@ -9,6 +9,9 @@ export interface BenchmarkResult {
   modelId: string;
   modelName: string;
   prompt: string;
+  promptId?: string | null;
+  promptName?: string | null;
+  promptVersion?: number | null;
   tokensPerSec: number;
   latencyMs: number;
   tokensGenerated: number;
@@ -28,6 +31,8 @@ export interface LastBenchmarkResult {
   timestamp: string;
   /** Tokens generated in the run. Optional — not part of the backend wire contract. */
   tokensGenerated?: number;
+  promptName?: string | null;
+  promptVersion?: number | null;
 }
 
 export interface Model {
@@ -234,6 +239,8 @@ export interface Prompt {
   id: string;
   name: string;
   text: string;
+  isDefault?: boolean;
+  currentVersion?: number;
   createdAt: string;
   updatedAt: string;
 }

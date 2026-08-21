@@ -185,18 +185,19 @@ export const httpClient: UnswarmClient = {
     );
   },
 
-  runBenchmark(modelId: string, prompt?: string) {
+  runBenchmark(modelId: string, opts?: { promptId?: string }) {
     return request<BenchmarkResult>(
       `/api/benchmarks?modelId=${encodeURIComponent(modelId)}`,
       {
         method: "POST",
-        body: JSON.stringify(prompt ? { prompt } : {}),
+        body: JSON.stringify(opts?.promptId ? { promptId: opts.promptId } : {}),
       },
     );
   },
 
-  listBenchmarks() {
-    return request<BenchmarkResult[]>("/api/benchmarks");
+  listBenchmarks(modelId?: string) {
+    const qs = modelId ? `?modelId=${encodeURIComponent(modelId)}` : "";
+    return request<BenchmarkResult[]>(`/api/benchmarks${qs}`);
   },
 
   // ── Agents ────────────────────────────────────────────────────

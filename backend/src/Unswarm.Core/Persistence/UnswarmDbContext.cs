@@ -35,6 +35,9 @@ public sealed class BenchmarkHistoryEntity
     public long TokensGenerated { get; set; }
     public string Status { get; set; } = "completed";
     public string? ErrorMessage { get; set; }
+    public string? PromptId { get; set; }
+    public string? PromptName { get; set; }
+    public int? PromptVersion { get; set; }
 }
 
 public sealed class LogEntity
@@ -119,8 +122,21 @@ public sealed class PromptEntity
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Text { get; set; } = string.Empty;
+    public bool IsDefault { get; set; }
+    public int CurrentVersion { get; set; } = 1;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class PromptVersionEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public string PromptId { get; set; } = string.Empty;
+    public int Version { get; set; }
+    public string Text { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
+
+    public PromptEntity Prompt { get; set; } = null!;
 }
 
 public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
@@ -132,6 +148,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<RegisteredRuntimeEntity> RegisteredRuntimes => Set<RegisteredRuntimeEntity>();
     public DbSet<ContainerModelMappingEntity> ContainerModelMappings => Set<ContainerModelMappingEntity>();
     public DbSet<PromptEntity> Prompts => Set<PromptEntity>();
+    public DbSet<PromptVersionEntity> PromptVersions => Set<PromptVersionEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -210,6 +227,17 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(p => p.Id);
             e.Property(p => p.Name).IsRequired();
             e.Property(p => p.Text).IsRequired();
+        });
+
+        modelBuilder.Entity<PromptVersionEntity>(e =>
+        {
+            e.HasKey(pv => pv.Id);
+            e.HasIndex(pv => new { pv.PromptId, pv.Version }).IsUnique();
+            e.HasOne(pv => pv.Prompt)
+             .WithMany()
+             .HasForeignKey(pv => pv.PromptId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.Property(pv => pv.Text).IsRequired();
         });
     }
 }

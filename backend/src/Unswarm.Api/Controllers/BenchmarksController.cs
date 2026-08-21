@@ -17,6 +17,7 @@ public sealed class BenchmarksController : ControllerBase
     private readonly ISchedulerQueue _scheduler;
     private readonly IClock _clock;
     private readonly IBenchmarkHistory _history;
+    private readonly IPromptStore _prompts;
 
     private const int MaxTokens = 256;
 
@@ -42,12 +43,14 @@ public sealed class BenchmarksController : ControllerBase
         IModelRegistry registry,
         ISchedulerQueue scheduler,
         IClock clock,
-        IBenchmarkHistory history)
+        IBenchmarkHistory history,
+        IPromptStore prompts)
     {
         _registry = registry;
         _scheduler = scheduler;
         _clock = clock;
         _history = history;
+        _prompts = prompts;
     }
 
     [Authorize(Roles = "Admin")]
@@ -57,7 +60,45 @@ public sealed class BenchmarksController : ControllerBase
         var model = await _registry.GetAsync(modelId, ct);
         if (model is null) return NotFound(new { error = $"Model {modelId} not found" });
 
-        var prompt = string.IsNullOrWhiteSpace(body?.Prompt) ? DefaultBenchmarkPrompt : body!.Prompt!.Trim();
+        // Prompt resolution: PromptId → explicit Prompt text → store default → built-in const.
+        // Identity is captured for benchmark-history attribution.
+        string prompt;
+        string? promptId = null;
+        string? promptName = null;
+        int? promptVersion = null;
+
+        if (!string.IsNullOrWhiteSpace(body?.PromptId))
+        {
+            var promptEntry = await _prompts.GetAsync(body!.PromptId!.Trim(), ct);
+            if (promptEntry is null)
+                return BadRequest(new { error = $"Prompt {body.PromptId} not found" });
+            prompt = promptEntry.Text;
+            promptId = promptEntry.Id;
+            promptName = promptEntry.Name;
+            promptVersion = promptEntry.CurrentVersion;
+        }
+        else if (!string.IsNullOrWhiteSpace(body?.Prompt))
+        {
+            prompt = body!.Prompt!.Trim();
+            // ad-hoc text prompt — no identity
+        }
+        else
+        {
+            var defaultEntry = await _prompts.GetDefaultAsync(ct);
+            if (defaultEntry is not null && !string.IsNullOrWhiteSpace(defaultEntry.Text))
+            {
+                prompt = defaultEntry.Text;
+                promptId = defaultEntry.Id;
+                promptName = defaultEntry.Name;
+                promptVersion = defaultEntry.CurrentVersion;
+            }
+            else
+            {
+                prompt = DefaultBenchmarkPrompt;
+                // built-in const — no identity
+            }
+        }
+
         var requestJson = BuildChatPayload(model.Id, prompt);
 
         var request = new InferenceRequest
@@ -94,7 +135,10 @@ public sealed class BenchmarksController : ControllerBase
                 tokensGenerated: 0,
                 status: "error",
                 errorMessage: ex.Message,
-                ct).ConfigureAwait(false);
+                ct,
+                promptId,
+                promptName,
+                promptVersion).ConfigureAwait(false);
 
             var failedResponse = BenchmarkResponse.FromEntry(failedEntry);
             failedResponse.ModelName = model.Name;
@@ -117,7 +161,10 @@ public sealed class BenchmarksController : ControllerBase
             tokensGenerated,
             status: "completed",
             errorMessage: null,
-            ct).ConfigureAwait(false);
+            ct,
+            promptId,
+            promptName,
+            promptVersion).ConfigureAwait(false);
 
         var responseItem = BenchmarkResponse.FromEntry(entry);
         responseItem.ModelName = model.Name;
@@ -125,9 +172,9 @@ public sealed class BenchmarksController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] string? modelId, CancellationToken ct)
     {
-        var entries = await _history.ListAsync(50, ct).ConfigureAwait(false);
+        var entries = await _history.ListAsync(50, modelId, ct).ConfigureAwait(false);
         var items = new List<BenchmarkResponse>(entries.Count);
         foreach (var entry in entries)
         {
@@ -157,4 +204,5 @@ public sealed class BenchmarksController : ControllerBase
 public sealed class BenchmarkRunRequest
 {
     public string? Prompt { get; set; }
+    public string? PromptId { get; set; }
 }

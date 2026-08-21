@@ -7,6 +7,8 @@ public sealed class PromptResponse
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string Text { get; set; } = "";
+    public bool IsDefault { get; set; }
+    public int CurrentVersion { get; set; } = 1;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -15,6 +17,8 @@ public sealed class PromptResponse
         Id = e.Id,
         Name = e.Name,
         Text = e.Text,
+        IsDefault = e.IsDefault,
+        CurrentVersion = e.CurrentVersion,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

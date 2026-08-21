@@ -24,7 +24,10 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
         long tokensGenerated,
         string status,
         string? errorMessage,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? promptId = null,
+        string? promptName = null,
+        int? promptVersion = null)
     {
         await using var db = _dbFactory();
         var entity = new BenchmarkHistoryEntity
@@ -37,19 +40,25 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
             Prompt = prompt,
             TokensGenerated = tokensGenerated,
             Status = string.IsNullOrWhiteSpace(status) ? "completed" : status,
-            ErrorMessage = errorMessage
+            ErrorMessage = errorMessage,
+            PromptId = promptId,
+            PromptName = promptName,
+            PromptVersion = promptVersion
         };
         db.Benchmarks.Add(entity);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return Map(entity);
     }
 
-    public async Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, CancellationToken ct = default)
+    public async Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, string? modelId = null, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
         if (maxCount <= 0) maxCount = 50;
         // SQLite cannot ORDER BY DateTimeOffset server-side, so materialize then sort.
-        var entities = await db.Benchmarks
+        var query = db.Benchmarks.AsQueryable();
+        if (!string.IsNullOrEmpty(modelId))
+            query = query.Where(b => b.ModelId == modelId);
+        var entities = await query
             .Take(1000)
             .ToListAsync(ct).ConfigureAwait(false);
         return entities
@@ -81,6 +90,9 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
         Prompt = e.Prompt,
         TokensGenerated = e.TokensGenerated,
         Status = e.Status,
-        ErrorMessage = e.ErrorMessage
+        ErrorMessage = e.ErrorMessage,
+        PromptId = e.PromptId,
+        PromptName = e.PromptName,
+        PromptVersion = e.PromptVersion
     };
 }

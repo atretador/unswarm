@@ -173,6 +173,10 @@ public sealed class DockerController : IDockerController
                 WaitBeforeKillSeconds = 10
             }, ct).ConfigureAwait(false);
         }
+        catch (DockerContainerNotFoundException)
+        {
+            _logger.LogWarning("Container {IdOrModel} not found (already removed)", idOrModel);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to stop container {IdOrModel}", idOrModel);
@@ -320,6 +324,10 @@ public sealed class DockerController : IDockerController
             {
                 Force = true
             }, ct).ConfigureAwait(false);
+        }
+        catch (DockerContainerNotFoundException)
+        {
+            _logger.LogDebug("Container {Id} not found during removal (already removed)", id);
         }
         catch (Exception ex)
         {

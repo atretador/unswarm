@@ -29,6 +29,7 @@ public sealed class InferenceProxyRemoteTests
             _host,
             _healthChecker,
             new LoggerFactory().CreateLogger<InferenceProxy>(),
+            NullServiceProvider.Instance,
             _containerRegistry,
             _router);
 

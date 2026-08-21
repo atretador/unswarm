@@ -12,6 +12,9 @@ public sealed record BenchmarkHistoryEntry
     public long TokensGenerated { get; init; }
     public string Status { get; init; } = "completed";
     public string? ErrorMessage { get; init; }
+    public string? PromptId { get; init; }
+    public string? PromptName { get; init; }
+    public int? PromptVersion { get; init; }
 }
 
 /// <summary>
@@ -27,9 +30,12 @@ public interface IBenchmarkHistory
         long tokensGenerated,
         string status,
         string? errorMessage,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? promptId = null,
+        string? promptName = null,
+        int? promptVersion = null);
 
-    Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, CancellationToken ct = default);
+    Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, string? modelId = null, CancellationToken ct = default);
 
     Task<BenchmarkHistoryEntry?> GetLatestForModelAsync(string modelId, CancellationToken ct = default);
 }

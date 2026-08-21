@@ -1,14 +1,14 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { motion, AnimatePresence } from "motion/react";
+import { motion } from "motion/react";
 import {
   Activity,
   AlertTriangle,
   BookOpen,
-  ChevronDown,
-  ChevronRight,
+  History,
   Play,
   Plus,
+  Star,
   Trash2,
   X,
   Zap,
@@ -149,6 +149,11 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     },
   });
 
+  const setDefaultMutation = useMutation({
+    mutationFn: (id: string) => client.setDefaultPrompt(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prompts"] }),
+  });
+
   const handleSelectPrompt = useCallback(
     (prompt: Prompt) => {
       setSelectedId(prompt.id);
@@ -198,7 +203,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
       aria-label="Prompt library"
     >
       <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-4xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh]">
+      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-4xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh] min-h-[420px] sm:min-h-[480px]">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-5 py-4">
           <h2 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">Prompt Library</h2>
@@ -255,6 +260,29 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                         }`}
                       >
                         {p.name}
+                        {p.isDefault && (
+                          <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-primary)]">default</span>
+                        )}
+                        <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{p.currentVersion ?? 1}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (!p.isDefault) {
+                            setDefaultMutation.mutate(p.id);
+                          }
+                        }}
+                        disabled={setDefaultMutation.isPending}
+                        className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] cursor-pointer"
+                        aria-label={p.isDefault ? "Default benchmark prompt" : `Set ${p.name} as default benchmark prompt`}
+                        title={p.isDefault ? "Default benchmark prompt" : `Set ${p.name} as default benchmark prompt`}
+                      >
+                        <Star
+                          className="size-3"
+                          fill={p.isDefault ? "var(--color-primary)" : "none"}
+                          stroke={p.isDefault ? "var(--color-primary)" : "currentColor"}
+                        />
                       </button>
                       {isConfirmingDelete ? (
                         <div className="flex shrink-0 items-center gap-0.5">
@@ -369,7 +397,6 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
 // ─── Benchmark row ────────────────────────────────────────────────
 
 function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: number }) {
-  const [expanded, setExpanded] = useState(false);
   const isError = result.status === "error";
 
   return (
@@ -380,33 +407,19 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
       transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
     >
       <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onClick={() => setExpanded((p) => !p)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded((p) => !p);
-          }
-        }}
-        className="flex cursor-pointer flex-wrap items-center gap-x-4 gap-y-3 border-b border-[var(--color-border-subtle)] px-4 py-3.5 transition-colors last:border-0 hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+        className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-[var(--color-border-subtle)] px-4 py-3.5 transition-colors last:border-0 hover:bg-[var(--color-bg-muted)]"
       >
-        {/* Model + timestamp */}
+        {/* Model + timestamp + prompt info */}
         <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
-          <span className="text-[var(--color-text-muted)]">
-            {expanded ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
-          </span>
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
               {result.modelName}
             </p>
             <p className="text-[10px] text-[var(--color-text-muted)]">
               {formatTimestamp(result.timestamp)}
+            </p>
+            <p className="truncate text-[10px] text-[var(--color-text-muted)]">
+              {result.promptName ?? "Built-in prompt"}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
             </p>
           </div>
         </div>
@@ -435,39 +448,145 @@ function BenchmarkRow({ result, index }: { result: BenchmarkResult; index: numbe
         </div>
       </div>
 
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="space-y-2.5 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-4 py-3">
-              <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-                Prompt
-              </p>
-              <p className="text-xs leading-relaxed text-[var(--color-text)]">
-                {result.prompt || "—"}
-              </p>
-              {isError && result.errorMessage && (
-                <div className="flex items-start gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1.5 text-[10px] text-[var(--color-status-error)]">
-                  <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-                  <span className="leading-relaxed">{result.errorMessage}</span>
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Inline error strip */}
+      {isError && result.errorMessage && (
+        <div className="flex items-start gap-1.5 border-b border-[var(--color-border-subtle)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-4 py-2 text-[10px] text-[var(--color-status-error)]">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          <span className="leading-relaxed">{result.errorMessage}</span>
+        </div>
+      )}
     </motion.div>
+  );
+}
+
+// ─── Model results modal ──────────────────────────────────────────
+
+function ModelResultsModal({
+  modelId,
+  modelName,
+  open,
+  onClose,
+}: {
+  modelId: string;
+  modelName: string;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    closeRef.current?.focus();
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open, onClose]);
+
+  const { data: results, isLoading } = useQuery({
+    queryKey: ["benchmarks", modelId],
+    queryFn: () => client.listBenchmarks(modelId),
+    enabled: open,
+  });
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${modelName} benchmark results`}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-3xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh] min-h-[360px] sm:min-h-[420px]">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-5 py-4">
+          <h2 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">
+            {modelName} — benchmark results
+          </h2>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="space-y-1 p-3">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-9 w-full rounded-[var(--radius-lg)]" />
+              ))}
+            </div>
+          ) : !results || results.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center p-8">
+              <EmptyState title="No benchmark runs for this model yet" />
+            </div>
+          ) : (
+            <div>
+              {results.map((r) => {
+                const isError = r.status === "error";
+                return (
+                  <div
+                    key={r.id}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border-subtle)] px-4 py-3 last:border-0"
+                  >
+                    {/* Prompt name + version */}
+                    <div className="min-w-0 flex-1 basis-40 truncate">
+                      <span className="text-xs font-medium text-[var(--color-text-heading)]">
+                        {r.promptName ?? "Built-in prompt"}
+                      </span>
+                      {r.promptVersion != null && (
+                        <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{r.promptVersion}</span>
+                      )}
+                    </div>
+
+                    {/* Metrics */}
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="flex items-center gap-1 font-mono text-xs text-[var(--color-text-heading)]">
+                        <Zap className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+                        {formatTokensPerSec(r.tokensPerSec)}
+                      </span>
+                      <span className="font-mono text-xs text-[var(--color-text-muted)]">
+                        {r.latencyMs > 0 ? `${r.latencyMs}ms` : "—"}
+                      </span>
+                      <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                        {r.tokensGenerated > 0 ? `${r.tokensGenerated} tok` : "n/a"}
+                      </span>
+                    </div>
+
+                    {/* Status + timestamp */}
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                      {isError ? (
+                        <Badge variant="error">error</Badge>
+                      ) : (
+                        <Badge variant="success">completed</Badge>
+                      )}
+                      <span className="text-[10px] text-[var(--color-text-muted)]">
+                        {formatTimestamp(r.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
 // ─── Run benchmark control ────────────────────────────────────────
 
-function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
+function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: () => void; onShowResults: (modelId: string, modelName: string) => void }) {
   const queryClient = useQueryClient();
   const [modelId, setModelId] = useState("");
   const [selectedPromptId, setSelectedPromptId] = useState("");
@@ -483,8 +602,8 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
   });
 
   const runMutation = useMutation({
-    mutationFn: ({ modelId, prompt }: { modelId: string; prompt?: string }) =>
-      client.runBenchmark(modelId, prompt),
+    mutationFn: ({ modelId, promptId }: { modelId: string; promptId?: string }) =>
+      client.runBenchmark(modelId, promptId ? { promptId } : undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["benchmarks"] });
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -503,8 +622,9 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
     label: p.name,
   }));
 
+  const defaultPrompt = (prompts ?? []).find((p) => p.isDefault);
+
   const selected = (models ?? []).find((m) => m.id === modelId);
-  const selectedPrompt = (prompts ?? []).find((p) => p.id === selectedPromptId);
   const disabledReason = benchmarkDisabledReason(selected ?? undefined);
   const canRun = !!selected && selected.status === "ready";
 
@@ -512,7 +632,7 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
     if (!canRun || runMutation.isPending) return;
     runMutation.mutate({
       modelId,
-      prompt: selectedPrompt?.text || undefined,
+      promptId: selectedPromptId || undefined,
     });
   };
 
@@ -537,7 +657,7 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
           value={selectedPromptId}
           onChange={(e) => setSelectedPromptId(e.target.value)}
           options={[
-            { value: "", label: "Default prompt" },
+            { value: "", label: defaultPrompt ? `Default prompt (${defaultPrompt.name})` : "Default prompt" },
             ...promptOptions,
           ]}
         />
@@ -550,6 +670,20 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
       >
         <BookOpen className="size-3.5" />
         Manage prompts
+      </Button>
+      <Button
+        variant="secondary"
+        size="md"
+        disabled={!modelId}
+        onClick={() => {
+          if (modelId && selected) {
+            onShowResults(modelId, selected.name);
+          }
+        }}
+        className="lg:self-end"
+      >
+        <History className="size-3.5" />
+        Results
       </Button>
       <Tooltip content={disabledReason ?? "Run a benchmark against the selected model"}>
         <span className="inline-flex sm:shrink-0">
@@ -577,6 +711,7 @@ function RunBenchmarkBar({ onManagePrompts }: { onManagePrompts: () => void }) {
 
 export default function Benchmarks() {
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const [resultsModal, setResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
 
   const {
     data: results,
@@ -635,7 +770,10 @@ export default function Benchmarks() {
         </p>
       </div>
 
-      <RunBenchmarkBar onManagePrompts={() => setShowPromptLibrary(true)} />
+      <RunBenchmarkBar
+        onManagePrompts={() => setShowPromptLibrary(true)}
+        onShowResults={(modelId, modelName) => setResultsModal({ modelId, modelName })}
+      />
 
       {!results || results.length === 0 ? (
         <Card padding="none">
@@ -656,6 +794,12 @@ export default function Benchmarks() {
       <PromptLibraryModal
         open={showPromptLibrary}
         onClose={() => setShowPromptLibrary(false)}
+      />
+      <ModelResultsModal
+        modelId={resultsModal?.modelId ?? ""}
+        modelName={resultsModal?.modelName ?? ""}
+        open={resultsModal !== null}
+        onClose={() => setResultsModal(null)}
       />
     </div>
   );

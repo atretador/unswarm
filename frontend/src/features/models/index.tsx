@@ -156,6 +156,11 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
                 value={formatRelativeTime(bench.timestamp)}
                 title={`Last run ${new Date(bench.timestamp).toLocaleString()}`}
               />
+              {bench.promptName && (
+                <span className="truncate text-[10px] text-[var(--color-text-muted)]">
+                  {bench.promptName}{bench.promptVersion != null ? ` v${bench.promptVersion}` : ""}
+                </span>
+              )}
             </div>
           ) : (
             <p className="text-xs text-[var(--color-text-muted)]">Not benchmarked yet</p>

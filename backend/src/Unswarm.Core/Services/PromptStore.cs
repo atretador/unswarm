@@ -45,10 +45,22 @@ public sealed class PromptStore : IPromptStore
             Id = Guid.NewGuid().ToString("N"),
             Name = name,
             Text = text,
+            CurrentVersion = 1,
             CreatedAt = now,
             UpdatedAt = now
         };
         db.Prompts.Add(entity);
+
+        var versionEntity = new PromptVersionEntity
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            PromptId = entity.Id,
+            Version = 1,
+            Text = text,
+            CreatedAt = now
+        };
+        db.PromptVersions.Add(versionEntity);
+
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return Map(entity);
     }
@@ -61,8 +73,24 @@ public sealed class PromptStore : IPromptStore
             return null;
 
         entity.Name = name;
+        var textChanged = !string.Equals(entity.Text, text, StringComparison.Ordinal);
         entity.Text = text;
         entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+        if (textChanged)
+        {
+            entity.CurrentVersion++;
+            var versionEntity = new PromptVersionEntity
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                PromptId = entity.Id,
+                Version = entity.CurrentVersion,
+                Text = text,
+                CreatedAt = entity.UpdatedAt
+            };
+            db.PromptVersions.Add(versionEntity);
+        }
+
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         return Map(entity);
     }
@@ -84,7 +112,32 @@ public sealed class PromptStore : IPromptStore
         Id = e.Id,
         Name = e.Name,
         Text = e.Text,
+        IsDefault = e.IsDefault,
+        CurrentVersion = e.CurrentVersion,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };
+
+    public async Task<PromptEntry?> SetDefaultAsync(string id, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.Prompts.FindAsync([id], ct).ConfigureAwait(false);
+        if (entity is null)
+            return null;
+
+        var all = await db.Prompts.ToListAsync(ct).ConfigureAwait(false);
+        foreach (var p in all)
+            p.IsDefault = false;
+
+        entity.IsDefault = true;
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        return Map(entity);
+    }
+
+    public async Task<PromptEntry?> GetDefaultAsync(CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.Prompts.FirstOrDefaultAsync(p => p.IsDefault, ct).ConfigureAwait(false);
+        return entity is null ? null : Map(entity);
+    }
 }

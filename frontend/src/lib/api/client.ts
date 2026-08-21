@@ -47,11 +47,11 @@ export interface UnswarmClient {
   /** Available launcher scripts on an agent (from agent's scripts_dir). */
   listAgentScripts(agentName: string): Promise<AgentScriptStatus[]>;
 
-  /** Run a benchmark against a model. Optional prompt overrides the default. */
-  runBenchmark(modelId: string, prompt?: string): Promise<BenchmarkResult>;
+  /** Run a benchmark against a model. Optional promptId resolves server-side. */
+  runBenchmark(modelId: string, opts?: { promptId?: string }): Promise<BenchmarkResult>;
 
-  /** Benchmark history, newest first (max 50). */
-  listBenchmarks(): Promise<BenchmarkResult[]>;
+  /** Benchmark history, newest first (max 50). Optional modelId filters. */
+  listBenchmarks(modelId?: string): Promise<BenchmarkResult[]>;
 
   // Agents
   listAgents(): Promise<Agent[]>;
@@ -78,6 +78,7 @@ export interface UnswarmClient {
   createPrompt(input: { name: string; text: string }): Promise<Prompt>;
   updatePrompt(id: string, input: { name: string; text: string }): Promise<Prompt>;
   deletePrompt(id: string): Promise<void>;
+  setDefaultPrompt(id: string): Promise<Prompt>;
 
   // Settings
   getSettings(): Promise<Settings>;

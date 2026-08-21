@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
@@ -180,7 +181,7 @@ public sealed class AgentsControllerTests
 
         var host = agents[0];
         Assert.Equal(Environment.MachineName, host.Hostname);
-        Assert.Equal(Environment.OSVersion.Platform.ToString(), host.OsPlatform);
+        Assert.Equal(RuntimeInformation.OSDescription, host.OsPlatform);
         Assert.Equal(Environment.ProcessorCount, host.CpuCores);
         Assert.True(host.IsConnected);
     }

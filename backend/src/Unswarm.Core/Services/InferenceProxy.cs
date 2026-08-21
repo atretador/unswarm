@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
@@ -11,18 +13,22 @@ public sealed class InferenceProxy : IInferenceProxy
     private readonly IHealthChecker _healthChecker;
     private readonly IContainerRegistry? _containerRegistry;
     private readonly ILogger<InferenceProxy> _logger;
+    private readonly IServiceProvider _serviceProvider;
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _startLocks = new(StringComparer.Ordinal);
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
 
     public InferenceProxy(
         IDockerController docker,
         IHealthChecker healthChecker,
         ILogger<InferenceProxy> logger,
+        IServiceProvider serviceProvider,
         IContainerRegistry? containerRegistry = null,
         IDockerControllerRouter? router = null)
     {
         _docker = docker;
         _healthChecker = healthChecker;
         _logger = logger;
+        _serviceProvider = serviceProvider;
         _containerRegistry = containerRegistry;
         _router = router ?? new HostOnlyDockerControllerRouter(docker);
     }
@@ -85,14 +91,106 @@ public sealed class InferenceProxy : IInferenceProxy
         // Legacy path for standalone models (no registration): match by model name.
         container ??= running.FirstOrDefault(c => c.ModelName == request.ModelName);
 
-        if (container?.Port is not { } port)
+        // If no running container found but a registered container exists, start it on demand
+        if (container?.Port is not { } port && registeredContainerId is not null && registered is not null)
+        {
+            // Skip on-demand start if the container is already starting/ready (race guard)
+            if (registered.Status != ContainerRegistrationStatus.Starting &&
+                registered.Status != ContainerRegistrationStatus.Ready)
+            {
+                var startLock = _startLocks.GetOrAdd(registeredContainerId, _ => new SemaphoreSlim(1, 1));
+                await startLock.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    // Double-check: another request may have started it while we waited
+                    containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+                    running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
+                    container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
+
+                    if (container?.Port is null)
+                    {
+                        // Stop any running managed containers that can't coexist with this one.
+                        if (_containerRegistry is not null)
+                        {
+                            var allRegistered = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+                            var requested = allRegistered.FirstOrDefault(r => r.Id == registeredContainerId);
+                            if (requested is not null)
+                            {
+                                var runningManaged = running.Where(c => c.RegisteredRuntimeId is not null && c.RegisteredRuntimeId != registeredContainerId).ToList();
+                                foreach (var rm in runningManaged)
+                                {
+                                    var otherRuntime = allRegistered.FirstOrDefault(r => r.Id == rm.RegisteredRuntimeId);
+                                    if (otherRuntime is null) continue;
+
+                                    // Check coexistence: can requested run along with other?
+                                    bool requestedAllowsOther = requested.CanRunAlongWith.Count == 0 ||
+                                        requested.CanRunAlongWith.Any(n =>
+                                            string.Equals(n, otherRuntime.Image, StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(n, otherRuntime.DisplayName, StringComparison.OrdinalIgnoreCase));
+                                    bool otherAllowsRequested = otherRuntime.CanRunAlongWith.Count == 0 ||
+                                        otherRuntime.CanRunAlongWith.Any(n =>
+                                            string.Equals(n, requested.Image, StringComparison.OrdinalIgnoreCase) ||
+                                            string.Equals(n, requested.DisplayName, StringComparison.OrdinalIgnoreCase));
+
+                                    // If either side doesn't list the other, they can't coexist
+                                    if (!requestedAllowsOther || !otherAllowsRequested)
+                                    {
+                                        _logger.LogInformation(
+                                            "Stopping incompatible container {Id} ({Image}) to make room for {Requested}",
+                                            rm.Id[..Math.Min(12, rm.Id.Length)], otherRuntime.Image, requested.Image);
+                                        try
+                                        {
+                                            await _docker.StopContainerAsync(rm.Id, ct).ConfigureAwait(false);
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            _logger.LogWarning(ex, "Failed to stop incompatible container {Id}", rm.Id[..Math.Min(12, rm.Id.Length)]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        _logger.LogInformation(
+                            "On-demand starting container {Id} for model {Model}",
+                            registeredContainerId[..Math.Min(12, registeredContainerId.Length)], request.ModelName);
+
+                        await using var scope = _serviceProvider.CreateAsyncScope();
+                        var registrationService = scope.ServiceProvider.GetRequiredService<IContainerRegistrationService>();
+                        var result = await registrationService.StartAsync(registeredContainerId, ct).ConfigureAwait(false);
+
+                        if (result.Container.Status != ContainerRegistrationStatus.Ready &&
+                            result.Container.Status != ContainerRegistrationStatus.Healthy)
+                        {
+                            _logger.LogWarning(
+                                "Failed to start container {Id} for model {Model}: {Error}",
+                                registeredContainerId[..Math.Min(12, registeredContainerId.Length)],
+                                request.ModelName,
+                                result.Container.ErrorMessage ?? "unknown error");
+                            return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
+                        }
+
+                        // Re-resolve: the container should now be running
+                        containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+                        running = containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue).ToList();
+                        container = running.FirstOrDefault(c => c.RegisteredRuntimeId == registeredContainerId);
+                    }
+                }
+                finally
+                {
+                    startLock.Release();
+                }
+            }
+        }
+
+        if (container?.Port is not { } resolvedPort)
         {
             _logger.LogWarning("No running container found for model {Model}", request.ModelName);
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
         }
 
-        await _healthChecker.WaitForReadyAsync(port, 120, ct).ConfigureAwait(false);
-        return await ProxyToPortAsync(request, port, ct).ConfigureAwait(false);
+        await _healthChecker.WaitForReadyAsync(resolvedPort, 120, ct).ConfigureAwait(false);
+        return await ProxyToPortAsync(request, resolvedPort, ct).ConfigureAwait(false);
     }
 
     private static IReadOnlySet<string> RegisteredContainerNames(RegisteredRuntime registered)
@@ -184,7 +282,54 @@ public sealed class InferenceProxy : IInferenceProxy
             && c.Status == ContainerStatus.Running
             && c.Port.HasValue);
 
-        if (container?.Port is not { } port)
+        if (container?.Port is not { } port && registeredContainerId is not null)
+        {
+            // Try on-demand start for remote containers
+            var startLock = _startLocks.GetOrAdd(registeredContainerId, _ => new SemaphoreSlim(1, 1));
+            await startLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+                container = containers.FirstOrDefault(c =>
+                    c.RegisteredRuntimeId == registeredContainerId
+                    && c.Status == ContainerStatus.Running
+                    && c.Port.HasValue);
+
+                if (container?.Port is null)
+                {
+                    _logger.LogInformation(
+                        "On-demand starting remote container {Id} for model {Model} on agent {Agent}",
+                        registeredContainerId[..Math.Min(12, registeredContainerId.Length)], request.ModelName, targetId);
+
+                    await using var scope = _serviceProvider.CreateAsyncScope();
+                    var registrationService = scope.ServiceProvider.GetRequiredService<IContainerRegistrationService>();
+                    var result = await registrationService.StartAsync(registeredContainerId, ct).ConfigureAwait(false);
+
+                    if (result.Container.Status != ContainerRegistrationStatus.Ready &&
+                        result.Container.Status != ContainerRegistrationStatus.Healthy)
+                    {
+                        _logger.LogWarning(
+                            "Failed to start remote container {Id} for model {Model}: {Error}",
+                            registeredContainerId[..Math.Min(12, registeredContainerId.Length)],
+                            request.ModelName,
+                            result.Container.ErrorMessage ?? "unknown error");
+                        return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
+                    }
+
+                    containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+                    container = containers.FirstOrDefault(c =>
+                        c.RegisteredRuntimeId == registeredContainerId
+                        && c.Status == ContainerStatus.Running
+                        && c.Port.HasValue);
+                }
+            }
+            finally
+            {
+                startLock.Release();
+            }
+        }
+
+        if (container?.Port is not { } resolvedPort)
         {
             _logger.LogWarning("No running container found for model {Model} on target {Target}", request.ModelName, targetId);
             return new InferenceResponse { StatusCode = 503, ContentType = "text/plain" };
@@ -193,12 +338,12 @@ public sealed class InferenceProxy : IInferenceProxy
         string rawBody;
         try
         {
-            rawBody = await remote.InferAsync(port, request.OriginalJson, ct).ConfigureAwait(false);
+            rawBody = await remote.InferAsync(resolvedPort, request.OriginalJson, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Remote inference failed for model {Model} on target {Target} port {Port}",
-                request.ModelName, targetId, port);
+                request.ModelName, targetId, resolvedPort);
             return new InferenceResponse { StatusCode = 502, ContentType = "text/plain" };
         }
 
@@ -263,12 +408,20 @@ public sealed class InferenceProxy : IInferenceProxy
                 };
             }
 
-            var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            var bodyStr = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            var tokens = 0;
+            if (statusCode >= 200 && statusCode < 300)
+            {
+                tokens = TryParseCompletionTokens(bodyStr);
+                if (tokens == 0)
+                    _logger.LogWarning("Inference response for model {Model} on port {Port} returned no usage.completion_tokens; benchmark metrics will be n/a", request.ModelName, port);
+            }
             return new InferenceResponse
             {
                 StatusCode = statusCode,
                 ContentType = contentType,
-                Body = body
+                Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
+                TokensGenerated = tokens
             };
         }
         catch (Exception ex)

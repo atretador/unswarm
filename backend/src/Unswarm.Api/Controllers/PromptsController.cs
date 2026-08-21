@@ -60,4 +60,12 @@ public sealed class PromptsController : ControllerBase
         if (!deleted) return NotFound();
         return NoContent();
     }
+
+    [HttpPost("{id}/default")]
+    public async Task<IActionResult> SetDefault(string id, CancellationToken ct)
+    {
+        var entry = await _prompts.SetDefaultAsync(id, ct);
+        if (entry is null) return NotFound();
+        return Ok(PromptResponse.From(entry));
+    }
 }

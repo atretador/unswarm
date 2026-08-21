@@ -19,6 +19,9 @@ public sealed class BenchmarkResponse
     public DateTimeOffset Timestamp { get; set; }
     public string Status { get; set; } = "completed";
     public string? ErrorMessage { get; set; }
+    public string? PromptId { get; set; }
+    public string? PromptName { get; set; }
+    public int? PromptVersion { get; set; }
 
     public static BenchmarkResponse FromEntry(BenchmarkHistoryEntry e) => new()
     {
@@ -31,6 +34,9 @@ public sealed class BenchmarkResponse
         TokensGenerated = e.TokensGenerated,
         Timestamp = e.Timestamp,
         Status = e.Status,
-        ErrorMessage = e.ErrorMessage
+        ErrorMessage = e.ErrorMessage,
+        PromptId = e.PromptId,
+        PromptName = e.PromptName,
+        PromptVersion = e.PromptVersion
     };
 }

@@ -22,7 +22,10 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
         long tokensGenerated,
         string status,
         string? errorMessage,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? promptId = null,
+        string? promptName = null,
+        int? promptVersion = null)
     {
         var entry = new BenchmarkHistoryEntry
         {
@@ -34,18 +37,24 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
             Prompt = prompt,
             TokensGenerated = tokensGenerated,
             Status = string.IsNullOrWhiteSpace(status) ? "completed" : status,
-            ErrorMessage = errorMessage
+            ErrorMessage = errorMessage,
+            PromptId = promptId,
+            PromptName = promptName,
+            PromptVersion = promptVersion
         };
         lock (_entries) _entries.Add(entry);
         AddedModelIds.Add(modelId);
         return Task.FromResult(entry);
     }
 
-    public Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, CancellationToken ct = default)
+    public Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, string? modelId = null, CancellationToken ct = default)
     {
         lock (_entries)
         {
-            var list = _entries.AsEnumerable().Reverse().Take(maxCount).ToList();
+            var query = _entries.AsEnumerable();
+            if (!string.IsNullOrEmpty(modelId))
+                query = query.Where(e => e.ModelId == modelId);
+            var list = query.Reverse().Take(maxCount).ToList();
             return Task.FromResult<IReadOnlyList<BenchmarkHistoryEntry>>(list);
         }
     }

@@ -1180,6 +1180,8 @@ function RegisteredContainerCard({
   const [benchmark, setBenchmark] = useState<{
     tokensPerSec: number;
     latencyMs: number;
+    promptName?: string | null;
+    promptVersion?: number | null;
   } | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [ringActive, setRingActive] = useState(highlight);
@@ -1236,7 +1238,12 @@ function RegisteredContainerCard({
   const benchmarkMutation = useMutation({
     mutationFn: (modelId: string) => client.runBenchmark(modelId),
     onSuccess: (result) => {
-      setBenchmark({ tokensPerSec: result.tokensPerSec, latencyMs: result.latencyMs });
+      setBenchmark({
+        tokensPerSec: result.tokensPerSec,
+        latencyMs: result.latencyMs,
+        promptName: result.promptName,
+        promptVersion: result.promptVersion,
+      });
     },
   });
 
@@ -1392,6 +1399,11 @@ function RegisteredContainerCard({
             >
               <Zap className="size-2.5" />
               {benchmark.tokensPerSec} tok/s · {benchmark.latencyMs}ms
+              {benchmark.promptName && (
+                <span className="truncate text-[var(--color-text-muted)]">
+                  {" "}· {benchmark.promptName}{benchmark.promptVersion != null ? ` v${benchmark.promptVersion}` : ""}
+                </span>
+              )}
             </span>
           )}
           <span className="mx-0.5 hidden h-4 w-px bg-[var(--color-border)] sm:block" />

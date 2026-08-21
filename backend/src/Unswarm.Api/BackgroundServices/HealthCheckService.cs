@@ -35,12 +35,20 @@ public sealed class HealthCheckService : BackgroundService
                 var healthChecker = scope.ServiceProvider.GetRequiredService<IHealthChecker>();
                 var logStore = scope.ServiceProvider.GetRequiredService<ILogStore>();
                 var settingsStore = scope.ServiceProvider.GetRequiredService<ISettingsStore>();
+                var registry = scope.ServiceProvider.GetRequiredService<IContainerRegistry>();
 
                 var settings = await settingsStore.GetAsync(stoppingToken);
                 var interval = TimeSpan.FromSeconds(Math.Max(settings.HealthCheckInterval, 5));
 
                 var containers = await docker.ListContainersAsync(stoppingToken);
-                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue))
+                var registeredContainers = await registry.ListAllAsync(stoppingToken);
+                var managedIds = new HashSet<string>(
+                    registeredContainers
+                        .Where(r => r.RuntimeContainerId is not null)
+                        .Select(r => r.RuntimeContainerId!)
+                );
+
+                foreach (var container in containers.Where(c => c.Status == ContainerStatus.Running && c.Port.HasValue && managedIds.Contains(c.Id)))
                 {
                     try
                     {

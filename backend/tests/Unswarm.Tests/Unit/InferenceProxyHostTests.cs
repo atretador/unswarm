@@ -22,6 +22,7 @@ public sealed class InferenceProxyHostTests
         _host,
         _healthChecker,
         new LoggerFactory().CreateLogger<InferenceProxy>(),
+        NullServiceProvider.Instance,
         _containerRegistry);
 
     private async Task<(string RegId, string ModelId)> SeedHostRegisteredContainer(

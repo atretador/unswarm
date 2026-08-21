@@ -208,6 +208,18 @@ await using (var scope = app.Services.CreateAsyncScope())
     // Existing installs that upgrade past the P9 cutoff need this table created here.
     await EnsurePromptsTableAsync(db);
 
+    // Prompt default-flag column drift repair: existing installs that predate the
+    // selectable-default feature need the IsDefault column added to their Prompts table.
+    await EnsurePromptDefaultColumnAsync(db);
+
+    // Prompt versioning schema drift repair: adds CurrentVersion column to Prompts,
+    // creates the PromptVersions table, and backfills version-1 rows for existing prompts.
+    await EnsurePromptVersioningAsync(db);
+
+    // Benchmark history prompt-identity columns drift repair: adds PromptId, PromptName,
+    // PromptVersion columns to the Benchmarks table for existing installs.
+    await EnsureBenchmarkPromptIdentityColumnsAsync(db);
+
     // RegisteredContainers → RegisteredRuntimes column drift repair. Older installs
     // may have the RegisteredContainers table without the RuntimeKind/LauncherPath/
     // RuntimeProcessId columns (added when script runtimes were introduced), and may
@@ -418,6 +430,176 @@ static async Task EnsurePromptsTableAsync(UnswarmDbContext db)
     catch (Exception ex)
     {
         Console.Error.WriteLine($"Unswarm startup: failed to create Prompts table: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// SQLite-only, idempotent drift repair for the Prompts table: adds the IsDefault
+/// column when it is missing (existing installs that predate the selectable-default
+/// feature). Follows the same PRAGMA table_info + ALTER TABLE pattern used by
+/// EnsureBenchmarkSchemaColumnsAsync. Non-fatal on failure.
+/// </summary>
+static async Task EnsurePromptDefaultColumnAsync(UnswarmDbContext db)
+{
+    try
+    {
+        const string table = "Prompts";
+        var conn = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync();
+
+        var columns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"PRAGMA table_info({table})";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1)); // column name
+            }
+        }
+
+        if (!columns.Contains("IsDefault", StringComparer.OrdinalIgnoreCase))
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN \"IsDefault\" INTEGER NOT NULL DEFAULT 0";
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to add IsDefault column to Prompts table: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// SQLite-only, idempotent drift repair for prompt versioning: adds the CurrentVersion
+/// column to Prompts, creates the PromptVersions table with its unique index, and
+/// backfills a version-1 row for every existing prompt that has no versions yet.
+/// Non-fatal on failure — repairs on the next start.
+/// </summary>
+static async Task EnsurePromptVersioningAsync(UnswarmDbContext db)
+{
+    try
+    {
+        var conn = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync();
+
+        // ── 1. Prompts: add CurrentVersion column if missing ─────────────
+        var promptColumns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(\"Prompts\")";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                promptColumns.Add(reader.GetString(1)); // column name
+            }
+        }
+
+        if (!promptColumns.Contains("CurrentVersion", StringComparer.OrdinalIgnoreCase))
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE \"Prompts\" ADD COLUMN \"CurrentVersion\" INTEGER NOT NULL DEFAULT 1";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // ── 2. PromptVersions: create table + unique index if missing ─────
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                CREATE TABLE IF NOT EXISTS "PromptVersions" (
+                    "Id" TEXT NOT NULL CONSTRAINT "PK_PromptVersions" PRIMARY KEY,
+                    "PromptId" TEXT NOT NULL,
+                    "Version" INTEGER NOT NULL,
+                    "Text" TEXT NOT NULL,
+                    "CreatedAt" TEXT NOT NULL,
+                    CONSTRAINT "FK_PromptVersions_Prompts_PromptId" FOREIGN KEY ("PromptId") REFERENCES "Prompts" ("Id") ON DELETE CASCADE
+                );
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """CREATE UNIQUE INDEX IF NOT EXISTS "IX_PromptVersions_PromptId_Version" ON "PromptVersions" ("PromptId", "Version");""";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        // ── 3. Backfill version-1 for prompts missing from PromptVersions ──
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                INSERT INTO "PromptVersions" ("Id", "PromptId", "Version", "Text", "CreatedAt")
+                SELECT lower(hex(randomblob(16))), p."Id", 1, p."Text", p."CreatedAt"
+                FROM "Prompts" p
+                WHERE NOT EXISTS (SELECT 1 FROM "PromptVersions" pv WHERE pv."PromptId" = p."Id")
+                """;
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to ensure prompt versioning schema: {ex.Message}");
+    }
+    finally
+    {
+        if (db.Database.GetDbConnection().State == System.Data.ConnectionState.Open)
+            await db.Database.CloseConnectionAsync();
+    }
+}
+
+/// <summary>
+/// SQLite-only, idempotent drift repair for benchmark-history prompt identity:
+/// adds PromptId, PromptName, PromptVersion columns to the Benchmarks table.
+/// Non-fatal on failure — repairs on the next start.
+/// </summary>
+static async Task EnsureBenchmarkPromptIdentityColumnsAsync(UnswarmDbContext db)
+{
+    try
+    {
+        const string table = "Benchmarks";
+        var conn = db.Database.GetDbConnection();
+        await db.Database.OpenConnectionAsync();
+
+        var columns = new List<string>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"PRAGMA table_info({table})";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                columns.Add(reader.GetString(1)); // column name
+            }
+        }
+
+        var adds = new List<string>();
+        if (!columns.Contains("PromptId", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN \"PromptId\" TEXT NULL");
+        if (!columns.Contains("PromptName", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN \"PromptName\" TEXT NULL");
+        if (!columns.Contains("PromptVersion", StringComparer.OrdinalIgnoreCase))
+            adds.Add("ADD COLUMN \"PromptVersion\" INTEGER NULL");
+
+        foreach (var add in adds)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {table} {add}";
+            await cmd.ExecuteNonQueryAsync();
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Unswarm startup: failed to repair benchmark history prompt identity schema: {ex.Message}");
     }
     finally
     {

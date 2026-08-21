@@ -48,6 +48,9 @@ function bench(modelId: string, modelName: string, tokensPerSec: number, latency
     modelId,
     modelName,
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: null,
+    promptName: null,
+    promptVersion: null,
     tokensPerSec,
     latencyMs,
     tokensGenerated,
@@ -58,12 +61,14 @@ function bench(modelId: string, modelName: string, tokensPerSec: number, latency
 }
 
 /** Model-level summary (Model.lastBenchmark). tokensGenerated is optional — the backend wire contract omits it. */
-function lastBench(tokensPerSec: number, latencyMs: number, tokensGenerated?: number): LastBenchmarkResult {
+function lastBench(tokensPerSec: number, latencyMs: number, tokensGenerated?: number, promptName?: string, promptVersion?: number): LastBenchmarkResult {
   return {
     tokensPerSec,
     latencyMs,
     timestamp: NOW,
     ...(tokensGenerated !== undefined ? { tokensGenerated } : {}),
+    ...(promptName !== undefined ? { promptName } : {}),
+    ...(promptVersion !== undefined ? { promptVersion } : {}),
   };
 }
 
@@ -77,6 +82,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "1",
     modelName: "llama-3.1-70b",
     prompt: LONG_PROMPT,
+    promptId: "p4",
+    promptName: "Long-form writing",
+    promptVersion: 2,
     tokensPerSec: 44.7,
     latencyMs: 108,
     tokensGenerated: 368,
@@ -89,6 +97,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "2",
     modelName: "mistral-large-2",
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 27.9,
     latencyMs: 194,
     tokensGenerated: 512,
@@ -101,6 +112,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "3",
     modelName: "codestral-22b",
     prompt: "Write a type-safe middleware chain for an HTTP router.",
+    promptId: "p2",
+    promptName: "Code review",
+    promptVersion: 1,
     tokensPerSec: 0,
     latencyMs: 0,
     tokensGenerated: 0,
@@ -113,6 +127,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "5",
     modelName: "gemma-2-27b",
     prompt: "Summarize the tokenizer differences between Llama 3 and Gemma in two sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 56.3,
     latencyMs: 91,
     tokensGenerated: 512,
@@ -125,6 +142,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "4",
     modelName: "phi-3.5-mini",
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 101.2,
     latencyMs: 31,
     tokensGenerated: 640,
@@ -137,6 +157,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "1",
     modelName: "llama-3.1-70b",
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 41.8,
     latencyMs: 124,
     tokensGenerated: 512,
@@ -149,6 +172,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "2",
     modelName: "mistral-large-2",
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 0,
     latencyMs: 0,
     tokensGenerated: 0,
@@ -161,6 +187,9 @@ const BENCHMARKS: BenchmarkResult[] = [
     modelId: "5",
     modelName: "gemma-2-27b",
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
+    promptId: "p1",
+    promptName: "Concise summary",
+    promptVersion: 3,
     tokensPerSec: 54.2,
     latencyMs: 99,
     tokensGenerated: 448,
@@ -177,6 +206,8 @@ const PROMPTS: Prompt[] = [
     id: "p1",
     name: "Concise summary",
     text: "Summarize the input in two sentences maximum, focusing on the key technical points. Use plain language without jargon.",
+    isDefault: true,
+    currentVersion: 3,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -184,6 +215,7 @@ const PROMPTS: Prompt[] = [
     id: "p2",
     name: "Code review",
     text: "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
+    currentVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -191,6 +223,7 @@ const PROMPTS: Prompt[] = [
     id: "p3",
     name: "Creative rewrite",
     text: "Rewrite the following text in a more engaging, conversational tone while preserving all technical accuracy and the original structure. Use short sentences and active voice. Add one concrete example where it clarifies the point.",
+    currentVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -198,6 +231,7 @@ const PROMPTS: Prompt[] = [
     id: "p4",
     name: "Long-form writing",
     text: "You are an experienced technical writer. Expand the following notes into a well-structured blog post with an introduction, three main sections, and a conclusion. Include practical tips, real-world examples, and potential pitfalls. Aim for approximately 800 words, maintain a professional but approachable tone, and ensure the content flows naturally from one section to the next.",
+    currentVersion: 2,
     createdAt: NOW,
     updatedAt: NOW,
   },
@@ -213,7 +247,7 @@ const MODELS: Model[] = [
     parameterSize: "70B",
     quantization: "Q4_K_M",
     status: "ready",
-    lastBenchmark: lastBench(42.3, 120, 512),
+    lastBenchmark: lastBench(42.3, 120, 512, "Concise summary", 3),
     contextWindow: 128000,
     containerImage: "unswarm/llama3.1:70b-q4km",
     sourceRuntimeId: "rc1",
@@ -227,7 +261,7 @@ const MODELS: Model[] = [
     parameterSize: "123B",
     quantization: "Q5_K_M",
     status: "ready",
-    lastBenchmark: lastBench(28.7, 185),
+    lastBenchmark: lastBench(28.7, 185, undefined, "Concise summary", 3),
     contextWindow: 128000,
     containerImage: "unswarm/mistral-large:123b-q5km",
     sourceRuntimeId: null,
@@ -255,7 +289,7 @@ const MODELS: Model[] = [
     parameterSize: "3.8B",
     quantization: "FP16",
     status: "deprecated",
-    lastBenchmark: lastBench(98.1, 32, 640),
+    lastBenchmark: lastBench(98.1, 32, 640, "Concise summary", 3),
     contextWindow: 128000,
     containerImage: "unswarm/phi3.5-mini:fp16",
     sourceRuntimeId: null,
@@ -269,7 +303,7 @@ const MODELS: Model[] = [
     parameterSize: "27B",
     quantization: "Q4_K_S",
     status: "ready",
-    lastBenchmark: lastBench(55.0, 95, 448),
+    lastBenchmark: lastBench(55.0, 95, 448, "Concise summary", 3),
     contextWindow: 8192,
     containerImage: "unswarm/gemma2:27b-q4ks",
     sourceRuntimeId: "rc1",
@@ -777,10 +811,13 @@ export const mockClient: UnswarmClient = {
     const agent = AGENTS.find((a) => a.name === agentName);
     return (agent?.scripts ?? []).map((s) => ({ ...s }));
   },
-  async runBenchmark(modelId: string, prompt?: string) {
+  async runBenchmark(modelId: string, opts?: { promptId?: string }) {
     await delay(rand(200, 500));
     const model = models.find((m) => m.id === modelId);
     if (!model) throw new Error(`Model ${modelId} not found`);
+    const prompt = opts?.promptId
+      ? PROMPTS.find((p) => p.id === opts.promptId)
+      : PROMPTS.find((p) => p.isDefault);
     const b = bench(
       modelId,
       model.name,
@@ -788,13 +825,22 @@ export const mockClient: UnswarmClient = {
       90 + Math.random() * 160,
       384,
     );
-    if (prompt) b.prompt = prompt;
+    if (prompt) {
+      b.prompt = prompt.text;
+      b.promptId = prompt.id;
+      b.promptName = prompt.name;
+      b.promptVersion = prompt.currentVersion ?? 1;
+    }
     benchmarks.unshift(b);
     return b;
   },
-  async listBenchmarks() {
+  async listBenchmarks(modelId?: string) {
     await delay(rand(80, 200));
-    return benchmarks.map((b) => ({ ...b }));
+    let result = benchmarks.map((b) => ({ ...b }));
+    if (modelId) {
+      result = result.filter((b) => b.modelId === modelId);
+    }
+    return result;
   },
   async startContainer(modelId) {
     await delay(rand(200, 500));
@@ -921,8 +967,12 @@ export const mockClient: UnswarmClient = {
     }
     const prompt = PROMPTS.find((p) => p.id === promptId);
     if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    const textChanged = prompt.text !== input.text.trim();
     prompt.name = input.name.trim();
     prompt.text = input.text.trim();
+    if (textChanged) {
+      prompt.currentVersion = (prompt.currentVersion ?? 1) + 1;
+    }
     prompt.updatedAt = new Date().toISOString();
     return { ...prompt };
   },
@@ -932,6 +982,18 @@ export const mockClient: UnswarmClient = {
     const idx = PROMPTS.findIndex((p) => p.id === promptId);
     if (idx === -1) throw new Error(`Prompt ${promptId} not found`);
     PROMPTS.splice(idx, 1);
+  },
+
+  async setDefaultPrompt(promptId: string) {
+    await delay(rand(60, 150));
+    const prompt = PROMPTS.find((p) => p.id === promptId);
+    if (!prompt) throw new Error(`Prompt ${promptId} not found`);
+    for (const p of PROMPTS) {
+      p.isDefault = false;
+    }
+    prompt.isDefault = true;
+    prompt.updatedAt = new Date().toISOString();
+    return { ...prompt };
   },
 
   // Settings

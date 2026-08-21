@@ -13,6 +13,7 @@ public sealed class BenchmarksControllerTests
     private readonly FakeSchedulerQueue _scheduler = new();
     private readonly FakeBenchmarkHistory _history = new();
     private readonly FakeClock _clock = new();
+    private readonly FakePromptStore _prompts = new();
 
     private async Task<ModelDefinition> SeedModel(string id = "model-1", string name = "llama-3")
     {
@@ -28,7 +29,7 @@ public sealed class BenchmarksControllerTests
         return model;
     }
 
-    private BenchmarksController CreateController() => new(_modelRegistry, _scheduler, _clock, _history);
+    private BenchmarksController CreateController() => new(_modelRegistry, _scheduler, _clock, _history, _prompts);
 
     [Fact]
     public async Task Run_PersistsAndReturnsFullCompletedItem()
@@ -120,7 +121,7 @@ public sealed class BenchmarksControllerTests
         await _history.AddAsync("model-1", "p2", 2, 2, 2, "completed", null);
 
         var controller = CreateController();
-        var result = await controller.List(CancellationToken.None);
+        var result = await controller.List(null, CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result);
         var items = Assert.IsAssignableFrom<List<BenchmarkResponse>>(ok.Value);

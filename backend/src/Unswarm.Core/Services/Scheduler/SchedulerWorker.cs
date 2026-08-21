@@ -275,6 +275,14 @@ public sealed class SchedulerWorker
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
 
+            if (response.StatusCode >= 400)
+            {
+                FailItem(queueItem, $"Inference returned HTTP {response.StatusCode}");
+                _statsTracker.RecordError(request);
+                request.Tcs.TrySetException(new InvalidOperationException($"Inference returned HTTP {response.StatusCode}"));
+                return;
+            }
+
             var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
             UpdateItem(queueItem with
             {

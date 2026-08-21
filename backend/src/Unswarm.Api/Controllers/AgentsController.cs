@@ -217,8 +217,320 @@ public sealed class AgentsController : ControllerBase
     {
         try
         {
-            var psi = new System.Diagnostics.ProcessStartInfo("nvidia-smi",
-                "--query-gpu=name,memory.total --format=csv,noheader,nounits")
+            var entries = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? DetectGpuWindows()
+                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    ? DetectGpuMacOs()
+                    : DetectGpuLinux();
+
+            if (entries.Count == 0)
+                return null;
+
+            // "NVIDIA GeForce RTX 4090 (24 GB), AMD Radeon Pro VII (16 GB)"
+            return string.Join(", ", entries);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // ── Linux: lspci for names, sysfs / nvidia-smi for VRAM ────────
+
+    private static List<string> DetectGpuLinux()
+    {
+        var results = new List<string>();
+
+        // GPU names via lspci (works for all vendors)
+        var lspciOutput = RunTool("lspci", "-nn");
+        if (string.IsNullOrEmpty(lspciOutput))
+            return results;
+
+        foreach (var line in lspciOutput.Split('\n'))
+        {
+            if (!line.Contains("VGA", StringComparison.OrdinalIgnoreCase) &&
+                !line.Contains("3D", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            // "05:00.0 VGA compatible controller [0300]: AMD ... [1002:66a1] (rev 06)"
+            // or  "01:00.0 VGA compatible controller: NVIDIA Corporation GeForce RTX 4090 (rev a1)"
+            var name = ExtractLinuxGpuName(line);
+            if (string.IsNullOrEmpty(name))
+                continue;
+
+            var vramMb = GetLinuxGpuVram(results.Count);
+            if (vramMb > 0)
+                results.Add($"{name} ({vramMb / 1024} GB)");
+            else
+                results.Add(name);
+        }
+
+        // Fallback: if lspci found nothing, try nvidia-smi (NVIDIA-only)
+        if (results.Count == 0)
+        {
+            var nvidiaOutput = RunTool("nvidia-smi",
+                "--query-gpu=name,memory.total --format=csv,noheader,nounits");
+            if (!string.IsNullOrEmpty(nvidiaOutput))
+            {
+                foreach (var line in nvidiaOutput.Split('\n'))
+                {
+                    var trimmed = line.Trim();
+                    if (string.IsNullOrEmpty(trimmed)) continue;
+                    // "NVIDIA GeForce RTX 4090, 24564" -> "NVIDIA GeForce RTX 4090 (24 GB)"
+                    var parts = trimmed.Split(',', 2);
+                    if (parts.Length == 2 &&
+                        long.TryParse(parts[1].Trim(), out var mb))
+                        results.Add($"{parts[0].Trim()} ({mb / 1024} GB)");
+                    else
+                        results.Add(trimmed);
+                }
+            }
+        }
+
+        return results;
+    }
+
+    private static string ExtractLinuxGpuName(string lspciLine)
+    {
+        // "05:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Vega 20 [Radeon Pro VII/Radeon Instinct MI50] [1002:66a1] (rev 06)"
+        // → "Radeon Pro VII"
+        //
+        // "01:00.0 VGA compatible controller: NVIDIA Corporation GeForce RTX 4090 (rev a1)"
+        // → "GeForce RTX 4090"
+
+        var name = lspciLine;
+
+        // Strip leading address (everything up to and including the first space after the address)
+        // "05:00.0 VGA..." or "46:00.0 VGA..." → "VGA..."
+        name = System.Text.RegularExpressions.Regex.Replace(name,
+            @"^\S+\s+", "").Trim();
+
+        // Strip controller type keywords
+        name = System.Text.RegularExpressions.Regex.Replace(name,
+            @"VGA compatible controller:?\s*|3D controller:?\s*|Display controller:?\s*", "",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+
+        // Strip trailing "(rev xx)"
+        name = System.Text.RegularExpressions.Regex.Replace(name,
+            @"\s*\(rev\s+\w+\)\s*$", "").Trim();
+
+        // Iterate bracket contents from last to first — find the first non-PCI-ID bracket.
+        // The marketing name lives inside the last meaningful brackets.
+        var allBrackets = System.Text.RegularExpressions.Regex.Matches(name, @"\[([^\]]+)\]");
+        for (int i = allBrackets.Count - 1; i >= 0; i--)
+        {
+            var content = allBrackets[i].Value[1..^1].Trim(); // strip [ and ]
+
+            // Skip PCI device ID brackets like "[1002:66a1]" or "[0300]"
+            if (System.Text.RegularExpressions.Regex.IsMatch(content, @"^[0-9a-f]{4}(:[0-9a-f]{4})?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                continue;
+
+            // "Radeon Pro VII/Radeon Instinct MI50" → "Radeon Pro VII"
+            var slashIdx = content.IndexOf('/');
+            if (slashIdx > 0)
+                content = content[..slashIdx].Trim();
+
+            return content;
+        }
+
+        // No useful brackets — strip known vendor prefixes
+        // "NVIDIA Corporation GeForce RTX 4090" → "GeForce RTX 4090"
+        name = System.Text.RegularExpressions.Regex.Replace(name,
+            @"^(NVIDIA Corporation|Advanced Micro Devices, Inc\.|Intel Corporation|Qualcomm Technologies, Inc\.|Broadcom Inc\.|VMware, Inc\.|Xilinx, Inc\.|Motorola|Matrox)\s*",
+            "", System.Text.RegularExpressions.RegexOptions.IgnoreCase).Trim();
+
+        return string.IsNullOrEmpty(name) ? null! : name;
+    }
+
+    private static long GetLinuxGpuVram(int gpuIndex)
+    {
+        // Try sysfs per-card VRAM (AMD, Intel Arc, NVIDIA open drivers)
+        try
+        {
+            var cards = System.IO.Directory.GetDirectories("/sys/class/drm", "card*")
+                .Where(d => System.IO.File.Exists(System.IO.Path.Combine(d, "device", "mem_info_vram_total")))
+                .OrderBy(d => d)
+                .ToList();
+
+            if (gpuIndex < cards.Count)
+            {
+                var vramPath = System.IO.Path.Combine(cards[gpuIndex], "device", "mem_info_vram_total");
+                var text = System.IO.File.ReadAllText(vramPath).Trim();
+                if (long.TryParse(text, out var bytes) && bytes > 0)
+                    return bytes / (1024 * 1024); // bytes → MB
+            }
+        }
+        catch { /* sysfs unavailable */ }
+
+        // Try nvidia-smi for NVIDIA VRAM
+        try
+        {
+            var output = RunTool("nvidia-smi",
+                "--query-gpu=memory.total --format=csv,noheader,nounits");
+            if (!string.IsNullOrEmpty(output))
+            {
+                var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (gpuIndex < lines.Length &&
+                    long.TryParse(lines[gpuIndex].Trim(), out var mb) && mb > 0)
+                    return mb;
+            }
+        }
+        catch { /* nvidia-smi unavailable */ }
+
+        return 0;
+    }
+
+    // ── Windows: WMI for name, registry for accurate VRAM ──────────
+
+    private static List<string> DetectGpuWindows()
+    {
+        var results = new List<string>();
+
+        try
+        {
+            // WMI gives us GPU names
+            var psi = new System.Diagnostics.ProcessStartInfo("powershell", "-NoProfile -Command \"Get-CimInstance Win32_VideoController | Select-Object Name,PNPDeviceID | ConvertTo-Json -Compress\"")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null) return results;
+            var json = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit(5000);
+
+            if (string.IsNullOrWhiteSpace(json))
+                return results;
+
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Single object or array
+            var devices = root.ValueKind == System.Text.Json.JsonValueKind.Array
+                ? root.EnumerateArray().ToList()
+                : [root];
+
+            foreach (var device in devices)
+            {
+                var name = device.GetProperty("Name").GetString();
+                var pnpId = device.TryGetProperty("PNPDeviceID", out var pnp) ? pnp.GetString() : null;
+
+                // Try to get VRAM from registry (accurate 64-bit value)
+                var vramMb = GetWindowsVramFromRegistry(pnpId);
+                if (vramMb > 0)
+                    results.Add($"{name} ({vramMb / 1024} GB)");
+                else
+                    results.Add(name ?? "Unknown GPU");
+            }
+        }
+        catch { /* PowerShell unavailable or WMI error */ }
+
+        return results;
+    }
+
+    private static long GetWindowsVramFromRegistry(string? pnpDeviceId)
+    {
+        if (string.IsNullOrEmpty(pnpDeviceId))
+            return 0;
+
+        try
+        {
+            // PNPDeviceID like "PCI\VEN_10DE&DEV_2684&SUBSYS_..." → extract VEN/DEV
+            var match = System.Text.RegularExpressions.Regex.Match(pnpDeviceId,
+                @"VEN_([0-9A-F]{4})&DEV_([0-9A-F]{4})", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return 0;
+
+            var vendorId = match.Groups[1].Value.ToUpperInvariant();
+            var classKey = @"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+
+            using var baseKey = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(classKey);
+            if (baseKey is null) return 0;
+
+            foreach (var subKeyName in baseKey.GetSubKeyNames())
+            {
+                if (!subKeyName.StartsWith("0", StringComparison.Ordinal) ||
+                    subKeyName.Length > 4) // Only 0000, 0001, etc.
+                    continue;
+
+                using var subKey = baseKey.OpenSubKey(subKeyName);
+                if (subKey is null) continue;
+
+                var hwVendor = subKey.GetValue("HardwareInformation.AdapterString")?.ToString() ?? "";
+                var regPnp = subKey.GetValue("MatchingDeviceId")?.ToString() ?? "";
+
+                // Match by PNP ID substring
+                if (!string.IsNullOrEmpty(regPnp) &&
+                    pnpDeviceId.Contains(regPnp, StringComparison.OrdinalIgnoreCase))
+                {
+                    // qwMemorySize is a QWORD (64-bit) with accurate VRAM in bytes
+                    var val = subKey.GetValue("HardwareInformation.qwMemorySize");
+                    if (val is long bytes && bytes > 0)
+                        return bytes / (1024 * 1024);
+
+                    // Fallback: AdapterRAM (uint32, capped at 4GB)
+                    var adapterRam = subKey.GetValue("AdapterRAM");
+                    if (adapterRam is int ram && ram > 0)
+                        return ram / (1024 * 1024);
+                }
+            }
+        }
+        catch { /* registry access denied or unavailable */ }
+
+        return 0;
+    }
+
+    // ── macOS: system_profiler ──────────────────────────────────────
+
+    private static List<string> DetectGpuMacOs()
+    {
+        var results = new List<string>();
+
+        var output = RunTool("system_profiler", "SPDisplaysDataType");
+        if (string.IsNullOrEmpty(output))
+            return results;
+
+        string? currentName = null;
+        foreach (var line in output.Split('\n'))
+        {
+            var trimmed = line.Trim();
+
+            // "Chipset Model: AMD Radeon Pro VII"
+            if (trimmed.StartsWith("Chipset Model:", StringComparison.OrdinalIgnoreCase))
+            {
+                currentName = trimmed["Chipset Model:".Length..].Trim();
+            }
+            // "VRAM (Total): 16 GB" or "Memory: 16 GB"
+            else if (currentName is not null &&
+                     (trimmed.StartsWith("VRAM (Total):", StringComparison.OrdinalIgnoreCase) ||
+                      trimmed.StartsWith("Memory:", StringComparison.OrdinalIgnoreCase)))
+            {
+                var vramStr = trimmed.Contains(':')
+                    ? trimmed[(trimmed.IndexOf(':') + 1)..].Trim()
+                    : "";
+
+                results.Add(string.IsNullOrEmpty(vramStr)
+                    ? currentName
+                    : $"{currentName} ({vramStr})");
+                currentName = null;
+            }
+        }
+
+        // Handle case where name was found but no VRAM line followed
+        if (currentName is not null)
+            results.Add(currentName);
+
+        return results;
+    }
+
+    // ── Shared helper ───────────────────────────────────────────────
+
+    private static string? RunTool(string command, string args)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(command, args)
             {
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -227,14 +539,8 @@ public sealed class AgentsController : ControllerBase
             using var proc = System.Diagnostics.Process.Start(psi);
             if (proc is null) return null;
             var output = proc.StandardOutput.ReadToEnd();
-            proc.WaitForExit(3000);
-            var line = output.Trim();
-            if (string.IsNullOrEmpty(line)) return null;
-            // "NVIDIA GeForce RTX 4090, 24564" -> "NVIDIA GeForce RTX 4090 (24564 MB)"
-            var parts = line.Split(',', 2);
-            return parts.Length == 2
-                ? parts[0].Trim() + " (" + parts[1].Trim() + " MB)"
-                : line;
+            proc.WaitForExit(5000);
+            return output;
         }
         catch
         {

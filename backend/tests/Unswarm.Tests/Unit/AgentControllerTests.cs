@@ -219,12 +219,8 @@ public sealed class AgentControllerTests : IDisposable
             payload = new
             {
                 hostname = "gpu-box-1",
-                os = "linux",
-                gpu = new object[]
-                {
-                    new { name = "NVIDIA RTX 3090", memory = 8192 },
-                    new { name = "NVIDIA A100", memory = 16384 }
-                },
+                osPlatform = "linux",
+                gpuInfo = "NVIDIA RTX 3090 (8GB), NVIDIA A100 (16GB)",
                 totalMemoryMb = 32768,
                 cpuCores = 16,
                 containers = new object[]
