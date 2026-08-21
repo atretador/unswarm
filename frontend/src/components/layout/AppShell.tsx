@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { AlertTriangle } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { Topbar, MobileDrawer } from "./Topbar";
@@ -75,21 +75,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
 
         <main className="flex-1 overflow-y-auto">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={location.pathname}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{
-                duration: 0.2,
-                ease: [0.16, 1, 0.3, 1],
-              }}
-              className="h-full"
-            >
-              {children}
-            </motion.div>
-          </AnimatePresence>
+          <motion.div
+            key={location.pathname}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{
+              duration: 0.2,
+              ease: [0.16, 1, 0.3, 1],
+            }}
+            className="h-full"
+          >
+            {children}
+          </motion.div>
         </main>
       </div>
     </div>
