@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare } from "lucide-react";
+import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { Card, Skeleton, Button, Badge, EmptyState, Input } from "../../components/ui";
-import type { ApiKeyCreateResponse } from "../../lib/api/types";
+import type { ApiKeyCreateResponse, ApiKeyItem } from "../../lib/api/types";
 
 // ─── Copy-to-clipboard helper ──────────────────────────────────────────
 
@@ -53,13 +53,20 @@ function scopeLabel(scope: "inference" | "agent") {
 
 // ─── Create Key form ────────────────────────────────────────────────────
 
-function CreateKeySection({ queryClient }: { queryClient: ReturnType<typeof useQueryClient> }) {
+function CreateKeySection({
+  queryClient,
+  scope,
+}: {
+  queryClient: ReturnType<typeof useQueryClient>;
+  scope: "inference" | "agent";
+}) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ApiKeyCreateResponse | null>(null);
 
   const createMutation = useMutation({
-    mutationFn: (name: string) => client.createApiKey(name),
+    mutationFn: (name: string) =>
+      scope === "agent" ? client.createAgentApiKey(name) : client.createApiKey(name),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["api-keys"] });
       setCreated(res);
@@ -84,13 +91,27 @@ function CreateKeySection({ queryClient }: { queryClient: ReturnType<typeof useQ
       <div className="flex items-center gap-2 mb-3">
         <Key className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          New Inference Key
+          {scope === "agent" ? "New Agent Key" : "New Inference Key"}
         </p>
       </div>
 
       <p className="text-sm text-[var(--color-text)] mb-4">
-        Create a key to authenticate to the inference proxy (<span className="font-mono">/v1</span>).
-        These keys are <strong>not</strong> login credentials.
+        {scope === "agent"
+          ? (
+            <>
+              Create a key to authenticate to the agent channel (
+              <span className="font-mono">/api/agents</span>,{" "}
+              <span className="font-mono">/ws/agent</span>).
+              These keys are <strong>not</strong> login credentials.
+            </>
+          )
+          : (
+            <>
+              Create a key to authenticate to the inference proxy (<span className="font-mono">/v1</span>).
+              These keys are <strong>not</strong> login credentials.
+            </>
+          )
+        }
       </p>
 
       {!created ? (
@@ -99,7 +120,7 @@ function CreateKeySection({ queryClient }: { queryClient: ReturnType<typeof useQ
             label="Key name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. CI runner"
+            placeholder={scope === "agent" ? "e.g. Remote worker" : "e.g. CI runner"}
             disabled={createMutation.isPending}
           />
           {error && <p className="text-sm text-[var(--color-status-error)]">{error}</p>}
@@ -262,7 +283,13 @@ function KeyRow({
   );
 }
 
-function KeyList({ queryClient }: { queryClient: ReturnType<typeof useQueryClient> }) {
+function KeyList({
+  queryClient,
+  scope,
+}: {
+  queryClient: ReturnType<typeof useQueryClient>;
+  scope: "inference" | "agent";
+}) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => client.listApiKeys(),
@@ -280,7 +307,8 @@ function KeyList({ queryClient }: { queryClient: ReturnType<typeof useQueryClien
     );
   }
 
-  const keys = data ?? [];
+  const allKeys = data ?? [];
+  const keys = allKeys.filter((k) => k.scope === scope);
   const activeKeys = keys.filter((k) => k.isActive);
   const retiredKeys = keys.filter((k) => !k.isActive);
 
@@ -289,7 +317,7 @@ function KeyList({ queryClient }: { queryClient: ReturnType<typeof useQueryClien
       <div className="flex items-center gap-2 mb-3">
         <ShieldAlert className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Managed Keys
+          {scope === "agent" ? "Agent Keys" : "Inference Keys"}
         </p>
       </div>
 
@@ -302,8 +330,12 @@ function KeyList({ queryClient }: { queryClient: ReturnType<typeof useQueryClien
       {keys.length === 0 ? (
         <EmptyState
           icon={<KeySquare className="size-8" />}
-          title="No API keys yet"
-          description="Create an inference key to authenticate clients against the /v1 proxy."
+          title={`No ${scope} keys yet`}
+          description={
+            scope === "agent"
+              ? "Create an agent key to authenticate to the agent channel."
+              : "Create an inference key to authenticate clients against the /v1 proxy."
+          }
         />
       ) : (
         <div>
@@ -349,8 +381,16 @@ function KeyList({ queryClient }: { queryClient: ReturnType<typeof useQueryClien
 
 // ─── Main Page ──────────────────────────────────────────────────────────
 
+type Tab = "inference" | "agent";
+
+const TABS: { key: Tab; label: string; icon: typeof Key }[] = [
+  { key: "inference", label: "Inference", icon: Key },
+  { key: "agent", label: "Agent", icon: Bot },
+];
+
 export default function ApiKeys() {
   const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState<Tab>("inference");
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
@@ -359,7 +399,7 @@ export default function ApiKeys() {
           API Keys
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Manage keys that authenticate to the inference proxy. These are not login credentials.
+          Manage keys that authenticate to the inference proxy and agent channel. These are not login credentials.
         </p>
       </div>
 
@@ -367,16 +407,46 @@ export default function ApiKeys() {
         <div className="flex items-start gap-3">
           <ShieldAlert className="size-4 text-[var(--color-status-warning)] mt-0.5 shrink-0" />
           <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-            Inference API keys authenticate to the OpenAI-compatible proxy at{" "}
-            <span className="font-mono">/v1</span> (or{" "}
-            <span className="font-mono">/api/v1/models</span>). Login uses a separate cookie
-            session — a login credential is not an inference key, and vice versa.
+            API keys authenticate to specific endpoints — inference keys for the{" "}
+            <span className="font-mono">/v1</span> proxy, agent keys for the agent
+            channel. Login uses a separate cookie session — a login credential is
+            not an API key, and vice versa.
           </p>
         </div>
       </Card>
 
-      <CreateKeySection queryClient={queryClient} />
-      <KeyList queryClient={queryClient} />
+      {/* Tab bar — same pattern as fleet ManageRuntimesModal */}
+      <div className="flex border-b border-[var(--color-border-subtle)]">
+        {TABS.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={`
+              flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors
+              border-b-2 -mb-px
+              ${
+                activeTab === tab.key
+                  ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
+                  : "border-b-2 border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }
+            `}
+          >
+            <tab.icon className="size-3.5" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div role="tabpanel">
+        <CreateKeySection queryClient={queryClient} scope={activeTab} />
+        <div className="mt-6">
+          <KeyList queryClient={queryClient} scope={activeTab} />
+        </div>
+      </div>
     </div>
   );
 }

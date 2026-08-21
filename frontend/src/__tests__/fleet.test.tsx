@@ -1400,4 +1400,335 @@ describe("Fleet", () => {
     expect(result.id).toBe(rc.id);
     expect(result.canRunAlongWith).toEqual(["some-peer"]);
   });
+
+  // ─── Available scripts picker (remote flow) ────────────────────
+
+  it("scripts tab lists available .sh files as selectable cards", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+
+    // Switch to scripts tab
+    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+
+    // Mock returns 3 available scripts for edge-node-1
+    await waitFor(() => {
+      expect(within(dialog).getByText("run_llama.sh")).toBeInTheDocument();
+    });
+    expect(within(dialog).getByText("run_vllm.sh")).toBeInTheDocument();
+    expect(within(dialog).getByText("start_api.sh")).toBeInTheDocument();
+  });
+
+  it("selecting an available script and registering sends correct payload", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    const registerSpy = vi.spyOn(mockClient, "registerRuntime");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("run_vllm.sh")).toBeInTheDocument();
+    });
+
+    // Click the script card to select it
+    await user.click(within(dialog).getByText("run_vllm.sh"));
+
+    // Confirm panel appears — port default is 8080
+    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    expect(portInput).toHaveValue(8080);
+
+    // Change port
+    await user.clear(portInput);
+    await user.type(portInput, "9000");
+
+    // Click register
+    await user.click(within(dialog).getByRole("button", { name: /register on edge-node-1/i }));
+
+    await waitFor(() => {
+      expect(registerSpy).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = registerSpy.mock.calls[0][0] as RegisterRuntimePayload;
+    expect(payload.runtimeKind).toBe("script");
+    expect(payload.launcherPath).toBe("/home/user/scripts/run_vllm.sh");
+    expect(payload.containerPort).toBe(9000);
+    expect(payload.agent).toBe("edge-node-1");
+  });
+
+  it("empty available scripts shows grounded copy", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    // gpu-node-1 returns [] from the mock
+    vi.spyOn(mockClient, "listAgents").mockResolvedValue([
+      {
+        name: "gpu-node-1",
+        connectionId: "conn-gpu",
+        connectedAt: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.0.0",
+        hostname: "gpu-node-1",
+        osPlatform: "linux/amd64",
+        gpuInfo: null,
+        totalMemoryMb: 16384,
+        cpuCores: 8,
+        containers: [],
+        scripts: [],
+      },
+    ]);
+
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle gpu-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle gpu-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on gpu-node-1/i });
+    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("No scripts found")).toBeInTheDocument();
+    });
+    expect(within(dialog).getByText(/No scripts found on gpu-node-1\. Add \.sh files to the agent's scripts_dir\./i)).toBeInTheDocument();
+  });
+
+  it("error fetching available scripts shows inline error with retry", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    vi.spyOn(mockClient, "listAvailableScripts").mockRejectedValueOnce(
+      new Error("Agent unreachable"),
+    );
+
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    await user.click(within(dialog).getByRole("button", { name: /scripts/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("Couldn't reach edge-node-1 to list scripts.")).toBeInTheDocument();
+    });
+
+    // Retry refetches
+    vi.spyOn(mockClient, "listAvailableScripts").mockResolvedValueOnce([
+      { path: "/home/user/scripts/run_llama.sh", name: "run_llama.sh" },
+    ]);
+
+    await user.click(within(dialog).getByRole("button", { name: /retry/i }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("run_llama.sh")).toBeInTheDocument();
+    });
+  });
+
+  // ─── Script Stop button ──────────────────────────────────────────
+
+  const SCRIPT_RC: RegisteredRuntime[] = [
+    {
+      id: "rc-script-1",
+      displayName: "vllm-script",
+      image: "run_vllm",
+      containerPort: 8080,
+      agent: "host",
+      canRunAlongWith: [],
+      status: "ready",
+      runtimeContainerId: null,
+      mappedPort: 8083,
+      errorMessage: null,
+      createdAt: new Date().toISOString(),
+      lastDiscoveredAt: null,
+      discoveredModels: [],
+      runtimeKind: "script",
+      launcherPath: "/opt/scripts/run_vllm.sh",
+    },
+  ];
+
+  it("running script renders Stop button and calls stopRegisteredRuntime", async () => {
+    seedRegisteredRuntimes(SCRIPT_RC);
+    // The agent must have the script listed with status "running" so runtimeSignal resolves to "running".
+    vi.spyOn(mockClient, "listAgents").mockResolvedValue([
+      {
+        name: "host",
+        connectionId: null,
+        connectedAt: null,
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.2.3",
+        hostname: "workstation",
+        osPlatform: "linux/amd64",
+        gpuInfo: "NVIDIA GeForce RTX 4090 (24GB)",
+        totalMemoryMb: 131072,
+        cpuCores: 16,
+        containers: [],
+        scripts: [
+          { path: "/opt/scripts/run_vllm.sh", pid: 1234, status: "running", port: 8083, startTime: Date.now() },
+        ],
+      },
+      {
+        name: "edge-node-1",
+        connectionId: "conn-1",
+        connectedAt: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "0.9.1",
+        hostname: "edge-node-1",
+        osPlatform: "linux/arm64",
+        gpuInfo: null,
+        totalMemoryMb: 16384,
+        cpuCores: 8,
+        containers: [],
+        scripts: [],
+      },
+    ]);
+
+    const stopSpy = vi.spyOn(mockClient, "stopRegisteredRuntime").mockImplementation(async (id) => {
+      const rc = SCRIPT_RC.find((r) => r.id === id)!;
+      return { ...rc, status: "registered" };
+    });
+
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("vllm-script")).toBeInTheDocument();
+    });
+
+    // Stop button should be visible for a running script
+    const stopBtn = screen.getByRole("button", { name: /Stop/i });
+    expect(stopBtn).toBeInTheDocument();
+
+    await user.click(stopBtn);
+
+    await waitFor(() => {
+      expect(stopSpy).toHaveBeenCalledWith("rc-script-1");
+    });
+  });
+
+  it("down script renders Start button", async () => {
+    // Script with status "registered" + agent script status "stopped" => signal "down"
+    const downScriptRc: RegisteredRuntime[] = [
+      {
+        ...SCRIPT_RC[0],
+        status: "registered" as const,
+      },
+    ];
+    seedRegisteredRuntimes(downScriptRc);
+    vi.spyOn(mockClient, "listAgents").mockResolvedValue([
+      {
+        name: "host",
+        connectionId: null,
+        connectedAt: null,
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "1.2.3",
+        hostname: "workstation",
+        osPlatform: "linux/amd64",
+        gpuInfo: "NVIDIA GeForce RTX 4090 (24GB)",
+        totalMemoryMb: 131072,
+        cpuCores: 16,
+        containers: [],
+        scripts: [
+          { path: "/opt/scripts/run_vllm.sh", pid: 0, status: "stopped", port: 0, startTime: 0 },
+        ],
+      },
+      {
+        name: "edge-node-1",
+        connectionId: "conn-1",
+        connectedAt: new Date().toISOString(),
+        lastSeen: new Date().toISOString(),
+        isConnected: true,
+        dockerSocket: "/var/run/docker.sock",
+        version: "0.9.1",
+        hostname: "edge-node-1",
+        osPlatform: "linux/arm64",
+        gpuInfo: null,
+        totalMemoryMb: 16384,
+        cpuCores: 8,
+        containers: [],
+        scripts: [],
+      },
+    ]);
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("vllm-script")).toBeInTheDocument();
+    });
+
+    // Start button should be visible for a down script
+    expect(screen.getByRole("button", { name: /Start/i })).toBeInTheDocument();
+    // No Stop button for a down script
+    expect(screen.queryByRole("button", { name: /Stop/i })).not.toBeInTheDocument();
+  });
+
+  it("mock stopRegisteredRuntime flips status to registered and preserves runtimeKind", async () => {
+    const rc = await mockClient.registerRuntime({
+      displayName: "test-script-stop",
+      image: "test-image:latest",
+      containerPort: 9090,
+      agent: "host",
+      runtimeKind: "script",
+      launcherPath: "/tmp/test.sh",
+    });
+    expect(rc.runtimeKind).toBe("script");
+    expect(rc.launcherPath).toBe("/tmp/test.sh");
+
+    const result = await mockClient.stopRegisteredRuntime(rc.id);
+    expect(result.status).toBe("registered");
+    expect(result.runtimeKind).toBe("script");
+    expect(result.launcherPath).toBe("/tmp/test.sh");
+  });
 });

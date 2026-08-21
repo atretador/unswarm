@@ -50,6 +50,7 @@ import {
 } from "../../components/ui";
 import type {
   Agent,
+  AgentAvailableScript,
   AgentScriptStatus,
   Container,
   ContainerRegistrationStatus,
@@ -1029,9 +1030,9 @@ function ManageScriptsBody({
   const [remoteDisplayName, setRemoteDisplayName] = useState("");
   const [remotePort, setRemotePort] = useState("8080");
 
-  const { data: agentScripts, isLoading, error } = useQuery({
-    queryKey: ["agent-scripts", agentName],
-    queryFn: () => client.listAgentScripts(agentName),
+  const { data: availableScripts, isLoading, error } = useQuery({
+    queryKey: ["agent-available-scripts", agentName],
+    queryFn: () => client.listAvailableScripts(agentName),
     staleTime: 15_000,
     enabled: !isHost,
   });
@@ -1073,7 +1074,7 @@ function ManageScriptsBody({
     });
   };
 
-  const pickRemoteScript = (script: AgentScriptStatus) => {
+  const pickRemoteScript = (script: AgentAvailableScript) => {
     if (selectedPath === script.path) {
       setSelectedPath(null);
       return;
@@ -1162,30 +1163,30 @@ function ManageScriptsBody({
         </div>
       ) : error ? (
         <EmptyState
-          title="Failed to load scripts"
-          description={error.message}
+          title="Couldn't list scripts"
+          description={`Couldn't reach ${agentName} to list scripts.`}
           action={
             <Button
               variant="secondary"
               size="sm"
               onClick={() =>
-                queryClient.invalidateQueries({ queryKey: ["agent-scripts", agentName] })
+                queryClient.invalidateQueries({ queryKey: ["agent-available-scripts", agentName] })
               }
             >
               Retry
             </Button>
           }
         />
-      ) : (agentScripts ?? []).length === 0 ? (
+      ) : (availableScripts ?? []).length === 0 ? (
         <EmptyState
           icon={<Terminal className="size-12" strokeWidth={1.5} />}
-          title="No launcher scripts found"
-          description="No launcher scripts found on this agent. Configure scripts_dir in the agent's config to enable script discovery."
+          title="No scripts found"
+          description={`No scripts found on ${agentName}. Add .sh files to the agent\u2019s scripts_dir.`}
         />
       ) : (
         <>
           <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {(agentScripts ?? []).map((s) => {
+            {(availableScripts ?? []).map((s) => {
               const already = isScriptRegistered(s.path);
               const selected = selectedPath === s.path;
               return (
@@ -1209,8 +1210,8 @@ function ManageScriptsBody({
                   `}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.path.split("/").pop()}>
-                      {s.path.split("/").pop()}
+                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.name}>
+                      {s.name}
                     </span>
                     {already ? (
                       <Badge variant="success" className="shrink-0 gap-1">
@@ -1423,6 +1424,11 @@ function RegisteredContainerCard({
     onSuccess: invalidate,
   });
 
+  const stopScriptMutation = useMutation({
+    mutationFn: (id: string) => client.stopRegisteredRuntime(id),
+    onSuccess: invalidate,
+  });
+
   const benchmarkMutation = useMutation({
     mutationFn: (modelId: string) => client.runBenchmark(modelId),
     onSuccess: (result) => {
@@ -1445,7 +1451,8 @@ function RegisteredContainerCard({
     stopMutation.isPending ||
     restartMutation.isPending ||
     rediscoverMutation.isPending ||
-    deleteMutation.isPending;
+    deleteMutation.isPending ||
+    stopScriptMutation.isPending;
 
   return (
     <motion.div
@@ -1596,8 +1603,20 @@ function RegisteredContainerCard({
           )}
           <span className="mx-0.5 hidden h-4 w-px bg-[var(--color-border)] sm:block" />
           {isScript ? (
-            // Scripts: Start when down, no Stop/Restart (managed by registration lifecycle)
-            signal === "down" || signal === "unknown" ? (
+            // Scripts: Start when down, Stop when running, no Restart (managed by registration lifecycle)
+            signal === "running" ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                loading={stopScriptMutation.isPending}
+                onClick={() => stopScriptMutation.mutate(container.id)}
+                title="Stop script"
+              >
+                <Square className="size-3" />
+                Stop
+              </Button>
+            ) : signal === "down" || signal === "unknown" ? (
               <Button
                 variant="primary"
                 size="sm"

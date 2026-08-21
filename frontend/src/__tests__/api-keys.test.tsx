@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { setMockLatency } from "../lib/api/mock";
+import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import ApiKeys from "../features/api-keys";
 
@@ -27,20 +27,33 @@ describe("API Keys page", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows seeded keys with scope badges", async () => {
+  it("shows seeded keys with scope badges across tabs", async () => {
+    const user = userEvent.setup();
     render(
       <TestWrapper>
         <ApiKeys />
       </TestWrapper>,
     );
 
+    // Wait for the page to fully load
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Inference/i })).toBeInTheDocument();
+    });
+
+    // On the default Inference tab, the "Local dashboard test" key (inference-scoped) is visible
+    await waitFor(() => {
+      expect(screen.getByText("Local dashboard test")).toBeInTheDocument();
+    });
+    // Inference badge appears in the key row
+    expect(screen.getAllByText("Inference").length).toBeGreaterThanOrEqual(1);
+
+    // Switch to Agent tab — "Go agent" key (agent-scoped) appears
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
     await waitFor(() => {
       expect(screen.getByText("Go agent")).toBeInTheDocument();
     });
-
-    // The seeded "Local dashboard test" key is inference-scoped.
-    expect(screen.getByText("Inference")).toBeInTheDocument();
-    expect(screen.getByText("Agent")).toBeInTheDocument();
+    // Agent badge appears in the key row
+    expect(screen.getAllByText("Agent").length).toBeGreaterThanOrEqual(1);
   });
 
   it("creates a new inference key and reveals the secret once", async () => {
@@ -73,6 +86,7 @@ describe("API Keys page", () => {
 
   it("revoke disables the revoke button", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
 
     render(
       <TestWrapper>
@@ -80,12 +94,18 @@ describe("API Keys page", () => {
       </TestWrapper>,
     );
 
+    // "Go agent" is on the Agent tab — switch there first
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
     await waitFor(() => {
       expect(screen.getByText("Go agent")).toBeInTheDocument();
     });
 
     // Revoke the seeded "Go agent" key — confirm dialog is stubbed to allow.
-    await userEvent.click(screen.getByRole("button", { name: "Revoke Go agent" }));
+    await user.click(screen.getByRole("button", { name: "Revoke Go agent" }));
 
     await waitFor(() => {
       expect(
@@ -102,6 +122,12 @@ describe("API Keys page", () => {
       </TestWrapper>,
     );
 
+    // "Go agent" is on the Agent tab
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
     await waitFor(() => {
       expect(screen.getByText("Go agent")).toBeInTheDocument();
     });
@@ -112,6 +138,169 @@ describe("API Keys page", () => {
       expect(
         screen.getByText("Key rotated — copy your new secret now."),
       ).toBeInTheDocument();
+    });
+  });
+
+  // ─── Tab bar ──────────────────────────────────────────────────
+
+  it("renders two tabs: Inference and Agent", async () => {
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Inference/i })).toBeInTheDocument();
+    });
+    expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+  });
+
+  it("Inference tab is active by default", async () => {
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Inference/i })).toBeInTheDocument();
+    });
+
+    const inferenceTab = screen.getByRole("tab", { name: /Inference/i });
+    expect(inferenceTab).toHaveAttribute("aria-selected", "true");
+
+    // Inference keys are shown
+    await waitFor(() => {
+      expect(screen.getByText("Local dashboard test")).toBeInTheDocument();
+    });
+    // Inference section heading
+    expect(screen.getByText("Inference Keys")).toBeInTheDocument();
+  });
+
+  it("switching to Agent tab shows agent keys and agent create form", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
+    // Agent tab is now selected
+    const agentTab = screen.getByRole("tab", { name: /Agent/i });
+    expect(agentTab).toHaveAttribute("aria-selected", "true");
+
+    // Agent section heading
+    await waitFor(() => {
+      expect(screen.getByText("Agent Keys")).toBeInTheDocument();
+    });
+    // The seeded "Go agent" key is agent-scoped
+    expect(screen.getByText("Go agent")).toBeInTheDocument();
+    // Agent key create form heading is present
+    expect(screen.getByText("New Agent Key")).toBeInTheDocument();
+  });
+
+  it("switching tabs filters keys by scope", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Inference/i })).toBeInTheDocument();
+    });
+
+    // On inference tab, "Local dashboard test" should be visible (inference-scoped)
+    await waitFor(() => {
+      expect(screen.getByText("Local dashboard test")).toBeInTheDocument();
+    });
+
+    // "Go agent" should NOT be visible on the inference tab
+    expect(screen.queryByText("Go agent")).not.toBeInTheDocument();
+
+    // Switch to agent tab
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+    await waitFor(() => {
+      expect(screen.getByText("Go agent")).toBeInTheDocument();
+    });
+
+    // "Local dashboard test" should NOT be visible on the agent tab
+    expect(screen.queryByText("Local dashboard test")).not.toBeInTheDocument();
+  });
+
+  it("creates an agent-scoped key via createAgentApiKey", async () => {
+    const user = userEvent.setup();
+    const createAgentSpy = vi.spyOn(mockClient, "createAgentApiKey");
+
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+
+    // Switch to Agent tab
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Create Key" })).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText("Key name"), "Remote worker");
+    await user.click(screen.getByRole("button", { name: "Create Key" }));
+
+    await waitFor(() => {
+      expect(createAgentSpy).toHaveBeenCalledWith("Remote worker");
+    });
+
+    // Secret banner shown
+    await waitFor(() => {
+      expect(
+        screen.getByText("Key created — copy your secret now."),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("empty agent keys shows appropriate empty state", async () => {
+    // Mock listApiKeys to return only inference keys
+    vi.spyOn(mockClient, "listApiKeys").mockResolvedValue([
+      {
+        id: "ak-inf-1",
+        name: "Inference only",
+        keyPrefix: "usk_test123",
+        scope: "inference",
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null,
+      },
+    ]);
+
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <ApiKeys />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Agent/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("tab", { name: /Agent/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("No agent keys yet")).toBeInTheDocument();
     });
   });
 });
