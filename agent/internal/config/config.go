@@ -3,7 +3,10 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -18,12 +21,13 @@ type ReconnectConfig struct {
 
 // Config is the top-level agent configuration.
 type Config struct {
-	BackendURL   string          `yaml:"backend_url"`
-	APIKey       string          `yaml:"api_key"`
-	AgentName    string          `yaml:"agent_name"`
-	DockerSocket string          `yaml:"docker_socket"`
-	ScriptsDir   string          `yaml:"scripts_dir"`
-	Reconnect    ReconnectConfig `yaml:"reconnect"`
+	BackendURL       string          `yaml:"backend_url"`
+	APIKey           string          `yaml:"api_key"`
+	AgentName        string          `yaml:"agent_name"`
+	DockerSocket     string          `yaml:"docker_socket"`
+	ScriptsDir       string          `yaml:"scripts_dir"`
+	AllowInsecureWs  bool            `yaml:"allow_insecure_ws"`
+	Reconnect        ReconnectConfig `yaml:"reconnect"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -58,6 +62,10 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return Config{}, fmt.Errorf("validate config %s: %w", path, err)
+	}
+
 	return cfg, nil
 }
 
@@ -69,4 +77,49 @@ func (c Config) InitialBackoff() time.Duration {
 // MaxBackoff returns the max backoff as a time.Duration.
 func (c Config) MaxBackoff() time.Duration {
 	return time.Duration(c.Reconnect.MaxBackoffMs) * time.Millisecond
+}
+
+// Validate checks the config for security issues and returns an error if any
+// are found. Called automatically by Load.
+func (c Config) Validate() error {
+	if err := validateInsecureWs(c.BackendURL, c.AllowInsecureWs); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateInsecureWs rejects ws:// connections to non-loopback hosts unless
+// allowInsecureWs is true, because the API key would be sent in plaintext.
+func validateInsecureWs(backendURL string, allowInsecureWs bool) error {
+	u, err := url.Parse(backendURL)
+	if err != nil {
+		return nil // unparseable URLs are caught elsewhere
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "ws" {
+		return nil // wss:// and other schemes are fine
+	}
+	host := u.Hostname()
+	if host == "" || isLoopback(host) {
+		return nil // loopback ws:// is allowed for local dev
+	}
+	if !allowInsecureWs {
+		return fmt.Errorf(
+			"backend_url uses unencrypted ws:// to a non-loopback host; the API key would be sent in plaintext. Use wss:// (e.g., via a TLS-terminating reverse proxy) or set allow_insecure_ws: true to accept the risk",
+		)
+	}
+	return nil
+}
+
+// isLoopback reports whether host is a loopback address (localhost, 127.x.x.x,
+// or ::1).
+func isLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return true
+	}
+	return false
 }

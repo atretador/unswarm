@@ -162,6 +162,8 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("Cookie", policy => policy.RequireAuthenticatedUser());
     options.AddPolicy("InferenceKey", policy =>
         policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.Inference.ToString()));
+    options.AddPolicy("AgentKey", policy =>
+        policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.Agent.ToString()));
 });
 
 // ── Background services ──────────────────────────────────────────────────

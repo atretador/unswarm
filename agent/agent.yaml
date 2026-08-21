@@ -2,6 +2,7 @@
 # Copy this file and modify as needed.
 
 # Backend WebSocket URL (supports ws://, wss://, http://, https://)
+# For any non-local deployment, use wss:// to encrypt the API key in transit.
 backend_url: "ws://localhost:5014"
 
 # API key for authentication (empty = no auth)
@@ -12,6 +13,12 @@ agent_name: "machine-b"
 
 # Docker socket path
 docker_socket: "unix:///var/run/docker.sock"
+
+# Allow unencrypted ws:// connections to non-loopback hosts.
+# Default false: the agent will refuse ws:// to a remote host to prevent
+# the API key from being sent in plaintext. Set to true only if you accept
+# the risk (e.g. a dedicated, isolated network with no MITM threat).
+allow_insecure_ws: false
 
 # Reconnection settings
 reconnect:

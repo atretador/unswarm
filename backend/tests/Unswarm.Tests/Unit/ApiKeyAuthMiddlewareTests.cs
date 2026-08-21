@@ -194,4 +194,40 @@ public sealed class ApiKeyAuthMiddlewareTests
         Assert.False(tracker.Called);
         Assert.Equal(401, context.Response.StatusCode);
     }
+
+    [Fact]
+    public async Task InferenceKey_AgentPath_Rejected()
+    {
+        var store = TestApiKeyStore.Create();
+        // Seed an Agent key so the agent surface is activated, then present an Inference key.
+        await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-activate");
+        var created = await store.CreateAsync("ci", ApiKeyScope.Inference, "ci-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/api/agents", "/ws/agent"] }, store,
+            path: "/api/agents", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(tracker.Called);
+        Assert.Equal(401, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentKey_InferencePath_Rejected()
+    {
+        var store = TestApiKeyStore.Create();
+        // Seed an Inference key so the inference surface is activated, then present an Agent key.
+        await store.CreateAsync("ci", ApiKeyScope.Inference, "ci-activate");
+        var created = await store.CreateAsync("agent", ApiKeyScope.Agent, "agent-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/v1"] }, store,
+            path: "/v1", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(tracker.Called);
+        Assert.Equal(401, context.Response.StatusCode);
+    }
 }

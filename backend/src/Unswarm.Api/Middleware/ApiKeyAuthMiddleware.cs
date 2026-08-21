@@ -13,11 +13,15 @@ namespace Unswarm.Api.Middleware;
 /// <summary>
 /// API-key authentication for the protected surfaces, scoped by path.
 ///
-///   /v1                       → inference key
+///   /v1                       → Inference key
+///   /api/agents, /ws/agent    → Agent key
 ///
-/// Two design rules keep the authentication surfaces strictly separate:
+/// Three design rules keep the authentication surfaces strictly separate:
 ///  1. A key carries a <see cref="ApiKeyScope"/> claim set by ApiKeyAuthMiddleware.
-///  2. Auth is opt-in per scope: a protected path only enforces a key once at
+///  2. Each protected path prefix maps to exactly one scope. After key validation
+///     the key's scope is compared to the path's required scope; a mismatch is
+///     rejected with 401.
+///  3. Auth is opt-in per scope: a protected path only enforces a key once at
 ///     least one active key of that scope exists. This preserves the historical
 ///     "empty key = auth disabled" behaviour for environments that run without
 ///     keys, while newly created keys flip the relevant surface on.
@@ -30,6 +34,8 @@ public sealed class ApiKeyAuthMiddleware
     /// <summary>Required scope per protected path prefix (case-insensitive).</summary>
     private static readonly Dictionary<string, ApiKeyScope> PathScope = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["/api/agents"] = ApiKeyScope.Agent,
+        ["/ws/agent"] = ApiKeyScope.Agent,
         ["/v1"] = ApiKeyScope.Inference,
     };
 
@@ -84,6 +90,13 @@ public sealed class ApiKeyAuthMiddleware
         if (entity is null)
         {
             _logger.LogWarning("Invalid API key for {Path} from {Ip}", path, context.Connection.RemoteIpAddress);
+            await DenyAsync(context);
+            return;
+        }
+
+        if (entity.Scope != scope)
+        {
+            _logger.LogWarning("API key scope {KeyScope} does not match required scope {RequiredScope} for {Path} from {Ip}", entity.Scope, scope, path, context.Connection.RemoteIpAddress);
             await DenyAsync(context);
             return;
         }

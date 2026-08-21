@@ -97,6 +97,7 @@ func TestLoadPartialOverride(t *testing.T) {
 	content := `
 backend_url: "ws://10.0.0.1:5014"
 agent_name: "partial-test"
+allow_insecure_ws: true
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.yaml")
@@ -137,5 +138,72 @@ func TestMaxBackoffDuration(t *testing.T) {
 	d := cfg.MaxBackoff()
 	if d != 30000000000 { // 30s in nanoseconds
 		t.Errorf("MaxBackoff() = %v, want 30s", d)
+	}
+}
+
+func TestValidateInsecureWs(t *testing.T) {
+	tests := []struct {
+		name           string
+		backendURL     string
+		allowInsecure  bool
+		wantErr        bool
+	}{
+		{
+			name:       "loopback ws:// localhost allowed",
+			backendURL: "ws://localhost:5014",
+			allowInsecure: false,
+			wantErr: false,
+		},
+		{
+			name:       "loopback ws:// 127.0.0.1 allowed",
+			backendURL: "ws://127.0.0.1:5014",
+			allowInsecure: false,
+			wantErr: false,
+		},
+		{
+			name:       "loopback ws:// ::1 allowed",
+			backendURL: "ws://[::1]:5014",
+			allowInsecure: false,
+			wantErr: false,
+		},
+		{
+			name:       "non-loopback ws:// rejected",
+			backendURL: "ws://10.0.0.1:5014",
+			allowInsecure: false,
+			wantErr: true,
+		},
+		{
+			name:       "non-loopback ws:// rejected for hostname",
+			backendURL: "ws://backend.example.com:5014",
+			allowInsecure: false,
+			wantErr: true,
+		},
+		{
+			name:       "non-loopback ws:// with allow_insecure_ws ok",
+			backendURL: "ws://10.0.0.1:5014",
+			allowInsecure: true,
+			wantErr: false,
+		},
+		{
+			name:       "wss:// always ok",
+			backendURL: "wss://backend.example.com:8443",
+			allowInsecure: false,
+			wantErr: false,
+		},
+		{
+			name:       "wss:// non-loopback ok",
+			backendURL: "wss://10.0.0.1:8443",
+			allowInsecure: false,
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateInsecureWs(tt.backendURL, tt.allowInsecure)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateInsecureWs(%q, %v) error = %v, wantErr %v",
+					tt.backendURL, tt.allowInsecure, err, tt.wantErr)
+			}
+		})
 	}
 }

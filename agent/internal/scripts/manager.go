@@ -51,7 +51,7 @@ type ScriptStatus struct {
 // disabled (IsEnabled returns false).
 func NewManager(scriptsDir string) *Manager {
 	logDir := filepath.Join(os.TempDir(), "unswarm-script-logs")
-	_ = os.MkdirAll(logDir, 0o755)
+	_ = os.MkdirAll(logDir, 0o700)
 	return &Manager{
 		scriptsDir: scriptsDir,
 		logDir:     logDir,
@@ -139,7 +139,7 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	logPath := m.logPath(resolved)
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return 0, fmt.Errorf("open log file: %w", err)
 	}
@@ -165,7 +165,7 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 
 	// Write PID file.
 	pidPath := m.pidPath(resolved)
-	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o644)
+	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d\n", pid)), 0o600)
 
 	// Reap the process in the background so it doesn't become a zombie.
 	go func() {
