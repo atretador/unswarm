@@ -1013,6 +1013,90 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal(startedId, persisted!.RuntimeContainerId);
     }
 
+    [Fact]
+    public async Task ResolveLiveContainerId_RecreatedContainer_ReturnsNewIdAndPersistsRefresh()
+    {
+        // Mirrors the fleet UI stop/restart path: the card passes the persisted
+        // RuntimeContainerId, which is stale after the docker container was recreated.
+        await _registry.CreateAsync(MakeRuntime("reg-ui", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id"
+        });
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "new-id",
+                ModelId = "localllama_gemma",
+                ModelName = "localllama_gemma",
+                Status = ContainerStatus.Running
+            }
+        ];
+
+        var service = CreateService();
+        var resolved = await service.ResolveLiveContainerIdAsync("old-id");
+
+        Assert.Equal("new-id", resolved);
+
+        var persisted = await _registry.GetAsync("reg-ui");
+        Assert.NotNull(persisted);
+        Assert.Equal("new-id", persisted!.RuntimeContainerId);
+    }
+
+    [Fact]
+    public async Task ResolveLiveContainerId_UnknownId_PassesThrough()
+    {
+        var service = CreateService();
+        var resolved = await service.ResolveLiveContainerIdAsync("some-unregistered-container");
+
+        Assert.Equal("some-unregistered-container", resolved);
+    }
+
+    [Fact]
+    public async Task ResolveLiveContainerId_NoLiveMatch_PassesThroughStaleId()
+    {
+        // Registered runtime exists but no container matches by id or name anymore —
+        // pass the stale id through so the docker layer logs its clear warning.
+        await _registry.CreateAsync(MakeRuntime("reg-gone", "localllama_gemma") with
+        {
+            RuntimeContainerId = "old-id"
+        });
+        _docker.ListedContainers = [];
+
+        var service = CreateService();
+        var resolved = await service.ResolveLiveContainerIdAsync("old-id");
+
+        Assert.Equal("old-id", resolved);
+    }
+
+    [Fact]
+    public async Task ResolveLiveContainerId_SameIdStillLive_NoRegistryWriteNeeded()
+    {
+        await _registry.CreateAsync(MakeRuntime("reg-live", "localllama_gemma") with
+        {
+            RuntimeContainerId = "live-id"
+        });
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "live-id",
+                ModelId = "localllama_gemma",
+                ModelName = "localllama_gemma",
+                Status = ContainerStatus.Running
+            }
+        ];
+
+        var service = CreateService();
+        var resolved = await service.ResolveLiveContainerIdAsync("live-id");
+
+        Assert.Equal("live-id", resolved);
+        var persisted = await _registry.GetAsync("reg-live");
+        Assert.Equal("live-id", persisted!.RuntimeContainerId);
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

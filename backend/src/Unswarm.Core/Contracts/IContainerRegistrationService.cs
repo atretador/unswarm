@@ -32,4 +32,13 @@ public interface IContainerRegistrationService
     Task DeleteAsync(string id, bool deleteModels, CancellationToken ct = default);
     Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default);
     Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Resolves the LIVE docker container id for a possibly-stale persisted
+    /// RuntimeContainerId. When the id belongs to a registered runtime whose container
+    /// was recreated (same name, new docker id), the live id is returned AND persisted
+    /// back to the registry. Unknown ids and unresolvable runtimes pass through unchanged
+    /// so generic (non-registered) docker operations keep their existing behavior.
+    /// </summary>
+    Task<string> ResolveLiveContainerIdAsync(string runtimeContainerId, CancellationToken ct = default);
 }

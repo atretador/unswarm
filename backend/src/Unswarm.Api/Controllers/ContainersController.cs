@@ -75,7 +75,11 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
-        await _docker.StopContainerAsync(id, ct);
+        // The fleet UI passes the registered runtime's persisted RuntimeContainerId,
+        // which is stale after the docker container was recreated (same name, new id).
+        // Resolve the live container id first; unknown ids pass through unchanged.
+        var containerId = await _registrationService.ResolveLiveContainerIdAsync(id, ct);
+        await _docker.StopContainerAsync(containerId, ct);
         return NoContent();
     }
 
@@ -83,7 +87,9 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("{id}/restart")]
     public async Task<IActionResult> Restart(string id, CancellationToken ct)
     {
-        var result = await _docker.RestartContainerAsync(id, ct);
+        // Same stale-id concern as Stop: resolve the live container id before restarting.
+        var containerId = await _registrationService.ResolveLiveContainerIdAsync(id, ct);
+        var result = await _docker.RestartContainerAsync(containerId, ct);
         if (result.ErrorMessage is not null)
             return StatusCode(500, new { error = "Failed to restart container" });
 

@@ -436,6 +436,46 @@ public sealed class ContainersControllerTests
         Assert.Null(response.RuntimeContainerId);
     }
 
+    // ── Generic stop/restart endpoints (fleet UI card buttons) ─────────
+
+    [Fact]
+    public async Task Stop_StaleRuntimeContainerId_RestartsLiveContainerId()
+    {
+        // The fleet UI Stop button posts the persisted RuntimeContainerId to
+        // /api/containers/{id}/stop. After a container recreation that id is stale;
+        // the controller must resolve and stop the LIVE id instead.
+        _registrationService.LiveIdMap["old-id"] = "new-id";
+
+        var result = await CreateController().Stop("old-id", CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Contains("old-id", _registrationService.ResolvedLiveIds);
+        Assert.Equal(["new-id"], _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task Stop_UnknownContainerId_PassesThroughToDocker()
+    {
+        var result = await CreateController().Stop("some-unregistered-id", CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Equal(["some-unregistered-id"], _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task Restart_StaleRuntimeContainerId_RestartsLiveContainerId()
+    {
+        _registrationService.LiveIdMap["old-id"] = "new-id";
+
+        var result = await CreateController().Restart("old-id", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ContainerResponse>(ok.Value);
+        Assert.Equal("new-id", response.Id);
+        Assert.Contains("old-id", _registrationService.ResolvedLiveIds);
+        Assert.Equal(["new-id"], _docker.RestartedContainerIds);
+    }
+
     // ── DTO completeness tests ────────────────────────────────────────
 
     [Fact]

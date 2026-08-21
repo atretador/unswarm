@@ -507,6 +507,42 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         return container;
     }
 
+    /// <inheritdoc />
+    public async Task<string> ResolveLiveContainerIdAsync(string runtimeContainerId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(runtimeContainerId))
+            return runtimeContainerId;
+
+        // Find the registered runtime that claims this (possibly stale) container id.
+        var allRuntimes = await _registry.ListAllAsync(ct).ConfigureAwait(false);
+        var runtime = allRuntimes.FirstOrDefault(r =>
+            !string.IsNullOrEmpty(r.RuntimeContainerId) &&
+            string.Equals(r.RuntimeContainerId, runtimeContainerId, StringComparison.OrdinalIgnoreCase));
+
+        if (runtime is null)
+            return runtimeContainerId; // not a registered runtime — generic docker path
+
+        var controller = GetController(runtime);
+        var live = await ResolveLiveRuntimeContainerAsync(controller, runtime, ct).ConfigureAwait(false);
+
+        if (live is null)
+            return runtimeContainerId; // nothing matches by id or name — keep old behavior
+
+        if (!string.Equals(live.Id, runtime.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation(
+                "Runtime container for {Id} was recreated: refreshing id {Old} -> {New}",
+                runtime.Id, runtime.RuntimeContainerId, live.Id);
+
+            await _registry.UpdateAsync(runtime.Id, runtime with
+            {
+                RuntimeContainerId = live.Id
+            }, ct).ConfigureAwait(false);
+        }
+
+        return live.Id;
+    }
+
     /// <summary>
     /// Resolves the controller for the container's execution target:
     /// "host" → local controller, anything else → "agent:&lt;name&gt;" via the router.

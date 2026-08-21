@@ -89,4 +89,20 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
             throw StopException;
         return Task.FromResult(StopResult);
     }
+
+    // ── ResolveLiveContainerIdAsync ────────────────────────────────────
+
+    public List<string> ResolvedLiveIds { get; } = [];
+
+    /// <summary>
+    /// Scriptable resolver: maps a requested (possibly stale) container id to the id
+    /// that should be returned. Unmapped ids pass through unchanged.
+    /// </summary>
+    public Dictionary<string, string> LiveIdMap { get; } = new();
+
+    public Task<string> ResolveLiveContainerIdAsync(string runtimeContainerId, CancellationToken ct = default)
+    {
+        ResolvedLiveIds.Add(runtimeContainerId);
+        return Task.FromResult(LiveIdMap.GetValueOrDefault(runtimeContainerId, runtimeContainerId));
+    }
 }
