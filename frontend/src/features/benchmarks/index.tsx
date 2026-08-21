@@ -598,6 +598,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
 // ─── Benchmark row ────────────────────────────────────────────────
 
 function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResult; index: number; onShowHistory?: (modelId: string, modelName: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const isError = result.status === "error";
 
   return (
@@ -610,8 +611,13 @@ function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResul
       <div
         className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-[var(--color-border-subtle)] px-4 py-3 transition-colors last:border-0 hover:bg-[var(--color-bg-muted)]"
       >
-        {/* Model + timestamp + prompt info */}
-        <div className="flex min-w-0 flex-1 basis-48 items-center gap-2">
+        {/* Model + timestamp + prompt info — clickable to expand/collapse details */}
+        <button
+          type="button"
+          onClick={() => setExpanded((e) => !e)}
+          aria-expanded={expanded}
+          className="flex min-w-0 flex-1 basis-48 cursor-pointer items-center gap-2 text-left"
+        >
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
               {result.modelName}
@@ -623,7 +629,7 @@ function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResul
               {result.promptName ?? "Built-in prompt"}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
             </p>
           </div>
-        </div>
+        </button>
 
         {/* Metrics — throughput primary, latency + tokens secondary */}
         <div className="grid shrink-0 grid-cols-[auto_4.5rem_4.5rem] items-center gap-x-3">
@@ -674,11 +680,19 @@ function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResul
         </div>
       </div>
 
-      {/* Inline error strip */}
-      {isError && result.errorMessage && (
-        <div className="flex items-start gap-1.5 border-b border-[var(--color-border-subtle)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-4 py-2 text-[10px] text-[var(--color-status-error)]">
-          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
-          <span className="leading-relaxed">{result.errorMessage}</span>
+      {/* Detail area — error message or prompt text, only when expanded */}
+      {expanded && (
+        <div className="border-b border-[var(--color-border-subtle)] px-4 py-2 last:border-0">
+          {isError && result.errorMessage ? (
+            <div className="flex items-start gap-1.5 bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] text-[10px] text-[var(--color-status-error)]">
+              <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+              <span className="leading-relaxed">{result.errorMessage}</span>
+            </div>
+          ) : (
+            <span className="block whitespace-pre-wrap text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+              {result.prompt}
+            </span>
+          )}
         </div>
       )}
     </motion.div>

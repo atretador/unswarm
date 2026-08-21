@@ -84,7 +84,7 @@ function SchedulerPolicySection() {
     {
       key: "enable-benchmarking",
       label: "Enable benchmarking",
-      desc: "Auto-benchmark models after validation",
+      desc: "Auto-run the default benchmark when a model is registered",
       checked: settings.enableBenchmarking,
       field: "enableBenchmarking",
     },

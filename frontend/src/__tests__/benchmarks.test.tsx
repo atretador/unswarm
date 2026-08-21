@@ -149,7 +149,7 @@ describe("Benchmarks", () => {
     expect(listSpy).toHaveBeenCalled();
   });
 
-  it("selecting a saved prompt sends its text to runBenchmark", async () => {
+  it("sends the saved prompt id to runBenchmark", async () => {
     const user = userEvent.setup();
     const runSpy = vi.spyOn(mockClient, "runBenchmark");
 
@@ -181,10 +181,8 @@ describe("Benchmarks", () => {
       expect(runSpy).toHaveBeenCalledTimes(1);
     });
     expect(runSpy.mock.calls[0][0]).toBe("1");
-    // The Code review prompt text is sent
-    expect(runSpy.mock.calls[0][1]).toBe(
-      "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
-    );
+    // The saved prompt id is sent; the backend resolves it to prompt text
+    expect(runSpy.mock.calls[0][1]).toEqual({ promptId: "p2" });
   });
 
   it("persists the selected prompt text into the run history", async () => {
