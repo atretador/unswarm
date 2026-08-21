@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
 import { Tooltip } from "../ui/Tooltip";
+import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
 
 export interface SidebarProps {
@@ -29,15 +30,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         `}
       >
         {!collapsed && (
-          <span className="font-heading text-sm font-semibold text-[var(--color-text-heading)] tracking-tight">
-            unswarm
-          </span>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Logo size={28} />
+            <span className="font-heading text-base font-semibold text-[var(--color-text-heading)] tracking-tight">
+              unswarm
+            </span>
+          </div>
         )}
-        {collapsed && (
-          <span className="font-heading text-xs font-bold text-[var(--color-text-heading)]">
-            u
-          </span>
-        )}
+        {collapsed && <Logo size={26} />}
       </div>
 
       {/* Nav */}

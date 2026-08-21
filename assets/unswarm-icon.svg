@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="unswarm-title">
+  <title id="unswarm-title">Unswarm — the swarm, brought to order</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2030"/>
+      <stop offset="1" stop-color="#0b0d14"/>
+    </linearGradient>
+    <radialGradient id="ambient" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.16"/>
+      <stop offset="0.6" stop-color="#22d3ee" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="coreGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.55"/>
+      <stop offset="0.55" stop-color="#22d3ee" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="bright" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a5f3fc"/>
+      <stop offset="1" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="dim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e7490"/>
+      <stop offset="1" stop-color="#164e63"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Tile -->
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#bg)"/>
+  <rect x="11.5" y="11.5" width="489" height="489" rx="108.5" fill="none" stroke="#22d3ee" stroke-opacity="0.14" stroke-width="3"/>
+
+  <!-- Ambient glow -->
+  <ellipse cx="256" cy="256" rx="212" ry="212" fill="url(#ambient)"/>
+
+  <!-- Routing lines: control plane to fleet -->
+  <g stroke="#67e8f9" stroke-opacity="0.38" stroke-width="9" stroke-linecap="round">
+    <line x1="256" y1="256" x2="256" y2="106"/>
+    <line x1="256" y1="256" x2="386" y2="181"/>
+    <line x1="256" y1="256" x2="386" y2="331"/>
+    <line x1="256" y1="256" x2="256" y2="406"/>
+    <line x1="256" y1="256" x2="126" y2="331"/>
+    <line x1="256" y1="256" x2="126" y2="181"/>
+  </g>
+
+  <!-- Dormant fleet nodes -->
+  <g fill="url(#dim)" stroke="#22d3ee" stroke-opacity="0.45" stroke-width="3">
+    <circle cx="256" cy="106" r="30"/>
+    <circle cx="386" cy="331" r="30"/>
+    <circle cx="256" cy="406" r="30"/>
+    <circle cx="126" cy="331" r="30"/>
+    <circle cx="126" cy="181" r="30"/>
+  </g>
+
+  <!-- Active node (model loaded / serving) -->
+  <circle cx="386" cy="181" r="47" fill="none" stroke="#22d3ee" stroke-opacity="0.35" stroke-width="3"/>
+  <circle cx="386" cy="181" r="32" fill="url(#bright)"/>
+
+  <!-- Control plane core -->
+  <circle cx="256" cy="256" r="88" fill="url(#coreGlow)"/>
+  <circle cx="256" cy="256" r="54" fill="url(#bright)"/>
+  <path d="M256 232 L276.8 244 L276.8 268 L256 280 L235.2 268 L235.2 244 Z"
+        fill="none" stroke="#083344" stroke-opacity="0.55" stroke-width="5" stroke-linejoin="round"/>
+</svg>

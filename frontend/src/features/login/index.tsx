@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../lib/auth-context";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
+import { Logo } from "../../components/ui/Logo";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -34,11 +35,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm p-8 rounded-[var(--radius-xl)] bg-[var(--color-bg-surface)] border border-[var(--color-border)] shadow-lg">
         {/* Logo */}
         <div className="flex justify-center mb-6">
-          <div className="flex items-center justify-center size-10 rounded-full bg-[var(--color-primary-soft)]">
-            <span className="font-heading text-lg font-bold text-[var(--color-primary)]">
-              u
-            </span>
-          </div>
+          <Logo size={44} />
         </div>
 
         <h1 className="font-heading text-base font-semibold text-[var(--color-text-heading)] mb-6 text-center">
