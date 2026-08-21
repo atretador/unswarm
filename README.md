@@ -2,6 +2,8 @@
 
 A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your fleet — all from a single dashboard.
 
+[![Unswarm demo](https://img.youtube.com/vi/7wesHD9aXlo/maxresdefault.jpg)](https://youtu.be/7wesHD9aXlo)
+
 ## Why Unswarm?
 
 Running multiple LLM models on a single machine is expensive — most machines can only keep one or two models loaded in VRAM at a time. Unswarm solves this by turning your machine into a **model switcher**: you pre-provision one container per model (each running an inference server like llama.cpp), and Unswarm's scheduler loads and unloads them on demand.
