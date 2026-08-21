@@ -20,7 +20,7 @@ public class UsersController : ControllerBase
     [HttpGet]
     public IActionResult List()
     {
-        var users = _userManager.Users.Select(u => new { u.Id, u.UserName, u.IsTempPassword }).ToList();
+        var users = _userManager.Users.Select(u => new { id = u.Id, username = u.UserName, isTempPassword = u.IsTempPassword }).ToList();
         return Ok(users);
     }
 
@@ -32,7 +32,7 @@ public class UsersController : ControllerBase
         if (!result.Succeeded)
             return BadRequest(new { error = string.Join(", ", result.Errors.Select(e => e.Description)) });
 
-        return Ok(new { user.Id, user.UserName, user.IsTempPassword });
+        return Ok(new { id = user.Id, username = user.UserName, isTempPassword = user.IsTempPassword });
     }
 
     [HttpPost("{id}/reset-password")]

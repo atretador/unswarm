@@ -27,7 +27,7 @@ public class AuthController : ControllerBase
             return Unauthorized(new { error = "Invalid username or password" });
 
         await _signInManager.SignInAsync(user, isPersistent: true);
-        return Ok(new { user.UserName, user.IsTempPassword });
+        return Ok(new { username = user.UserName, isTempPassword = user.IsTempPassword });
     }
 
     [HttpPost("logout")]
@@ -46,7 +46,7 @@ public class AuthController : ControllerBase
         var user = await _userManager.GetUserAsync(User);
         if (user == null) return Unauthorized();
 
-        return Ok(new { user.UserName, user.Email, user.IsTempPassword });
+        return Ok(new { username = user.UserName, email = user.Email, isTempPassword = user.IsTempPassword });
     }
 
     [HttpPost("change-password")]
