@@ -581,6 +581,7 @@ function ManageContainersBody({
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
+  const [port, setPort] = useState("8080");
 
   const { data: containers, isLoading, error } = useQuery({
     queryKey: ["agent-containers", agentName],
@@ -589,11 +590,11 @@ function ManageContainersBody({
   });
 
   const registerMutation = useMutation({
-    mutationFn: (payload: { displayName: string; image: string }) =>
+    mutationFn: (payload: { displayName: string; image: string; port: number }) =>
       client.registerRuntime({
         displayName: payload.displayName,
         image: payload.image,
-        containerPort: 8080,
+        containerPort: payload.port,
         agent: agentName,
       }),
     onSuccess: () => {
@@ -627,6 +628,9 @@ function ManageContainersBody({
     }
     setSelectedId(c.id);
     setDisplayName(displayNameFromContainer(c));
+    // Prefill from the container's detected port; fall back to the platform
+    // default when telemetry reports none (e.g. a stopped container).
+    setPort(c.port != null ? String(c.port) : "8080");
   };
 
   const confirmRegister = () => {
@@ -634,6 +638,7 @@ function ManageContainersBody({
     registerMutation.mutate({
       displayName: displayName.trim(),
       image: selected.modelName || selected.id,
+      port: parseInt(port, 10) || 8080,
     });
   };
 
@@ -824,7 +829,7 @@ function ManageContainersBody({
           </>
         )}
 
-        {/* Inline confirm: display name + register */}
+        {/* Inline confirm: display name + container + port */}
         <AnimatePresence>
           {selected && (
             <motion.div
@@ -847,7 +852,7 @@ function ManageContainersBody({
                   <X className="size-3.5" />
                 </button>
               </div>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+              <div className="space-y-2.5">
                 <Input
                   label="Display name"
                   value={displayName}
@@ -855,15 +860,20 @@ function ManageContainersBody({
                   placeholder="my-model-server"
                   aria-label="Display name"
                 />
-                <span className="hidden text-center text-[10px] text-[var(--color-text-muted)] sm:block">
-                  →
-                </span>
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-[var(--color-text-muted)]">Image</span>
+                  <span className="text-xs font-medium text-[var(--color-text-muted)]">Container</span>
                   <code className="h-8 truncate rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-1.5 font-mono text-xs text-[var(--color-text)]">
                     {selected.modelName}
                   </code>
                 </div>
+                <Input
+                  label="Port"
+                  type="number"
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                  placeholder="8080"
+                  aria-label="Port"
+                />
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>

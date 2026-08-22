@@ -280,7 +280,7 @@ describe("Fleet", () => {
     expect(within(dialog).queryByText("container-1")).not.toBeInTheDocument();
   });
 
-  it("selecting a container registers it with agent + prefilled image", async () => {
+  it("selecting a container prefills display name + detected port and registers with agent", async () => {
     seedRegisteredRuntimes(HOST_RCS);
     const user = userEvent.setup();
     const registerSpy = vi.spyOn(mockClient, "registerRuntime");
@@ -297,15 +297,18 @@ describe("Fleet", () => {
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
     await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
 
     await user.click(screen.getByText("vllm-serve"));
 
-    const registerButton = await screen.findByRole("button", { name: /register on edge-node-1/i });
-    await user.click(registerButton);
+    // Port auto-fills from the container's detected port (8000 in the mock seed)
+    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    expect(portInput).toHaveValue(8000);
+
+    await user.click(await screen.findByRole("button", { name: /register on edge-node-1/i }));
 
     await waitFor(() => {
       expect(registerSpy).toHaveBeenCalledTimes(1);
@@ -313,8 +316,77 @@ describe("Fleet", () => {
     const payload = registerSpy.mock.calls[0][0] as RegisterRuntimePayload;
     expect(payload.agent).toBe("edge-node-1");
     expect(payload.image).toBe("vllm-serve");
-    expect(payload.containerPort).toBe(8080);
+    expect(payload.containerPort).toBe(8000);
     expect(payload.displayName).toBeTruthy();
+  });
+
+  it("allows manually overriding the prefilled container port", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    const registerSpy = vi.spyOn(mockClient, "registerRuntime");
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("vllm-serve")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("vllm-serve"));
+
+    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    expect(portInput).toHaveValue(8000);
+
+    // Manual override of the auto-detected port
+    await user.clear(portInput);
+    await user.type(portInput, "9000");
+
+    await user.click(await screen.findByRole("button", { name: /register on edge-node-1/i }));
+
+    await waitFor(() => {
+      expect(registerSpy).toHaveBeenCalledTimes(1);
+    });
+    const payload = registerSpy.mock.calls[0][0] as RegisterRuntimePayload;
+    expect(payload.image).toBe("vllm-serve");
+    expect(payload.containerPort).toBe(9000);
+  });
+
+  it("falls back to 8080 when the container reports no detected port", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+
+    render(
+      <TestWrapper>
+        <Fleet />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Toggle edge-node-1 section" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
+    await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
+
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    await waitFor(() => {
+      expect(screen.getByText("ray-worker")).toBeInTheDocument();
+    });
+
+    // ray-worker is stopped → telemetry reports no port → fallback default
+    await user.click(screen.getByText("ray-worker"));
+
+    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    expect(portInput).toHaveValue(8080);
   });
 
   it("modal closes after a successful registration", async () => {
