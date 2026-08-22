@@ -21,7 +21,25 @@ public sealed class SchedulerWorkerShutdownTests
     private readonly FakeLogStore _logStore = new();
     private readonly FakeStatsTracker _statsTracker = new();
     private readonly FakeClock _clock = new();
+    private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly ILogger<SchedulerWorker> _logger = new LoggerFactory().CreateLogger<SchedulerWorker>();
+
+    public SchedulerWorkerShutdownTests()
+    {
+        // Lane scheduling routes models through the container registry.
+        foreach (var model in new[] { "llama", "mistral" })
+        {
+            _containerRegistry.CreateAsync(new RegisteredRuntime
+            {
+                Id = $"reg-{model}",
+                DisplayName = model,
+                Image = model,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }).GetAwaiter().GetResult();
+            _containerRegistry.AddModelMappingAsync($"reg-{model}", model).GetAwaiter().GetResult();
+        }
+    }
 
     private SchedulerWorker CreateWorker(
         Channel<InferenceRequest>? channel = null,
@@ -33,7 +51,7 @@ public sealed class SchedulerWorkerShutdownTests
         settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
         return new SchedulerWorker(channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            containerRegistry: null, router, resolver);
+            _containerRegistry, router, resolver);
     }
 
     private static InferenceRequest MakeRequest(string model, string id)
@@ -126,7 +144,7 @@ public sealed class SchedulerWorkerShutdownTests
     }
 
     [Fact]
-    public async Task BatchDrainSwitch_CancelsWaitingItemsViaTcs_DoesNotMarkProcessing()
+    public async Task WaitingItemsBehindModelSwitch_AllResolve_NeverMarkedProcessing()
     {
         var channel = Channel.CreateUnbounded<InferenceRequest>();
         var settings = new SchedulerSettings { LazyStop = true, BatchDrain = true, MaxContainerStartRetries = 1 };
@@ -148,7 +166,7 @@ public sealed class SchedulerWorkerShutdownTests
 
         worker.Start(cts.Token);
 
-        // Channel order: r1 (llama, blocks) → mistral → r2/r3 (llama, Waiting at switch time).
+        // Channel order: r1 (llama, blocks) → mistral → r2/r3 (llama).
         var r1 = MakeRequest("llama", "r1");
         var mistral = MakeRequest("mistral", "m1");
         var r2 = MakeRequest("llama", "r2");
@@ -158,22 +176,28 @@ public sealed class SchedulerWorkerShutdownTests
         await channel.Writer.WriteAsync(mistral);
         await channel.Writer.WriteAsync(r2);
         await channel.Writer.WriteAsync(r3);
-        await Task.Delay(200); // dispatcher forwards everything behind r1
 
         releaseFirst.TrySetResult();
 
-        // The switch to mistral batch-drains the resident llama queue: waiting
-        // items are cancelled via their Tcs — NOT flipped to Processing and left
-        // hanging.
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5)));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => r3.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        // Lane scheduling guarantees every queued item RESOLVES — none may hang
+        // forever on its Tcs nor be flipped to Processing while still waiting.
+        var result1 = await r1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(200, result1.StatusCode);
+        var resultM = await mistral.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(200, resultM.StatusCode);
+        var result2 = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(200, result2.StatusCode);
+        var result3 = await r3.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(200, result3.StatusCode);
 
-        // The mistral request itself completes normally after the switch.
-        var result = await mistral.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(200, result.StatusCode);
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 2 && _docker.StoppedContainerIds.Count == 1);
+        // The mistral switch stopped the llama container exactly once.
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
+        Assert.Single(_docker.StoppedContainerIds);
+
+        // Nothing is stuck in Processing after the dust settles.
+        await Task.Delay(100);
+        Assert.Empty(worker.GetSnapshot().Processing);
 
         cts.Cancel();
         await worker.WaitForShutdownAsync();

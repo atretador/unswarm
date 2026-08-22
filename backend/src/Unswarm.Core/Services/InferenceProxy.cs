@@ -27,6 +27,12 @@ public sealed class InferenceProxy : IInferenceProxy
     private const int ProxyHoldSeconds = 180;
     private const int RetryDelayMs = 500;
 
+    /// <summary>
+    /// Warmup-retry window in seconds. Overridable for tests — the production
+    /// default (180s) would make persistent-failure paths take minutes to resolve.
+    /// </summary>
+    public int HoldSecondsOverride { get; set; } = ProxyHoldSeconds;
+
     public InferenceProxy(
         IDockerController docker,
         IHealthChecker healthChecker,
@@ -272,7 +278,7 @@ public sealed class InferenceProxy : IInferenceProxy
                 }
 
                 // Bounded retry while the backend finishes warming up.
-                var holdDeadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+                var holdDeadline = DateTime.UtcNow.AddSeconds(HoldSecondsOverride);
                 while (true)
                 {
                     string rawScriptBody;
@@ -393,7 +399,7 @@ public sealed class InferenceProxy : IInferenceProxy
         }
 
         // Bounded retry while the backend finishes warming up.
-        var containerHoldDeadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+        var containerHoldDeadline = DateTime.UtcNow.AddSeconds(HoldSecondsOverride);
 
         // Streaming requests tunnel through chat_completion_stream so tokens reach
         // the client incrementally instead of being buffered until completion.
@@ -772,7 +778,7 @@ public sealed class InferenceProxy : IInferenceProxy
     {
         await _healthChecker.WaitForReadyAsync(port, ReadyTimeoutSeconds, ct).ConfigureAwait(false);
 
-        var deadline = DateTime.UtcNow.AddSeconds(ProxyHoldSeconds);
+        var deadline = DateTime.UtcNow.AddSeconds(HoldSecondsOverride);
         while (true)
         {
             try

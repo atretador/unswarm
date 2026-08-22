@@ -4,9 +4,19 @@ using Unswarm.Core.Telemetry;
 namespace Unswarm.Tests.Unit;
 
 /// <summary>
+/// Metrics instruments are process-wide statics with a single global state slot
+/// (e.g. the queue-depth provider). These tests must not race with the parallel
+/// scheduler suites that spawn live SchedulerWorkers registering providers, so
+/// this collection opts out of parallelization and runs after them.
+/// </summary>
+[CollectionDefinition(nameof(UnswarmMetricsSerialCollection), DisableParallelization = true)]
+public sealed class UnswarmMetricsSerialCollection;
+
+/// <summary>
 /// Verifies the custom "Unswarm" instruments record values, observed through a
 /// plain <see cref="MeterListener"/> (no exporter dependency required).
 /// </summary>
+[Collection(nameof(UnswarmMetricsSerialCollection))]
 public sealed class UnswarmMetricsTests : IDisposable
 {
     private readonly MeterListener _listener = new();
@@ -78,9 +88,11 @@ public sealed class UnswarmMetricsTests : IDisposable
     {
         UnswarmMetrics.RecordInferenceFailure("mistral", isHostTarget: true);
 
-        var m = Snapshot().Single(x => x.Instrument == "unswarm.inference.failures");
+        // Meters are process-wide and other tests may record concurrently —
+        // scope the lookup by tags instead of assuming a single measurement.
+        var m = Snapshot().Single(x => x.Instrument == "unswarm.inference.failures"
+                                       && x.Tags.GetValueOrDefault("model") as string == "mistral");
         Assert.Equal(1, m.Value);
-        Assert.Equal("mistral", m.Tags["model"]);
         Assert.Equal("host", m.Tags["target.kind"]);
     }
 
@@ -89,10 +101,10 @@ public sealed class UnswarmMetricsTests : IDisposable
     {
         UnswarmMetrics.RecordModelSwitch("llama3", "qwen", "host");
 
-        var m = Snapshot().Single(x => x.Instrument == "unswarm.model.switches");
+        var m = Snapshot().Single(x => x.Instrument == "unswarm.model.switches"
+                                       && x.Tags.GetValueOrDefault("from") as string == "llama3"
+                                       && x.Tags.GetValueOrDefault("to") as string == "qwen");
         Assert.Equal(1, m.Value);
-        Assert.Equal("llama3", m.Tags["from"]);
-        Assert.Equal("qwen", m.Tags["to"]);
         Assert.Equal("host", m.Tags["target"]);
     }
 
@@ -109,9 +121,15 @@ public sealed class UnswarmMetricsTests : IDisposable
     }
 
     [Fact]
-    public void QueueDepth_WithoutProvider_EmitsNoPositiveMeasurement()
+    public void QueueDepth_EmptyQueues_EmitsNoPositiveMeasurement()
     {
-        // No provider registered — gauge must emit nothing rather than zero.
+        // The gauge reads a single global provider slot. Take it over explicitly
+        // and report zero depth — what a fully drained scheduler reports. The
+        // gauge must not emit a positive measurement for empty queues.
+        // (Runs serially after the scheduler suites, so no live worker can
+        // re-register a provider with pending items during this window.)
+        using var registration = UnswarmMetrics.RegisterQueueDepthProvider(() => 0);
+
         _listener.RecordObservableInstruments();
 
         var depths = Snapshot().Where(x => x.Instrument == "unswarm.queue.depth").ToList();

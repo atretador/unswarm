@@ -671,7 +671,7 @@ public sealed class RemoteAgentDockerControllerTests
     }
 
     [Fact]
-    public async Task InferStreamAsync_ErrorResult_ThrowsOnRead()
+    public async Task InferStreamAsync_ErrorResult_ThrowsFromOpen()
     {
         var controller = CreateController();
         _registry.OnSend = msg =>
@@ -680,11 +680,10 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        await using var stream = await controller.InferStreamAsync(8080, "{}");
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        var ex = await Assert.ThrowsAsync<IOException>(
-            () => stream.ReadAsync(new byte[16], cts.Token).AsTask());
+        // Immediate failures surface from InferStreamAsync itself so callers can
+        // fall back to buffered inference instead of discovering them mid-stream.
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.InferStreamAsync(8080, "{}"));
         Assert.Contains("container not running", ex.Message);
     }
 
@@ -699,27 +698,23 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        await using var stream = await controller.InferStreamAsync(8080, "{}");
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
+        // Surfaced from the open call (see InferStreamAsync doc comment).
         await Assert.ThrowsAsync<NotSupportedException>(
-            () => stream.ReadAsync(new byte[16], cts.Token).AsTask());
+            () => controller.InferStreamAsync(8080, "{}"));
     }
 
     [Fact]
-    public async Task InferStreamAsync_AgentDisconnect_FaultsPendingRead()
+    public async Task InferStreamAsync_AgentDisconnect_FaultsPendingOpen()
     {
         var controller = CreateController();
 
-        await using var stream = await controller.InferStreamAsync(8080, "{}");
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
-        // Simulate the agent dropping while the read is pending.
-        var readTask = stream.ReadAsync(new byte[16], cts.Token).AsTask();
+        // The open awaits the first chunk/result; simulate the agent dropping
+        // while it is still pending.
+        var openTask = controller.InferStreamAsync(8080, "{}");
         await Task.Delay(50);
         controller.FailPendingCommands("Agent disconnected");
 
-        await Assert.ThrowsAnyAsync<Exception>(() => readTask);
+        await Assert.ThrowsAnyAsync<Exception>(() => openTask);
     }
 
     [Fact]

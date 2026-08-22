@@ -100,6 +100,8 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task CrossTarget_ProcessesConcurrently()
     {
+        await RegisterModelAsync("host-a");
+        await RegisterModelAsync("agent-a");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver());
@@ -128,6 +130,10 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task CrossTarget_ModelSwitches_DoNotStopOtherTargetsContainers()
     {
+        await RegisterModelAsync("host-a");
+        await RegisterModelAsync("host-b");
+        await RegisterModelAsync("agent-a");
+        await RegisterModelAsync("agent-b");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver());
@@ -148,6 +154,8 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
             MakeRequest("agent-b", id: "r4"));
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && agent.StartedModels.Count == 2
+            && host.StoppedContainerIds.Count == 1 && agent.StoppedContainerIds.Count == 1);
 
         // Each target switched its own model: exactly one stop per target, its own container
         Assert.Equal(["host-a", "host-b"], host.StartedModels);
@@ -168,6 +176,8 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task SameTarget_ModelSwitch_StopsOldContainer()
     {
+        await RegisterModelAsync("host-a");
+        await RegisterModelAsync("host-b");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver());
@@ -185,6 +195,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 1);
         // Same-target stop/start preserved: old container stopped, new started
         Assert.Equal(["host-a", "host-b"], host.StartedModels);
         Assert.Single(host.StoppedContainerIds);
@@ -218,8 +229,10 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Both containers started, neither stopped (symmetric compatibility)
-        Assert.Equal(["container-a", "container-b"], host.StartedModels);
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 0);
+        // Both containers started, neither stopped (symmetric compatibility).
+        // Concurrent lane starts make the start order nondeterministic.
+        Assert.Equal(["container-a", "container-b"], host.StartedModels.OrderBy(m => m, StringComparer.Ordinal).ToList());
         Assert.Empty(host.StoppedContainerIds);
 
         await ShutdownAsync();
@@ -250,6 +263,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 1);
         // Incompatible → old container stopped before starting the new one
         Assert.Equal(["container-a", "container-b"], host.StartedModels);
         Assert.Single(host.StoppedContainerIds);
@@ -287,8 +301,12 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // model-c is incompatible with both a and b → both stopped before c starts
-        Assert.Equal(["container-a", "container-b", "container-c"], host.StartedModels);
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 3 && host.StoppedContainerIds.Count == 2);
+        // model-c is incompatible with both a and b → both stopped before c starts.
+        // a/b start concurrently so their relative order is nondeterministic; c is
+        // strictly last (it can only start once both have drained).
+        Assert.Equal(["container-a", "container-b", "container-c"],
+            host.StartedModels.OrderBy(m => m, StringComparer.Ordinal).ToList());
         Assert.Equal(2, host.StoppedContainerIds.Count);
 
         await ShutdownAsync();
@@ -320,8 +338,10 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Both containers started, neither stopped
-        Assert.Equal(["img-a", "img-b"], host.StartedModels);
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 0);
+        // Both containers started, neither stopped. Concurrent lane starts make
+        // the start order nondeterministic.
+        Assert.Equal(["img-a", "img-b"], host.StartedModels.OrderBy(m => m, StringComparer.Ordinal).ToList());
         Assert.Empty(host.StoppedContainerIds);
 
         await ShutdownAsync();
@@ -352,6 +372,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("model-b", id: "r2"));
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 1);
 
         Assert.Equal(["container-a", "container-b"], host.StartedModels);
         Assert.Single(host.StoppedContainerIds);
@@ -360,33 +381,38 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     }
 
     [Fact]
-    public async Task CanRunAlongWith_TargetMappingMissing_FallsBackToStopAll_DoesNotThrow()
+    public async Task UnknownModel_MapsToMissingRegistration_FailsFastWithoutContainerWork()
     {
-        // The second model has no registry mapping and matches no registered runtime
-        // by name → compatibility cannot be proven → conservative stop-all fallback.
+        // The model has a mapping, but it points at a registration that does not
+        // exist in the registry. Routing cannot resolve a runtime → the request
+        // fails immediately and the target is never touched.
         await RegisterContainerAsync("reg-a", "container-a", []);
         await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+        await _containerRegistry.AddModelMappingAsync("reg-missing", "unknown-model");
 
         var host = new FakeDockerController { IdPrefix = "host" };
         CreateWorker(HostAndAgentRouter(host, new FakeDockerController()), HostAndAgentResolver());
 
         var allDone = new TaskCompletionSource();
-        var remaining = 2;
         _inference.InvokeFunc = (req, ct) =>
         {
-            if (Interlocked.Decrement(ref remaining) == 0)
-                allDone.TrySetResult();
+            allDone.TrySetResult();
             return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
         };
 
-        await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("unknown-model", id: "r2"));
+        var r1 = MakeRequest("model-a", id: "r1");
+        var r2 = MakeRequest("unknown-model", id: "r2");
+        await EnqueueAsync(r1, r2);
 
-        // Both requests complete without throwing; the unmapped target ran alone.
-        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // r1 runs normally; r2 fails fast naming the unmapped model.
+        await r1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Contains("unknown-model", ex.Message);
+        Assert.Contains("not mapped to a registered runtime", ex.Message);
 
-        Assert.Equal(["container-a", "unknown-model"], host.StartedModels);
-        // container-a was stopped before the unresolvable model started
-        Assert.Single(host.StoppedContainerIds);
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 1);
+        Assert.Equal(["container-a"], host.StartedModels);
+        Assert.Empty(host.StoppedContainerIds);
 
         await ShutdownAsync();
     }
@@ -394,6 +420,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task AgentTarget_Routing_ResolvesToAgent()
     {
+        await RegisterModelAsync("agent-remote");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver());
@@ -405,6 +432,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
 
         Assert.Equal(200, result.StatusCode);
         Assert.Equal("agent:gpu1", req.TargetId);
+        await Eventually.UntilAsync(() => agent.StartedModels.Count == 1);
         Assert.Equal(["agent-remote"], agent.StartedModels);
         Assert.Empty(host.StartedModels);
 
@@ -414,11 +442,14 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task ErrorState_FailsOnlyThatTargetsRequests()
     {
+        await RegisterModelAsync("host-broken");
+        await RegisterModelAsync("agent-good");
+        await RegisterModelAsync("host-ok");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
-        host.OnStart = (model, ct) => model == "host-broken"
+        host.OnStartRegistered = (registeredContainerId, image, ct) => image == "host-broken"
             ? Task.FromResult(new ContainerStartResult { ContainerId = "fail", ErrorMessage = "Container start failed" })
-            : Task.FromResult(new ContainerStartResult { ContainerId = $"host-{model}", MappedPort = 9000 });
+            : Task.FromResult(new ContainerStartResult { ContainerId = $"host-{image}", MappedPort = 9000 });
 
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver());
 
@@ -437,6 +468,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         var result3 = await r3.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(200, result3.StatusCode);
 
+        await Eventually.UntilAsync(() => agent.StartedModels.Count == 1 && host.StartedModels.Contains("host-ok"));
         Assert.Equal(["agent-good"], agent.StartedModels);
 
         await ShutdownAsync();
@@ -445,6 +477,8 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task DisconnectedAgentTarget_FailsRequestFast()
     {
+        await RegisterModelAsync("agent-remote");
+        await RegisterModelAsync("host-local");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent, agentReachable: false), HostAndAgentResolver());
@@ -466,6 +500,8 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     [Fact]
     public async Task MaxConcurrentTargets_LimitsDistinctTargets()
     {
+        await RegisterModelAsync("host-a");
+        await RegisterModelAsync("agent-a");
         var host = new FakeDockerController { IdPrefix = "host" };
         var agent = new FakeDockerController { IdPrefix = "agent" };
         CreateWorker(HostAndAgentRouter(host, agent), HostAndAgentResolver(),
@@ -502,6 +538,13 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
+    }
+
+    /// <summary>Registers a model on its own exclusive runtime (image = model name).</summary>
+    private async Task RegisterModelAsync(string model)
+    {
+        await RegisterContainerAsync($"reg-{model}", model, []);
+        await _containerRegistry.AddModelMappingAsync($"reg-{model}", model);
     }
 
     public void Dispose()

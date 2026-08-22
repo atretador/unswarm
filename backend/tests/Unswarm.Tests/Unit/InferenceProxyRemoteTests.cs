@@ -131,6 +131,10 @@ public sealed class InferenceProxyRemoteTests
         _remote.InferFunc = (port, body, ct) => throw new InvalidOperationException("agent lost");
 
         var proxy = CreateProxy();
+        // Shrink the warmup-retry hold window: production (180s) would retry the
+        // persistent failure for minutes before surfacing the 502.
+        proxy.HoldSecondsOverride = 1;
+
         var response = await proxy.InvokeAsync(MakeRequest("llama-3-8b"));
 
         Assert.Equal(502, response.StatusCode);

@@ -20,7 +20,25 @@ public sealed class SchedulerWorkerLiveSettingsTests : IDisposable
     private readonly FakeLogStore _logStore = new();
     private readonly FakeStatsTracker _statsTracker = new();
     private readonly FakeClock _clock = new();
+    private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly ILogger<SchedulerWorker> _logger = new LoggerFactory().CreateLogger<SchedulerWorker>();
+
+    public SchedulerWorkerLiveSettingsTests()
+    {
+        // Lane scheduling routes models through the container registry.
+        foreach (var model in new[] { "llama", "mistral" })
+        {
+            _containerRegistry.CreateAsync(new RegisteredRuntime
+            {
+                Id = $"reg-{model}",
+                DisplayName = model,
+                Image = model,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }).GetAwaiter().GetResult();
+            _containerRegistry.AddModelMappingAsync($"reg-{model}", model).GetAwaiter().GetResult();
+        }
+    }
 
     private SchedulerWorker CreateWorker(
         Channel<InferenceRequest>? channel = null,
@@ -32,7 +50,7 @@ public sealed class SchedulerWorkerLiveSettingsTests : IDisposable
         return new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            settingsStore: settingsStore);
+            _containerRegistry, settingsStore: settingsStore);
     }
 
     private static InferenceRequest MakeRequest(

@@ -132,6 +132,7 @@ public sealed class SchedulerWorkerStopGuardTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 1);
         // model-a started, then stopped (incompatible with model-b), model-b started.
         // The orphan container should NOT appear in stopped list.
         Assert.Equal(["a:latest", "b:latest"], host.StartedModels);
@@ -177,6 +178,7 @@ public sealed class SchedulerWorkerStopGuardTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StartedModels.Count == 2 && host.StoppedContainerIds.Count == 1);
         // Registered incompatible container IS stopped
         Assert.Equal(["a:latest", "b:latest"], host.StartedModels);
         Assert.Single(host.StoppedContainerIds);
@@ -229,6 +231,7 @@ public sealed class SchedulerWorkerStopGuardTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StoppedContainerIds.Count == 1);
         // The incompatible container was stopped via its LIVE id, not the stale one.
         var stopped = Assert.Single(host.StoppedContainerIds);
         Assert.Equal("new-id", stopped);
@@ -262,6 +265,7 @@ public sealed class SchedulerWorkerStopGuardTests : IDisposable
         await EnqueueAsync(MakeRequest("model-a", id: "r1"));
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => host.StartedContainerIds.Count == 1);
         var persisted = await _containerRegistry.GetAsync("reg-a");
         Assert.NotNull(persisted);
         var startedId = Assert.Single(host.StartedContainerIds);

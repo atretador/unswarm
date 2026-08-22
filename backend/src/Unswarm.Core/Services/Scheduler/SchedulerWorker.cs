@@ -10,20 +10,18 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Core.Services.Scheduler;
 
 /// <summary>
-/// Multi-target non-preemptive scheduler. A dispatcher reads requests from a global
-/// bounded channel, resolves each request's execution target ("host" | "agent:&lt;name&gt;"),
-/// and enqueues it into that target's own bounded channel. Each target runs a sequential
-/// worker that preserves single-slot behavior WITHIN the target: it ensures the correct
-/// container is running (stop/start scoped to that target only), batch-drains before
-/// switching, applies canRunAlongWith compatibility, and fails queued requests for that
-/// target when a container cannot be started. Containers on different targets run
-/// concurrently.
+/// Multi-target, lane-based non-preemptive scheduler. A dispatcher reads requests from
+/// a global bounded channel, resolves the model's registered runtime and execution
+/// target ("host" | "agent:&lt;name&gt;"), and routes the request into the per-runtime
+/// lane for that (target, runtime) pair. A single event-driven scheduler wakes on
+/// enqueues and completions, scans lanes in creation order, and starts lane heads when
+/// capacity (<see cref="RegisteredRuntime.MaxConcurrentInferences"/>),
+/// <see cref="CoexistencePolicy"/> coexistence, and skip-budget rules allow. Each
+/// started item runs as a fire-and-forget task; container stop/start switching is
+/// serialized per lane and scoped to the lane's target only.
 /// </summary>
 public sealed class SchedulerWorker
 {
-    /// <summary>Default per-target channel capacity (used when store is unavailable).</summary>
-    private const int DefaultTargetQueueDepth = 16;
-
     /// <summary>
     /// Cap on terminal (Completed/Failed) entries retained in <see cref="_allItems"/>.
     /// Recent completions stay queryable via <see cref="_recentCompleted"/>; older
@@ -47,8 +45,29 @@ public sealed class SchedulerWorker
     private readonly ISettingsStore? _settingsStore;
     private readonly IAgentRegistry? _agentRegistry;
 
-    // Per-target state
-    private readonly ConcurrentDictionary<string, TargetSlot> _slots = new(StringComparer.Ordinal);
+    // ── Lane state ────────────────────────────────────────────────────────────
+
+    /// <summary>Per-target grouping of runtime lanes, keyed by target id.</summary>
+    private readonly ConcurrentDictionary<string, TargetGroup> _targets = new(StringComparer.Ordinal);
+
+    /// <summary>Lanes in creation order — the scheduler's stable scan order.</summary>
+    private readonly List<RuntimeLane> _laneOrder = new();
+    private readonly object _laneOrderLock = new();
+
+    /// <summary>
+    /// Registered runtime entities by id, populated at dispatch/route time and used
+    /// for coexistence and exclusivity decisions without hitting the registry.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, RegisteredRuntime> _runtimeCache = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Shared wake signal for the scheduler loop. Written on every enqueue and every
+    /// inference completion; the scheduler drains it and re-scans all lanes.
+    /// </summary>
+    private readonly Channel<object?> _wake = Channel.CreateUnbounded<object?>(new UnboundedChannelOptions
+    {
+        SingleReader = true
+    });
 
     // Tracking
     private readonly ConcurrentDictionary<string, QueueItem> _allItems = new();
@@ -96,7 +115,7 @@ public sealed class SchedulerWorker
         _settingsStore = settingsStore;
         _agentRegistry = agentRegistry;
 
-        // Publish total queue depth (global channel + per-target channels) to the
+        // Publish total queue depth (global channel + all lane channels) to the
         // "unswarm.queue.depth" gauge. No-op unless an OTel provider listens to the
         // "Unswarm" meter.
         _queueDepthRegistration = Telemetry.UnswarmMetrics.RegisterQueueDepthProvider(GetTotalQueueDepth);
@@ -105,21 +124,21 @@ public sealed class SchedulerWorker
         _statsTracker.SetQueueDepthProvider(GetTotalQueueDepth);
     }
 
-    /// <summary>Total requests waiting across the global channel and all target channels.</summary>
+    /// <summary>Total requests waiting across the global channel and all lane channels.</summary>
     private long GetTotalQueueDepth()
     {
         var depth = (long)_channel.Reader.Count;
-        foreach (var slot in _slots.Values)
+        foreach (var lane in SnapshotLanes())
         {
-            depth += slot.Channel.Reader.Count;
+            depth += lane.Pending.Reader.Count;
         }
         return depth;
     }
 
     /// <summary>
     /// Returns live settings from the database when an ISettingsStore is available,
-    /// otherwise falls back to the injected snapshot. Called once per switch/slot-creation
-    /// (not per queued item) to avoid excessive DB reads.
+    /// otherwise falls back to the injected snapshot. Called once per scheduling step /
+    /// switch (not per queued item) to avoid excessive DB reads.
     /// </summary>
     private async Task<SchedulerSettings> GetCurrentSettingsAsync(CancellationToken ct)
     {
@@ -161,6 +180,67 @@ public sealed class SchedulerWorker
         return target.AgentName;
     }
 
+    // ── Lane registry helpers ─────────────────────────────────────────────────
+
+    private List<RuntimeLane> SnapshotLanes()
+    {
+        lock (_laneOrderLock)
+        {
+            return _laneOrder.ToList();
+        }
+    }
+
+    private void RegisterLaneOrder(RuntimeLane lane)
+    {
+        lock (_laneOrderLock)
+        {
+            if (!_laneOrder.Contains(lane))
+                _laneOrder.Add(lane);
+        }
+    }
+
+    private void WakeScheduler() => _wake.Writer.TryWrite(null);
+
+    /// <summary>
+    /// Returns the target group for <paramref name="targetId"/>, creating it if needed.
+    /// Owns the target-scoped running-container registry used by switch/coexistence paths.
+    /// </summary>
+    private TargetGroup GetTargetGroup(string targetId) =>
+        _targets.GetOrAdd(targetId, _ => new TargetGroup { TargetId = targetId });
+
+    /// <summary>
+    /// Cached-entity coexistence check for the scheduler hot path. Unknown runtimes
+    /// are treated as NOT coexistable (conservative); identical ids always coexist.
+    /// </summary>
+    private bool CanCoexist(string runtimeIdA, string runtimeIdB)
+    {
+        if (string.Equals(runtimeIdA, runtimeIdB, StringComparison.Ordinal))
+            return true;
+
+        return _runtimeCache.TryGetValue(runtimeIdA, out var a)
+            && _runtimeCache.TryGetValue(runtimeIdB, out var b)
+            && CoexistencePolicy.IsAllowedToCoexist(a, b);
+    }
+
+    /// <summary>
+    /// Resolves a registered runtime entity by id, going through the cache first.
+    /// Returns null when no registry is configured or the id is unknown.
+    /// </summary>
+    private async Task<RegisteredRuntime?> GetRuntimeEntityAsync(string runtimeId, CancellationToken ct)
+    {
+        if (_containerRegistry is null)
+            return null;
+
+        if (_runtimeCache.TryGetValue(runtimeId, out var cached))
+            return cached;
+
+        var runtime = await _containerRegistry.GetAsync(runtimeId, ct).ConfigureAwait(false);
+        if (runtime is not null)
+            _runtimeCache[runtimeId] = runtime;
+
+        return runtime;
+    }
+
     public void Start(CancellationToken ct)
     {
         _runTask = RunAsync(ct);
@@ -175,18 +255,53 @@ public sealed class SchedulerWorker
         }
     }
 
+    // ── Snapshot ──────────────────────────────────────────────────────────────
+
     public QueueSnapshot GetSnapshot()
     {
         lock (_snapshotLock)
         {
-            var waiting = _allItems.Values
-                .Where(i => i.Status == QueueItemStatus.Waiting)
-                .OrderBy(i => i.Priority)
-                .ThenBy(i => i.CreatedAt)
+            var lanes = SnapshotLanes();
+
+            var processing = _allItems.Values
+                .Where(i => i.Status == QueueItemStatus.Processing)
+                .OrderBy(i => i.CreatedAt)
                 .ToList();
 
-            var current = _allItems.Values
-                .FirstOrDefault(i => i.Status == QueueItemStatus.Processing);
+            var current = processing.FirstOrDefault();
+
+            // Distinct in-flight runtime ids — the blocking universe for waiting items.
+            var inFlightRuntimes = new List<string>();
+            foreach (var lane in lanes)
+            {
+                if (Volatile.Read(ref lane.ActiveInferences) > 0)
+                    inFlightRuntimes.Add(lane.RuntimeId);
+            }
+
+            // Flattened pending view across lanes in lane-creation order; within a
+            // lane, priority then age. Blocking runtime ids are computed at snapshot
+            // time using the same coexistence rules the scheduler applies.
+            var waiting = new List<QueueItem>();
+            var seen = new HashSet<string>();
+            foreach (var lane in lanes)
+            {
+                foreach (var item in _allItems.Values
+                    .Where(i => i.Status == QueueItemStatus.Waiting
+                                && i.TargetId == lane.TargetId
+                                && i.RuntimeId == lane.RuntimeId)
+                    .OrderBy(i => i.Priority)
+                    .ThenBy(i => i.CreatedAt))
+                {
+                    seen.Add(item.Id);
+                    waiting.Add(item with { BlockedByRuntimeIds = ComputeBlockedBy(item, inFlightRuntimes) });
+                }
+            }
+
+            // Safety net: waiting items whose lane is unknown (should not happen).
+            waiting.AddRange(_allItems.Values
+                .Where(i => i.Status == QueueItemStatus.Waiting && !seen.Contains(i.Id))
+                .OrderBy(i => i.CreatedAt)
+                .Select(i => i with { BlockedByRuntimeIds = ComputeBlockedBy(i, inFlightRuntimes) }));
 
             var recent = _recentCompleted.ToArray()
                 .OrderByDescending(i => i.CreatedAt)
@@ -197,14 +312,47 @@ public sealed class SchedulerWorker
                 .Where(t => t.Status != "complete")
                 .ToList();
 
+            // Aggregate skip-budget state across lanes (root-level view for the dashboard).
+            var skipsUsed = lanes.Sum(l => Math.Max(0, Volatile.Read(ref l.SkipsUsed)));
+            var skipsRemaining = Math.Max(0, ClampSkipLimit(_settings.ParallelSlotSkipLimit) - skipsUsed);
+            if (!_settings.EnableParallelSlotSkip)
+                skipsRemaining = 0;
+
             return new QueueSnapshot
             {
                 CurrentSlot = current,
+                Processing = processing,
                 Waiting = waiting,
                 RecentCompleted = recent,
-                ActiveTransitions = transitions
+                ActiveTransitions = transitions,
+                SkipsUsed = skipsUsed,
+                SkipsRemaining = skipsRemaining
             };
         }
+    }
+
+    /// <summary>Clamps a skip-limit setting to its valid range [1, 1000].</summary>
+    private static int ClampSkipLimit(int value) => Math.Clamp(value, 1, 1000);
+
+    /// <summary>
+    /// Computes which in-flight runtime ids block <paramref name="item"/> under the
+    /// scheduler's coexistence rules (a different in-flight runtime that may not run
+    /// alongside the item's runtime). Same-runtime in-flight work never blocks here —
+    /// that is a capacity concern, not a coexistence one.
+    /// </summary>
+    private IReadOnlyList<string> ComputeBlockedBy(QueueItem item, List<string> inFlightRuntimes)
+    {
+        if (inFlightRuntimes.Count == 0 || item.RuntimeId is null)
+            return [];
+
+        List<string>? blocked = null;
+        foreach (var runtimeId in inFlightRuntimes)
+        {
+            if (!CanCoexist(item.RuntimeId, runtimeId))
+                (blocked ??= []).Add(runtimeId);
+        }
+
+        return (IReadOnlyList<string>?)blocked ?? Array.Empty<string>();
     }
 
     // ── Dispatcher ────────────────────────────────────────────────────────────
@@ -212,6 +360,8 @@ public sealed class SchedulerWorker
     private async Task RunAsync(CancellationToken stoppingToken)
     {
         _logStore.Enqueue(LogLevel.Info, "Scheduler", "Scheduler worker started");
+
+        var schedulerTask = SchedulerLoopAsync(stoppingToken);
 
         try
         {
@@ -224,14 +374,6 @@ public sealed class SchedulerWorker
                 try
                 {
                     await DispatchAsync(request, queueItem, stoppingToken).ConfigureAwait(false);
-
-                    // Update queueItem with resolved TargetId now that dispatch has set it
-                    if (request.TargetId is not null)
-                    {
-                        var updatedItem = queueItem with { TargetId = request.TargetId };
-                        _allItems[request.Id] = updatedItem;
-                        queueItem = updatedItem;
-                    }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -251,28 +393,54 @@ public sealed class SchedulerWorker
             // Normal shutdown
         }
 
-        // Shutdown drain: every item still queued (global channel + per-target
-        // channels) must have its Tcs completed so awaiting HTTP handlers return
-        // promptly instead of hanging until their client times out.
+        // Shutdown drain: every item still queued (global channel + every lane's
+        // pending channel) must have its Tcs completed so awaiting HTTP handlers
+        // return promptly instead of hanging until their client times out.
         DrainQueuedItemsOnShutdown(stoppingToken);
+
+        // Exit only once every lane has fully drained its in-flight work.
+        while (SnapshotLanes().Any(l => Volatile.Read(ref l.ActiveInferences) > 0))
+        {
+            try
+            {
+                await Task.Delay(50, stoppingToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        try
+        {
+            await schedulerTask.ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal shutdown
+        }
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler", "Scheduler worker stopped");
     }
 
     /// <summary>
     /// Completes the Tcs of every request still sitting in the global channel or in
-    /// any per-target channel. Best-effort: a slot worker may concurrently dequeue an
-    /// item during shutdown, in which case its own cancellation path resolves it.
+    /// any lane's pending channel. Best-effort: the scheduler may concurrently start
+    /// an item during shutdown, in which case its own cancellation path resolves it.
     /// </summary>
     private void DrainQueuedItemsOnShutdown(CancellationToken stoppingToken)
     {
         while (_channel.Reader.TryRead(out var pending))
             FailPendingOnShutdown(pending, stoppingToken);
 
-        foreach (var slot in _slots.Values)
+        foreach (var lane in SnapshotLanes())
         {
-            while (slot.Channel.Reader.TryRead(out var pending))
-                FailPendingOnShutdown(pending, stoppingToken);
+            while (lane.Pending.Reader.TryRead(out var queuedItem))
+            {
+                FailItem(queuedItem, "Scheduler shutting down");
+                if (_requests.TryGetValue(queuedItem.Id, out var request))
+                    request.Tcs.TrySetCanceled(stoppingToken);
+            }
         }
     }
 
@@ -287,6 +455,30 @@ public sealed class SchedulerWorker
 
     private async Task DispatchAsync(InferenceRequest request, QueueItem queueItem, CancellationToken ct)
     {
+        // ── Model → registered runtime routing (no legacy fallbacks) ──────────
+        if (_containerRegistry is null)
+        {
+            const string message = "No container registry configured; cannot route models to runtimes";
+            FailItem(queueItem, message);
+            request.Tcs.TrySetException(new InvalidOperationException(message));
+            return;
+        }
+
+        var runtimeId = await _containerRegistry
+            .GetContainerIdForModelAsync(request.ModelName, ct)
+            .ConfigureAwait(false);
+        var runtime = runtimeId is not null
+            ? await GetRuntimeEntityAsync(runtimeId, ct).ConfigureAwait(false)
+            : null;
+
+        if (runtimeId is null || runtime is null)
+        {
+            var message = $"Model '{request.ModelName}' is not mapped to a registered runtime";
+            FailItem(queueItem, message);
+            request.Tcs.TrySetException(new InvalidOperationException(message));
+            return;
+        }
+
         var targetId = await _resolver.ResolveTargetAsync(request.ModelName, ct).ConfigureAwait(false);
         request.TargetId = targetId;
 
@@ -299,8 +491,8 @@ public sealed class SchedulerWorker
         }
 
         if (_settings.MaxConcurrentTargets > 0
-            && !_slots.ContainsKey(targetId)
-            && _slots.Count >= _settings.MaxConcurrentTargets)
+            && !_targets.ContainsKey(targetId)
+            && _targets.Count >= _settings.MaxConcurrentTargets)
         {
             FailItem(queueItem, $"Max concurrent targets ({_settings.MaxConcurrentTargets}) exceeded");
             request.Tcs.TrySetException(new InvalidOperationException(
@@ -308,209 +500,357 @@ public sealed class SchedulerWorker
             return;
         }
 
-        var slot = await GetOrCreateSlotAsync(targetId, ct).ConfigureAwait(false);
-        await slot.Channel.Writer.WriteAsync(request, ct).ConfigureAwait(false);
-        EnsureSlotWorkerStarted(slot, ct);
+        var lane = await GetOrCreateLaneAsync(targetId, runtime, ct).ConfigureAwait(false);
+
+        var routed = queueItem with { TargetId = targetId, RuntimeId = runtime.Id };
+        _allItems[request.Id] = routed;
+
+        await lane.Pending.Writer.WriteAsync(routed, ct).ConfigureAwait(false);
+        WakeScheduler();
     }
 
-    private async Task<TargetSlot> GetOrCreateSlotAsync(string targetId, CancellationToken ct)
+    private async Task<RuntimeLane> GetOrCreateLaneAsync(string targetId, RegisteredRuntime runtime, CancellationToken ct)
     {
-        if (_slots.TryGetValue(targetId, out var existing))
-            return existing;
+        var group = _targets.GetOrAdd(targetId, _ => new TargetGroup { TargetId = targetId });
 
+        if (group.Lanes.TryGetValue(runtime.Id, out var existing))
+        {
+            _runtimeCache[runtime.Id] = runtime;
+            return existing;
+        }
+
+        // Live settings: queue depth changes apply to newly created lanes.
         var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
-        // Existing slots are not resized on settings change — acceptable trade-off.
         var depth = ClampQueueDepth(currentSettings.MaxQueueDepth);
 
-        var slot = _slots.GetOrAdd(targetId, _ => new TargetSlot
+        var created = new RuntimeLane
         {
             TargetId = targetId,
-            Channel = Channel.CreateBounded<InferenceRequest>(new BoundedChannelOptions(depth)
+            RuntimeId = runtime.Id,
+            Pending = Channel.CreateBounded<QueueItem>(new BoundedChannelOptions(depth)
             {
-                FullMode = BoundedChannelFullMode.Wait
+                FullMode = BoundedChannelFullMode.Wait,
+                SingleReader = true
             }),
-            ConcurrencyGate = new SemaphoreSlim(1, 1)
-        });
+            MaxConcurrency = Math.Max(1, runtime.MaxConcurrentInferences)
+        };
 
-        return slot;
+        var lane = group.Lanes.GetOrAdd(runtime.Id, created);
+        _runtimeCache[runtime.Id] = runtime;
+        RegisterLaneOrder(lane);
+        return lane;
     }
 
-    private void EnsureSlotWorkerStarted(TargetSlot slot, CancellationToken ct)
+    // ── Event-driven lane scheduler ───────────────────────────────────────────
+
+    /// <summary>
+    /// Single scheduling loop: consumes merged wake signals (enqueue + every
+    /// completion), scans lanes in creation order, and starts startable lane heads
+    /// until no further progress is possible, then parks on the next wake.
+    /// </summary>
+    private async Task SchedulerLoopAsync(CancellationToken ct)
     {
-        lock (slot)
-        {
-            if (slot.Worker is not null && !slot.Worker.IsCompleted)
-                return;
-
-            slot.Worker = RunTargetAsync(slot, ct);
-        }
-    }
-
-    // ── Per-target worker ─────────────────────────────────────────────────────
-
-    private async Task RunTargetAsync(TargetSlot slot, CancellationToken stoppingToken)
-    {
-        _logStore.Enqueue(LogLevel.Info, "Scheduler", $"Target worker started for {slot.TargetId}");
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", "Lane scheduler started");
 
         try
         {
-            // Manual loop instead of await foreach so we can control whether to
-            // fire-and-forget a concurrent request or await sequentially.
-            while (await slot.Channel.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
+            while (!ct.IsCancellationRequested)
             {
-                if (!slot.Channel.Reader.TryRead(out var request))
+                // Drain accumulated wakes; a fresh scan covers everything.
+                while (_wake.Reader.TryRead(out _))
+                {
+                }
+
+                bool progressed;
+                try
+                {
+                    progressed = await TryStartWorkAsync(ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Scheduling step failed; retrying after delay");
+                    await Task.Delay(100, CancellationToken.None).ConfigureAwait(false);
                     continue;
-
-                var queueItem = _allItems.TryGetValue(request.Id, out var existing)
-                    ? existing
-                    : CreateQueueItem(request);
-                _requests.TryAdd(request.Id, request);
-
-                var requestModel = request.ModelName;
-                var modelMatches = slot.ResidentModel == requestModel;
-                // Live settings: skip toggles must take effect without a restart.
-                var liveSettings = await GetCurrentSettingsAsync(stoppingToken).ConfigureAwait(false);
-                // +1 accounts for the sequential path consuming one slot;
-                // with MaxConcurrency=1 this is always false → fully sequential.
-                var skipsRemaining = liveSettings.EnableParallelSlotSkip
-                    ? liveSettings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed)
-                    : 0;
-
-                var goParallel = false;
-                if (modelMatches)
-                {
-                    // ── PARALLELISM ────────────────────────────────────────
-                    // Same runtime serving multiple streams. Governed by the
-                    // skip settings: only when enabled, budget remaining, and
-                    // the runtime declares concurrent-inference capacity.
-                    goParallel = skipsRemaining > 0
-                        && Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
                 }
-                else if (Volatile.Read(ref slot.ActiveInferences) > 0)
-                {
-                    // ── CONCURRENCY ────────────────────────────────────────
-                    // A different runtime that is allowed to run together with
-                    // every container currently up on this target. Always
-                    // permitted (not gated by the skip settings): the switch
-                    // inside ProcessRequestAsync keeps compatible containers
-                    // alive, so no drain is needed.
-                    goParallel = await CanRunAlongsideRunningAsync(slot, requestModel, stoppingToken)
-                        .ConfigureAwait(false);
-                }
-                // ActiveInferences == 0 with a model mismatch → nothing to gain
-                // from the parallel path; the sequential path switches cheaply.
 
-                if (goParallel)
-                {
-                    // ── Parallel path ──────────────────────────────────────
-                    // Same runtime with capacity (skip-budgeted), or a
-                    // coexistence-compatible runtime (not budgeted — separate
-                    // concern from parallelism). Launch processing concurrently
-                    // without awaiting; the next iteration reads the next request.
-                    if (modelMatches)
-                        Interlocked.Increment(ref slot.SkipsUsed);
-                    Interlocked.Increment(ref slot.ActiveInferences);
-
-                    var capturedRequest = request;
-                    var capturedQueueItem = queueItem;
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await ProcessRequestAsync(slot, capturedRequest, capturedQueueItem, stoppingToken)
-                                .ConfigureAwait(false);
-                        }
-                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                        {
-                            FailItem(capturedQueueItem, "Scheduler shutting down");
-                            capturedRequest.Tcs.TrySetCanceled(stoppingToken);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
-                                capturedRequest.Id, slot.TargetId);
-                            FailItem(capturedQueueItem, ex.Message);
-                            capturedRequest.Tcs.TrySetException(ex);
-                        }
-                        finally
-                        {
-                            Interlocked.Decrement(ref slot.ActiveInferences);
-                        }
-                    }, stoppingToken);
-                }
-                else
-                {
-                    // ── Sequential path ────────────────────────────────────
-                    // Skip budget exhausted, skip disabled, or incompatible
-                    // model: process one-at-a-time, awaiting completion before
-                    // the next dequeue.
-                    //
-                    // The skip counter no longer resets on EVERY sequential item;
-                    // it resets only after QueueStepsTillReset items have been
-                    // processed sequentially.
-                    var steps = Interlocked.Increment(ref slot.SequentialStepsProcessed);
-                    if (steps >= liveSettings.QueueStepsTillReset)
-                    {
-                        Interlocked.Exchange(ref slot.SkipsUsed, 0);
-                        Interlocked.Exchange(ref slot.SequentialStepsProcessed, 0);
-                    }
-
-                    // If the model differs and active inferences are still
-                    // running for the previous model, wait for them to drain
-                    // before issuing a model switch.
-                    if (!modelMatches)
-                    {
-                        while (Volatile.Read(ref slot.ActiveInferences) > 0)
-                        {
-                            await Task.Delay(50, stoppingToken).ConfigureAwait(false);
-                        }
-                    }
-
-                    try
-                    {
-                        await ProcessRequestAsync(slot, request, queueItem, stoppingToken).ConfigureAwait(false);
-                    }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
-                        FailItem(queueItem, "Scheduler shutting down");
-                        request.Tcs.TrySetCanceled(stoppingToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
-                            request.Id, slot.TargetId);
-                        FailItem(queueItem, ex.Message);
-                        request.Tcs.TrySetException(ex);
-                    }
-                }
+                if (!progressed)
+                    await _wake.Reader.WaitToReadAsync(ct).ConfigureAwait(false);
             }
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Normal shutdown
         }
 
-        // Drain any fire-and-forget tasks still running before logging worker stop.
-        while (Volatile.Read(ref slot.ActiveInferences) > 0)
-        {
-            await Task.Delay(50, stoppingToken).ConfigureAwait(false);
-        }
-
-        _logStore.Enqueue(LogLevel.Info, "Scheduler", $"Target worker stopped for {slot.TargetId}");
+        _logStore.Enqueue(LogLevel.Info, "Scheduler", "Lane scheduler stopped");
     }
 
-    private async Task ProcessRequestAsync(TargetSlot slot, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    /// <summary>
+    /// One scheduling pass: computes the in-flight runtime set, evaluates every
+    /// non-empty lane's head via <see cref="LaneScheduler.IsStartable"/>, and starts
+    /// startable heads fire-and-forget. Repeats until a full pass makes no progress.
+    /// Returns true when at least one item was started.
+    /// </summary>
+    private async Task<bool> TryStartWorkAsync(CancellationToken ct)
     {
-        // Already resolved elsewhere (e.g., cancelled by a batch drain or shutdown):
-        // never run inference for it again — the caller is long gone.
-        if (request.Tcs.Task.IsCompleted)
-            return;
+        // Live settings: skip toggles must take effect without a restart.
+        var settings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+        var lanes = SnapshotLanes();
+        if (lanes.Count == 0)
+            return false;
 
+        var progressed = false;
+        bool progressThisPass;
+        do
+        {
+            progressThisPass = false;
+
+            // Recomputed for EVERY start (see break below): TryStartLaneHead bumps
+            // ActiveInferences synchronously, and a stale snapshot here would let
+            // mutually-incompatible lanes start concurrently and deadlock each
+            // other's switch drain gates.
+            //
+            // In-flight runtimes are grouped PER TARGET: containers on different
+            // targets are independent machines — coexistence/exclusivity never
+            // applies across targets.
+            var inFlightByTarget = ComputeInFlightRuntimeIdsByTarget(lanes);
+
+            // Heads that are hard-blocked right now (capacity / coexistence /
+            // exclusivity — independent of the skip budget). Starting any other
+            // lane's head while these exist is a bypass and consumes skip budget.
+            var blockedHeads = new HashSet<RuntimeLane>();
+            foreach (var lane in lanes)
+            {
+                if (lane.Pending.Reader.Count == 0)
+                    continue;
+
+                var others = InFlightExcluding(inFlightByTarget, lane);
+                if (!IsHardStartable(lane, others))
+                    blockedHeads.Add(lane);
+            }
+
+            foreach (var lane in lanes)
+            {
+                if (lane.Pending.Reader.Count == 0)
+                    continue;
+
+                if (!lane.Pending.Reader.TryPeek(out _))
+                    continue;
+
+                var skipsRemaining = settings.EnableParallelSlotSkip
+                    ? settings.ParallelSlotSkipLimit - Volatile.Read(ref lane.SkipsUsed)
+                    : 0;
+
+                var others = InFlightExcluding(inFlightByTarget, lane);
+                var bypasses = blockedHeads.Count > 0 || EarlierLaneHasPending(lanes, lane);
+                var laneHasCapacity = Volatile.Read(ref lane.ActiveInferences) < Math.Max(1, lane.MaxConcurrency);
+
+                var startable = LaneScheduler.IsStartable(
+                    lane,
+                    others,
+                    CanCoexist,
+                    candidateIsExclusive: IsExclusiveRuntime(lane.RuntimeId),
+                    laneHasCapacity: laneHasCapacity,
+                    isHeadOfItsLane: true,
+                    bypassesBlockedItem: bypasses,
+                    skipEnabled: settings.EnableParallelSlotSkip,
+                    skipsRemaining: skipsRemaining);
+
+                if (!startable)
+                    continue;
+
+                if (!TryStartLaneHead(lane, bypasses, ct))
+                    continue;
+
+                progressed = true;
+                progressThisPass = true;
+
+                // Restart the scan: the start changed ActiveInferences, so the
+                // in-flight set and blocked-head set must be recomputed before
+                // evaluating any other lane.
+                break;
+            }
+        }
+        while (progressThisPass);
+
+        return progressed;
+    }
+
+    private static List<string> InFlightExcluding(
+        Dictionary<string, List<string>> inFlightByTarget,
+        RuntimeLane lane)
+    {
+        if (inFlightByTarget.Count == 0
+            || !inFlightByTarget.TryGetValue(lane.TargetId, out var onTarget))
+            return [];
+
+        return onTarget
+            .Where(r => !string.Equals(r, lane.RuntimeId, StringComparison.Ordinal))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Distinct in-flight runtime ids per target id, computed from a fresh
+    /// <see cref="RuntimeLane.ActiveInferences"/> read for every lane.
+    /// </summary>
+    private static Dictionary<string, List<string>> ComputeInFlightRuntimeIdsByTarget(List<RuntimeLane> lanes)
+    {
+        Dictionary<string, List<string>>? map = null;
+        foreach (var lane in lanes)
+        {
+            if (Volatile.Read(ref lane.ActiveInferences) <= 0)
+                continue;
+
+            map ??= new(StringComparer.Ordinal);
+            if (!map.TryGetValue(lane.TargetId, out var list))
+                map[lane.TargetId] = list = [];
+            list.Add(lane.RuntimeId);
+        }
+
+        return map ?? new Dictionary<string, List<string>>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Hard startability (capacity + coexistence + exclusivity) evaluated without the
+    /// skip budget — used to detect blocked lane heads for bypass accounting.
+    /// </summary>
+    private bool IsHardStartable(RuntimeLane lane, List<string> inFlightOthers)
+    {
+        if (Volatile.Read(ref lane.ActiveInferences) >= Math.Max(1, lane.MaxConcurrency))
+            return false;
+
+        if (inFlightOthers.Count == 0)
+            return true;
+
+        if (IsExclusiveRuntime(lane.RuntimeId))
+            return false;
+
+        return inFlightOthers.All(other => CanCoexist(lane.RuntimeId, other));
+    }
+
+    private bool IsExclusiveRuntime(string runtimeId) =>
+        !_runtimeCache.TryGetValue(runtimeId, out var runtime)
+        || runtime.CanRunAlongWith.Count == 0;
+
+    private static bool EarlierLaneHasPending(List<RuntimeLane> lanes, RuntimeLane lane)
+    {
+        foreach (var earlier in lanes)
+        {
+            if (ReferenceEquals(earlier, lane))
+                return false;
+            if (earlier.Pending.Reader.Count > 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Starts the head of <paramref name="lane"/>: increments <see cref="RuntimeLane.ActiveInferences"/>
+    /// synchronously (so capacity gates never observe a stale zero), dequeues the head,
+    /// optionally consumes skip budget, and launches the runner fire-and-forget.
+    /// </summary>
+    private bool TryStartLaneHead(RuntimeLane lane, bool consumeSkip, CancellationToken ct)
+    {
+        Interlocked.Increment(ref lane.ActiveInferences);
+
+        if (!lane.Pending.Reader.TryRead(out var item))
+        {
+            // Head vanished (drained during shutdown) — undo the reservation.
+            Interlocked.Decrement(ref lane.ActiveInferences);
+            return false;
+        }
+
+        if (consumeSkip)
+            Interlocked.Increment(ref lane.SkipsUsed);
+
+        if (!_requests.TryGetValue(item.Id, out var request))
+        {
+            FailItem(item, $"Tracking lost for request {item.Id}");
+            Interlocked.Decrement(ref lane.ActiveInferences);
+            WakeScheduler();
+            return true;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await RunLaneItemAsync(lane, request, item, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // RunLaneItemAsync handles its own failures; this is a last-resort guard.
+                _logger.LogError(ex, "Lane runner crashed for request {Id} on target {Target}",
+                    item.Id, lane.TargetId);
+            }
+        }, CancellationToken.None);
+
+        return true;
+    }
+
+    // ── Lane runner ───────────────────────────────────────────────────────────
+
+    private async Task RunLaneItemAsync(RuntimeLane lane, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    {
+        try
+        {
+            // Already resolved elsewhere (cancelled by a batch drain or shutdown):
+            // never run inference for it again — the caller is long gone.
+            if (request.Tcs.Task.IsCompleted)
+                return;
+
+            await ProcessRequestAsync(lane, request, queueItem, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            FailItem(queueItem, "Scheduler shutting down");
+            request.Tcs.TrySetCanceled(ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
+                request.Id, lane.TargetId);
+            FailItem(queueItem, ex.Message);
+            request.Tcs.TrySetException(ex);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref lane.ActiveInferences);
+
+            // Sequential-step accounting: after QueueStepsTillReset completions on
+            // this lane, reset the skip budget so future bypasses are permitted.
+            try
+            {
+                var settings = await GetCurrentSettingsAsync(CancellationToken.None).ConfigureAwait(false);
+                var steps = Interlocked.Increment(ref lane.SequentialStepsProcessed);
+                if (steps >= settings.QueueStepsTillReset)
+                {
+                    Interlocked.Exchange(ref lane.SkipsUsed, 0);
+                    Interlocked.Exchange(ref lane.SequentialStepsProcessed, 0);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update skip accounting for lane {Runtime} on {Target}",
+                    lane.RuntimeId, lane.TargetId);
+            }
+
+            // Completion is a scheduling event: something may have become startable.
+            WakeScheduler();
+        }
+    }
+
+    private async Task ProcessRequestAsync(RuntimeLane lane, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    {
         // Track this request as active for dashboard stats
         _statsTracker.TrackActiveRequest(request.Id);
         try
         {
-            await ProcessRequestInnerAsync(slot, request, queueItem, ct).ConfigureAwait(false);
+            await ProcessRequestInnerAsync(lane, request, queueItem, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -518,17 +858,20 @@ public sealed class SchedulerWorker
         }
     }
 
-    private async Task ProcessRequestInnerAsync(TargetSlot slot, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    private async Task ProcessRequestInnerAsync(RuntimeLane lane, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
     {
-
-        // Ensure correct model is running on this target
-        if (slot.ResidentModel != request.ModelName)
+        // Ensure the lane's runtime serves the requested model
+        if (lane.ResidentModel != request.ModelName)
         {
-            await SwitchModelAsync(slot, request.ModelName, ct).ConfigureAwait(false);
+            var runtime = await GetRuntimeEntityAsync(lane.RuntimeId, ct).ConfigureAwait(false)
+                ?? throw new InvalidOperationException(
+                    $"Registered runtime {lane.RuntimeId} for model {request.ModelName} not found");
+
+            await SwitchModelAsync(lane, request.ModelName, runtime, ct).ConfigureAwait(false);
         }
 
         // If switch failed, the model container won't be running
-        if (slot.ResidentModel != request.ModelName)
+        if (lane.ResidentModel != request.ModelName)
         {
             FailItem(queueItem, $"Failed to start container for model {request.ModelName}");
             request.Tcs.TrySetException(new InvalidOperationException($"Container for model {request.ModelName} not available"));
@@ -538,7 +881,7 @@ public sealed class SchedulerWorker
         // Process the request
         UpdateItemStatus(queueItem, QueueItemStatus.Processing);
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
-            $"Processing request {request.Id} for model {request.ModelName} on {slot.TargetId}");
+            $"Processing request {request.Id} for model {request.ModelName} on {lane.TargetId} (runtime {lane.RuntimeId})");
 
         // Declared outside the try so the catch filters can distinguish a request
         // timeout from scheduler shutdown.
@@ -568,9 +911,9 @@ public sealed class SchedulerWorker
 
             // ── Stream-drain gating ──────────────────────────────────────────
             // For streaming responses, await full body consumption BEFORE
-            // releasing the per-target worker slot. This prevents the next
-            // request from dequeuing and triggering a model switch that would
-            // kill the upstream container still serving the active stream.
+            // releasing the lane slot. This prevents the next request from
+            // triggering a model switch that would kill the upstream container
+            // still serving the active stream.
             if (response.BodyDrained is not null)
             {
                 try
@@ -582,14 +925,14 @@ public sealed class SchedulerWorker
                     // Drain cancelled (timeout or upstream gone) — log but do not
                     // fail the request; the client already has the result.
                     _logStore.Enqueue(LogLevel.Warn, "Scheduler",
-                        $"Stream drain cancelled for request {request.Id} on {slot.TargetId}");
+                        $"Stream drain cancelled for request {request.Id} on {lane.TargetId}");
                 }
                 catch (Exception ex)
                 {
                     // Drain fault (upstream disconnect, etc.) — log and continue.
                     // The request is already completed; this must not propagate.
                     _logStore.Enqueue(LogLevel.Warn, "Scheduler",
-                        $"Stream drain faulted for request {request.Id} on {slot.TargetId}: {ex.Message}");
+                        $"Stream drain faulted for request {request.Id} on {lane.TargetId}: {ex.Message}");
                 }
 
                 // Token counts are now final (written by the tap stream on EOF/dispose).
@@ -646,8 +989,8 @@ public sealed class SchedulerWorker
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // Shutdown (the worker may dequeue a buffered item after cancellation
-            // before observing the token): cancel the caller, never fake a timeout.
+            // Shutdown (the runner may observe cancellation mid-flight): cancel the
+            // caller, never fake a timeout.
             FailItem(queueItem, "Scheduler shutting down");
             request.Tcs.TrySetCanceled(ct);
         }
@@ -660,98 +1003,85 @@ public sealed class SchedulerWorker
         }
     }
 
-    // ── Target-scoped model switching ─────────────────────────────────────────
+    // ── Lane-scoped model switching ───────────────────────────────────────────
 
-    private async Task SwitchModelAsync(TargetSlot slot, string targetModel, CancellationToken ct)
+    private async Task SwitchModelAsync(RuntimeLane lane, string targetModel, RegisteredRuntime targetRuntime, CancellationToken ct)
     {
-        // Serialize switches per target: concurrent (coexistence-allowed) requests
-        // may each trigger a switch; container state mutations must not interleave.
-        await slot.SwitchLock.WaitAsync(ct).ConfigureAwait(false);
+        // Serialize switches per lane: concurrent (coexistence-allowed) requests may
+        // each trigger a switch; container state mutations must not interleave.
+        await lane.SwitchLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await SwitchModelLockedAsync(slot, targetModel, ct).ConfigureAwait(false);
+            await SwitchModelLockedAsync(lane, targetModel, targetRuntime, ct).ConfigureAwait(false);
         }
         finally
         {
-            slot.SwitchLock.Release();
+            lane.SwitchLock.Release();
         }
     }
 
-    private async Task SwitchModelLockedAsync(TargetSlot slot, string targetModel, CancellationToken ct)
+    private async Task SwitchModelLockedAsync(RuntimeLane lane, string targetModel, RegisteredRuntime targetRuntime, CancellationToken ct)
     {
-        // Drain gate: only wait for active inferences to finish when the switch
-        // will STOP one of their containers (incompatible target). Coexistence-
-        // compatible targets start alongside without draining.
-        if (slot.RunningContainers.Count > 0
-            && !await CanRunAlongsideRunningAsync(slot, targetModel, ct).ConfigureAwait(false))
+        // Drain gate: only wait for active inferences to finish when the switch will
+        // STOP one of their containers (incompatible runtime). Coexistence-compatible
+        // runtimes start alongside without draining. Same-lane in-flight work always
+        // shares this lane's runtime container, so only sibling lanes matter here.
+        if (!await CanRunAlongsideRunningAsync(lane, targetRuntime, ct).ConfigureAwait(false))
         {
-            while (Volatile.Read(ref slot.ActiveInferences) > 0)
+            while (AnyIncompatibleInFlightOnTarget(lane, targetRuntime))
             {
                 await Task.Delay(50, ct).ConfigureAwait(false);
             }
         }
 
         var transitionId = Guid.NewGuid().ToString("N");
-        var fromModel = slot.ResidentModel ?? "(none)";
+        var fromModel = lane.ResidentModel ?? "(none)";
         var switchStart = _clock.UtcNow;
 
-        Telemetry.UnswarmMetrics.RecordModelSwitch(fromModel, targetModel, slot.TargetId);
+        Telemetry.UnswarmMetrics.RecordModelSwitch(fromModel, targetModel, lane.TargetId);
 
         var transition = new ModelTransition
         {
             Id = transitionId,
             FromModel = fromModel,
             ToModel = targetModel,
+            RuntimeId = lane.RuntimeId,
             Status = "switching",
             StartedAt = _clock.UtcNow
         };
         _activeTransitions[transitionId] = transition;
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
-            $"Switching model on {slot.TargetId}: {fromModel} -> {targetModel}");
+            $"Switching model on {lane.TargetId} (runtime {lane.RuntimeId}): {fromModel} -> {targetModel}");
 
         try
         {
-            // Resolve the target model's registered container (if any)
-            string? targetRegisteredRuntimeId = null;
-            RegisteredRuntime? targetRegisteredContainer = null;
-            if (_containerRegistry is not null)
-            {
-                targetRegisteredRuntimeId = await _containerRegistry
-                    .GetContainerIdForModelAsync(targetModel, ct).ConfigureAwait(false);
-
-                if (targetRegisteredRuntimeId is not null)
-                {
-                    targetRegisteredContainer = await _containerRegistry
-                        .GetAsync(targetRegisteredRuntimeId, ct).ConfigureAwait(false);
-                }
-            }
-
             // Load live settings once per switch for LazyStop / BatchDrain evaluation
             var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
 
-            // Update concurrency limit from the registered runtime (if available).
+            // Update concurrency limit from the registered runtime.
             // Only safe when nothing is in flight — with coexistence-allowed
             // switches, active inferences may still be running; the next quiet
             // switch picks up the new limit.
-            if (targetRegisteredContainer is not null && Volatile.Read(ref slot.ActiveInferences) == 0)
+            if (Volatile.Read(ref lane.ActiveInferences) == 0)
             {
-                var newMax = targetRegisteredContainer.MaxConcurrentInferences;
-                slot.MaxConcurrency = newMax;
-                var oldGate = slot.ConcurrencyGate;
-                slot.ConcurrencyGate = new SemaphoreSlim(newMax, newMax);
+                var newMax = Math.Max(1, targetRuntime.MaxConcurrentInferences);
+                lane.MaxConcurrency = newMax;
+                var oldGate = lane.ConcurrencyGate;
+                lane.ConcurrencyGate = new SemaphoreSlim(newMax, newMax);
                 oldGate?.Dispose();
             }
 
-            // Container-aware: same registered container as resident → instant switch
-            if (targetRegisteredRuntimeId is not null
-                && slot.ResidentRegisteredRuntimeId is not null
-                && targetRegisteredRuntimeId == slot.ResidentRegisteredRuntimeId)
+            // This lane's runtime container is already up → instant switch (covers
+            // multi-model runtimes: the model changed but the container did not).
+            var targetGroup = GetTargetGroup(lane.TargetId);
+            if (targetGroup.RunningContainers.TryGetValue(lane.RuntimeId, out var alreadyRunning))
             {
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (same container {slot.ResidentRegisteredRuntimeId})");
+                    $"Instant switch on {lane.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
 
-                slot.ResidentModel = targetModel;
+                lane.ResidentModel = targetModel;
+                lane.ResidentContainerId = alreadyRunning.ContainerId;
 
                 var switchDurationMs = (_clock.UtcNow - switchStart).TotalMilliseconds;
                 _statsTracker.RecordSwitch(switchDurationMs);
@@ -760,69 +1090,50 @@ public sealed class SchedulerWorker
                 _activeTransitions[transitionId] = transition;
 
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Instant model switch complete on {slot.TargetId}: now running {targetModel} ({switchDurationMs:F0}ms)");
-                return;
-            }
-
-            // Target container already running on this target (compatible set) → instant
-            if (targetRegisteredRuntimeId is not null
-                && slot.RunningContainers.TryGetValue(targetRegisteredRuntimeId, out var alreadyRunning))
-            {
-                _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Instant switch on {slot.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
-
-                slot.ResidentModel = targetModel;
-                slot.ResidentContainerId = alreadyRunning.ContainerId;
-                slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
-
-                var switchDurationMs2 = (_clock.UtcNow - switchStart).TotalMilliseconds;
-                _statsTracker.RecordSwitch(switchDurationMs2);
-
-                transition = transition with { Status = "complete" };
-                _activeTransitions[transitionId] = transition;
+                    $"Instant model switch complete on {lane.TargetId}: now running {targetModel} ({switchDurationMs:F0}ms)");
                 return;
             }
 
             // Drain: if LazyStop, batch-drain all requests for the current model first.
             // When BatchDrain=false, skip the drain and proceed with minimal stop/switch.
             if (currentSettings.LazyStop && currentSettings.BatchDrain
-                && slot.ResidentContainerId is not null && slot.ResidentModel is not null)
+                && lane.ResidentContainerId is not null && lane.ResidentModel is not null)
             {
                 transition = transition with { Status = "draining" };
                 _activeTransitions[transitionId] = transition;
 
-                await DrainCurrentModelAsync(slot, ct).ConfigureAwait(false);
+                await DrainCurrentModelAsync(lane, ct).ConfigureAwait(false);
             }
 
             // Stop incompatible running containers on this target (canRunAlongWith)
             transition = transition with { Status = "switching" };
             _activeTransitions[transitionId] = transition;
 
-            await StopIncompatibleContainersAsync(slot, targetModel, targetRegisteredContainer, ct).ConfigureAwait(false);
+            await StopIncompatibleContainersAsync(lane, targetRuntime, ct).ConfigureAwait(false);
 
             // Start new container
             transition = transition with { Status = "starting" };
             _activeTransitions[transitionId] = transition;
 
             // Script runtime: start via the appropriate controller instead of Docker
-            if (targetRegisteredContainer?.RuntimeKind == RuntimeKind.Script)
+            if (targetRuntime.RuntimeKind == RuntimeKind.Script)
             {
-                var launcherPath = targetRegisteredContainer.LauncherPath
-                    ?? throw new InvalidOperationException($"Script runtime {targetRegisteredContainer.Id} has no LauncherPath");
+                var launcherPath = targetRuntime.LauncherPath
+                    ?? throw new InvalidOperationException($"Script runtime {targetRuntime.Id} has no LauncherPath");
 
                 int scriptPid;
                 try
                 {
-                    var isHost = string.Equals(slot.TargetId, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
+                    var isHost = string.Equals(lane.TargetId, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
                     if (!isHost)
                     {
                         // Agent-hosted script: start via RemoteAgentDockerController
-                        var scriptController = _router.GetController(slot.TargetId);
+                        var scriptController = _router.GetController(lane.TargetId);
                         if (scriptController is not RemoteAgentDockerController remoteScriptController)
                         {
-                            throw new InvalidOperationException($"Agent target '{slot.TargetId}' does not have a connected RemoteAgentDockerController");
+                            throw new InvalidOperationException($"Agent target '{lane.TargetId}' does not have a connected RemoteAgentDockerController");
                         }
-                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRegisteredContainer.ContainerPort, ct).ConfigureAwait(false);
+                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRuntime.ContainerPort, ct).ConfigureAwait(false);
                     }
                     else
                     {
@@ -831,14 +1142,14 @@ public sealed class SchedulerWorker
                             throw new InvalidOperationException("HostScriptRuntimeController not available");
 
                         var scriptResult = await _scriptController.StartScriptAsync(
-                            targetRegisteredContainer.Id, launcherPath, targetRegisteredContainer.ContainerPort, ct).ConfigureAwait(false);
+                            targetRuntime.Id, launcherPath, targetRuntime.ContainerPort, ct).ConfigureAwait(false);
 
                         if (scriptResult.ErrorMessage is not null)
                         {
                             _logStore.Enqueue(LogLevel.Error, "Scheduler",
-                                $"Script start failed on {slot.TargetId} for model {targetModel}: {scriptResult.ErrorMessage}");
+                                $"Script start failed on {lane.TargetId} for model {targetModel}: {scriptResult.ErrorMessage}");
 
-                            FailAllForModel(targetModel, slot.TargetId, $"Script start failed: {scriptResult.ErrorMessage}");
+                            FailAllForModel(targetModel, lane.TargetId, $"Script start failed: {scriptResult.ErrorMessage}");
 
                             transition = transition with { Status = "complete" };
                             _activeTransitions[transitionId] = transition;
@@ -851,32 +1162,30 @@ public sealed class SchedulerWorker
                 catch (Exception ex)
                 {
                     _logStore.Enqueue(LogLevel.Error, "Scheduler",
-                        $"Script start failed on {slot.TargetId} for model {targetModel}: {ex.Message}");
+                        $"Script start failed on {lane.TargetId} for model {targetModel}: {ex.Message}");
 
-                    FailAllForModel(targetModel, slot.TargetId, $"Script start failed: {ex.Message}");
+                    FailAllForModel(targetModel, lane.TargetId, $"Script start failed: {ex.Message}");
 
                     transition = transition with { Status = "complete" };
                     _activeTransitions[transitionId] = transition;
                     return;
                 }
 
-                var scriptKey = $"script:{targetRegisteredContainer.Id}";
-                var scriptPort = targetRegisteredContainer.ContainerPort;
+                var scriptKey = $"script:{targetRuntime.Id}";
+                var scriptPort = targetRuntime.ContainerPort;
 
                 // Wait for health
-                var healthHost = ResolveHealthCheckHost(slot.TargetId);
+                var healthHost = ResolveHealthCheckHost(lane.TargetId);
                 await _healthChecker.WaitForReadyAsync(scriptPort, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
 
-                slot.ResidentModel = targetModel;
-                slot.ResidentContainerId = scriptKey;
-                slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
+                lane.ResidentModel = targetModel;
+                lane.ResidentContainerId = scriptKey;
 
-                var scriptRunningKey = targetRegisteredRuntimeId ?? scriptKey;
-                slot.RunningContainers[scriptRunningKey] = new RunningContainerInfo
+                GetTargetGroup(lane.TargetId).RunningContainers[lane.RuntimeId] = new RunningContainerInfo
                 {
-                    Key = scriptRunningKey,
-                    RegisteredRuntimeId = targetRegisteredRuntimeId,
-                    ContainerName = targetRegisteredContainer.DisplayName ?? targetRegisteredContainer.Image,
+                    Key = lane.RuntimeId,
+                    RegisteredRuntimeId = lane.RuntimeId,
+                    ContainerName = targetRuntime.DisplayName ?? targetRuntime.Image,
                     ContainerId = scriptKey
                 };
 
@@ -887,11 +1196,12 @@ public sealed class SchedulerWorker
                 _activeTransitions[transitionId] = transition;
 
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Script switch complete on {slot.TargetId}: now running {targetModel} on port {scriptPort} ({switchDurationScript:F0}ms)");
+                    $"Script switch complete on {lane.TargetId}: now running {targetModel} on port {scriptPort} ({switchDurationScript:F0}ms)");
+                _ = scriptPid;
                 return;
             }
 
-            var controller = _router.GetController(slot.TargetId);
+            var controller = _router.GetController(lane.TargetId);
             var maxRetries = _settings.MaxContainerStartRetries;
             ContainerStartResult? startResult = null;
             Exception? lastException = null;
@@ -901,29 +1211,21 @@ public sealed class SchedulerWorker
                 ct.ThrowIfCancellationRequested();
                 try
                 {
-                    if (targetRegisteredContainer is not null)
-                    {
-                        startResult = await controller.StartRegisteredContainerAsync(
-                            targetRegisteredContainer.Id,
-                            targetRegisteredContainer.Image,
-                            targetRegisteredContainer.ContainerPort,
-                            targetRegisteredContainer.GpuDevices,
-                            targetRegisteredContainer.MemoryLimitMb,
-                            targetRegisteredContainer.ExtraLabels ?? new Dictionary<string, string>(),
-                            ct).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        // Legacy path: container name matches model name
-                        startResult = await controller.StartContainerAsync(targetModel, ct).ConfigureAwait(false);
-                    }
+                    startResult = await controller.StartRegisteredContainerAsync(
+                        targetRuntime.Id,
+                        targetRuntime.Image,
+                        targetRuntime.ContainerPort,
+                        targetRuntime.GpuDevices,
+                        targetRuntime.MemoryLimitMb,
+                        targetRuntime.ExtraLabels ?? new Dictionary<string, string>(),
+                        ct).ConfigureAwait(false);
 
                     if (startResult.ErrorMessage is null)
                         break; // Success
 
                     lastException = new InvalidOperationException(startResult.ErrorMessage);
                     _logStore.Enqueue(LogLevel.Warn, "Scheduler",
-                        $"Container start attempt {attempt}/{maxRetries} failed on {slot.TargetId} for model {targetModel}: {startResult.ErrorMessage}");
+                        $"Container start attempt {attempt}/{maxRetries} failed on {lane.TargetId} for model {targetModel}: {startResult.ErrorMessage}");
 
                     if (attempt < maxRetries)
                     {
@@ -937,7 +1239,7 @@ public sealed class SchedulerWorker
                 {
                     lastException = ex;
                     _logStore.Enqueue(LogLevel.Warn, "Scheduler",
-                        $"Container start attempt {attempt}/{maxRetries} threw on {slot.TargetId} for model {targetModel}: {ex.Message}");
+                        $"Container start attempt {attempt}/{maxRetries} threw on {lane.TargetId} for model {targetModel}: {ex.Message}");
 
                     if (attempt < maxRetries)
                     {
@@ -954,9 +1256,9 @@ public sealed class SchedulerWorker
                 // All retries exhausted
                 var errorMsg = lastException?.Message ?? "Unknown error";
                 _logStore.Enqueue(LogLevel.Error, "Scheduler",
-                    $"Container start failed after {maxRetries} attempts on {slot.TargetId} for model {targetModel}: {errorMsg}");
+                    $"Container start failed after {maxRetries} attempts on {lane.TargetId} for model {targetModel}: {errorMsg}");
 
-                FailAllForModel(targetModel, slot.TargetId, $"Container start failed after {maxRetries} attempts: {errorMsg}");
+                FailAllForModel(targetModel, lane.TargetId, $"Container start failed after {maxRetries} attempts: {errorMsg}");
 
                 transition = transition with { Status = "complete" };
                 _activeTransitions[transitionId] = transition;
@@ -966,25 +1268,22 @@ public sealed class SchedulerWorker
             // Wait for health
             if (startResult.MappedPort.HasValue)
             {
-                var healthHost = ResolveHealthCheckHost(slot.TargetId);
+                var healthHost = ResolveHealthCheckHost(lane.TargetId);
                 await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
             }
 
-            slot.ResidentModel = targetModel;
-            slot.ResidentContainerId = startResult.ContainerId;
-            slot.ResidentRegisteredRuntimeId = targetRegisteredRuntimeId;
+            lane.ResidentModel = targetModel;
+            lane.ResidentContainerId = startResult.ContainerId;
 
             // Persist the live container id so the registry converges when the docker
             // container was recreated (same name, new id) outside this scheduler —
             // otherwise stop/status paths keep operating on the stale id.
-            if (_containerRegistry is not null
-                && targetRegisteredContainer is not null
-                && !string.IsNullOrEmpty(startResult.ContainerId)
-                && !string.Equals(startResult.ContainerId, targetRegisteredContainer.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(startResult.ContainerId)
+                && !string.Equals(startResult.ContainerId, targetRuntime.RuntimeContainerId, StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
-                    await _containerRegistry.UpdateAsync(targetRegisteredContainer.Id, targetRegisteredContainer with
+                    await _containerRegistry!.UpdateAsync(targetRuntime.Id, targetRuntime with
                     {
                         RuntimeContainerId = startResult.ContainerId
                     }, ct).ConfigureAwait(false);
@@ -993,16 +1292,15 @@ public sealed class SchedulerWorker
                 {
                     _logger.LogWarning(ex,
                         "Failed to refresh RuntimeContainerId for registered runtime {RegId} after scheduler start",
-                        targetRegisteredContainer.Id);
+                        targetRuntime.Id);
                 }
             }
 
-            var runningKey = targetRegisteredRuntimeId ?? $"legacy:{startResult.ContainerId}";
-            slot.RunningContainers[runningKey] = new RunningContainerInfo
+            GetTargetGroup(lane.TargetId).RunningContainers[lane.RuntimeId] = new RunningContainerInfo
             {
-                Key = runningKey,
-                RegisteredRuntimeId = targetRegisteredRuntimeId,
-                ContainerName = targetRegisteredContainer?.Image ?? targetModel,
+                Key = lane.RuntimeId,
+                RegisteredRuntimeId = lane.RuntimeId,
+                ContainerName = targetRuntime.Image,
                 ContainerId = startResult.ContainerId
             };
 
@@ -1013,14 +1311,14 @@ public sealed class SchedulerWorker
             _activeTransitions[transitionId] = transition;
 
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                $"Model switch complete on {slot.TargetId}: now running {targetModel} on port {startResult.MappedPort} ({switchDurationMs3:F0}ms)");
+                $"Model switch complete on {lane.TargetId}: now running {targetModel} on port {startResult.MappedPort} ({switchDurationMs3:F0}ms)");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Model switch failed on {Target}: {From} -> {To}", slot.TargetId, fromModel, targetModel);
+            _logger.LogError(ex, "Model switch failed on {Target}: {From} -> {To}", lane.TargetId, fromModel, targetModel);
 
             // Fail all queued requests for the target model
-            FailAllForModel(targetModel, slot.TargetId, $"Model switch failed: {ex.Message}");
+            FailAllForModel(targetModel, lane.TargetId, $"Model switch failed: {ex.Message}");
 
             transition = transition with { Status = "complete" };
             _activeTransitions[transitionId] = transition;
@@ -1030,69 +1328,31 @@ public sealed class SchedulerWorker
     }
 
     /// <summary>
-    /// Stops containers on this target that cannot run alongside the target container.
-    /// Compatibility is decided by the shared symmetric <see cref="CoexistencePolicy"/>
-    /// (each side must allow-list the other; empty list = runs alone).
-    /// With no registry info or an unresolvable target model, behaves as
-    /// single-container mode: every other running container on the target is stopped.
+    /// Stops containers tracked on this lane's target that cannot run alongside the
+    /// target runtime. Compatibility is decided by the shared symmetric
+    /// <see cref="CoexistencePolicy"/> (each side must allow-list the other; empty
+    /// list = runs alone). Every tracked entry carries its registered runtime id —
+    /// there are no legacy keys, so all entries are safe stop candidates.
     /// </summary>
-    private async Task StopIncompatibleContainersAsync(TargetSlot slot, string targetModel, RegisteredRuntime? targetContainer, CancellationToken ct)
+    private async Task StopIncompatibleContainersAsync(RuntimeLane lane, RegisteredRuntime targetRuntime, CancellationToken ct)
     {
         // Live-state merge first: containers started outside the scheduler
         // (registration auto-start, manual start, backend restart survivors)
         // must be visible here or they will never be stopped.
-        await ReconcileRunningContainersAsync(slot, ct).ConfigureAwait(false);
+        await ReconcileRunningContainersAsync(lane, ct).ConfigureAwait(false);
 
-        // Second-chance resolution: the primary model→registry mapping may have missed,
-        // but the request's model name can still identify the runtime (legacy containers
-        // are named after their model).
-        if (_containerRegistry is not null && targetContainer is null)
-        {
-            targetContainer = await ResolveTargetRuntimeByModelNameAsync(targetModel, ct).ConfigureAwait(false);
-            if (targetContainer is not null)
-                _logger.LogInformation(
-                    "Resolved model {Model} to registered runtime {RegId} via name fallback on {Target}",
-                    targetModel, targetContainer.Id, slot.TargetId);
-        }
-
-        // No registry or unresolvable target → conservative single-slot behavior
-        if (_containerRegistry is null || targetContainer is null)
-        {
-            _logger.LogWarning(
-                "Target model {Model} on {Target} could not be resolved to a registered runtime{Reason}; stopping ALL running containers as a conservative fallback",
-                targetModel, slot.TargetId,
-                _containerRegistry is null ? " (no container registry available)" : "");
-            await StopAllRunningAsync(slot, ct).ConfigureAwait(false);
-            return;
-        }
+        var runningOnTarget = GetTargetGroup(lane.TargetId).RunningContainers;
 
         var toStop = new List<string>();
-        foreach (var kv in slot.RunningContainers)
+        foreach (var kv in runningOnTarget)
         {
             var info = kv.Value;
 
-            // Same registered container → never stop
-            if (info.RegisteredRuntimeId is not null && info.RegisteredRuntimeId == targetContainer.Id)
+            // Same registered runtime → never stop
+            if (string.Equals(info.RegisteredRuntimeId, targetRuntime.Id, StringComparison.Ordinal))
                 continue;
 
-            // Legacy running entry (no registry id) → try to prove compatibility from
-            // its identifying fields before falling back to a stop.
-            if (info.RegisteredRuntimeId is null)
-            {
-                if (await LegacyEntryIsCompatibleAsync(info, targetContainer, ct).ConfigureAwait(false))
-                    continue;
-
-                if (string.IsNullOrEmpty(info.ContainerName))
-                {
-                    _logger.LogWarning(
-                        "Stopping legacy running entry {Key} on {Target}: it has no identifying fields, compatibility cannot be proven",
-                        kv.Key, slot.TargetId);
-                }
-                toStop.Add(kv.Key);
-                continue;
-            }
-
-            var runningEntity = await _containerRegistry.GetAsync(info.RegisteredRuntimeId, ct).ConfigureAwait(false);
+            var runningEntity = await _containerRegistry!.GetAsync(info.RegisteredRuntimeId, ct).ConfigureAwait(false);
             if (runningEntity is null)
             {
                 toStop.Add(kv.Key);
@@ -1100,32 +1360,22 @@ public sealed class SchedulerWorker
             }
 
             // Symmetric compatibility via the shared policy: each side must allow the other
-            if (!CoexistencePolicy.IsAllowedToCoexist(targetContainer, runningEntity))
+            if (!CoexistencePolicy.IsAllowedToCoexist(targetRuntime, runningEntity))
                 toStop.Add(kv.Key);
         }
 
-        var controller = _router.GetController(slot.TargetId);
+        var controller = _router.GetController(lane.TargetId);
         foreach (var key in toStop)
         {
-            var info = slot.RunningContainers[key];
-
-            // Registered-only stop guard: skip containers not known to the fleet
-            if (!await IsFleetRegisteredAsync(info, ct).ConfigureAwait(false))
-            {
-                _logger.LogWarning(
-                    "Skipping stop of unregistered container {ContainerId} on {Target} (not fleet-registered)",
-                    info.ContainerId, slot.TargetId);
-                continue;
-            }
+            var info = runningOnTarget[key];
 
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                $"Stopping incompatible container {info.ContainerName} on {slot.TargetId}");
+                $"Stopping incompatible container {info.ContainerName} on {lane.TargetId}");
 
             // Script runtimes: dispatch stop to the correct controller
-            if (info.ContainerId.StartsWith("script:", StringComparison.Ordinal)
-                && info.RegisteredRuntimeId is not null)
+            if (info.ContainerId.StartsWith("script:", StringComparison.Ordinal))
             {
-                await StopScriptRuntimeAsync(slot.TargetId, info.RegisteredRuntimeId, ct).ConfigureAwait(false);
+                await StopScriptRuntimeAsync(lane.TargetId, info.RegisteredRuntimeId, ct).ConfigureAwait(false);
             }
             else
             {
@@ -1133,116 +1383,39 @@ public sealed class SchedulerWorker
                 await controller.StopContainerAsync(stopTargetId, ct).ConfigureAwait(false);
             }
 
-            slot.RunningContainers.Remove(key);
+            runningOnTarget.TryRemove(key, out _);
 
-            if (slot.ResidentContainerId == info.ContainerId)
+            // The stopped container may have been the resident of ANY lane on this
+            // target (sibling lanes included) — clear stale residency so the next
+            // request on that lane re-runs the switch instead of hitting a dead container.
+            if (GetTargetGroup(lane.TargetId).Lanes.TryGetValue(key, out var ownerLane)
+                && string.Equals(ownerLane.ResidentContainerId, info.ContainerId, StringComparison.Ordinal))
             {
-                slot.ResidentModel = null;
-                slot.ResidentContainerId = null;
-                slot.ResidentRegisteredRuntimeId = null;
+                ownerLane.ResidentModel = null;
+                ownerLane.ResidentContainerId = null;
+            }
+
+            if (lane.ResidentContainerId == info.ContainerId)
+            {
+                lane.ResidentModel = null;
+                lane.ResidentContainerId = null;
             }
         }
     }
 
-    private async Task StopAllRunningAsync(TargetSlot slot, CancellationToken ct)
-    {
-        var controller = _router.GetController(slot.TargetId);
-        foreach (var kv in slot.RunningContainers.ToList())
-        {
-            _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                $"Stopping container {kv.Value.ContainerName} on {slot.TargetId}");
-
-            // Script runtimes: dispatch stop to the correct controller
-            if (kv.Value.ContainerId.StartsWith("script:", StringComparison.Ordinal)
-                && kv.Value.RegisteredRuntimeId is not null)
-            {
-                await StopScriptRuntimeAsync(slot.TargetId, kv.Value.RegisteredRuntimeId, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                var stopTargetId = await ResolveStopTargetIdAsync(controller, kv.Value, ct).ConfigureAwait(false);
-                await controller.StopContainerAsync(stopTargetId, ct).ConfigureAwait(false);
-            }
-
-            slot.RunningContainers.Remove(kv.Key);
-        }
-
-        slot.ResidentModel = null;
-        slot.ResidentContainerId = null;
-        slot.ResidentRegisteredRuntimeId = null;
-    }
-
     /// <summary>
-    /// Checks whether a container is fleet-registered and therefore safe to stop.
-    /// A container is considered fleet-registered if it has a RegisteredRuntimeId
-    /// (scheduler-tracked), or if the IContainerRegistry knows its RuntimeContainerId.
-    /// When _containerRegistry is null (legacy tests), all containers are considered
-    /// safe to stop to preserve old behavior.
+    /// Merges live container state on this lane's target into
+    /// <see cref="RuntimeLane.RunningContainers"/>. Only containers that resolve to a
+    /// registered runtime (docker-label path first, then registry RuntimeContainerId
+    /// match) are tracked — there are no legacy keys. ADDITIVE ONLY: never removes
+    /// entries (a transient empty listing must not make the scheduler forget
+    /// containers it started).
     /// </summary>
-    private async Task<bool> IsFleetRegisteredAsync(RunningContainerInfo info, CancellationToken ct)
-    {
-        // Scheduler-tracked container — always safe to stop
-        if (!string.IsNullOrEmpty(info.RegisteredRuntimeId))
-            return true;
-
-        // No registry available — legacy behavior: allow stop
-        if (_containerRegistry is null)
-            return true;
-
-        // Check if any registered runtime claims this container id
-        try
-        {
-            var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
-            if (allRuntimes.Any(r => r.RuntimeContainerId == info.ContainerId))
-                return true;
-        }
-        catch
-        {
-            // On error, fall through to skip (conservative)
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// Second-chance target resolution when the primary model→registry mapping missed:
-    /// retries the mapping lookup (model id / model name → SourceRuntimeId), then falls
-    /// back to legacy naming where a registered runtime's image or display name equals
-    /// the requested model name.
-    /// </summary>
-    private async Task<RegisteredRuntime?> ResolveTargetRuntimeByModelNameAsync(string modelName, CancellationToken ct)
-    {
-        if (_containerRegistry is null)
-            return null;
-
-        var mappedId = await _containerRegistry.GetContainerIdForModelAsync(modelName, ct).ConfigureAwait(false);
-        if (mappedId is not null)
-        {
-            var mapped = await _containerRegistry.GetAsync(mappedId, ct).ConfigureAwait(false);
-            if (mapped is not null)
-                return mapped;
-        }
-
-        var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
-        return allRuntimes.FirstOrDefault(r =>
-            string.Equals(r.Image, modelName, StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrEmpty(r.DisplayName) &&
-             string.Equals(r.DisplayName, modelName, StringComparison.OrdinalIgnoreCase)));
-    }
-
-    /// <summary>
-    /// Merges live container state on this target into <see cref="TargetSlot.RunningContainers"/>.
-    /// The slot only tracks containers the scheduler itself started; containers started via
-    /// registration auto-start, manually, or surviving a backend restart are otherwise
-    /// invisible — silently breaking both coexistence checks and incompatible-container stops.
-    /// ADDITIVE ONLY: never removes entries (a transient empty listing must not make the
-    /// scheduler forget containers it started).
-    /// </summary>
-    private async Task ReconcileRunningContainersAsync(TargetSlot slot, CancellationToken ct)
+    private async Task ReconcileRunningContainersAsync(RuntimeLane lane, CancellationToken ct)
     {
         try
         {
-            var controller = _router.GetController(slot.TargetId);
+            var controller = _router.GetController(lane.TargetId);
             var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
 
             IReadOnlyList<RegisteredRuntime> allRuntimes =
@@ -1250,29 +1423,31 @@ public sealed class SchedulerWorker
                     ? await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false)
                     : Array.Empty<RegisteredRuntime>();
 
+            var runningOnTarget = GetTargetGroup(lane.TargetId).RunningContainers;
+
             foreach (var c in containers.Where(c => c.Status == ContainerStatus.Running))
             {
                 // Resolve the registered runtime: docker-label path first,
-                // then registry RuntimeContainerId match.
+                // then registry RuntimeContainerId match. Unresolvable containers
+                // are not tracked (no legacy keys).
                 var regId = c.RegisteredRuntimeId;
                 if (regId is null)
                     regId = allRuntimes.FirstOrDefault(r =>
                         r.RuntimeContainerId is not null &&
                         string.Equals(r.RuntimeContainerId, c.Id, StringComparison.OrdinalIgnoreCase))?.Id;
 
-                var key = regId ?? $"legacy:{c.Id}";
-                if (slot.RunningContainers.ContainsKey(key))
+                if (regId is null || runningOnTarget.ContainsKey(regId))
                     continue;
 
-                slot.RunningContainers[key] = new RunningContainerInfo
+                runningOnTarget[regId] = new RunningContainerInfo
                 {
-                    Key = key,
+                    Key = regId,
                     RegisteredRuntimeId = regId,
                     ContainerName = c.ModelName,
                     ContainerId = c.Id
                 };
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Reconciled externally-started container {c.ModelName} ({c.Id[..Math.Min(12, c.Id.Length)]}) into target {slot.TargetId}");
+                    $"Reconciled externally-started container {c.ModelName} ({c.Id[..Math.Min(12, c.Id.Length)]}) into target {lane.TargetId}");
             }
         }
         catch (OperationCanceledException)
@@ -1281,53 +1456,52 @@ public sealed class SchedulerWorker
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to reconcile running containers on {Target}", slot.TargetId);
+            _logger.LogWarning(ex, "Failed to reconcile running containers on {Target}", lane.TargetId);
         }
     }
 
     /// <summary>
-    /// Coexistence-aware parallel eligibility: returns true when the incoming
-    /// request's model resolves to a registered runtime that may run alongside
-    /// EVERY container currently tracked on the slot (symmetric policy check,
-    /// mirroring <see cref="StopIncompatibleContainersAsync"/>). When true, the
-    /// scheduler may launch the request concurrently — the model switch inside
-    /// processing will start the new container while keeping compatible ones alive.
+    /// Coexistence-aware eligibility for a model switch on this lane: returns true
+    /// when the candidate runtime may run alongside everything currently active on
+    /// the target — sibling lanes with in-flight work AND every tracked running
+    /// container (symmetric policy check, mirroring
+    /// <see cref="StopIncompatibleContainersAsync"/>). When true, the switch keeps
+    /// compatible containers alive instead of draining.
     /// </summary>
-    private async Task<bool> CanRunAlongsideRunningAsync(TargetSlot slot, string modelName, CancellationToken ct)
+    private async Task<bool> CanRunAlongsideRunningAsync(RuntimeLane lane, RegisteredRuntime candidate, CancellationToken ct)
     {
         if (_containerRegistry is null)
             return false;
 
         // Live-state merge first: externally-started / restart-surviving
         // containers must participate in the coexistence decision.
-        await ReconcileRunningContainersAsync(slot, ct).ConfigureAwait(false);
+        await ReconcileRunningContainersAsync(lane, ct).ConfigureAwait(false);
 
-        if (slot.RunningContainers.Count == 0)
-            return false;
+        // Sibling lanes with in-flight work must be compatible. Same-lane in-flight
+        // work shares the candidate's container and is always compatible.
+        if (_targets.TryGetValue(lane.TargetId, out var group))
+        {
+            foreach (var sibling in group.Lanes.Values)
+            {
+                if (ReferenceEquals(sibling, lane))
+                    continue;
+                if (Volatile.Read(ref sibling.ActiveInferences) == 0)
+                    continue;
+                if (!CanCoexist(candidate.Id, sibling.RuntimeId))
+                    return false;
+            }
+        }
 
-        var target = await ResolveTargetRuntimeByModelNameAsync(modelName, ct).ConfigureAwait(false);
-        if (target is null)
-            return false;
-
-        foreach (var kv in slot.RunningContainers)
+        foreach (var kv in GetTargetGroup(lane.TargetId).RunningContainers)
         {
             var info = kv.Value;
 
-            // Same registered runtime → same-container case; handled by the
-            // modelMatches branch, but treat as compatible here regardless.
-            if (info.RegisteredRuntimeId is not null && info.RegisteredRuntimeId == target.Id)
+            // Same registered runtime → compatible by definition.
+            if (string.Equals(info.RegisteredRuntimeId, candidate.Id, StringComparison.Ordinal))
                 continue;
 
-            if (info.RegisteredRuntimeId is null)
-            {
-                // Legacy entry: must prove compatibility from identifying fields.
-                if (await LegacyEntryIsCompatibleAsync(info, target, ct).ConfigureAwait(false))
-                    continue;
-                return false;
-            }
-
             var runningEntity = await _containerRegistry.GetAsync(info.RegisteredRuntimeId, ct).ConfigureAwait(false);
-            if (runningEntity is null || !CoexistencePolicy.IsAllowedToCoexist(target, runningEntity))
+            if (runningEntity is null || !CoexistencePolicy.IsAllowedToCoexist(candidate, runningEntity))
                 return false;
         }
 
@@ -1335,43 +1509,26 @@ public sealed class SchedulerWorker
     }
 
     /// <summary>
-    /// Best-effort compatibility proof for legacy running entries without a
-    /// RegisteredRuntimeId. First tries to find the registered runtime backing the
-    /// entry (by runtime container id, then image/display name) and applies the
-    /// symmetric <see cref="CoexistencePolicy"/>; without a registered owner it falls
-    /// back to a one-sided check of the target's allow list against the entry's
-    /// container name.
+    /// True when any sibling lane on this lane's target currently has in-flight work
+    /// on a runtime that cannot coexist with <paramref name="candidate"/> — i.e. the
+    /// switch would stop a container actively serving a request.
     /// </summary>
-    private async Task<bool> LegacyEntryIsCompatibleAsync(RunningContainerInfo info, RegisteredRuntime targetContainer, CancellationToken ct)
+    private bool AnyIncompatibleInFlightOnTarget(RuntimeLane lane, RegisteredRuntime candidate)
     {
-        if (_containerRegistry is null || string.IsNullOrEmpty(info.ContainerName))
+        if (!_targets.TryGetValue(lane.TargetId, out var group))
             return false;
 
-        try
+        foreach (var sibling in group.Lanes.Values)
         {
-            var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
-            var claimed = allRuntimes.FirstOrDefault(r =>
-                !string.Equals(r.Id, targetContainer.Id, StringComparison.OrdinalIgnoreCase) &&
-                ((!string.IsNullOrEmpty(r.RuntimeContainerId) &&
-                  string.Equals(r.RuntimeContainerId, info.ContainerId, StringComparison.OrdinalIgnoreCase)) ||
-                 string.Equals(r.Image, info.ContainerName, StringComparison.OrdinalIgnoreCase) ||
-                 (!string.IsNullOrEmpty(r.DisplayName) &&
-                  string.Equals(r.DisplayName, info.ContainerName, StringComparison.OrdinalIgnoreCase))));
-
-            if (claimed is not null)
-                return CoexistencePolicy.IsAllowedToCoexist(targetContainer, claimed);
-
-            // No registered owner: one-sided proof — the target explicitly allows this container name.
-            return (targetContainer.CanRunAlongWith ?? []).Any(name =>
-                string.Equals(name, info.ContainerName, StringComparison.OrdinalIgnoreCase));
+            if (ReferenceEquals(sibling, lane))
+                continue;
+            if (Volatile.Read(ref sibling.ActiveInferences) == 0)
+                continue;
+            if (!CanCoexist(candidate.Id, sibling.RuntimeId))
+                return true;
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Failed to prove compatibility for legacy running entry {Key} on {Target}; treating as incompatible",
-                info.Key, targetContainer.Id);
-            return false;
-        }
+
+        return false;
     }
 
     /// <summary>
@@ -1462,13 +1619,13 @@ public sealed class SchedulerWorker
     /// callers hanging on a Tcs that will only resolve when the item is dequeued
     /// again after the switch (if ever).
     /// </summary>
-    private Task DrainCurrentModelAsync(TargetSlot slot, CancellationToken ct)
+    private Task DrainCurrentModelAsync(RuntimeLane lane, CancellationToken ct)
     {
-        if (slot.ResidentModel is null) return Task.CompletedTask;
+        if (lane.ResidentModel is null) return Task.CompletedTask;
 
         // Collect all waiting requests for the current model on this target
         var toDrain = _allItems.Values
-            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == slot.ResidentModel && i.TargetId == slot.TargetId)
+            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == lane.ResidentModel && i.TargetId == lane.TargetId)
             .OrderBy(i => i.Priority)
             .ThenBy(i => i.CreatedAt)
             .ToList();
@@ -1476,7 +1633,7 @@ public sealed class SchedulerWorker
         if (toDrain.Count == 0) return Task.CompletedTask;
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
-            $"Batch-draining {toDrain.Count} requests for model {slot.ResidentModel} on {slot.TargetId}");
+            $"Batch-draining {toDrain.Count} requests for model {lane.ResidentModel} on {lane.TargetId}");
 
         foreach (var item in toDrain)
         {
@@ -1491,6 +1648,8 @@ public sealed class SchedulerWorker
 
     private void FailAllForModel(string modelName, string targetId, string errorMessage)
     {
+        // Fails across ALL lanes of this target serving the model — the filter is
+        // model+target scoped, so coexisting lanes are covered too.
         var toFail = _allItems.Values
             .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == modelName && i.TargetId == targetId)
             .ToList();

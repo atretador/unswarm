@@ -16,7 +16,26 @@ public sealed class SchedulerWorkerTests : IDisposable
     private readonly FakeLogStore _logStore = new();
     private readonly FakeStatsTracker _statsTracker = new();
     private readonly FakeClock _clock = new();
+    private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly ILogger<SchedulerWorker> _logger = new LoggerFactory().CreateLogger<SchedulerWorker>();
+
+    public SchedulerWorkerTests()
+    {
+        // The lane scheduler routes every model through the container registry;
+        // register the models used across these tests, one runtime each.
+        foreach (var model in new[] { "llama", "mistral", "broken", "working" })
+        {
+            _containerRegistry.CreateAsync(new RegisteredRuntime
+            {
+                Id = $"reg-{model}",
+                DisplayName = model,
+                Image = model,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }).GetAwaiter().GetResult();
+            _containerRegistry.AddModelMappingAsync($"reg-{model}", model).GetAwaiter().GetResult();
+        }
+    }
 
     private SchedulerWorker CreateWorker(
         Channel<InferenceRequest>? channel = null,
@@ -24,7 +43,8 @@ public sealed class SchedulerWorkerTests : IDisposable
     {
         channel ??= Channel.CreateUnbounded<InferenceRequest>();
         settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
-        return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings);
+        return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings,
+            _containerRegistry);
     }
 
     private static InferenceRequest MakeRequest(
@@ -104,6 +124,7 @@ public sealed class SchedulerWorkerTests : IDisposable
 
         var ordered = invocationOrder.OrderBy(x => x.Seq).Select(x => x.Id).ToList();
         Assert.Equal(["r1", "r2", "r3"], ordered);
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 1);
         // Only one model start — no model switch
         Assert.Single(_docker.StartedModels);
         Assert.Empty(_docker.StoppedContainerIds);
@@ -136,6 +157,7 @@ public sealed class SchedulerWorkerTests : IDisposable
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 2 && _docker.StoppedContainerIds.Count == 1);
         // Container was stopped when switching from llama → mistral
         Assert.Single(_docker.StoppedContainerIds);
 
@@ -168,6 +190,7 @@ public sealed class SchedulerWorkerTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 1);
         // Container started once, never stopped between same-model requests
         Assert.Single(_docker.StartedModels);
         Assert.Empty(_docker.StoppedContainerIds);
@@ -201,6 +224,7 @@ public sealed class SchedulerWorkerTests : IDisposable
 
         await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 2 && _docker.StoppedContainerIds.Count == 1);
         // Verify the switch happened correctly
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
         Assert.Single(_docker.StoppedContainerIds);
@@ -323,9 +347,9 @@ public sealed class SchedulerWorkerTests : IDisposable
         worker.Start(cts.Token);
 
         // Docker fails only for "broken" model
-        _docker.OnStart = (modelName, ct) =>
+        _docker.OnStartRegistered = (registeredContainerId, image, ct) =>
         {
-            if (modelName == "broken")
+            if (image == "broken")
             {
                 return Task.FromResult(new ContainerStartResult
                 {
@@ -335,7 +359,7 @@ public sealed class SchedulerWorkerTests : IDisposable
             }
             return Task.FromResult(new ContainerStartResult
             {
-                ContainerId = $"ok-{modelName}",
+                ContainerId = $"ok-{image}",
                 MappedPort = 9000
             });
         };
@@ -471,8 +495,9 @@ public sealed class SchedulerWorkerTests : IDisposable
         await channel.Writer.WriteAsync(req);
         await req.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Give worker a moment to update snapshot state
-        await Task.Delay(50);
+        // Snapshot state is updated by background threads after the Tcs resolves —
+        // poll for it instead of sleeping a fixed interval.
+        await Eventually.UntilAsync(() => worker.GetSnapshot().RecentCompleted.Count >= 1);
 
         var snapshot = worker.GetSnapshot();
         Assert.Single(snapshot.RecentCompleted);

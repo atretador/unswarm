@@ -16,6 +16,13 @@ public sealed class FakeDockerController : IDockerController
     public Func<string, CancellationToken, Task<ContainerStartResult>>? OnRestart { get; set; }
     public Func<string, int, CancellationToken, Task<IReadOnlyList<string>>>? OnGetContainerLogs { get; set; }
 
+    /// <summary>
+    /// Hook for <see cref="StartRegisteredContainerAsync"/> invocations. Arguments:
+    /// (registeredContainerId, image, ct). When set it fully replaces the default
+    /// behavior for registered starts (mirrors OnStart for the legacy start path).
+    /// </summary>
+    public Func<string, string, CancellationToken, Task<ContainerStartResult>>? OnStartRegistered { get; set; }
+
     public List<string> StartedModels { get; } = [];
     public List<string> StartedContainerIds { get; } = [];
     public List<string> StoppedContainerIds { get; } = [];
@@ -70,6 +77,9 @@ public sealed class FakeDockerController : IDockerController
         CancellationToken ct = default)
     {
         StartedModels.Add(image); // Track model starts for test assertions
+        if (OnStartRegistered != null)
+            return OnStartRegistered(registeredContainerId, image, ct);
+
         if (FailStart)
         {
             var failedId = NextId();

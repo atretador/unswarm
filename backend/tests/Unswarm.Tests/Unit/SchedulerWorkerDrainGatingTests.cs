@@ -21,7 +21,25 @@ public sealed class SchedulerWorkerDrainGatingTests
     private readonly FakeLogStore _logStore = new();
     private readonly FakeStatsTracker _statsTracker = new();
     private readonly FakeClock _clock = new();
+    private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly ILogger<SchedulerWorker> _logger = new LoggerFactory().CreateLogger<SchedulerWorker>();
+
+    public SchedulerWorkerDrainGatingTests()
+    {
+        // Lane scheduling routes models through the container registry.
+        foreach (var model in new[] { "llama", "mistral" })
+        {
+            _containerRegistry.CreateAsync(new RegisteredRuntime
+            {
+                Id = $"reg-{model}",
+                DisplayName = model,
+                Image = model,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }).GetAwaiter().GetResult();
+            _containerRegistry.AddModelMappingAsync($"reg-{model}", model).GetAwaiter().GetResult();
+        }
+    }
 
     private SchedulerWorker CreateWorker(
         Channel<InferenceRequest>? channel = null,
@@ -29,7 +47,8 @@ public sealed class SchedulerWorkerDrainGatingTests
     {
         channel ??= Channel.CreateUnbounded<InferenceRequest>();
         settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
-        return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings);
+        return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings,
+            _containerRegistry);
     }
 
     private static InferenceRequest MakeRequest(string model, string id)
@@ -95,6 +114,7 @@ public sealed class SchedulerWorkerDrainGatingTests
 
         var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(200, r2Result.StatusCode);
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 2 && _docker.StoppedContainerIds.Count == 1);
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
         Assert.Single(_docker.StoppedContainerIds);
 
@@ -119,6 +139,7 @@ public sealed class SchedulerWorkerDrainGatingTests
         var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(200, r2Result.StatusCode);
+        await Eventually.UntilAsync(() => _docker.StartedModels.Count == 2 && _docker.StoppedContainerIds.Count == 1);
         Assert.Equal(["llama", "mistral"], _docker.StartedModels);
         Assert.Single(_docker.StoppedContainerIds);
 
@@ -143,6 +164,20 @@ public sealed class SchedulerWorkerDrainGatingTests
         resolver.ResolveFunc = (model, ct) =>
             Task.FromResult(model == "model-0" ? "agent-a" : "host");
         var registry = new FakeContainerRegistry();
+
+        // Lane scheduling routes models through the container registry.
+        await registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-0", DisplayName = "model-0", Image = "model-0",
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await registry.AddModelMappingAsync("reg-0", "model-0");
+        await registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-1", DisplayName = "model-1", Image = "model-1",
+            CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await registry.AddModelMappingAsync("reg-1", "model-1");
 
         var worker = new SchedulerWorker(
             channel, hostDocker, _inference, _healthChecker,
@@ -183,6 +218,7 @@ public sealed class SchedulerWorkerDrainGatingTests
         var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(200, r2Result.StatusCode);
+        await Eventually.UntilAsync(() => hostDocker.StartedModels.Contains("model-1"));
         Assert.Contains("model-1", hostDocker.StartedModels);
         Assert.Empty(agentDocker.StoppedContainerIds);
 
@@ -268,6 +304,7 @@ public sealed class SchedulerWorkerDrainGatingTests
 
         var r2Result = await r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(200, r2Result.StatusCode);
+        await Eventually.UntilAsync(() => hostDocker.StoppedContainerIds.Count == 1);
         Assert.Single(hostDocker.StoppedContainerIds);
 
         cts.Cancel();
