@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentAvailableScript,
   ApiKeyCreateResponse,
   ApiKeyItem,
   AgentScriptStatus,
@@ -19,9 +20,13 @@ import type {
 } from "./types";
 import type { UnswarmClient } from "./client";
 
+/**
+ * Base URL for the API. Defaults to '' (same-origin relative paths) so the SPA
+ * can be served by (or proxied to) the backend without cross-origin cookies.
+ * Set VITE_API_URL to target a different origin explicitly.
+ */
 export const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ||
-  "http://localhost:5014";
+  (import.meta.env.VITE_API_URL as string | undefined) || "";
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -37,6 +42,26 @@ function encodePathId(id: string): string {
 }
 
 // ─── Request helper ──────────────────────────────────────────────
+
+/**
+ * Paths that are expected to return 401 as part of normal auth flows
+ * (login attempts, session probes) — never trigger a login redirect.
+ */
+const AUTH_EXEMPT_PATHS = ["/api/auth/login", "/api/auth/me"];
+
+/** Guards against firing more than one login redirect per page load. */
+let redirectingToLogin = false;
+
+function handleUnauthorized(path: string) {
+  if (redirectingToLogin || AUTH_EXEMPT_PATHS.some((p) => path.startsWith(p))) {
+    return;
+  }
+  if (typeof window === "undefined") return;
+  // Already on the login route — nothing to do (avoids redirect loops).
+  if (window.location.pathname === "/login") return;
+  redirectingToLogin = true;
+  window.location.assign("/login");
+}
 
 async function request<T>(
   path: string,
@@ -58,6 +83,9 @@ async function request<T>(
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      handleUnauthorized(path);
+    }
     let message = `HTTP ${res.status}`;
     try {
       const body = await res.json();
@@ -250,8 +278,10 @@ export const httpClient: UnswarmClient = {
     return request<LogEntry[]>(`/api/logs${qs ? `?${qs}` : ""}`);
   },
 
-  subscribeLogs(callback) {
-    const es = new EventSource(`${BASE_URL}/api/logs/stream`);
+  subscribeLogs(callback, onError) {
+    const es = new EventSource(`${BASE_URL}/api/logs/stream`, {
+      withCredentials: true,
+    });
     es.onmessage = (event) => {
       try {
         const entry: LogEntry = JSON.parse(event.data);
@@ -259,6 +289,10 @@ export const httpClient: UnswarmClient = {
       } catch {
         // ignore malformed frames
       }
+    };
+    es.onerror = () => {
+      // Connection failed or dropped (EventSource auto-reconnects).
+      onError?.();
     };
     return () => {
       es.close();

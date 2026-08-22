@@ -207,6 +207,9 @@ function DashboardContent() {
 
   const hourLabels = stats.requestsPerMinute.map((_, i) => `${i}m`);
 
+  // BASE_URL is '' for same-origin deployments — show the current origin instead.
+  const displayBaseUrl = BASE_URL || window.location.origin;
+
   return (
     <div className="p-6 space-y-6 max-w-6xl">
       {/* Stat cards */}
@@ -237,18 +240,18 @@ function DashboardContent() {
             No authentication required.
           </p>
 
-          {/* Base URL */}
+          {/* Base URL (falls back to current origin when API is same-origin) */}
           <div className="flex items-center gap-2 mb-4 p-2.5 rounded-[var(--radius-md)] bg-[var(--color-bg-elevated)] border border-[var(--color-border)]">
             <code className="flex-1 text-sm font-mono text-[var(--color-text-heading)] truncate">
-              {BASE_URL}
+              {displayBaseUrl}
             </code>
-            <CopyButton text={BASE_URL} />
+            <CopyButton text={displayBaseUrl} />
           </div>
 
           {/* Endpoint rows */}
           <div className="space-y-1.5">
             {PROXY_ENDPOINTS.map((ep) => {
-              const fullUrl = `${BASE_URL}${ep.path}`;
+              const fullUrl = `${displayBaseUrl}${ep.path}`;
               return (
                 <div
                   key={ep.path}

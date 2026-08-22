@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentAvailableScript,
   ApiKeyCreateResponse,
   ApiKeyItem,
   AgentScriptStatus,
@@ -56,6 +57,9 @@ export interface UnswarmClient {
   /** Available launcher scripts on an agent (from agent's scripts_dir). */
   listAgentScripts(agentName: string): Promise<AgentScriptStatus[]>;
 
+  /** Launcher scripts available on a remote agent (queried live over WebSocket). */
+  listAvailableScripts(agentName: string): Promise<AgentAvailableScript[]>;
+
   /** Run a benchmark against a model. Optional promptId resolves server-side. */
   runBenchmark(modelId: string, opts?: { promptId?: string }): Promise<BenchmarkResult>;
 
@@ -79,8 +83,14 @@ export interface UnswarmClient {
     since?: string;
   }): Promise<LogEntry[]>;
 
-  /** Subscribe to a live stream of log entries. Returns an unsubscribe function. */
-  subscribeLogs(callback: (entry: LogEntry) => void): () => void;
+  /**
+   * Subscribe to a live stream of log entries. Returns an unsubscribe function.
+   * Optional `onError` fires when the stream connection fails or drops.
+   */
+  subscribeLogs(
+    callback: (entry: LogEntry) => void,
+    onError?: () => void,
+  ): () => void;
 
   // Prompt Library
   listPrompts(): Promise<Prompt[]>;

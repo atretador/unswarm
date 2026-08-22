@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Fleet from "../features/fleet";
-import type { RegisterRuntimePayload, RegisteredRuntime } from "../lib/api/types";
+import type { Agent, RegisterRuntimePayload, RegisteredRuntime } from "../lib/api/types";
 
 beforeEach(() => {
   setMockLatency(0);
@@ -1021,7 +1021,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     // Shared, mutable agent telemetry: listAgents refetches this same array after
     // invalidation, so flipping the status here is what a live backend would report.
-    const agents = [
+    const agents: Agent[] = [
       {
         name: "host",
         connectionId: null,
