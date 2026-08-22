@@ -39,10 +39,19 @@ public sealed class LogRetentionService : BackgroundService
                 var dbFactory = scope.ServiceProvider.GetRequiredService<Func<UnswarmDbContext>>();
                 await using var db = dbFactory();
 
-                // B5: Bulk delete with server-side filtering instead of loading entire table into memory
-                var deletedCount = await db.Logs
+                // Fetch IDs first, then bulk delete by PK (SQLite can't translate ExecuteDelete with DateTimeOffset)
+                var idsToDelete = await db.Logs
                     .Where(l => l.Timestamp < cutoff)
-                    .ExecuteDeleteAsync(stoppingToken);
+                    .Select(l => l.Id)
+                    .ToListAsync(stoppingToken);
+
+                var deletedCount = 0;
+                if (idsToDelete.Count > 0)
+                {
+                    deletedCount = await db.Logs
+                        .Where(l => idsToDelete.Contains(l.Id))
+                        .ExecuteDeleteAsync(stoppingToken);
+                }
 
                 if (deletedCount > 0)
                 {
