@@ -38,6 +38,12 @@ public sealed class BenchmarkHistoryEntity
     public string? PromptId { get; set; }
     public string? PromptName { get; set; }
     public int? PromptVersion { get; set; }
+
+    /// <summary>
+    /// Captured LLM response text (choices[0].message.content), truncated to a
+    /// sane cap. Null when the body could not be read/parsed or the run errored.
+    /// </summary>
+    public string? Response { get; set; }
 }
 
 public sealed class LogEntity

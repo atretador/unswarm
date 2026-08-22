@@ -47,6 +47,43 @@ public static class BenchmarkDefaults
         };
         return JsonSerializer.Serialize(payload);
     }
+
+    /// <summary>Upper bound on persisted response text (chars).</summary>
+    public const int MaxStoredResponseChars = 8192;
+
+    /// <summary>
+    /// Drains a non-streaming OpenAI-compatible completion body and extracts
+    /// choices[0].message.content for persistence in benchmark history.
+    /// Never throws: any read/parse/shape failure yields null. The result is
+    /// truncated to <see cref="MaxStoredResponseChars"/> characters. The stream
+    /// itself is not disposed here — ownership stays with the response object
+    /// (tap/tunnel streams manage their own lifetime).
+    /// </summary>
+    public static async Task<string?> ExtractResponseContentAsync(Stream? body, CancellationToken ct = default)
+    {
+        if (body is null) return null;
+        try
+        {
+            using var buffered = new MemoryStream();
+            await body.CopyToAsync(buffered, ct).ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(System.Text.Encoding.UTF8.GetString(buffered.ToArray()));
+            var content = doc.RootElement
+                .GetProperty("choices")
+                .EnumerateArray()
+                .FirstOrDefault()
+                .GetProperty("message")
+                .GetProperty("content")
+                .GetString();
+            if (string.IsNullOrEmpty(content)) return null;
+            return content.Length <= MaxStoredResponseChars
+                ? content
+                : content[..MaxStoredResponseChars];
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 /// <summary>
@@ -162,7 +199,9 @@ public sealed class AutoBenchmarkService
                 CancellationToken.None,
                 promptId,
                 promptName,
-                promptVersion).ConfigureAwait(false);
+                promptVersion,
+                await BenchmarkDefaults.ExtractResponseContentAsync(response.Body, CancellationToken.None)
+                    .ConfigureAwait(false)).ConfigureAwait(false);
 
             LogInfo($"Auto-benchmark completed for {model.Id}: {tokensPerSec:F1} tok/s");
         }

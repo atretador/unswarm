@@ -139,6 +139,10 @@ public sealed class BenchmarksController : ControllerBase
                 ? tokensGenerated / (elapsedMs / 1000.0)
                 : 0;
 
+        // Capture the model's answer text for history. Best-effort: null on any
+        // read/parse failure, never throws.
+        var responseText = await BenchmarkDefaults.ExtractResponseContentAsync(response.Body, ct).ConfigureAwait(false);
+
         var entry = await _history.AddAsync(
             model.Id,
             prompt,
@@ -150,7 +154,8 @@ public sealed class BenchmarksController : ControllerBase
             ct,
             promptId,
             promptName,
-            promptVersion).ConfigureAwait(false);
+            promptVersion,
+            responseText).ConfigureAwait(false);
 
         var responseItem = BenchmarkResponse.FromEntry(entry);
         responseItem.ModelName = model.Name;

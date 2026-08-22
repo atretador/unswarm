@@ -15,6 +15,7 @@ public sealed record BenchmarkHistoryEntry
     public string? PromptId { get; init; }
     public string? PromptName { get; init; }
     public int? PromptVersion { get; init; }
+    public string? Response { get; init; }
 }
 
 /// <summary>
@@ -33,7 +34,8 @@ public interface IBenchmarkHistory
         CancellationToken ct = default,
         string? promptId = null,
         string? promptName = null,
-        int? promptVersion = null);
+        int? promptVersion = null,
+        string? response = null);
 
     Task<IReadOnlyList<BenchmarkHistoryEntry>> ListAsync(int maxCount = 50, string? modelId = null, CancellationToken ct = default);
 

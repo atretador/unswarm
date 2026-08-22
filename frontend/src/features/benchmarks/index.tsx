@@ -773,11 +773,13 @@ function ModelResultsModal({
   modelName,
   open,
   onClose,
+  onShowResults,
 }: {
   modelId: string;
   modelName: string;
   open: boolean;
   onClose: () => void;
+  onShowResults?: (result: BenchmarkResult) => void;
 }) {
   const { data: results, isLoading } = useQuery({
     queryKey: ["benchmarks", modelId],
@@ -836,8 +838,17 @@ function ModelResultsModal({
                       </span>
                     </div>
 
-                    {/* Status + timestamp */}
-                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                    {/* Results + status + timestamp */}
+                    <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onShowResults?.(r)}
+                        className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
+                        aria-label={`Results for ${modelName} run`}
+                        title="View run results"
+                      >
+                        <FileText className="size-3.5" />
+                      </button>
                       {isError ? (
                         <Badge variant="error">error</Badge>
                       ) : (
@@ -1080,6 +1091,7 @@ export default function Benchmarks() {
         modelName={modelResultsModal?.modelName ?? ""}
         open={modelResultsModal !== null}
         onClose={() => setModelResultsModal(null)}
+        onShowResults={setRunResult}
       />
       {runResult && (
         <RunResultModal
