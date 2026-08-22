@@ -38,10 +38,14 @@ describe("mockClient", () => {
   describe("getQueueSnapshot", () => {
     it("returns correct shape", async () => {
       const snap = await mockClient.getQueueSnapshot();
+      expect(snap).toHaveProperty("processing");
       expect(snap).toHaveProperty("currentSlot");
       expect(snap).toHaveProperty("waiting");
       expect(snap).toHaveProperty("recentCompleted");
       expect(snap).toHaveProperty("activeTransitions");
+      expect(snap).toHaveProperty("skipsUsed");
+      expect(snap).toHaveProperty("skipsRemaining");
+      expect(Array.isArray(snap.processing)).toBe(true);
       expect(Array.isArray(snap.waiting)).toBe(true);
       expect(Array.isArray(snap.recentCompleted)).toBe(true);
     });

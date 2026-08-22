@@ -40,8 +40,9 @@ describe("Queue", () => {
       expect(screen.getByText("Host (local)")).toBeInTheDocument();
     });
 
-    // Waiting items are numbered per-target within their sections
-    expect(screen.getByText("mistral-large-2")).toBeInTheDocument();
+    // Waiting items are numbered per-target within their sections.
+    // mistral-large-2 appears twice: one lane processing it + one waiting copy.
+    expect(screen.getAllByText("mistral-large-2").length).toBe(2);
   });
 
   it("shows recent completed items", async () => {
@@ -103,10 +104,13 @@ describe("Queue", () => {
     vi.spyOn(mockClient, "getQueueSnapshot")
       .mockRejectedValueOnce(new Error("Temporary failure"))
       .mockResolvedValueOnce({
+        processing: [],
         currentSlot: null,
         waiting: [],
         recentCompleted: [],
         activeTransitions: [],
+        skipsUsed: 0,
+        skipsRemaining: 0,
       });
 
     render(

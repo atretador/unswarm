@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  ListOrdered,
   ArrowRight,
   Clock,
   ChevronDown,
@@ -50,25 +49,23 @@ function TargetSection({
   cancelMutation,
 }: {
   targetId: string;
-  processing: QueueItem | null;
+  processing: QueueItem[];
   waiting: QueueItem[];
   cancelMutation: ReturnType<typeof useMutation<void, Error, string>>;
 }) {
-  const idle = !processing && waiting.length === 0;
+  const idle = processing.length === 0 && waiting.length === 0;
   const [expanded, setExpanded] = useState(!idle);
   const { label, kind } = parseTarget(targetId);
 
-  // Live elapsed timer — ticks every second while processing
+  // Live elapsed timer — ticks every second while anything is processing
   const [, setTick] = useState(0);
   useEffect(() => {
-    if (!processing) return;
+    if (processing.length === 0) return;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
-  }, [processing?.id]);
+  }, [processing.map((p) => p.id).join(",")]);
 
-  const liveElapsedMs = processing
-    ? Date.now() - new Date(processing.createdAt).getTime()
-    : 0;
+  const now = Date.now();
 
   return (
     <Card padding="none" className="overflow-hidden">
@@ -91,7 +88,7 @@ function TargetSection({
             <span className="inline-block size-2 rounded-full bg-[var(--color-text-muted)] opacity-40" />
           ) : (
             <StatusDot
-              status={processing ? "processing" : "waiting"}
+              status={processing.length > 0 ? "processing" : "waiting"}
               size="md"
             />
           )}
@@ -107,7 +104,7 @@ function TargetSection({
           </span>
 
           <Badge variant={idle ? "default" : "outline"} className="shrink-0">
-            {waiting.length + (processing ? 1 : 0)}
+            {waiting.length + processing.length}
           </Badge>
         </button>
       </div>
@@ -131,89 +128,122 @@ function TargetSection({
                 </div>
               )}
 
-              {/* Processing item */}
-              {processing && (
-                <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-running)_6%,transparent)] px-3 py-2 mb-1">
-                  <div className="flex items-center gap-3 text-xs min-w-0">
-                    <StatusDot status="processing" size="sm" />
-                    <span className="font-mono text-[var(--color-text-heading)] truncate">
-                      {processing.modelAssigned ?? processing.modelRequested}
-                    </span>
-                    {processing.generationTokensPerSec > 0 && (
-                      <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Token generation speed">
-                        {processing.generationTokensPerSec.toFixed(1)} tok/s
-                      </span>
-                    )}
-                    {processing.promptTokensPerSec > 0 && (
-                      <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Prompt processing speed">
-                        prompt {processing.promptTokensPerSec.toFixed(0)} tok/s
-                      </span>
-                    )}
-                    {processing.tokensGenerated > 0 ? (
-                      <span className="text-[var(--color-text-muted)] font-mono shrink-0">
-                        {processing.tokensGenerated.toLocaleString()} /{" "}
-                        {processing.tokensRequested.toLocaleString()}
-                      </span>
-                    ) : (
-                      <span className="text-[var(--color-text-muted)] font-mono shrink-0 animate-pulse">
-                        ...
-                      </span>
-                    )}
-                    <span className="text-[var(--color-text-muted)] font-mono shrink-0">
-                      {formatMs(liveElapsedMs)}
-                    </span>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
-                    onClick={() => cancelMutation.mutate(processing.id)}
-                    disabled={cancelMutation.isPending}
-                    aria-label="Cancel processing request"
-                    title="Cancel"
+              {/* Processing items — one per runtime lane */}
+              {processing.map((item) => {
+                const liveElapsedMs = now - new Date(item.createdAt).getTime();
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-running)_6%,transparent)] px-3 py-2 mb-1"
                   >
-                    <X className="size-3.5" />
-                  </Button>
-                </div>
-              )}
+                    <div className="flex items-center gap-3 text-xs min-w-0">
+                      <StatusDot status="processing" size="sm" />
+                      <span className="font-mono text-[var(--color-text-heading)] truncate">
+                        {item.modelAssigned ?? item.modelRequested}
+                      </span>
+                      {item.runtimeId && (
+                        <span
+                          className="shrink-0 rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px font-mono text-[10px] text-[var(--color-text-muted)]"
+                          title={`Running on runtime ${item.runtimeId}`}
+                        >
+                          {item.runtimeId}
+                        </span>
+                      )}
+                      {item.generationTokensPerSec > 0 && (
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Token generation speed">
+                          {item.generationTokensPerSec.toFixed(1)} tok/s
+                        </span>
+                      )}
+                      {item.promptTokensPerSec > 0 && (
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Prompt processing speed">
+                          prompt {item.promptTokensPerSec.toFixed(0)} tok/s
+                        </span>
+                      )}
+                      {item.tokensGenerated > 0 ? (
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0">
+                          {item.tokensGenerated.toLocaleString()} /{" "}
+                          {item.tokensRequested.toLocaleString()}
+                        </span>
+                      ) : (
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0 animate-pulse">
+                          ...
+                        </span>
+                      )}
+                      <span className="text-[var(--color-text-muted)] font-mono shrink-0">
+                        {formatMs(liveElapsedMs)}
+                      </span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
+                      onClick={() => cancelMutation.mutate(item.id)}
+                      disabled={cancelMutation.isPending}
+                      aria-label="Cancel processing request"
+                      title="Cancel"
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                );
+              })}
 
               {/* Waiting items */}
               {waiting.length > 0 && (
                 <div className="divide-y divide-[var(--color-border-subtle)]">
-                  {waiting.map((item, i) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="text-[var(--color-text-muted)] font-mono w-5 text-center shrink-0">
-                          #{i + 1}
-                        </span>
-                        <StatusDot status="waiting" size="sm" />
-                        <span className="font-mono text-[var(--color-text-heading)] truncate">
-                          {item.modelRequested}
-                        </span>
+                  {waiting.map((item, i) => {
+                    const blocked = item.blockedByRuntimeIds.length > 0;
+                    return (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-[var(--color-text-muted)] font-mono w-5 text-center shrink-0">
+                            #{i + 1}
+                          </span>
+                          <StatusDot status="waiting" size="sm" />
+                          <span className="font-mono text-[var(--color-text-heading)] truncate">
+                            {item.modelRequested}
+                          </span>
+                          {!blocked && i === 0 && (
+                            <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-primary)]">
+                              next up
+                            </span>
+                          )}
+                          {blocked && (
+                            <span
+                              className="shrink-0 rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px text-[10px] text-[var(--color-text-muted)]"
+                              title={`Waiting for ${item.blockedByRuntimeIds.join(", ")} to finish`}
+                            >
+                              blocked by{" "}
+                              {item.blockedByRuntimeIds.length === 1
+                                ? item.blockedByRuntimeIds[0]
+                                : `${item.blockedByRuntimeIds.length} runtime(s)`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 text-[var(--color-text-muted)] shrink-0">
+                          <span className="flex items-center gap-1">
+                            <Clock className="size-3" />
+                            {formatMs(item.waitMs)}
+                          </span>
+                          <Badge variant="outline">P{item.priority}</Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
+                            onClick={() => cancelMutation.mutate(item.id)}
+                            disabled={cancelMutation.isPending}
+                            aria-label={`Cancel ${item.modelRequested} request`}
+                            title="Cancel"
+                          >
+                            <X className="size-3.5" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-4 text-[var(--color-text-muted)] shrink-0">
-                        <span className="flex items-center gap-1">
-                          <Clock className="size-3" />
-                          {formatMs(item.waitMs)}
-                        </span>
-                        <Badge variant="outline">P{item.priority}</Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
-                          onClick={() => cancelMutation.mutate(item.id)}
-                          disabled={cancelMutation.isPending}
-                          aria-label={`Cancel ${item.modelRequested} request`}
-                          title="Cancel"
-                        >
-                          <X className="size-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -298,7 +328,24 @@ export default function Queue() {
     );
   }
 
-  const { currentSlot, waiting, recentCompleted, activeTransitions } = snapshot;
+  const {
+    processing: processingRaw,
+    currentSlot,
+    waiting,
+    recentCompleted,
+    activeTransitions,
+    skipsUsed,
+    skipsRemaining,
+  } = snapshot;
+
+  // New contract: `processing` holds all in-flight items across lanes.
+  // Fall back to the legacy single-slot alias when absent.
+  const processing =
+    processingRaw ?? (currentSlot ? [currentSlot] : []);
+
+  // Skip-budget indicator is only meaningful when the feature has been used
+  // or has budget available; fully hidden when skip is off and unused.
+  const showSkipBudget = skipsRemaining > 0 || skipsUsed > 0;
 
   // Build full target list: host + all agents
   const allTargets = [
@@ -311,21 +358,21 @@ export default function Queue() {
   // Merge queue items onto targets
   const grouped = new Map<
     string,
-    { processing: QueueItem | null; waiting: QueueItem[] }
+    { processing: QueueItem[]; waiting: QueueItem[] }
   >();
   for (const target of allTargets) {
-    grouped.set(target, { processing: null, waiting: [] });
+    grouped.set(target, { processing: [], waiting: [] });
   }
 
-  if (currentSlot) {
-    const key = currentSlot.targetId ?? "host";
-    if (!grouped.has(key)) grouped.set(key, { processing: null, waiting: [] });
-    grouped.get(key)!.processing = currentSlot;
+  for (const item of processing) {
+    const key = item.targetId ?? "host";
+    if (!grouped.has(key)) grouped.set(key, { processing: [], waiting: [] });
+    grouped.get(key)!.processing.push(item);
   }
 
   for (const item of waiting) {
     const key = item.targetId ?? "host";
-    if (!grouped.has(key)) grouped.set(key, { processing: null, waiting: [] });
+    if (!grouped.has(key)) grouped.set(key, { processing: [], waiting: [] });
     grouped.get(key)!.waiting.push(item);
   }
 
@@ -346,9 +393,21 @@ export default function Queue() {
             <span className="size-1.5 rounded-full bg-[var(--color-status-running)] animate-pulse" />
             <span>Live — polling every 2s</span>
           </div>
+          {showSkipBudget && (
+            <div
+              className="flex items-center gap-1.5"
+              title={`Skip queue budget: ${skipsUsed} used`}
+            >
+              <ArrowRight className="size-3" />
+              <span>
+                Skip budget: {skipsRemaining} left
+                {skipsUsed > 0 ? ` (${skipsUsed} used)` : ""}
+              </span>
+            </div>
+          )}
           {activeTransitions.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <ListOrdered className="size-3" />
+              <ArrowRight className="size-3" />
               <span>
                 {activeTransitions.length} active transition(s)
               </span>
@@ -379,6 +438,14 @@ export default function Queue() {
                   <span className="font-mono text-[var(--color-text-heading)]">
                     {t.toModel}
                   </span>
+                  {t.runtimeId && (
+                    <span
+                      className="rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px font-mono text-[10px] text-[var(--color-text-muted)]"
+                      title={`Switching on runtime ${t.runtimeId}`}
+                    >
+                      {t.runtimeId}
+                    </span>
+                  )}
                 </div>
                 <Badge variant={t.status === "complete" ? "success" : "info"}>
                   {t.status}
@@ -435,7 +502,10 @@ export default function Queue() {
 
       {/* Accessible live region for screen readers */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        Queue: {waiting.length} waiting, {currentSlot ? "1 processing" : "idle"}
+        Queue: {waiting.length} waiting,{" "}
+        {processing.length > 0
+          ? `${processing.length} processing`
+          : "idle"}
         {activeTransitions.length > 0 &&
           `, ${activeTransitions.length} active transition(s)`}
       </div>

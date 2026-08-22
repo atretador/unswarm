@@ -189,6 +189,10 @@ export interface QueueItem {
   modelRequested: string;
   modelAssigned: string | null;
   targetId: string | null;
+  /** Registered runtime id of the lane serving this item (null until routed). */
+  runtimeId: string | null;
+  /** In-flight runtime ids currently blocking this waiting item (empty = could start next). */
+  blockedByRuntimeIds: string[];
   status: QueueItemStatus;
   priority: number;
   tokensRequested: number;
@@ -198,13 +202,35 @@ export interface QueueItem {
   elapsedMs: number;
   waitMs: number;
   createdAt: string;
+  errorMessage?: string | null;
 }
 
 export interface QueueSnapshot {
-  currentSlot: QueueItem | null;
+  /**
+   * All in-flight items across every runtime lane.
+   * Legacy backends may omit this — fall back to [currentSlot] when absent.
+   */
+  processing?: QueueItem[];
+  /** Legacy compat alias: oldest processing item. May be absent on newer payloads. */
+  currentSlot?: QueueItem | null;
   waiting: QueueItem[];
   recentCompleted: QueueItem[];
   activeTransitions: ModelTransition[];
+  /** Total skip budget consumed across all lanes. */
+  skipsUsed: number;
+  /** Remaining skip budget (0 when the skip feature is disabled). */
+  skipsRemaining: number;
+}
+
+export interface ModelTransition {
+  id: string;
+  fromModel: string;
+  toModel: string;
+  /** Registered runtime id whose lane performed this switch. */
+  runtimeId?: string | null;
+  status: "draining" | "switching" | "starting" | "complete";
+  startedAt: string;
+  estimatedCompletion: string | null;
 }
 
 export interface ModelTransition {
