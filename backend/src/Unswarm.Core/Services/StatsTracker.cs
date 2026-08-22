@@ -12,17 +12,33 @@ public sealed class StatsTracker : IStatsTracker
     private long _totalRequests;
     private long _totalTokens;
     private long _startTimeTicks;
-    private int _errorsLast24h;
     private int _switchCount;
     private double _lastSwitchMs;
     private double _avgSwitchMs;
     private readonly ConcurrentQueue<(DateTimeOffset Time, long Tokens)> _recentCompletions = new();
+    private readonly ConcurrentQueue<DateTimeOffset> _recentErrors = new();
+    private Func<long>? _queueDepthProvider;
     private readonly object _lock = new();
 
     public StatsTracker(IClock clock)
     {
         _clock = clock;
         _startTimeTicks = _clock.UtcNow.Ticks;
+    }
+
+    public void TrackActiveRequest(string requestId)
+    {
+        _activeRequests.TryAdd(requestId, new RequestRecord { StartedAt = _clock.UtcNow });
+    }
+
+    public void UntrackActiveRequest(string requestId)
+    {
+        _activeRequests.TryRemove(requestId, out _);
+    }
+
+    public void SetQueueDepthProvider(Func<long> provider)
+    {
+        _queueDepthProvider = provider;
     }
 
     public void RecordCompletion(InferenceRequest request)
@@ -50,7 +66,8 @@ public sealed class StatsTracker : IStatsTracker
     public void RecordError(InferenceRequest request)
     {
         Interlocked.Increment(ref _totalRequests);
-        Interlocked.Increment(ref _errorsLast24h);
+        _recentErrors.Enqueue(_clock.UtcNow);
+        PruneRecentErrors();
     }
 
     public void RecordSwitch(double durationMs)
@@ -77,6 +94,9 @@ public sealed class StatsTracker : IStatsTracker
             tps = ComputeTokensPerSecond(now);
         }
 
+        // Prune errors before counting to ensure accuracy
+        PruneRecentErrors();
+
         var summary = new StatsSummary
         {
             TotalRequests = Volatile.Read(ref _totalRequests),
@@ -85,8 +105,9 @@ public sealed class StatsTracker : IStatsTracker
             TotalTokensProcessed = Volatile.Read(ref _totalTokens),
             UptimeSeconds = uptime,
             RequestsPerMinute = rpm,
-            ErrorsLast24h = Volatile.Read(ref _errorsLast24h),
+            ErrorsLast24h = _recentErrors.Count,
             TokensPerSecond = tps,
+            QueueDepth = (int)(_queueDepthProvider?.Invoke() ?? 0),
             SwitchCount = _switchCount,
             LastSwitchMs = _lastSwitchMs,
             AvgSwitchMs = _avgSwitchMs
@@ -101,6 +122,15 @@ public sealed class StatsTracker : IStatsTracker
         while (_recentCompletions.TryPeek(out var item) && item.Time < cutoff)
         {
             _recentCompletions.TryDequeue(out _);
+        }
+    }
+
+    private void PruneRecentErrors()
+    {
+        var cutoff = _clock.UtcNow.AddHours(-24);
+        while (_recentErrors.TryPeek(out var time) && time < cutoff)
+        {
+            _recentErrors.TryDequeue(out _);
         }
     }
 

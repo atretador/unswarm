@@ -109,6 +109,7 @@ function DashboardContent() {
   } = useQuery({
     queryKey: ["stats"],
     queryFn: () => client.getStats(),
+    refetchInterval: 2000,
   });
 
   if (isLoading) {
