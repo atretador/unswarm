@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -57,6 +57,18 @@ function TargetSection({
   const idle = !processing && waiting.length === 0;
   const [expanded, setExpanded] = useState(!idle);
   const { label, kind } = parseTarget(targetId);
+
+  // Live elapsed timer — ticks every second while processing
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!processing) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [processing?.id]);
+
+  const liveElapsedMs = processing
+    ? Date.now() - new Date(processing.createdAt).getTime()
+    : 0;
 
   return (
     <Card padding="none" className="overflow-hidden">
@@ -127,12 +139,18 @@ function TargetSection({
                     <span className="font-mono text-[var(--color-text-heading)] truncate">
                       {processing.modelAssigned ?? processing.modelRequested}
                     </span>
+                    {processing.tokensGenerated > 0 ? (
+                      <span className="text-[var(--color-text-muted)] font-mono shrink-0">
+                        {processing.tokensGenerated.toLocaleString()} /{" "}
+                        {processing.tokensRequested.toLocaleString()}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--color-text-muted)] font-mono shrink-0 animate-pulse">
+                        ...
+                      </span>
+                    )}
                     <span className="text-[var(--color-text-muted)] font-mono shrink-0">
-                      {processing.tokensGenerated.toLocaleString()} /{" "}
-                      {processing.tokensRequested.toLocaleString()}
-                    </span>
-                    <span className="text-[var(--color-text-muted)] font-mono shrink-0">
-                      {formatMs(processing.elapsedMs)}
+                      {formatMs(liveElapsedMs)}
                     </span>
                   </div>
                   <Button
