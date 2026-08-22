@@ -28,7 +28,7 @@ describe("Settings", () => {
     expect(screen.getByRole("button", { name: /scheduler/i })).toBeInTheDocument();
   });
 
-  it("defaults to General tab with theme note", async () => {
+  it("defaults to General tab with log retention control", async () => {
     render(
       <TestWrapper initialEntries={["/settings"]}>
         <Settings />
@@ -36,10 +36,10 @@ describe("Settings", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Theme")).toBeInTheDocument();
+      expect(screen.getByText("Log retention (hours)")).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/Theme is controlled from the topbar toggle/)).toBeInTheDocument();
+    expect(screen.getByText("System")).toBeInTheDocument();
   });
 
   it("navigates to Scheduler tab via URL param", async () => {
@@ -57,6 +57,12 @@ describe("Settings", () => {
     expect(screen.getByText("Batch drain")).toBeInTheDocument();
     expect(screen.getByText("Lazy stop")).toBeInTheDocument();
     expect(screen.getByText("Enable benchmarking")).toBeInTheDocument();
+
+    // New scheduler fields
+    expect(screen.getByText("Request timeout (seconds)")).toBeInTheDocument();
+    expect(screen.getByText("Idle timeout (seconds)")).toBeInTheDocument();
+    expect(screen.getByText("Health check interval (seconds)")).toBeInTheDocument();
+    expect(screen.getByText("Priority mode")).toBeInTheDocument();
   });
 
   it("shows Users tab with user table for admin", async () => {
@@ -88,8 +94,8 @@ describe("Settings", () => {
       expect(screen.getByText("Settings")).toBeInTheDocument();
     });
 
-    // Theme section is static, should always render
-    expect(screen.getByText("Theme")).toBeInTheDocument();
+    // System section header is static, should always render
+    expect(screen.getByText("System")).toBeInTheDocument();
   });
 
   it("deep-links to tab via search params", async () => {
@@ -112,7 +118,7 @@ describe("Settings", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Theme")).toBeInTheDocument();
+      expect(screen.getByText("System")).toBeInTheDocument();
     });
   });
 });

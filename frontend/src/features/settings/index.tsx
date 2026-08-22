@@ -8,13 +8,14 @@ import {
   Card,
   Skeleton,
   Input,
+  Select,
   Switch,
   Button,
   Badge,
   Modal,
   ConfirmDialog,
 } from "../../components/ui";
-import type { User } from "../../lib/api/types";
+import type { Settings as SettingsData, User } from "../../lib/api/types";
 
 // ─── Tab Definitions ────────────────────────────────────────────
 
@@ -38,6 +39,9 @@ function SchedulerPolicySection() {
 
   const [draftMaxQueue, setDraftMaxQueue] = useState<string>("");
   const [draftParallelSkip, setDraftParallelSkip] = useState<string>("");
+  const [draftRequestTimeout, setDraftRequestTimeout] = useState<string>("");
+  const [draftIdleTimeout, setDraftIdleTimeout] = useState<string>("");
+  const [draftHealthCheckInterval, setDraftHealthCheckInterval] = useState<string>("");
   const draftInitRef = useState(true);
 
   // Reset draft when server data changes
@@ -45,16 +49,35 @@ function SchedulerPolicySection() {
     if (settings) {
       setDraftMaxQueue(String(settings.maxQueueDepth));
       setDraftParallelSkip(String(settings.parallelSlotSkipLimit));
+      setDraftRequestTimeout(String(settings.requestTimeout));
+      setDraftIdleTimeout(String(settings.idleTimeout));
+      setDraftHealthCheckInterval(String(settings.healthCheckInterval));
       draftInitRef[1](false);
     }
   }, [settings]);
 
   const commitDraft = useCallback(
-    (field: "maxQueueDepth" | "parallelSlotSkipLimit", raw: string) => {
-      const num = Number(raw) || (field === "parallelSlotSkipLimit" ? 1 : 0);
-      const clamped = field === "parallelSlotSkipLimit"
-        ? Math.max(1, Math.min(1000, num))
-        : Math.max(0, num);
+    (
+      field:
+        | "maxQueueDepth"
+        | "parallelSlotSkipLimit"
+        | "requestTimeout"
+        | "idleTimeout"
+        | "healthCheckInterval",
+      raw: string,
+    ) => {
+      const num = Number(raw);
+      if (!Number.isFinite(num)) return;
+      const clamped =
+        field === "parallelSlotSkipLimit"
+          ? Math.max(1, Math.min(1000, num))
+          : field === "maxQueueDepth"
+            ? Math.max(0, num)
+            : field === "requestTimeout"
+              ? Math.max(5, num)
+              : field === "idleTimeout"
+                ? Math.max(10, num)
+                : Math.max(5, num); // healthCheckInterval
       if (settings && clamped !== settings[field]) {
         updateMutation.mutate({ [field]: clamped });
       }
@@ -63,7 +86,7 @@ function SchedulerPolicySection() {
   );
 
   const updateMutation = useMutation({
-    mutationFn: (patch: Record<string, boolean | number>) => client.updateSettings(patch),
+    mutationFn: (patch: Partial<SettingsData>) => client.updateSettings(patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
     onError: (err: Error) => {
       console.error("Failed to update settings:", err.message);
@@ -162,6 +185,50 @@ function SchedulerPolicySection() {
             onBlur={() => commitDraft("parallelSlotSkipLimit", draftParallelSkip)}
             onKeyDown={(e) => {
               if (e.key === "Enter") commitDraft("parallelSlotSkipLimit", draftParallelSkip);
+            }}
+          />
+          <Input
+            label="Request timeout (seconds)"
+            type="number"
+            value={draftRequestTimeout}
+            onChange={(e) => setDraftRequestTimeout(e.target.value)}
+            onBlur={() => commitDraft("requestTimeout", draftRequestTimeout)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDraft("requestTimeout", draftRequestTimeout);
+            }}
+          />
+          <Input
+            label="Idle timeout (seconds)"
+            type="number"
+            value={draftIdleTimeout}
+            onChange={(e) => setDraftIdleTimeout(e.target.value)}
+            onBlur={() => commitDraft("idleTimeout", draftIdleTimeout)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDraft("idleTimeout", draftIdleTimeout);
+            }}
+          />
+          <Input
+            label="Health check interval (seconds)"
+            type="number"
+            value={draftHealthCheckInterval}
+            onChange={(e) => setDraftHealthCheckInterval(e.target.value)}
+            onBlur={() => commitDraft("healthCheckInterval", draftHealthCheckInterval)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDraft("healthCheckInterval", draftHealthCheckInterval);
+            }}
+          />
+          <Select
+            label="Priority mode"
+            value={settings.priorityMode}
+            options={[
+              { value: "fifo", label: "FIFO" },
+              { value: "priority", label: "Priority" },
+            ]}
+            onChange={(e) => {
+              const next = e.target.value as SettingsData["priorityMode"];
+              if (next !== settings.priorityMode) {
+                updateMutation.mutate({ priorityMode: next });
+              }
             }}
           />
         </div>
@@ -539,14 +606,64 @@ function UsersTab() {
 // ─── General Tab ────────────────────────────────────────────────
 
 function GeneralTab() {
+  const queryClient = useQueryClient();
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => client.getSettings(),
+  });
+
+  const [draftRetention, setDraftRetention] = useState<string>("");
+
+  useEffect(() => {
+    if (settings) {
+      setDraftRetention(String(settings.logRetention));
+    }
+  }, [settings]);
+
+  const updateMutation = useMutation({
+    mutationFn: (patch: Partial<SettingsData>) => client.updateSettings(patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+    onError: (err: Error) => {
+      console.error("Failed to update settings:", err.message);
+    },
+  });
+
+  const commitRetention = useCallback(
+    (raw: string) => {
+      const num = Number(raw);
+      if (!Number.isFinite(num)) return;
+      const clamped = Math.max(1, num);
+      if (settings && clamped !== settings.logRetention) {
+        updateMutation.mutate({ logRetention: clamped });
+      }
+    },
+    [settings],
+  );
+
   return (
     <Card padding="md">
-      <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-        Theme
-      </p>
-      <p className="text-sm text-[var(--color-text)]">
-        Theme is controlled from the topbar toggle (light / dark / system).
-      </p>
+      <div className="flex items-center gap-2 mb-4">
+        <SettingsIcon className="size-4 text-[var(--color-text-muted)]" />
+        <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+          System
+        </p>
+      </div>
+
+      {isLoading || !settings ? (
+        <Skeleton className="h-8 w-full" />
+      ) : (
+        <Input
+          label="Log retention (hours)"
+          type="number"
+          value={draftRetention}
+          onChange={(e) => setDraftRetention(e.target.value)}
+          onBlur={() => commitRetention(draftRetention)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRetention(draftRetention);
+          }}
+        />
+      )}
     </Card>
   );
 }

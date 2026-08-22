@@ -103,12 +103,14 @@ describe("mockClient", () => {
   describe("settings round-trip", () => {
     it("getSettings returns settings, updateSettings patches", async () => {
       const s = await mockClient.getSettings();
-      expect(s).toHaveProperty("maxConcurrentModels");
-      expect(s).toHaveProperty("defaultModel");
       expect(s).toHaveProperty("priorityMode");
       expect(s).toHaveProperty("batchDrain");
       expect(s).toHaveProperty("lazyStop");
       expect(s).toHaveProperty("maxQueueDepth");
+      expect(s).toHaveProperty("requestTimeout");
+      expect(s).toHaveProperty("idleTimeout");
+      expect(s).toHaveProperty("healthCheckInterval");
+      expect(s).toHaveProperty("logRetention");
 
       const updated = await mockClient.updateSettings({ requestTimeout: 999 });
       expect(updated.requestTimeout).toBe(999);

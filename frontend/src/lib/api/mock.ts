@@ -698,8 +698,6 @@ const LOGS: LogEntry[] = [
 ];
 
 const SETTINGS: Settings = {
-  maxConcurrentModels: 1,
-  defaultModel: "llama-3.1-70b",
   requestTimeout: 120,
   healthCheckInterval: 10,
   autoShutdownIdle: true,

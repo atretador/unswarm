@@ -249,8 +249,6 @@ export interface LogEntry {
 // ─── Settings ─────────────────────────────────────────────────────
 
 export interface Settings {
-  maxConcurrentModels: number;
-  defaultModel: string | null;
   requestTimeout: number;
   healthCheckInterval: number;
   autoShutdownIdle: boolean;
