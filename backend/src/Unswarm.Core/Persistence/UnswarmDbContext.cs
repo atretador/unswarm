@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Core.Persistence;
 
@@ -138,6 +139,11 @@ public sealed class PromptEntity
     public string Name { get; set; } = string.Empty;
     public string Text { get; set; } = string.Empty;
     public bool IsDefault { get; set; }
+    /// <summary>
+    /// Per-prompt benchmark generation cap used when this prompt drives a manual
+    /// benchmark run. Defaults to <see cref="BenchmarkDefaults.MaxTokens"/>.
+    /// </summary>
+    public int MaxTokens { get; set; } = BenchmarkDefaults.MaxTokens;
     public int CurrentVersion { get; set; } = 1;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -272,6 +278,8 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(p => p.Id);
             e.Property(p => p.Name).IsRequired();
             e.Property(p => p.Text).IsRequired();
+            // DB-level default backfills existing rows when the column is added.
+            e.Property(p => p.MaxTokens).HasDefaultValue(BenchmarkDefaults.MaxTokens);
         });
 
         modelBuilder.Entity<PromptVersionEntity>(e =>

@@ -45,8 +45,11 @@ public sealed class BenchmarksController : ControllerBase
         if (model is null) return NotFound(new { error = $"Model {modelId} not found" });
 
         // Prompt resolution: PromptId → explicit Prompt text → store default → built-in const.
-        // Identity is captured for benchmark-history attribution.
+        // Identity is captured for benchmark-history attribution. Saved prompts carry
+        // their own generation cap; ad-hoc text and the built-in const use the shared
+        // BenchmarkDefaults.MaxTokens.
         string prompt;
+        int maxTokens = MaxTokens;
         string? promptId = null;
         string? promptName = null;
         int? promptVersion = null;
@@ -57,6 +60,7 @@ public sealed class BenchmarksController : ControllerBase
             if (promptEntry is null)
                 return BadRequest(new { error = $"Prompt {body.PromptId} not found" });
             prompt = promptEntry.Text;
+            maxTokens = promptEntry.MaxTokens;
             promptId = promptEntry.Id;
             promptName = promptEntry.Name;
             promptVersion = promptEntry.CurrentVersion;
@@ -72,6 +76,7 @@ public sealed class BenchmarksController : ControllerBase
             if (defaultEntry is not null && !string.IsNullOrWhiteSpace(defaultEntry.Text))
             {
                 prompt = defaultEntry.Text;
+                maxTokens = defaultEntry.MaxTokens;
                 promptId = defaultEntry.Id;
                 promptName = defaultEntry.Name;
                 promptVersion = defaultEntry.CurrentVersion;
@@ -83,7 +88,7 @@ public sealed class BenchmarksController : ControllerBase
             }
         }
 
-        var requestJson = BenchmarkDefaults.BuildChatPayload(model.Id, prompt);
+        var requestJson = BenchmarkDefaults.BuildChatPayload(model.Id, prompt, maxTokens);
 
         var request = new InferenceRequest
         {

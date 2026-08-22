@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Persistence;
+using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Core.Services;
 
@@ -36,7 +37,7 @@ public sealed class PromptStore : IPromptStore
         return entity is null ? null : Map(entity);
     }
 
-    public async Task<PromptEntry> CreateAsync(string name, string text, CancellationToken ct = default)
+    public async Task<PromptEntry> CreateAsync(string name, string text, int? maxTokens = null, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
         var now = DateTimeOffset.UtcNow;
@@ -45,6 +46,7 @@ public sealed class PromptStore : IPromptStore
             Id = Guid.NewGuid().ToString("N"),
             Name = name,
             Text = text,
+            MaxTokens = BenchmarkDefaults.NormalizeMaxTokens(maxTokens),
             CurrentVersion = 1,
             CreatedAt = now,
             UpdatedAt = now
@@ -65,7 +67,7 @@ public sealed class PromptStore : IPromptStore
         return Map(entity);
     }
 
-    public async Task<PromptEntry?> UpdateAsync(string id, string name, string text, CancellationToken ct = default)
+    public async Task<PromptEntry?> UpdateAsync(string id, string name, string text, int? maxTokens = null, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
         var entity = await db.Prompts.FindAsync([id], ct).ConfigureAwait(false);
@@ -75,6 +77,8 @@ public sealed class PromptStore : IPromptStore
         entity.Name = name;
         var textChanged = !string.Equals(entity.Text, text, StringComparison.Ordinal);
         entity.Text = text;
+        if (maxTokens is not null)
+            entity.MaxTokens = BenchmarkDefaults.NormalizeMaxTokens(maxTokens);
         entity.UpdatedAt = DateTimeOffset.UtcNow;
 
         if (textChanged)
@@ -113,6 +117,7 @@ public sealed class PromptStore : IPromptStore
         Name = e.Name,
         Text = e.Text,
         IsDefault = e.IsDefault,
+        MaxTokens = e.MaxTokens,
         CurrentVersion = e.CurrentVersion,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt

@@ -1,4 +1,5 @@
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Tests.Fakes;
 
@@ -27,7 +28,7 @@ public sealed class FakePromptStore : IPromptStore
         return Task.FromResult(entry);
     }
 
-    public Task<PromptEntry> CreateAsync(string name, string text, CancellationToken ct = default)
+    public Task<PromptEntry> CreateAsync(string name, string text, int? maxTokens = null, CancellationToken ct = default)
     {
         var entry = new PromptEntry
         {
@@ -35,6 +36,7 @@ public sealed class FakePromptStore : IPromptStore
             Name = name,
             Text = text,
             IsDefault = false,
+            MaxTokens = BenchmarkDefaults.NormalizeMaxTokens(maxTokens),
             CurrentVersion = 1,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -43,7 +45,7 @@ public sealed class FakePromptStore : IPromptStore
         return Task.FromResult(entry);
     }
 
-    public Task<PromptEntry?> UpdateAsync(string id, string name, string text, CancellationToken ct = default)
+    public Task<PromptEntry?> UpdateAsync(string id, string name, string text, int? maxTokens = null, CancellationToken ct = default)
     {
         if (!_prompts.TryGetValue(id, out var existing))
             return Task.FromResult<PromptEntry?>(null);
@@ -53,6 +55,7 @@ public sealed class FakePromptStore : IPromptStore
         {
             Name = name,
             Text = text,
+            MaxTokens = maxTokens is null ? existing.MaxTokens : BenchmarkDefaults.NormalizeMaxTokens(maxTokens),
             CurrentVersion = textChanged ? existing.CurrentVersion + 1 : existing.CurrentVersion,
             UpdatedAt = DateTimeOffset.UtcNow
         };

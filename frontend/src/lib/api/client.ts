@@ -9,6 +9,7 @@ import type {
   LogEntry,
   Model,
   Prompt,
+  PromptInput,
   PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
@@ -100,8 +101,8 @@ export interface UnswarmClient {
 
   // Prompt Library
   listPrompts(): Promise<Prompt[]>;
-  createPrompt(input: { name: string; text: string }): Promise<Prompt>;
-  updatePrompt(id: string, input: { name: string; text: string }): Promise<Prompt>;
+  createPrompt(input: PromptInput): Promise<Prompt>;
+  updatePrompt(id: string, input: PromptInput): Promise<Prompt>;
   deletePrompt(id: string): Promise<void>;
   setDefaultPrompt(id: string): Promise<Prompt>;
   listPromptVersions(promptId: string): Promise<PromptVersion[]>;

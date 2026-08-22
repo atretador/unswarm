@@ -464,7 +464,7 @@ describe("Benchmarks", () => {
   it("creating a new prompt calls createPrompt and shows in list", async () => {
     const user = userEvent.setup();
     const createSpy = vi.spyOn(mockClient, "createPrompt").mockResolvedValueOnce({
-      id: "new-1", name: "Test prompt", text: "Hello world",
+      id: "new-1", name: "Test prompt", text: "Hello world", maxTokens: 256,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 
@@ -494,13 +494,13 @@ describe("Benchmarks", () => {
     await waitFor(() => {
       expect(createSpy).toHaveBeenCalledTimes(1);
     });
-    expect(createSpy.mock.calls[0][0]).toEqual({ name: "Test prompt", text: "Hello world" });
+    expect(createSpy.mock.calls[0][0]).toEqual({ name: "Test prompt", text: "Hello world", maxTokens: 256 });
   });
 
   it("editing and saving an existing prompt calls updatePrompt", async () => {
     const user = userEvent.setup();
     const updateSpy = vi.spyOn(mockClient, "updatePrompt").mockResolvedValueOnce({
-      id: "p1", name: "Better summary", text: "Updated text",
+      id: "p1", name: "Better summary", text: "Updated text", maxTokens: 256,
       createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     });
 

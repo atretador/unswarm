@@ -91,6 +91,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   const [draftText, setDraftText] = useState("");
+  const [draftMaxTokens, setDraftMaxTokens] = useState("256");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -107,18 +108,20 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: { name: string; text: string }) => client.createPrompt(input),
+    mutationFn: (input: { name: string; text: string; maxTokens: number }) =>
+      client.createPrompt(input),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["prompts"] });
       setSelectedId(created.id);
       setDraftName(created.name);
       setDraftText(created.text);
+      setDraftMaxTokens(String(created.maxTokens));
       setIsCreating(false);
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...input }: { id: string; name: string; text: string }) =>
+    mutationFn: ({ id, ...input }: { id: string; name: string; text: string; maxTokens: number }) =>
       client.updatePrompt(id, input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["prompts"] }),
   });
@@ -132,6 +135,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
         setSelectedId(null);
         setDraftName("");
         setDraftText("");
+        setDraftMaxTokens("256");
       }
     },
   });
@@ -173,6 +177,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
       setSelectedId(prompt.id);
       setDraftName(prompt.name);
       setDraftText(prompt.text);
+      setDraftMaxTokens(String(prompt.maxTokens));
       setIsCreating(false);
       setConfirmDeleteId(null);
       setShowHistory(false);
@@ -195,6 +200,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     setSelectedId(null);
     setDraftName("");
     setDraftText("");
+    setDraftMaxTokens("256");
     setIsCreating(true);
     setConfirmDeleteId(null);
   };
@@ -203,10 +209,12 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     const name = draftName.trim();
     const text = draftText.trim();
     if (!name || !text) return;
+    const parsed = Number.parseInt(draftMaxTokens, 10);
+    const maxTokens = Number.isFinite(parsed) ? Math.min(32768, Math.max(16, parsed)) : 256;
     if (isCreating) {
-      createMutation.mutate({ name, text });
+      createMutation.mutate({ name, text, maxTokens });
     } else if (selectedId) {
-      updateMutation.mutate({ id: selectedId, name, text });
+      updateMutation.mutate({ id: selectedId, name, text, maxTokens });
     }
   };
 
@@ -271,6 +279,9 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                           <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-primary)]">default</span>
                         )}
                         <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{p.currentVersion ?? 1}</span>
+                        {p.maxTokens != null && (
+                          <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">{p.maxTokens} tok</span>
+                        )}
                         {p.id === selectedId && showHistory && (
                           <span className="ml-1 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">history</span>
                         )}
@@ -462,6 +473,24 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                     placeholder="Short, descriptive name"
                     className="h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
                   />
+                </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="prompt-max-tokens" className="text-xs font-medium text-[var(--color-text-muted)]">
+                    Max tokens
+                  </label>
+                  <input
+                    id="prompt-max-tokens"
+                    type="number"
+                    min={16}
+                    max={32768}
+                    step={1}
+                    value={draftMaxTokens}
+                    onChange={(e) => setDraftMaxTokens(e.target.value)}
+                    className="h-9 w-36 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 font-mono text-sm tabular-nums text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
+                  />
+                  <p className="text-[10px] text-[var(--color-text-muted)]">
+                    Generation cap for runs using this prompt (16–32768)
+                  </p>
                 </div>
                 <div className="flex flex-1 min-h-[160px] flex-col space-y-1.5">
                   <label htmlFor="prompt-text" className="text-xs font-medium text-[var(--color-text-muted)]">

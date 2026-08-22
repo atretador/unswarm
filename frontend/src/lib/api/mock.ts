@@ -224,6 +224,7 @@ const PROMPTS: Prompt[] = [
     id: "p1",
     name: "Concise summary",
     text: "Summarize the input in two sentences maximum, focusing on the key technical points. Use plain language without jargon.",
+    maxTokens: 256,
     isDefault: true,
     currentVersion: 3,
     createdAt: NOW,
@@ -233,6 +234,7 @@ const PROMPTS: Prompt[] = [
     id: "p2",
     name: "Code review",
     text: "Review this code for bugs, performance issues, and readability. Be specific about line numbers and suggest concrete fixes. Keep suggestions actionable — no vague advice.",
+    maxTokens: 256,
     currentVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,
@@ -241,6 +243,7 @@ const PROMPTS: Prompt[] = [
     id: "p3",
     name: "Creative rewrite",
     text: "Rewrite the following text in a more engaging, conversational tone while preserving all technical accuracy and the original structure. Use short sentences and active voice. Add one concrete example where it clarifies the point.",
+    maxTokens: 256,
     currentVersion: 1,
     createdAt: NOW,
     updatedAt: NOW,
@@ -249,6 +252,7 @@ const PROMPTS: Prompt[] = [
     id: "p4",
     name: "Long-form writing",
     text: "You are an experienced technical writer. Expand the following notes into a well-structured blog post with an introduction, three main sections, and a conclusion. Include practical tips, real-world examples, and potential pitfalls. Aim for approximately 800 words, maintain a professional but approachable tone, and ensure the content flows naturally from one section to the next.",
+    maxTokens: 2048,
     currentVersion: 2,
     createdAt: NOW,
     updatedAt: NOW,
@@ -1156,7 +1160,7 @@ export const mockClient: UnswarmClient = {
     return [...PROMPTS].sort((a, b) => a.name.localeCompare(b.name));
   },
 
-  async createPrompt(input: { name: string; text: string }) {
+  async createPrompt(input: { name: string; text: string; maxTokens?: number }) {
     await delay(rand(80, 200));
     if (!input.name.trim() || !input.text.trim()) {
       throw new Error("Name and text are required");
@@ -1165,6 +1169,7 @@ export const mockClient: UnswarmClient = {
       id: id(),
       name: input.name.trim(),
       text: input.text.trim(),
+      maxTokens: input.maxTokens ?? 256,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1172,7 +1177,7 @@ export const mockClient: UnswarmClient = {
     return { ...prompt };
   },
 
-  async updatePrompt(promptId: string, input: { name: string; text: string }) {
+  async updatePrompt(promptId: string, input: { name: string; text: string; maxTokens?: number }) {
     await delay(rand(80, 200));
     if (!input.name.trim() || !input.text.trim()) {
       throw new Error("Name and text are required");
@@ -1182,6 +1187,9 @@ export const mockClient: UnswarmClient = {
     const textChanged = prompt.text !== input.text.trim();
     prompt.name = input.name.trim();
     prompt.text = input.text.trim();
+    if (input.maxTokens !== undefined) {
+      prompt.maxTokens = input.maxTokens;
+    }
     if (textChanged) {
       prompt.currentVersion = (prompt.currentVersion ?? 1) + 1;
     }

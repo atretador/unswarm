@@ -272,10 +272,22 @@ export interface Prompt {
   id: string;
   name: string;
   text: string;
+  /** Generation token cap applied when running benchmarks with this prompt (16–32768). */
+  maxTokens: number;
   isDefault?: boolean;
   currentVersion?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Payload for creating/updating a prompt.
+ * `maxTokens` is optional — the backend applies its default (256) when omitted.
+ */
+export interface PromptInput {
+  name: string;
+  text: string;
+  maxTokens?: number;
 }
 
 export interface PromptVersion {

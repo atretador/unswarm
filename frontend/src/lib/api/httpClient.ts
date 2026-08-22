@@ -9,6 +9,7 @@ import type {
   LogEntry,
   Model,
   Prompt,
+  PromptInput,
   PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
@@ -334,14 +335,14 @@ export const httpClient: UnswarmClient = {
     return request<Prompt[]>("/api/prompts");
   },
 
-  createPrompt(input: { name: string; text: string }) {
+  createPrompt(input: PromptInput) {
     return request<Prompt>("/api/prompts", {
       method: "POST",
       body: JSON.stringify(input),
     });
   },
 
-  updatePrompt(id: string, input: { name: string; text: string }) {
+  updatePrompt(id: string, input: PromptInput) {
     return request<Prompt>(`/api/prompts/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(input),

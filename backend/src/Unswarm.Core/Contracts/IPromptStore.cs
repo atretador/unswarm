@@ -1,5 +1,7 @@
 namespace Unswarm.Core.Contracts;
 
+using Unswarm.Core.Services.Benchmarks;
+
 /// <summary>A single version snapshot of a prompt's text.</summary>
 public sealed record PromptVersion
 {
@@ -17,6 +19,8 @@ public sealed record PromptEntry
     public required string Name { get; init; }
     public required string Text { get; init; }
     public required bool IsDefault { get; init; }
+    /// <summary>Benchmark generation cap used when this prompt drives a run.</summary>
+    public int MaxTokens { get; init; } = BenchmarkDefaults.MaxTokens;
     public int CurrentVersion { get; init; } = 1;
     public required DateTimeOffset CreatedAt { get; init; }
     public required DateTimeOffset UpdatedAt { get; init; }
@@ -31,13 +35,19 @@ public interface IPromptStore
 
     Task<PromptEntry?> GetAsync(string id, CancellationToken ct = default);
 
-    Task<PromptEntry> CreateAsync(string name, string text, CancellationToken ct = default);
+    /// <summary>
+    /// Creates a prompt. When <paramref name="maxTokens"/> is null the default cap
+    /// (<see cref="BenchmarkDefaults.MaxTokens"/>) is used; otherwise it is clamped
+    /// to the sane range (16–32768).
+    /// </summary>
+    Task<PromptEntry> CreateAsync(string name, string text, int? maxTokens = null, CancellationToken ct = default);
 
     /// <summary>
     /// Updates a prompt's name and text. Returns the updated entry, or null if the id
-    /// does not exist (callers should treat null as 404).
+    /// does not exist (callers should treat null as 404). When <paramref name="maxTokens"/>
+    /// is null the existing cap is kept; otherwise it is clamped to 16–32768.
     /// </summary>
-    Task<PromptEntry?> UpdateAsync(string id, string name, string text, CancellationToken ct = default);
+    Task<PromptEntry?> UpdateAsync(string id, string name, string text, int? maxTokens = null, CancellationToken ct = default);
 
     /// <summary>
     /// Deletes a prompt. Returns true if the row existed, false if the id was unknown.

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Api.Controllers;
 
@@ -30,8 +31,10 @@ public sealed class PromptsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(new { error = "Name and text are required" });
+        if (!IsValidMaxTokens(request.MaxTokens, out var maxTokensError))
+            return BadRequest(new { error = maxTokensError });
 
-        var entry = await _prompts.CreateAsync(request.Name.Trim(), request.Text.Trim(), ct);
+        var entry = await _prompts.CreateAsync(request.Name.Trim(), request.Text.Trim(), request.MaxTokens, ct);
         return CreatedAtAction(nameof(Get), new { id = entry.Id }, PromptResponse.From(entry));
     }
 
@@ -49,8 +52,10 @@ public sealed class PromptsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(new { error = "Name and text are required" });
+        if (!IsValidMaxTokens(request.MaxTokens, out var maxTokensError))
+            return BadRequest(new { error = maxTokensError });
 
-        var entry = await _prompts.UpdateAsync(id, request.Name.Trim(), request.Text.Trim(), ct);
+        var entry = await _prompts.UpdateAsync(id, request.Name.Trim(), request.Text.Trim(), request.MaxTokens, ct);
         if (entry is null) return NotFound();
         return Ok(PromptResponse.From(entry));
     }
@@ -104,8 +109,15 @@ public sealed class PromptsController : ControllerBase
         var version = await _prompts.GetVersionAsync(id, request.Version, ct);
         if (version is null) return NotFound(new { error = $"Version {request.Version} not found" });
 
-        var updated = await _prompts.UpdateAsync(id, entry.Name, version.Text, ct);
+        var updated = await _prompts.UpdateAsync(id, entry.Name, version.Text, null, ct);
         if (updated is null) return NotFound();
         return Ok(PromptResponse.From(updated));
+    }
+
+    private static bool IsValidMaxTokens(int? maxTokens, out string? error)
+    {
+        error = maxTokens is null ? null :
+            $"maxTokens must be between {BenchmarkDefaults.MinPromptMaxTokens} and {BenchmarkDefaults.MaxPromptMaxTokens}";
+        return error is null;
     }
 }

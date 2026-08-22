@@ -16,6 +16,18 @@ public static class BenchmarkDefaults
 {
     public const int MaxTokens = 256;
 
+    /// <summary>Sane bounds for per-prompt generation caps.</summary>
+    public const int MinPromptMaxTokens = 16;
+    public const int MaxPromptMaxTokens = 32768;
+
+    /// <summary>
+    /// Normalizes an optional per-prompt max-token cap: null → default cap,
+    /// otherwise clamped into [<see cref="MinPromptMaxTokens"/>, <see cref="MaxPromptMaxTokens"/>].
+    /// </summary>
+    public static int NormalizeMaxTokens(int? maxTokens) => maxTokens is null
+        ? MaxTokens
+        : Math.Clamp(maxTokens.Value, MinPromptMaxTokens, MaxPromptMaxTokens);
+
     /// <summary>
     /// A LONGER, realistic instruction prompt so benchmarks measure real generation
     /// work, not a one-word smoke reply.
@@ -35,6 +47,9 @@ public static class BenchmarkDefaults
         "and accountability in automated pipelines.";
 
     public static string BuildChatPayload(string modelId, string prompt)
+        => BuildChatPayload(modelId, prompt, MaxTokens);
+
+    public static string BuildChatPayload(string modelId, string prompt, int maxTokens)
     {
         var payload = new
         {
@@ -43,7 +58,7 @@ public static class BenchmarkDefaults
             {
                 new { role = "user", content = prompt }
             },
-            max_tokens = MaxTokens
+            max_tokens = maxTokens
         };
         return JsonSerializer.Serialize(payload);
     }
