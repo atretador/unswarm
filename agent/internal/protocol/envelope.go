@@ -15,6 +15,13 @@ const (
 	TypeTelemetry     = "telemetry"
 	TypeHeartbeat     = "heartbeat"
 	TypeError         = "error"
+
+	// TypeSyncRegistrations is sent by the backend (on connect and whenever
+	// registrations change) to give the agent its registered runtime set:
+	// registeredRuntimeId -> container name/id mappings. The agent gates all
+	// container lifecycle commands against this set when
+	// enforce_registered_runtime is enabled.
+	TypeSyncRegistrations = "sync_registrations"
 )
 
 // Command names dispatched by the backend.
@@ -55,6 +62,22 @@ type HelloPayload struct {
 // HelloAckPayload is sent by the backend to acknowledge a hello.
 type HelloAckPayload struct {
 	OK bool `json:"ok"`
+}
+
+// RegistrationEntry maps one registered runtime to the container it owns on
+// this agent. ContainerName is the pre-provisioned container name (the
+// "image" field on commands); ContainerID is optional and carries the last
+// known full docker container id.
+type RegistrationEntry struct {
+	RegisteredRuntimeID string `json:"registeredRuntimeId"`
+	ContainerName       string `json:"containerName,omitempty"`
+	ContainerID         string `json:"containerId,omitempty"`
+}
+
+// SyncRegistrationsPayload is the payload of a sync_registrations message.
+// It is a FULL snapshot: it replaces any previously synced mapping.
+type SyncRegistrationsPayload struct {
+	Registrations []RegistrationEntry `json:"registrations"`
 }
 
 // CommandPayload is sent by the backend to request an action on the agent.

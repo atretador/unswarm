@@ -28,6 +28,12 @@ type Config struct {
 	ScriptsDir      string          `yaml:"scripts_dir"`
 	AllowInsecureWs bool            `yaml:"allow_insecure_ws"`
 	Reconnect       ReconnectConfig `yaml:"reconnect"`
+
+	// EnforceRegisteredRuntime gates container lifecycle commands against the
+	// registered runtime set synced from the backend (sync_registrations).
+	// Default true: unregistered targets are rejected without touching Docker.
+	// Set false to restore legacy behavior (act on any container on the host).
+	EnforceRegisteredRuntime bool `yaml:"enforce_registered_runtime"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -42,6 +48,9 @@ func DefaultConfig() Config {
 			MaxBackoffMs:     30000,
 			MaxRetries:       -1,
 		},
+		// Registered-runtime enforcement is ON by default; an explicit
+		// enforce_registered_runtime: false in agent.yaml opts out.
+		EnforceRegisteredRuntime: true,
 	}
 }
 

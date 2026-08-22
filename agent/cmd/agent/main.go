@@ -20,6 +20,7 @@ import (
 	"unswarm/agent/internal/dispatch"
 	"unswarm/agent/internal/docker"
 	"unswarm/agent/internal/protocol"
+	"unswarm/agent/internal/runtimegate"
 	"unswarm/agent/internal/scripts"
 	"unswarm/agent/internal/telemetry"
 )
@@ -84,12 +85,22 @@ func main() {
 		logger.Info("script support enabled", "scripts_dir", cfg.ScriptsDir)
 	}
 
+	// Registered-runtime gate: lifecycle commands are checked against the
+	// registered runtime set synced from the backend (sync_registrations).
+	gate := runtimegate.NewGate(runtimegate.NewRegistry(), cfg.EnforceRegisteredRuntime)
+	if cfg.EnforceRegisteredRuntime {
+		logger.Info("registered-runtime enforcement enabled")
+	} else {
+		logger.Warn("registered-runtime enforcement DISABLED: agent will act on any container on this host")
+	}
+
 	// Set up command dispatcher
-	disp := setupDispatcher(dockerHandler, scriptMgr, logger)
+	disp := setupDispatcher(dockerHandler, scriptMgr, gate, logger)
 
 	// Set up the message router (extension point for future inference
-	// message types proxied over the WebSocket).
-	msgRouter := setupMessageRouter(logger)
+	// message types proxied over the WebSocket). sync_registrations is
+	// routed here to keep the gate's mapping current.
+	msgRouter := setupMessageRouter(gate, logger)
 
 	// Set up telemetry collector
 	telemCollector := telemetry.New(logger)
@@ -369,59 +380,60 @@ func errorResult(msg string) protocol.CommandResultPayload {
 	return protocol.CommandResultPayload{OK: false, Error: &msg}
 }
 
-// setupDispatcher registers all command handlers.
-func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slog.Logger) *dispatch.Dispatcher {
+// setupDispatcher registers all command handlers. Container lifecycle
+// commands pass through the registered-runtime gate first: an unregistered
+// target is rejected without any Docker API call when enforcement is on.
+func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runtimegate.Gate, logger *slog.Logger) *dispatch.Dispatcher {
 	d := dispatch.New()
 
-	// start_container
-	d.Register(protocol.CmdStartContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("start_container")
+	// gated wraps a lifecycle handler with the registered-runtime check.
+	gated := func(cmd string, run func(p protocol.CommandPayload, name string) protocol.CommandResultPayload) func(protocol.CommandPayload) protocol.CommandResultPayload {
+		return func(p protocol.CommandPayload) protocol.CommandResultPayload {
+			name := p.ContainerName()
+			if blocked, ok := gate.Check(cmd, name); ok {
+				logger.Warn("blocked unregistered container command", "command", cmd, "target", name)
+				return blocked
+			}
+			if dh == nil {
+				return notConnectedResult(cmd)
+			}
+			return run(p, name)
 		}
+	}
+
+	// start_container
+	d.Register(protocol.CmdStartContainer, gated(protocol.CmdStartContainer, func(_ protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("starting container", "name", name)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.StartContainer(ctx, name)
-	})
+	}))
 
 	// stop_container
-	d.Register(protocol.CmdStopContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("stop_container")
-		}
+	d.Register(protocol.CmdStopContainer, gated(protocol.CmdStopContainer, func(_ protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("stopping container", "name", name)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.StopContainer(ctx, name)
-	})
+	}))
 
 	// restart_container
-	d.Register(protocol.CmdRestartContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("restart_container")
-		}
+	d.Register(protocol.CmdRestartContainer, gated(protocol.CmdRestartContainer, func(_ protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("restarting container", "name", name)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.RestartContainer(ctx, name)
-	})
+	}))
 
 	// inspect_container
-	d.Register(protocol.CmdInspectContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("inspect_container")
-		}
+	d.Register(protocol.CmdInspectContainer, gated(protocol.CmdInspectContainer, func(_ protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("inspecting container", "name", name)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.InspectContainer(ctx, name)
-	})
+	}))
 
-	// list_containers
+	// list_containers — filtered to registered containers when enforcement is on.
 	d.Register(protocol.CmdListContainers, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		if dh == nil {
 			return notConnectedResult("list_containers")
@@ -429,32 +441,24 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 		logger.Info("listing containers")
 		ctx, cancel := commandContext()
 		defer cancel()
-		return dh.ListContainers(ctx)
+		return gate.FilterListResult(protocol.CmdListContainers, dh.ListContainers(ctx))
 	})
 
 	// get_container_logs
-	d.Register(protocol.CmdGetContainerLogs, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("get_container_logs")
-		}
+	d.Register(protocol.CmdGetContainerLogs, gated(protocol.CmdGetContainerLogs, func(p protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("getting container logs", "name", name, "tailLines", p.TailLines)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.GetContainerLogs(ctx, name, p.TailLines)
-	})
+	}))
 
 	// remove_container
-	d.Register(protocol.CmdRemoveContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
-		name := p.ContainerName()
-		if dh == nil {
-			return notConnectedResult("remove_container")
-		}
+	d.Register(protocol.CmdRemoveContainer, gated(protocol.CmdRemoveContainer, func(_ protocol.CommandPayload, name string) protocol.CommandResultPayload {
 		logger.Info("removing container", "name", name)
 		ctx, cancel := commandContext()
 		defer cancel()
 		return dh.RemoveContainer(ctx, name)
-	})
+	}))
 
 	// health_check
 	d.Register(protocol.CmdHealthCheck, func(p protocol.CommandPayload) protocol.CommandResultPayload {
@@ -572,10 +576,24 @@ func derefStr(s *string) string {
 //	msgRouter.RegisterMessage("inference_request", func(env protocol.Envelope) *protocol.Envelope {
 //	    // proxy to the local model server and return the response envelope
 //	})
-func setupMessageRouter(logger *slog.Logger) *dispatch.Router {
+//
+// sync_registrations is routed here as well: the backend pushes the agent's
+// registered runtime set on connect and whenever registrations change, and
+// the handler atomically replaces the gate's mapping (full snapshot).
+func setupMessageRouter(gate *runtimegate.Gate, logger *slog.Logger) *dispatch.Router {
 	r := dispatch.NewRouter()
-	// No message types are registered in Phase 3; the router exists so
-	// inference message types can be added without touching the message loop.
+	r.RegisterMessage(protocol.TypeSyncRegistrations, func(env protocol.Envelope) *protocol.Envelope {
+		var payload protocol.SyncRegistrationsPayload
+		if env.Payload != nil {
+			if err := json.Unmarshal(env.Payload, &payload); err != nil {
+				logger.Error("decode sync_registrations payload", "error", err)
+				return nil
+			}
+		}
+		gate.Registry().Replace(payload.Registrations)
+		logger.Info("registered runtime set synced", "entries", len(payload.Registrations))
+		return nil
+	})
 	return r
 }
 
