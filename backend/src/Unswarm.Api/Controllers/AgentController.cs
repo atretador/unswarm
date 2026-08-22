@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Api.Controllers;
 
@@ -24,15 +25,21 @@ public sealed class AgentController : ControllerBase
     private readonly IAgentRegistry _registry;
     private readonly ILogger<AgentController> _logger;
     private readonly IDockerControllerRouter? _router;
+    private readonly IApiKeyStore? _keys;
+    private readonly IContainerRegistry? _containers;
 
     public AgentController(
         IAgentRegistry registry,
         ILogger<AgentController> logger,
-        IDockerControllerRouter? router = null)
+        IDockerControllerRouter? router = null,
+        IApiKeyStore? keys = null,
+        IContainerRegistry? containers = null)
     {
         _registry = registry;
         _logger = logger;
         _router = router;
+        _keys = keys;
+        _containers = containers;
     }
 
     [HttpGet("/ws/agent")]
@@ -44,12 +51,16 @@ public sealed class AgentController : ControllerBase
             return;
         }
 
+        // The authenticated key identity was stamped by ApiKeyAuthMiddleware;
+        // its id drives per-agent binding enforcement in the handshake below.
+        string? apiKeyId = HttpContext.User.FindFirst("unswarm:key-id")?.Value;
+
         using var socket = await HttpContext.WebSockets.AcceptWebSocketAsync();
-        await HandleConnectionAsync(socket, ct);
+        await HandleConnectionAsync(socket, ct, apiKeyId);
     }
 
     // Extracted for testability — core connection handling without HttpContext dependency
-    public async Task HandleConnectionAsync(WebSocket socket, CancellationToken ct)
+    public async Task HandleConnectionAsync(WebSocket socket, CancellationToken ct, string? apiKeyId = null)
     {
         string? agentName = null;
         string? connectionId = null;
@@ -82,6 +93,22 @@ public sealed class AgentController : ControllerBase
                 return;
             }
 
+            // Per-agent key binding: a key bound to agent X may only claim "X";
+            // an unbound agent-scope key consumes its first use and binds to the
+            // claimed name atomically (persisted immediately by the store).
+            if (_keys is not null && apiKeyId is not null)
+            {
+                var binding = await _keys.ResolveAgentBindingAsync(apiKeyId, agentName, ct);
+                if (binding == AgentKeyBindingResult.Mismatch)
+                {
+                    _logger.LogWarning(
+                        "Agent key {KeyId} rejected for agent {AgentName}: key is bound to a different agent",
+                        apiKeyId, agentName);
+                    await SendError(socket, $"API key is bound to a different agent; connection as '{agentName}' rejected", ct);
+                    return;
+                }
+            }
+
             string? dockerSocket = payload.TryGetProperty("dockerSocket", out var ds) ? ds.GetString() : null;
             string? version = payload.TryGetProperty("version", out var v) ? v.GetString() : null;
 
@@ -104,6 +131,12 @@ public sealed class AgentController : ControllerBase
             // B1 + m3: Use shared camelCase options for hello ack
             var ackPayload = JsonSerializer.SerializeToElement(new { ok = true }, JsonOptions);
             await SendAsync(socket, new AgentMessage { Type = "hello", Payload = ackPayload }, ct);
+
+            // Push the agent's registered runtime set right after the handshake so
+            // registered-runtime enforcement has data before the first command.
+            // Fail-safe: any failure here is logged and skipped — the agent
+            // re-syncs on its next connect (and mutation paths push updates).
+            await SendRegistrationSyncAsync(socket, agentName, ct);
 
             await ReadLoop(socket, agentName, ct);
         }
@@ -131,6 +164,38 @@ public sealed class AgentController : ControllerBase
                 }
                 catch { /* best effort */ }
             }
+        }
+    }
+
+    /// <summary>
+    /// Builds the registered-runtime snapshot for <paramref name="agentName"/> from
+    /// the container registry and pushes it to the agent as a sync_registrations
+    /// message (via the agent's RemoteAgentDockerController). Best-effort: when no
+    /// registry/router is configured, the agent is disconnected, or anything throws,
+    /// the sync is skipped silently — the next connect re-syncs.
+    /// </summary>
+    private async Task SendRegistrationSyncAsync(WebSocket socket, string agentName, CancellationToken ct)
+    {
+        try
+        {
+            if (_containers is null || _router is null)
+                return;
+
+            var all = await _containers.ListAllAsync(ct).ConfigureAwait(false);
+            var entries = all
+                .Where(r => string.Equals(r.Agent?.Trim(), agentName.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Select(r => new AgentRuntimeRegistration(r.Id, r.Image, r.RuntimeContainerId))
+                .ToList();
+
+            if (_router.GetController(ExecutionTarget.ForAgent(agentName).Id) is not RemoteAgentDockerController remote)
+                return;
+
+            await remote.SendRegistrationSyncAsync(entries, ct).ConfigureAwait(false);
+            _logger.LogDebug("Synced {Count} registrations to agent {AgentName}", entries.Count, agentName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to push registration sync to agent {AgentName}; will re-sync on next connect", agentName);
         }
     }
 

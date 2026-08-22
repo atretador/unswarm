@@ -6,6 +6,7 @@ using Unswarm.Api.Controllers;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
+using Unswarm.Core.Services.Remote;
 using Unswarm.Tests.Fakes;
 
 namespace Unswarm.Tests.Unit;
@@ -326,6 +327,197 @@ public sealed class AgentControllerTests : IDisposable
         Assert.NotNull(routed);
         Assert.Equal("cmd-001", routed!.Id);
         Assert.Equal("command_result", routed.Type);
+    }
+
+    // ── Per-agent key binding enforcement ─────────────────────────────
+
+    [Fact]
+    public async Task BoundKey_MismatchedAgentName_RejectedWithError()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("bound key", ApiKeyScope.Agent, boundAgentName: "alpha");
+        var controller = new AgentController(_registry, NullLogger<AgentController>.Instance, router: null, keys: store);
+
+        var socket = new FakeWebSocket();
+        var helloJson = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "beta" } // ≠ bound name "alpha"
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(helloJson));
+
+        await controller.HandleConnectionAsync(socket, CancellationToken.None, apiKeyId: created.Id);
+
+        Assert.Contains(socket.SentMessages, m => m.Contains("bound to a different agent"));
+        Assert.Contains(socket.SentMessages, m => m.Contains("beta"));
+
+        // The impostor was never registered; the legitimate agent neither.
+        Assert.Null(_registry.Get("beta"));
+        Assert.Null(_registry.Get("alpha"));
+    }
+
+    [Fact]
+    public async Task BoundKey_CorrectAgentName_AcceptsAndRegisters()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("bound key", ApiKeyScope.Agent, boundAgentName: "alpha");
+        var controller = new AgentController(_registry, NullLogger<AgentController>.Instance, router: null, keys: store);
+
+        var socket = new FakeWebSocket();
+        var helloJson = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "alpha" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(helloJson));
+
+        var task = controller.HandleConnectionAsync(socket, CancellationToken.None, apiKeyId: created.Id);
+
+        var agent = await WaitForAgentAsync("alpha");
+        Assert.NotNull(agent);
+        Assert.Contains(socket.SentMessages, m => m.Contains("\"type\":\"hello\""));
+
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+        await task;
+    }
+
+    [Fact]
+    public async Task UnboundKey_FirstUseConsumed_BindsToClaimedName()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("consumable key", ApiKeyScope.Agent);
+        Assert.Null((await store.GetAsync(created.Id))!.BoundAgentName);
+
+        var controller = new AgentController(_registry, NullLogger<AgentController>.Instance, router: null, keys: store);
+
+        // First connection claims "first-agent": allowed and binds the key.
+        var firstSocket = new FakeWebSocket();
+        var firstHello = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "first-agent" }
+        }, JsonOptions);
+        firstSocket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(firstHello));
+
+        var firstTask = controller.HandleConnectionAsync(firstSocket, CancellationToken.None, apiKeyId: created.Id);
+        Assert.NotNull(await WaitForAgentAsync("first-agent"));
+        Assert.DoesNotContain(firstSocket.SentMessages, m => m.Contains("\"type\":\"error\""));
+
+        // Key is now permanently bound to "first-agent".
+        Assert.Equal("first-agent", (await store.GetAsync(created.Id))!.BoundAgentName);
+
+        firstSocket.EnqueueReceive(WebSocketMessageType.Close, []);
+        await firstTask;
+
+        // Second connection with the same key claiming another name: rejected.
+        var secondSocket = new FakeWebSocket();
+        var secondHello = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "impostor" }
+        }, JsonOptions);
+        secondSocket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(secondHello));
+
+        await controller.HandleConnectionAsync(secondSocket, CancellationToken.None, apiKeyId: created.Id);
+
+        Assert.Contains(secondSocket.SentMessages, m => m.Contains("bound to a different agent"));
+        Assert.Null(_registry.Get("impostor"));
+    }
+
+    // ── sync_registrations on connect ─────────────────────────────────
+
+    [Fact]
+    public async Task HelloAck_SendsSyncRegistrationsSnapshotForConnectedAgent()
+    {
+        var containers = new FakeContainerRegistry();
+        await containers.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-1", Image = "unswarm/llama", Agent = "sync-agent", RuntimeContainerId = "abc123def456"
+        });
+        await containers.CreateAsync(new RegisteredRuntime { Id = "reg-host", Image = "host-only", Agent = "host" });
+        await containers.CreateAsync(new RegisteredRuntime { Id = "reg-other", Image = "other-img", Agent = "other-agent" });
+
+        var remote = new RemoteAgentDockerController("sync-agent", _registry);
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["agent:sync-agent"] = remote
+        });
+        var controller = new AgentController(
+            _registry, NullLogger<AgentController>.Instance, router, containers: containers);
+
+        var socket = new FakeWebSocket();
+        var helloJson = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "sync-agent" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(helloJson));
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+
+        await controller.HandleConnectionAsync(socket, CancellationToken.None);
+
+        var syncMsg = socket.SentMessages.SingleOrDefault(m => m.Contains("\"type\":\"sync_registrations\""));
+        Assert.False(syncMsg is null, "expected a sync_registrations message after hello ack");
+
+        using var doc = JsonDocument.Parse(syncMsg!);
+        var registrations = doc.RootElement.GetProperty("payload").GetProperty("registrations");
+
+        // Only this agent's runtimes — host and other-agent entries are excluded.
+        Assert.Equal(1, registrations.GetArrayLength());
+        var entry = registrations[0];
+        Assert.Equal("reg-1", entry.GetProperty("registeredRuntimeId").GetString());
+        Assert.Equal("unswarm/llama", entry.GetProperty("containerName").GetString());
+        Assert.Equal("abc123def456", entry.GetProperty("containerId").GetString());
+    }
+
+    [Fact]
+    public async Task HelloAck_WithNoRegistrations_SendsEmptySnapshot()
+    {
+        var containers = new FakeContainerRegistry();
+        var remote = new RemoteAgentDockerController("empty-agent", _registry);
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["agent:empty-agent"] = remote
+        });
+        var controller = new AgentController(
+            _registry, NullLogger<AgentController>.Instance, router, containers: containers);
+
+        var socket = new FakeWebSocket();
+        var helloJson = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "empty-agent" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(helloJson));
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+
+        await controller.HandleConnectionAsync(socket, CancellationToken.None);
+
+        var syncMsg = socket.SentMessages.SingleOrDefault(m => m.Contains("\"type\":\"sync_registrations\""));
+        Assert.False(syncMsg is null, "expected an (empty) sync_registrations snapshot");
+
+        using var doc = JsonDocument.Parse(syncMsg!);
+        Assert.Equal(0, doc.RootElement.GetProperty("payload").GetProperty("registrations").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task NoContainerRegistryConfigured_NoSyncRegistrationsSent()
+    {
+        var socket = new FakeWebSocket();
+        var helloJson = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "bare-agent" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(helloJson));
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+
+        // Default controller (no router/containers): connect must not throw and
+        // must not send sync_registrations.
+        await _controller.HandleConnectionAsync(socket, CancellationToken.None);
+
+        Assert.DoesNotContain(socket.SentMessages, m => m.Contains("sync_registrations"));
+        Assert.Contains(socket.SentMessages, m => m.Contains("\"type\":\"hello\""));
     }
 
     public void Dispose()

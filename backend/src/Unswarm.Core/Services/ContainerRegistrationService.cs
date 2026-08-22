@@ -106,10 +106,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         if (container.RuntimeKind == RuntimeKind.Script)
         {
-            return await StartAndDiscoverScriptAsync(container, ct).ConfigureAwait(false);
+            var scriptResult = await StartAndDiscoverScriptAsync(container, ct).ConfigureAwait(false);
+            await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
+            return scriptResult;
         }
 
-        return await StartAndDiscoverAsync(container, ct).ConfigureAwait(false);
+        var containerResult = await StartAndDiscoverAsync(container, ct).ConfigureAwait(false);
+        await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
+        return containerResult;
     }
 
     /// <summary>
@@ -217,6 +221,9 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 // LastDiscoveredAt intentionally untouched: it records the last model
                 // discovery, not the last start.
             }, ct).ConfigureAwait(false);
+
+            // RuntimeContainerId may have changed — refresh the agent's gate mapping.
+            await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
 
             return new RegisteredRuntimeWithModels
             {
@@ -412,6 +419,9 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         await _registry.DeleteAsync(id, ct).ConfigureAwait(false);
         _logger.LogInformation("Deleted registered container {Id}", id);
+
+        // Snapshot no longer contains the deleted runtime — refresh the agent's gate.
+        await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
     }
 
     public async Task<RegisteredRuntime?> UpdateCanRunAlongWithAsync(string id, IReadOnlyList<string> canRunAlongWith, CancellationToken ct = default)
@@ -538,6 +548,9 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             {
                 RuntimeContainerId = live.Id
             }, ct).ConfigureAwait(false);
+
+            // The agent's gate maps container ids too — keep it in sync.
+            await PushRegistrationSyncAsync(runtime.Agent, ct).ConfigureAwait(false);
         }
 
         return live.Id;
@@ -554,6 +567,39 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var isHost = string.IsNullOrWhiteSpace(container.Agent)
             || string.Equals(container.Agent, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
         return _router.GetController(isHost ? ExecutionTarget.HostId : ExecutionTarget.ForAgent(container.Agent!).Id);
+    }
+
+    /// <summary>
+    /// Pushes a full sync_registrations snapshot of this agent's registered
+    /// runtimes to the remote agent so its registered-runtime gate stays current
+    /// after create/update/delete. Best-effort and fail-safe: host targets,
+    /// disconnected agents, missing controllers, and send failures are all
+    /// skipped silently — the agent re-syncs on its next connect.
+    /// </summary>
+    private async Task PushRegistrationSyncAsync(string? agent, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(agent)
+                || string.Equals(agent.Trim(), ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            if (_router.GetController(ExecutionTarget.ForAgent(agent).Id) is not RemoteAgentDockerController remote)
+                return;
+
+            var all = await _registry.ListAllAsync(ct).ConfigureAwait(false);
+            var entries = all
+                .Where(r => string.Equals(r.Agent?.Trim(), agent.Trim(), StringComparison.OrdinalIgnoreCase))
+                .Select(r => new AgentRuntimeRegistration(r.Id, r.Image, r.RuntimeContainerId))
+                .ToList();
+
+            await remote.SendRegistrationSyncAsync(entries, ct).ConfigureAwait(false);
+            _logger.LogDebug("Pushed {Count} registration entries to agent {Agent}", entries.Count, agent);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to push registration sync to agent {Agent}; will re-sync on next connect", agent);
+        }
     }
 
     private async Task<RegisteredRuntimeWithModels> StartAndDiscoverAsync(RegisteredRuntime container, CancellationToken ct)

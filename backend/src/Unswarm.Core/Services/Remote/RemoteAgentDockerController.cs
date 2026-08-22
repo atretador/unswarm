@@ -44,6 +44,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
     public const string CommandType = "command";
     public const string CommandResultType = "command_result";
+    public const string SyncRegistrationsType = "sync_registrations";
     public const int DefaultContainerPort = 8080;
 
     /// <summary>
@@ -70,6 +71,48 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
     /// <summary>Number of commands awaiting a result (test/observability aid).</summary>
     public int PendingCommandCount => _pending.Count;
+
+    /// <summary>
+    /// Sends a full snapshot of this agent's registered runtime set to the agent
+    /// via a "sync_registrations" message. The agent gates container lifecycle
+    /// commands against this set (registeredRuntimeId → container name/id), so it
+    /// must be pushed on connect and whenever registrations change.
+    /// Wire contract (see agent/internal/protocol/envelope.go SyncRegistrationsPayload):
+    ///   { "type": "sync_registrations", "payload": { "registrations": [
+    ///       { "registeredRuntimeId": "...", "containerName": "...", "containerId": "..." } ] } }
+    /// Returns false when the agent is not connected or the send fails — callers
+    /// skip silently; the next connect re-syncs.
+    /// </summary>
+    public async Task<bool> SendRegistrationSyncAsync(IReadOnlyList<AgentRuntimeRegistration> registrations, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            registrations = registrations.Select(r => new
+            {
+                registeredRuntimeId = r.RegisteredRuntimeId,
+                containerName = r.ContainerName,
+                containerId = r.ContainerId
+            })
+        }, JsonOptions);
+
+        var message = new AgentMessage
+        {
+            Type = SyncRegistrationsType,
+            Agent = _agentName,
+            Payload = payload
+        };
+
+        try
+        {
+            return await _agentRegistry.SendAsync(_agentName, message, ct).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // Fail-safe: a broken/half-open socket must never break registration
+            // flows. The agent re-syncs on its next connect.
+            return false;
+        }
+    }
 
     /// <summary>
     /// Routes an incoming agent message to its pending command TCS. Call this from the
@@ -577,6 +620,15 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         _ => ContainerStatus.Error
     };
 }
+
+/// <summary>
+/// One entry of a sync_registrations snapshot: a registered runtime and the
+/// container it owns on the target agent.
+/// </summary>
+public sealed record AgentRuntimeRegistration(
+    string RegisteredRuntimeId,
+    string? ContainerName,
+    string? ContainerId);
 
 /// <summary>
 /// Lightweight descriptor for a launcher script on a remote agent.
