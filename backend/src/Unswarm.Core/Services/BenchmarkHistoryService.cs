@@ -28,7 +28,8 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
         string? promptId = null,
         string? promptName = null,
         int? promptVersion = null,
-        string? response = null)
+        string? response = null,
+        string? reasoning = null)
     {
         await using var db = _dbFactory();
         var entity = new BenchmarkHistoryEntity
@@ -45,7 +46,8 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
             PromptId = promptId,
             PromptName = promptName,
             PromptVersion = promptVersion,
-            Response = response
+            Response = response,
+            Reasoning = reasoning
         };
         db.Benchmarks.Add(entity);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -96,6 +98,7 @@ public sealed class BenchmarkHistoryService : IBenchmarkHistory
         PromptId = e.PromptId,
         PromptName = e.PromptName,
         PromptVersion = e.PromptVersion,
-        Response = e.Response
+        Response = e.Response,
+        Reasoning = e.Reasoning
     };
 }

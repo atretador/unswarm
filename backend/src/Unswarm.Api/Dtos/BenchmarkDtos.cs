@@ -26,6 +26,9 @@ public sealed class BenchmarkResponse
     /// <summary>LLM response text (truncated); null when unavailable.</summary>
     public string? Response { get; set; }
 
+    /// <summary>Model reasoning/thinking text; null when unavailable.</summary>
+    public string? Reasoning { get; set; }
+
     public static BenchmarkResponse FromEntry(BenchmarkHistoryEntry e) => new()
     {
         Id = e.Id,
@@ -41,6 +44,7 @@ public sealed class BenchmarkResponse
         PromptId = e.PromptId,
         PromptName = e.PromptName,
         PromptVersion = e.PromptVersion,
-        Response = e.Response
+        Response = e.Response,
+        Reasoning = e.Reasoning
     };
 }

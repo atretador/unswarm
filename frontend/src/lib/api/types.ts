@@ -20,6 +20,8 @@ export interface BenchmarkResult {
   errorMessage?: string | null;
   /** Raw LLM output text. Null/absent when the run errored or text wasn't captured. */
   response?: string | null;
+  /** Model reasoning/thinking text. Null/absent when the model emitted none or it wasn't captured. */
+  reasoning?: string | null;
 }
 
 /**

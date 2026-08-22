@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Benchmarks from "../features/benchmarks";
+import type { BenchmarkResult } from "../lib/api/types";
 
 beforeEach(() => {
   setMockLatency(0);
@@ -790,5 +791,130 @@ describe("Benchmarks", () => {
     await waitFor(() => {
       expect(screen.getByRole("dialog", { name: /benchmark results$/i })).toBeInTheDocument();
     });
+  });
+
+  // ─── Run results modal: reasoning + output sections ─────────────
+
+  function makeResult(overrides: Partial<BenchmarkResult> = {}): BenchmarkResult {
+    return {
+      id: "bx",
+      modelId: "9",
+      modelName: "thinker-8b",
+      prompt: "Explain the scheduling strategy.",
+      promptId: null,
+      promptName: null,
+      promptVersion: null,
+      tokensPerSec: 42,
+      latencyMs: 100,
+      tokensGenerated: 256,
+      timestamp: new Date().toISOString(),
+      status: "completed",
+      errorMessage: null,
+      ...overrides,
+    };
+  }
+
+  async function openRunModal(result: BenchmarkResult) {
+    const user = userEvent.setup();
+    vi.spyOn(mockClient, "listBenchmarks").mockResolvedValue([result]);
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    const resultsBtn = await screen.findByRole("button", {
+      name: `Results for ${result.modelName} run`,
+    });
+    await user.click(resultsBtn);
+
+    const dialog = await screen.findByRole("dialog", { name: /run details/i });
+    return { user, dialog };
+  }
+
+  it("reasoning-only entry shows the Thinking section without a false empty state", async () => {
+    const { dialog } = await openRunModal(
+      makeResult({ reasoning: "Step one: check the queue depth before sizing the batch." }),
+    );
+
+    // Thinking header is present, Output is not
+    expect(within(dialog).getByText("Thinking")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Output")).not.toBeInTheDocument();
+
+    // Reasoning text exists but is hidden while collapsed (collapsed by default)
+    expect(
+      within(dialog).queryByText(/Step one: check the queue depth/),
+    ).not.toBeInTheDocument();
+
+    // No false "No response captured" — reasoning counts as content
+    expect(within(dialog).queryByText("No response captured")).not.toBeInTheDocument();
+  });
+
+  it("entry with both reasoning and response shows both sections", async () => {
+    const { dialog } = await openRunModal(
+      makeResult({
+        reasoning: "Compare the two schedulers on tail latency first.",
+        response: "The scheduler drains the active slot before swapping weights.",
+      }),
+    );
+
+    expect(within(dialog).getByText("Thinking")).toBeInTheDocument();
+    expect(within(dialog).getByText("Output")).toBeInTheDocument();
+
+    // Output is expanded by default; Thinking is collapsed by default
+    expect(
+      within(dialog).getByText(/drains the active slot before swapping weights/),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText(/Compare the two schedulers on tail latency/),
+    ).not.toBeInTheDocument();
+
+    // Per-section copy affordances are discoverable
+    expect(within(dialog).getByRole("button", { name: "Copy output to clipboard" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Copy thinking to clipboard" })).toBeInTheDocument();
+  });
+
+  it("entry with neither reasoning nor response shows No response captured", async () => {
+    const { dialog } = await openRunModal(makeResult());
+
+    expect(within(dialog).getByText("No response captured")).toBeInTheDocument();
+    expect(within(dialog).queryByText("Thinking")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Output")).not.toBeInTheDocument();
+  });
+
+  it("thinking and output sections toggle via aria-expanded headers", async () => {
+    const { user, dialog } = await openRunModal(
+      makeResult({
+        reasoning: "Reasoning trace that should appear when expanded.",
+        response: "Visible output text.",
+      }),
+    );
+
+    const thinkingToggle = within(dialog).getByRole("button", { name: "Thinking" });
+    expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Expand thinking → reasoning becomes visible
+    await user.click(thinkingToggle);
+    expect(thinkingToggle).toHaveAttribute("aria-expanded", "true");
+    expect(
+      within(dialog).getByText(/Reasoning trace that should appear/),
+    ).toBeInTheDocument();
+
+    // Collapse again → hidden
+    await user.click(thinkingToggle);
+    expect(thinkingToggle).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(dialog).queryByText(/Reasoning trace that should appear/),
+    ).not.toBeInTheDocument();
+
+    // Output starts expanded and can be collapsed too
+    const outputToggle = within(dialog).getByRole("button", { name: "Output" });
+    expect(outputToggle).toHaveAttribute("aria-expanded", "true");
+    expect(within(dialog).getByText(/Visible output text/)).toBeInTheDocument();
+
+    await user.click(outputToggle);
+    expect(outputToggle).toHaveAttribute("aria-expanded", "false");
+    expect(within(dialog).queryByText(/Visible output text/)).not.toBeInTheDocument();
   });
 });

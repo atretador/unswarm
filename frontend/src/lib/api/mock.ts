@@ -109,6 +109,8 @@ const BENCHMARKS: BenchmarkResult[] = [
     timestamp: new Date(Date.now() - 2 * 60_000).toISOString(),
     status: "completed",
     errorMessage: null,
+    reasoning:
+      "The user wants a long-form piece, so I should prioritize structure over brevity: intro framing, three sections with concrete examples, and a short conclusion. KV sizing math first (context length × bytes per token), then batch trade-offs. Keep each section under ~150 words so the total lands near 400.",
   },
   {
     id: "b7",
@@ -154,6 +156,8 @@ const BENCHMARKS: BenchmarkResult[] = [
     timestamp: new Date(Date.now() - 6 * 3600_000).toISOString(),
     status: "completed",
     errorMessage: null,
+    reasoning:
+      "Two sentences max. The key technical differences are vocabulary size (128k vs 256k) and how each handles byte fallback — lead with that, skip training-data details.",
   },
   {
     id: "b4",

@@ -37,15 +37,16 @@ public interface IPromptStore
 
     /// <summary>
     /// Creates a prompt. When <paramref name="maxTokens"/> is null the default cap
-    /// (<see cref="BenchmarkDefaults.MaxTokens"/>) is used; otherwise it is clamped
-    /// to the sane range (16–32768).
+    /// (<see cref="BenchmarkDefaults.MaxTokens"/>) is used; otherwise it is floored
+    /// at <see cref="BenchmarkDefaults.MinPromptMaxTokens"/> (no upper ceiling).
     /// </summary>
     Task<PromptEntry> CreateAsync(string name, string text, int? maxTokens = null, CancellationToken ct = default);
 
     /// <summary>
     /// Updates a prompt's name and text. Returns the updated entry, or null if the id
     /// does not exist (callers should treat null as 404). When <paramref name="maxTokens"/>
-    /// is null the existing cap is kept; otherwise it is clamped to 16–32768.
+    /// is null the existing cap is kept; otherwise it is floored at
+    /// <see cref="BenchmarkDefaults.MinPromptMaxTokens"/> (no upper ceiling).
     /// </summary>
     Task<PromptEntry?> UpdateAsync(string id, string name, string text, int? maxTokens = null, CancellationToken ct = default);
 

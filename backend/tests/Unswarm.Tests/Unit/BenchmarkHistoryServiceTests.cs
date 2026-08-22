@@ -74,6 +74,26 @@ public sealed class BenchmarkHistoryServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AddAsync_PersistsResponseAndReasoning()
+    {
+        await SeedModel("model-1");
+        var service = CreateService();
+
+        var entry = await service.AddAsync(
+            "model-1", "p", 1, 1, 1, "completed", null,
+            response: "answer", reasoning: "thinking text");
+
+        Assert.Equal("answer", entry.Response);
+        Assert.Equal("thinking text", entry.Reasoning);
+
+        // Round-trips through the DB read path too.
+        var latest = await service.GetLatestForModelAsync("model-1");
+        Assert.NotNull(latest);
+        Assert.Equal("answer", latest!.Response);
+        Assert.Equal("thinking text", latest.Reasoning);
+    }
+
+    [Fact]
     public async Task ListAsync_NewestFirst_RespectsMaxCount()
     {
         await SeedModel("model-1");

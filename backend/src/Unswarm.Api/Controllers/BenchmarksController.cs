@@ -144,9 +144,11 @@ public sealed class BenchmarksController : ControllerBase
                 ? tokensGenerated / (elapsedMs / 1000.0)
                 : 0;
 
-        // Capture the model's answer text for history. Best-effort: null on any
-        // read/parse failure, never throws.
-        var responseText = await BenchmarkDefaults.ExtractResponseContentAsync(response.Body, ct).ConfigureAwait(false);
+        // Capture the model's answer text AND reasoning text for history.
+        // Best-effort: nulls on any read/parse failure, never throws. Thinking
+        // models (e.g. Qwen3.x) put all generated text in reasoning_content, so
+        // both parts must be captured to avoid empty history rows.
+        var responseParts = await BenchmarkDefaults.ExtractResponsePartsAsync(response.Body, ct).ConfigureAwait(false);
 
         var entry = await _history.AddAsync(
             model.Id,
@@ -160,7 +162,8 @@ public sealed class BenchmarksController : ControllerBase
             promptId,
             promptName,
             promptVersion,
-            responseText).ConfigureAwait(false);
+            responseParts.Content,
+            responseParts.Reasoning).ConfigureAwait(false);
 
         var responseItem = BenchmarkResponse.FromEntry(entry);
         responseItem.ModelName = model.Name;

@@ -35,8 +35,8 @@ public sealed class PromptUpsertRequest
 
     /// <summary>
     /// Optional benchmark generation cap. Null on create → default (256);
-    /// null on update → keep existing. When set, must be within
-    /// [<see cref="BenchmarkDefaults.MinPromptMaxTokens"/>, <see cref="BenchmarkDefaults.MaxPromptMaxTokens"/>].
+    /// null on update → keep existing. When set, must be a positive number
+    /// (no upper ceiling — the cap is the user's call on their infrastructure).
     /// </summary>
     public int? MaxTokens { get; set; }
 }

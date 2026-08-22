@@ -16,17 +16,16 @@ public static class BenchmarkDefaults
 {
     public const int MaxTokens = 256;
 
-    /// <summary>Sane bounds for per-prompt generation caps.</summary>
-    public const int MinPromptMaxTokens = 16;
-    public const int MaxPromptMaxTokens = 32768;
+    /// <summary>Floor for per-prompt generation caps. No ceiling — the cap is the user's call.</summary>
+    public const int MinPromptMaxTokens = 1;
 
     /// <summary>
     /// Normalizes an optional per-prompt max-token cap: null → default cap,
-    /// otherwise clamped into [<see cref="MinPromptMaxTokens"/>, <see cref="MaxPromptMaxTokens"/>].
+    /// otherwise floored at <see cref="MinPromptMaxTokens"/> (no upper bound).
     /// </summary>
     public static int NormalizeMaxTokens(int? maxTokens) => maxTokens is null
         ? MaxTokens
-        : Math.Clamp(maxTokens.Value, MinPromptMaxTokens, MaxPromptMaxTokens);
+        : Math.Max(MinPromptMaxTokens, maxTokens.Value);
 
     /// <summary>
     /// A LONGER, realistic instruction prompt so benchmarks measure real generation
@@ -67,38 +66,68 @@ public static class BenchmarkDefaults
     public const int MaxStoredResponseChars = 8192;
 
     /// <summary>
-    /// Drains a non-streaming OpenAI-compatible completion body and extracts
-    /// choices[0].message.content for persistence in benchmark history.
-    /// Never throws: any read/parse/shape failure yields null. The result is
-    /// truncated to <see cref="MaxStoredResponseChars"/> characters. The stream
+    /// Both captured texts from a non-streaming completion body. Either may be
+    /// null: thinking models (e.g. Qwen3.x on llama.cpp) put ALL generated text
+    /// in <c>message.reasoning_content</c> with <c>content</c> == "" until
+    /// reasoning finishes, so both fields must be captured independently.
+    /// </summary>
+    public sealed record ResponseParts(string? Content, string? Reasoning);
+
+    /// <summary>
+    /// Drains a non-streaming OpenAI-compatible completion body and extracts BOTH
+    /// choices[0].message.content and choices[0].message.reasoning_content for
+    /// persistence in benchmark history.
+    /// Never throws: any read/parse/shape failure yields (null, null). Each field
+    /// is truncated to <see cref="MaxStoredResponseChars"/> characters. The stream
     /// itself is not disposed here — ownership stays with the response object
     /// (tap/tunnel streams manage their own lifetime).
     /// </summary>
-    public static async Task<string?> ExtractResponseContentAsync(Stream? body, CancellationToken ct = default)
+    public static async Task<ResponseParts> ExtractResponsePartsAsync(Stream? body, CancellationToken ct = default)
     {
-        if (body is null) return null;
+        if (body is null) return new ResponseParts(null, null);
         try
         {
             using var buffered = new MemoryStream();
             await body.CopyToAsync(buffered, ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(System.Text.Encoding.UTF8.GetString(buffered.ToArray()));
-            var content = doc.RootElement
+            var message = doc.RootElement
                 .GetProperty("choices")
                 .EnumerateArray()
                 .FirstOrDefault()
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString();
-            if (string.IsNullOrEmpty(content)) return null;
-            return content.Length <= MaxStoredResponseChars
-                ? content
-                : content[..MaxStoredResponseChars];
+                .GetProperty("message");
+
+            static string? ReadTruncated(JsonElement element, string propertyName)
+            {
+                if (element.ValueKind != JsonValueKind.Object ||
+                    !element.TryGetProperty(propertyName, out var value) ||
+                    value.ValueKind != JsonValueKind.String)
+                {
+                    return null;
+                }
+                var text = value.GetString();
+                if (string.IsNullOrEmpty(text)) return null;
+                return text.Length <= MaxStoredResponseChars
+                    ? text
+                    : text[..MaxStoredResponseChars];
+            }
+
+            return new ResponseParts(
+                Content: ReadTruncated(message, "content"),
+                Reasoning: ReadTruncated(message, "reasoning_content"));
         }
         catch
         {
-            return null;
+            return new ResponseParts(null, null);
         }
     }
+
+    /// <summary>
+    /// Legacy single-value extraction; delegates to <see cref="ExtractResponsePartsAsync"/>
+    /// and returns only the content part. New call sites should use the parts method so
+    /// reasoning text from thinking models is not lost.
+    /// </summary>
+    public static async Task<string?> ExtractResponseContentAsync(Stream? body, CancellationToken ct = default)
+        => (await ExtractResponsePartsAsync(body, ct).ConfigureAwait(false)).Content;
 }
 
 /// <summary>
@@ -202,7 +231,12 @@ public sealed class AutoBenchmarkService
                     : 0;
 
             // CancellationToken.None: the history row must land even if the caller's
-            // token was cancelled mid-run.
+            // token was cancelled mid-run. The stream is drained exactly once and
+            // BOTH content and reasoning are captured (thinking models emit all
+            // generated text via reasoning_content).
+            var parts = await BenchmarkDefaults
+                .ExtractResponsePartsAsync(response.Body, CancellationToken.None)
+                .ConfigureAwait(false);
             await _history.AddAsync(
                 model.Id,
                 prompt,
@@ -215,8 +249,8 @@ public sealed class AutoBenchmarkService
                 promptId,
                 promptName,
                 promptVersion,
-                await BenchmarkDefaults.ExtractResponseContentAsync(response.Body, CancellationToken.None)
-                    .ConfigureAwait(false)).ConfigureAwait(false);
+                parts.Content,
+                parts.Reasoning).ConfigureAwait(false);
 
             LogInfo($"Auto-benchmark completed for {model.Id}: {tokensPerSec:F1} tok/s");
         }

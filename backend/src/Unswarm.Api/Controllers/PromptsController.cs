@@ -116,8 +116,11 @@ public sealed class PromptsController : ControllerBase
 
     private static bool IsValidMaxTokens(int? maxTokens, out string? error)
     {
-        error = maxTokens is null ? null :
-            $"maxTokens must be between {BenchmarkDefaults.MinPromptMaxTokens} and {BenchmarkDefaults.MaxPromptMaxTokens}";
+        // The generation cap is the user's call — it's their infrastructure.
+        // Only guard against non-positive values; no upper ceiling.
+        error = maxTokens is null || maxTokens > 0
+            ? null
+            : "maxTokens must be a positive number";
         return error is null;
     }
 }

@@ -45,6 +45,13 @@ public sealed class BenchmarkHistoryEntity
     /// sane cap. Null when the body could not be read/parsed or the run errored.
     /// </summary>
     public string? Response { get; set; }
+
+    /// <summary>
+    /// Captured model reasoning/thinking text (choices[0].message.reasoning_content),
+    /// truncated to the same sane cap as <see cref="Response"/>. Null when absent
+    /// (non-thinking models) or when the body could not be read/parsed.
+    /// </summary>
+    public string? Reasoning { get; set; }
 }
 
 public sealed class LogEntity

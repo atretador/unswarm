@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   BookOpen,
   Check,
+  ChevronDown,
+  ChevronRight,
   Copy,
   Eye,
   FileText,
@@ -210,7 +212,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     const text = draftText.trim();
     if (!name || !text) return;
     const parsed = Number.parseInt(draftMaxTokens, 10);
-    const maxTokens = Number.isFinite(parsed) ? Math.min(32768, Math.max(16, parsed)) : 256;
+    const maxTokens = Number.isFinite(parsed) && parsed > 0 ? parsed : 256;
     if (isCreating) {
       createMutation.mutate({ name, text, maxTokens });
     } else if (selectedId) {
@@ -481,15 +483,14 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                   <input
                     id="prompt-max-tokens"
                     type="number"
-                    min={16}
-                    max={32768}
+                    min={1}
                     step={1}
                     value={draftMaxTokens}
                     onChange={(e) => setDraftMaxTokens(e.target.value)}
                     className="h-9 w-36 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 font-mono text-sm tabular-nums text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
                   />
                   <p className="text-[10px] text-[var(--color-text-muted)]">
-                    Generation cap for runs using this prompt (16–32768)
+                    Generation cap for runs using this prompt (tokens)
                   </p>
                 </div>
                 <div className="flex flex-1 min-h-[160px] flex-col space-y-1.5">
@@ -685,23 +686,69 @@ function StatTile({ label, value }: { label: string; value: string }) {
   );
 }
 
+/** Section header that toggles a collapsible content block (aria-expanded pattern). */
+function CollapsibleSectionHeader({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1 py-0.5 -mx-1 text-left transition-colors hover:bg-[var(--color-bg-muted)]"
+    >
+      {open ? (
+        <ChevronDown className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+      ) : (
+        <ChevronRight className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+      )}
+      <span className="truncate text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+        {label}
+      </span>
+    </button>
+  );
+}
+
 function RunResultModal({ result, onClose }: { result: BenchmarkResult; onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"output" | "thinking" | null>(null);
+  // Thinking is collapsed by default — it's supporting context, not the answer.
+  const [showThinking, setShowThinking] = useState(false);
+  const [showOutput, setShowOutput] = useState(true);
   const isError = result.status === "error";
   const hasResponse = typeof result.response === "string" && result.response.length > 0;
+  const hasReasoning = typeof result.reasoning === "string" && result.reasoning.length > 0;
+  const hasAnyContent = hasResponse || hasReasoning;
 
-  const handleCopy = useCallback(() => {
-    if (!hasResponse) return;
+  const handleCopy = useCallback((text: string, key: "output" | "thinking") => {
     navigator.clipboard
-      .writeText(result.response as string)
+      .writeText(text)
       .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
+        setCopied(key);
+        window.setTimeout(() => setCopied(null), 1500);
       })
       .catch(() => {
         // Clipboard unavailable (permissions/insecure context) — nothing sensible to do.
       });
-  }, [hasResponse, result.response]);
+  }, []);
+
+  const copyButton = (key: "output" | "thinking", text: string, label: string) => (
+    <button
+      type="button"
+      onClick={() => handleCopy(text, key)}
+      className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
+      aria-label={label}
+    >
+      {copied === key ? (
+        <>
+          <Check className="size-3" />
+          Copied
+        </>
+      ) : (
+        <>
+          <Copy className="size-3" />
+          Copy
+        </>
+      )}
+    </button>
+  );
 
   return (
     <Dialog
@@ -745,51 +792,69 @@ function RunResultModal({ result, onClose }: { result: BenchmarkResult; onClose:
           </div>
         </div>
 
-        {/* Response / error */}
-        <div className="flex min-h-0 flex-col gap-1.5">
-          <div className="flex items-center justify-between gap-2">
+        {/* Error / thinking / output */}
+        {isError && result.errorMessage ? (
+          <div className="flex min-h-0 flex-col gap-1.5">
             <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
               Response
             </span>
-            {hasResponse && (
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
-                aria-label="Copy response to clipboard"
-              >
-                {copied ? (
-                  <>
-                    <Check className="size-3" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="size-3" />
-                    Copy
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-
-          {isError && result.errorMessage ? (
             <div className="flex items-start gap-1.5 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3 py-2.5">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--color-status-error)]" />
               <span className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--color-status-error)]">
                 {result.errorMessage}
               </span>
             </div>
-          ) : hasResponse ? (
-            <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-heading)]">
-              {result.response}
-            </pre>
-          ) : (
+          </div>
+        ) : !hasAnyContent ? (
+          <div className="flex min-h-0 flex-col gap-1.5">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+              Response
+            </span>
             <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
               No response captured
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <>
+            {/* Thinking — collapsed by default, only when reasoning was captured */}
+            {hasReasoning && (
+              <section className="flex min-h-0 flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <CollapsibleSectionHeader
+                    label="Thinking"
+                    open={showThinking}
+                    onToggle={() => setShowThinking((v) => !v)}
+                  />
+                  {copyButton("thinking", result.reasoning as string, "Copy thinking to clipboard")}
+                </div>
+                {showThinking && (
+                  <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-muted)]">
+                    {result.reasoning}
+                  </pre>
+                )}
+              </section>
+            )}
+
+            {/* Output — expanded by default, only when response text exists */}
+            {hasResponse && (
+              <section className="flex min-h-0 flex-col gap-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <CollapsibleSectionHeader
+                    label="Output"
+                    open={showOutput}
+                    onToggle={() => setShowOutput((v) => !v)}
+                  />
+                  {copyButton("output", result.response as string, "Copy output to clipboard")}
+                </div>
+                {showOutput && (
+                  <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-heading)]">
+                    {result.response}
+                  </pre>
+                )}
+              </section>
+            )}
+          </>
+        )}
       </div>
     </Dialog>
   );

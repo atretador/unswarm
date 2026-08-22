@@ -26,7 +26,8 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
         string? promptId = null,
         string? promptName = null,
         int? promptVersion = null,
-        string? response = null)
+        string? response = null,
+        string? reasoning = null)
     {
         var entry = new BenchmarkHistoryEntry
         {
@@ -42,7 +43,8 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
             PromptId = promptId,
             PromptName = promptName,
             PromptVersion = promptVersion,
-            Response = response
+            Response = response,
+            Reasoning = reasoning
         };
         lock (_entries) _entries.Add(entry);
         AddedModelIds.Add(modelId);
