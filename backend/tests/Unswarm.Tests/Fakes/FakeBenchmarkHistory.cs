@@ -25,7 +25,8 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
         CancellationToken ct = default,
         string? promptId = null,
         string? promptName = null,
-        int? promptVersion = null)
+        int? promptVersion = null,
+        string? response = null)
     {
         var entry = new BenchmarkHistoryEntry
         {
@@ -40,7 +41,8 @@ public sealed class FakeBenchmarkHistory : IBenchmarkHistory
             ErrorMessage = errorMessage,
             PromptId = promptId,
             PromptName = promptName,
-            PromptVersion = promptVersion
+            PromptVersion = promptVersion,
+            Response = response
         };
         lock (_entries) _entries.Add(entry);
         AddedModelIds.Add(modelId);

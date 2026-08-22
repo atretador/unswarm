@@ -42,6 +42,8 @@ public sealed class SettingsStore : ISettingsStore
         entity.MaxQueueDepth = settings.MaxQueueDepth;
         entity.MaxConcurrentTargets = settings.MaxConcurrentTargets;
         entity.ParallelSlotSkipLimit = settings.ParallelSlotSkipLimit;
+        entity.EnableParallelSlotSkip = settings.EnableParallelSlotSkip;
+        entity.QueueStepsTillReset = settings.QueueStepsTillReset;
 
         if (entity.Id == "default" && db.Entry(entity).State == EntityState.Detached)
         {

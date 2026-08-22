@@ -368,10 +368,12 @@ public sealed class SchedulerWorker
 
                 var requestModel = request.ModelName;
                 var modelMatches = slot.ResidentModel == requestModel;
+                // Live settings: skip toggles must take effect without a restart.
+                var liveSettings = await GetCurrentSettingsAsync(stoppingToken).ConfigureAwait(false);
                 // +1 accounts for the sequential path consuming one slot;
                 // with MaxConcurrency=1 this is always false → fully sequential.
-                var skipsRemaining = _settings.EnableParallelSlotSkip
-                    ? _settings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed)
+                var skipsRemaining = liveSettings.EnableParallelSlotSkip
+                    ? liveSettings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed)
                     : 0;
 
                 var goParallel = false;
@@ -447,7 +449,7 @@ public sealed class SchedulerWorker
                     // it resets only after QueueStepsTillReset items have been
                     // processed sequentially.
                     var steps = Interlocked.Increment(ref slot.SequentialStepsProcessed);
-                    if (steps >= _settings.QueueStepsTillReset)
+                    if (steps >= liveSettings.QueueStepsTillReset)
                     {
                         Interlocked.Exchange(ref slot.SkipsUsed, 0);
                         Interlocked.Exchange(ref slot.SequentialStepsProcessed, 0);
@@ -1036,6 +1038,11 @@ public sealed class SchedulerWorker
     /// </summary>
     private async Task StopIncompatibleContainersAsync(TargetSlot slot, string targetModel, RegisteredRuntime? targetContainer, CancellationToken ct)
     {
+        // Live-state merge first: containers started outside the scheduler
+        // (registration auto-start, manual start, backend restart survivors)
+        // must be visible here or they will never be stopped.
+        await ReconcileRunningContainersAsync(slot, ct).ConfigureAwait(false);
+
         // Second-chance resolution: the primary model→registry mapping may have missed,
         // but the request's model name can still identify the runtime (legacy containers
         // are named after their model).
@@ -1224,6 +1231,61 @@ public sealed class SchedulerWorker
     }
 
     /// <summary>
+    /// Merges live container state on this target into <see cref="TargetSlot.RunningContainers"/>.
+    /// The slot only tracks containers the scheduler itself started; containers started via
+    /// registration auto-start, manually, or surviving a backend restart are otherwise
+    /// invisible — silently breaking both coexistence checks and incompatible-container stops.
+    /// ADDITIVE ONLY: never removes entries (a transient empty listing must not make the
+    /// scheduler forget containers it started).
+    /// </summary>
+    private async Task ReconcileRunningContainersAsync(TargetSlot slot, CancellationToken ct)
+    {
+        try
+        {
+            var controller = _router.GetController(slot.TargetId);
+            var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
+
+            IReadOnlyList<RegisteredRuntime> allRuntimes =
+                _containerRegistry is not null
+                    ? await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false)
+                    : Array.Empty<RegisteredRuntime>();
+
+            foreach (var c in containers.Where(c => c.Status == ContainerStatus.Running))
+            {
+                // Resolve the registered runtime: docker-label path first,
+                // then registry RuntimeContainerId match.
+                var regId = c.RegisteredRuntimeId;
+                if (regId is null)
+                    regId = allRuntimes.FirstOrDefault(r =>
+                        r.RuntimeContainerId is not null &&
+                        string.Equals(r.RuntimeContainerId, c.Id, StringComparison.OrdinalIgnoreCase))?.Id;
+
+                var key = regId ?? $"legacy:{c.Id}";
+                if (slot.RunningContainers.ContainsKey(key))
+                    continue;
+
+                slot.RunningContainers[key] = new RunningContainerInfo
+                {
+                    Key = key,
+                    RegisteredRuntimeId = regId,
+                    ContainerName = c.ModelName,
+                    ContainerId = c.Id
+                };
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Reconciled externally-started container {c.ModelName} ({c.Id[..Math.Min(12, c.Id.Length)]}) into target {slot.TargetId}");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to reconcile running containers on {Target}", slot.TargetId);
+        }
+    }
+
+    /// <summary>
     /// Coexistence-aware parallel eligibility: returns true when the incoming
     /// request's model resolves to a registered runtime that may run alongside
     /// EVERY container currently tracked on the slot (symmetric policy check,
@@ -1233,7 +1295,14 @@ public sealed class SchedulerWorker
     /// </summary>
     private async Task<bool> CanRunAlongsideRunningAsync(TargetSlot slot, string modelName, CancellationToken ct)
     {
-        if (_containerRegistry is null || slot.RunningContainers.Count == 0)
+        if (_containerRegistry is null)
+            return false;
+
+        // Live-state merge first: externally-started / restart-surviving
+        // containers must participate in the coexistence decision.
+        await ReconcileRunningContainersAsync(slot, ct).ConfigureAwait(false);
+
+        if (slot.RunningContainers.Count == 0)
             return false;
 
         var target = await ResolveTargetRuntimeByModelNameAsync(modelName, ct).ConfigureAwait(false);
