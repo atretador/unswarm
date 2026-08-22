@@ -1,6 +1,7 @@
 <div align="center">
   <img src="assets/unswarm-icon.svg" alt="Unswarm" width="128" />
   <h1>Unswarm</h1>
+  <p><a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a></p>
 </div>
 
 A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your fleet — all from a single dashboard.
@@ -131,16 +132,62 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 
 | Endpoint | Description |
 |----------|-------------|
+| **Agents** | |
 | `GET /api/agents` | List connected agents |
+| `GET /api/agents/{name}/containers` | List containers on a specific agent |
+| `GET /api/agents/{name}/scripts` | List scripts on a specific agent |
+| `GET /api/agents/{name}/scripts/available` | List available scripts on a specific agent |
+| **Containers** | |
 | `GET /api/containers` | List registered containers/runtimes |
+| `POST /api/containers/register` | Register a new container/runtime |
+| `GET /api/containers/registered` | List all registered runtimes |
+| `GET /api/containers/registered/{id}` | Get a specific registered runtime |
+| `DELETE /api/containers/registered/{id}` | Delete a registered runtime |
 | `POST /api/containers/registered/{id}/start` | Start a registered runtime |
 | `POST /api/containers/registered/{id}/stop` | Stop a registered runtime |
+| `POST /api/containers/registered/{id}/restart` | Restart a registered runtime |
+| `POST /api/containers/registered/{id}/rediscover` | Rediscover models from a runtime |
+| `PUT /api/containers/registered/{id}/concurrency` | Update co-location settings for a runtime |
+| `POST /api/containers/concurrency` | Atomically toggle co-location between two runtimes |
+| `POST /api/containers/start` | Start a container |
+| `POST /api/containers/{id}/stop` | Stop a container |
+| `POST /api/containers/{id}/restart` | Restart a container |
+| **Models** | |
 | `GET /api/models` | List discovered models |
 | `POST /api/models` | Register a model |
-| `POST /v1/chat/completions` | OpenAI-compatible inference proxy |
-| `GET /api/queue` | Get inference queue status |
+| `DELETE /api/models/{id}` | Delete a model |
+| **Inference** | |
+| `GET /v1/models` | List models (OpenAI-compatible format) |
+| `POST /v1/chat/completions` | OpenAI-compatible chat completions proxy |
+| `POST /v1/completions` | OpenAI-compatible completions proxy |
+| `GET /api/queue/snapshot` | Get inference queue status |
+| **Benchmarks & Prompts** | |
 | `GET /api/benchmarks` | List benchmark history |
-| `POST /api/benchmarks/run` | Run a benchmark |
+| `POST /api/benchmarks` | Run a benchmark |
+| `GET /api/prompts` | List saved prompts |
+| `POST /api/prompts` | Create a prompt |
+| `GET /api/prompts/{id}` | Get a prompt |
+| `PUT /api/prompts/{id}` | Update a prompt (creates new version) |
+| `DELETE /api/prompts/{id}` | Delete a prompt |
+| `POST /api/prompts/{id}/default` | Set a prompt as the default benchmark prompt |
+| `GET /api/prompts/{id}/versions` | List prompt version history |
+| `POST /api/prompts/{id}/rollback` | Rollback to a previous prompt version |
+| **Auth & Users** | |
+| `POST /api/auth/login` | Log in |
+| `POST /api/auth/logout` | Log out |
+| `GET /api/auth/me` | Get current user |
+| `POST /api/auth/change-password` | Change password |
+| `GET /api/users` | List users |
+| `POST /api/users` | Create a user |
+| `DELETE /api/users/{id}` | Delete a user |
+| `POST /api/users/{id}/reset-password` | Reset a user's password |
+| **API Keys** | |
+| `GET /api/api-keys` | List API keys |
+| `POST /api/api-keys` | Create an API key |
+| `POST /api/api-keys/agent` | Create an agent API key |
+| `DELETE /api/api-keys/{id}` | Delete an API key |
+| `POST /api/api-keys/{id}/rotate` | Rotate an API key |
+| **System** | |
 | `GET /api/logs` | Query logs |
 | `GET /api/settings` | Get settings |
 | `PUT /api/settings` | Update settings |
@@ -275,7 +322,7 @@ daemon. See [deploy/README.md](deploy/README.md) for the systemd install
 unswarm/
 ├── agent/                  # Go agent daemon
 │   ├── cmd/agent/          #   Entry point
-│   └── internal/           #   Client, docker, dispatch, protocol, scripts, telemetry
+│   └── internal/           #   Backoff, client, config, docker, dispatch, protocol, runtimegate, scripts, telemetry
 ├── backend/                # .NET backend
 │   ├── src/
 │   │   ├── Unswarm.Api/    #   Controllers, middleware, background services
@@ -285,8 +332,8 @@ unswarm/
 └── frontend/               # React SPA
     └── src/
         ├── components/     #   Layout and UI primitives
-        ├── features/       #   Dashboard, models, fleet, benchmarks, queue, logs, settings
-        ├── lib/            #   API client, query config, theme
+        ├── features/       #   Dashboard, models, fleet, benchmarks, queue, logs, settings, auth, api-keys, profile
+        ├── lib/            #   API client, auth context, nav items, query config, theme
         └── __tests__/      #   Component tests
 ```
 
