@@ -189,6 +189,8 @@ export interface QueueItem {
   priority: number;
   tokensRequested: number;
   tokensGenerated: number;
+  promptTokensPerSec: number;
+  generationTokensPerSec: number;
   elapsedMs: number;
   waitMs: number;
   createdAt: string;

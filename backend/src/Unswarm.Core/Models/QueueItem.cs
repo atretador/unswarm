@@ -10,6 +10,8 @@ public sealed record QueueItem
     public int Priority { get; init; }
     public int TokensRequested { get; init; }
     public int TokensGenerated { get; init; }
+    public double PromptTokensPerSec { get; init; }
+    public double GenerationTokensPerSec { get; init; }
     public long ElapsedMs { get; init; }
     public long WaitMs { get; init; }
     public DateTimeOffset CreatedAt { get; init; }

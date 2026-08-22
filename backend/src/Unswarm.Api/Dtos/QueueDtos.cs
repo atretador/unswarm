@@ -28,6 +28,8 @@ public sealed class QueueItemResponse
     public int Priority { get; set; }
     public int TokensRequested { get; set; }
     public int TokensGenerated { get; set; }
+    public double PromptTokensPerSec { get; set; }
+    public double GenerationTokensPerSec { get; set; }
     public long ElapsedMs { get; set; }
     public long WaitMs { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -43,6 +45,8 @@ public sealed class QueueItemResponse
         Priority = i.Priority,
         TokensRequested = i.TokensRequested,
         TokensGenerated = i.TokensGenerated,
+        PromptTokensPerSec = i.PromptTokensPerSec,
+        GenerationTokensPerSec = i.GenerationTokensPerSec,
         ElapsedMs = i.ElapsedMs,
         WaitMs = i.WaitMs,
         CreatedAt = i.CreatedAt,

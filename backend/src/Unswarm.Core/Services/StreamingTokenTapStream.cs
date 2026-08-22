@@ -25,6 +25,7 @@ internal sealed class StreamingTokenTapStream : Stream
     private int _deltaCount;
     private int _usageTokens;
     private double _serverTps;
+    private double _promptTps;
     private bool _disposed;
 
     public StreamingTokenTapStream(Stream inner, InferenceResponse response)
@@ -186,6 +187,16 @@ internal sealed class StreamingTokenTapStream : Stream
             {
                 _serverTps = rate;
             }
+
+            // 4. Check for timings.prompt_per_second (llama.cpp prompt processing speed)
+            if (root.TryGetProperty("timings", out var timings2)
+                && timings2.TryGetProperty("prompt_per_second", out var pps2)
+                && pps2.ValueKind == JsonValueKind.Number
+                && pps2.TryGetDouble(out var promptRate)
+                && promptRate > 0)
+            {
+                _promptTps = promptRate;
+            }
         }
         catch
         {
@@ -205,5 +216,6 @@ internal sealed class StreamingTokenTapStream : Stream
         // Prefer explicit usage count; fall back to delta counting
         _response.TokensGenerated = _usageTokens > 0 ? _usageTokens : _deltaCount;
         _response.ServerTokensPerSec = _serverTps;
+        _response.ServerPromptTokensPerSec = _promptTps;
     }
 }

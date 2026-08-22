@@ -296,13 +296,15 @@ public sealed class InferenceProxy : IInferenceProxy
 
                     var scriptTokens = TryParseCompletionTokens(rawScriptBody);
                     var scriptServerTps = TryParseServerTokensPerSec(rawScriptBody);
+                    var scriptPromptTps = TryParsePromptTokensPerSec(rawScriptBody);
                     return new InferenceResponse
                     {
                         StatusCode = 200,
                         ContentType = "application/json",
                         Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
                         TokensGenerated = scriptTokens,
-                        ServerTokensPerSec = scriptServerTps
+                        ServerTokensPerSec = scriptServerTps,
+                        ServerPromptTokensPerSec = scriptPromptTps
                     };
                 }
             }
@@ -413,6 +415,7 @@ public sealed class InferenceProxy : IInferenceProxy
 
             var tokens = TryParseCompletionTokens(rawBody);
             var serverTps = TryParseServerTokensPerSec(rawBody);
+            var promptTps = TryParsePromptTokensPerSec(rawBody);
 
             return new InferenceResponse
             {
@@ -420,7 +423,8 @@ public sealed class InferenceProxy : IInferenceProxy
                 ContentType = "application/json",
                 Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
                 TokensGenerated = tokens,
-                ServerTokensPerSec = serverTps
+                ServerTokensPerSec = serverTps,
+                ServerPromptTokensPerSec = promptTps
             };
         }
     }
@@ -486,6 +490,51 @@ public sealed class InferenceProxy : IInferenceProxy
         catch
         {
             // best-effort; 0 means fall back to stopwatch-derived value
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Best-effort extraction of the server-reported prompt processing throughput.
+    /// Returns the prompt tokens/sec when the server exposes timing data,
+    /// otherwise 0. Checks:
+    ///   1. llama.cpp OpenAI-compatible: root <c>timings</c> → <c>prompt_per_second</c>
+    ///   2. Ollama-style: root <c>prompt_eval_count</c> / <c>prompt_eval_duration</c> (ns)
+    /// </summary>
+    private static double TryParsePromptTokensPerSec(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            // 1. llama.cpp OpenAI-compatible: timings.prompt_per_second
+            if (root.TryGetProperty("timings", out var timings)
+                && timings.TryGetProperty("prompt_per_second", out var pps)
+                && pps.ValueKind == System.Text.Json.JsonValueKind.Number
+                && pps.TryGetDouble(out var rate)
+                && rate > 0)
+            {
+                return rate;
+            }
+
+            // 2. Ollama-style: prompt_eval_count / (prompt_eval_duration_ns / 1e9)
+            if (root.TryGetProperty("prompt_eval_count", out var promptCount)
+                && promptCount.ValueKind == System.Text.Json.JsonValueKind.Number
+                && root.TryGetProperty("prompt_eval_duration", out var promptDur)
+                && promptDur.ValueKind == System.Text.Json.JsonValueKind.Number
+                && promptDur.TryGetDouble(out var durNs)
+                && durNs > 0)
+            {
+                if (promptCount.TryGetDouble(out var count) && count > 0)
+                {
+                    return count / (durNs / 1_000_000_000.0);
+                }
+            }
+        }
+        catch
+        {
+            // best-effort
         }
         return 0;
     }
@@ -720,10 +769,12 @@ public sealed class InferenceProxy : IInferenceProxy
         var bodyStr = await response2.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var tokens = 0;
         var serverTps = 0.0;
+        var promptTps = 0.0;
         if (statusCode2 >= 200 && statusCode2 < 300)
         {
             tokens = TryParseCompletionTokens(bodyStr);
             serverTps = TryParseServerTokensPerSec(bodyStr);
+            promptTps = TryParsePromptTokensPerSec(bodyStr);
             if (tokens == 0)
                 _logger.LogWarning("Inference response for model {Model} on port {Port} returned no usage.completion_tokens; benchmark metrics will be n/a", request.ModelName, port);
         }
@@ -733,7 +784,8 @@ public sealed class InferenceProxy : IInferenceProxy
             ContentType = contentType2,
             Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
             TokensGenerated = tokens,
-            ServerTokensPerSec = serverTps
+            ServerTokensPerSec = serverTps,
+            ServerPromptTokensPerSec = promptTps
         };
     }
 }

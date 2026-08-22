@@ -100,6 +100,9 @@ public sealed class SchedulerWorker
         // "unswarm.queue.depth" gauge. No-op unless an OTel provider listens to the
         // "Unswarm" meter.
         _queueDepthRegistration = Telemetry.UnswarmMetrics.RegisterQueueDepthProvider(GetTotalQueueDepth);
+
+        // Expose queue depth to the stats tracker so the dashboard shows real values.
+        _statsTracker.SetQueueDepthProvider(GetTotalQueueDepth);
     }
 
     /// <summary>Total requests waiting across the global channel and all target channels.</summary>
@@ -465,6 +468,21 @@ public sealed class SchedulerWorker
         if (request.Tcs.Task.IsCompleted)
             return;
 
+        // Track this request as active for dashboard stats
+        _statsTracker.TrackActiveRequest(request.Id);
+        try
+        {
+            await ProcessRequestInnerAsync(slot, request, queueItem, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _statsTracker.UntrackActiveRequest(request.Id);
+        }
+    }
+
+    private async Task ProcessRequestInnerAsync(TargetSlot slot, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
+    {
+
         // Ensure correct model is running on this target
         if (slot.ResidentModel != request.ModelName)
         {
@@ -537,10 +555,15 @@ public sealed class SchedulerWorker
                 // Update the queue item with the final token count and timing.
                 var finalTokens = response.TokensGenerated;
                 var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
+                var genTps = response.ServerTokensPerSec > 0
+                    ? response.ServerTokensPerSec
+                    : (finalTokens > 0 && waitMs > 0 ? finalTokens * 1000.0 / waitMs : 0);
                 UpdateItem(queueItem with
                 {
                     Status = QueueItemStatus.Completed,
                     TokensGenerated = finalTokens,
+                    PromptTokensPerSec = response.ServerPromptTokensPerSec,
+                    GenerationTokensPerSec = genTps,
                     ElapsedMs = waitMs,
                     WaitMs = waitMs
                 });
@@ -549,10 +572,15 @@ public sealed class SchedulerWorker
             {
                 // Buffered (non-streaming) path: response body already consumed.
                 var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
+                var genTps2 = response.ServerTokensPerSec > 0
+                    ? response.ServerTokensPerSec
+                    : (response.TokensGenerated > 0 && waitMs > 0 ? response.TokensGenerated * 1000.0 / waitMs : 0);
                 UpdateItem(queueItem with
                 {
                     Status = QueueItemStatus.Completed,
                     TokensGenerated = response.TokensGenerated,
+                    PromptTokensPerSec = response.ServerPromptTokensPerSec,
+                    GenerationTokensPerSec = genTps2,
                     ElapsedMs = waitMs,
                     WaitMs = waitMs
                 });

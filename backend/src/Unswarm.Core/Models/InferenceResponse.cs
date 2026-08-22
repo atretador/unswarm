@@ -13,6 +13,7 @@ public sealed class InferenceResponse
     /// </summary>
     public int TokensGenerated { get; set; }
     public double ServerTokensPerSec { get; set; }
+    public double ServerPromptTokensPerSec { get; set; }
 
     /// <summary>
     /// When non-null, the scheduler must await this task before considering the

@@ -139,6 +139,16 @@ function TargetSection({
                     <span className="font-mono text-[var(--color-text-heading)] truncate">
                       {processing.modelAssigned ?? processing.modelRequested}
                     </span>
+                    {processing.generationTokensPerSec > 0 && (
+                      <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Token generation speed">
+                        {processing.generationTokensPerSec.toFixed(1)} tok/s
+                      </span>
+                    )}
+                    {processing.promptTokensPerSec > 0 && (
+                      <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Prompt processing speed">
+                        prompt {processing.promptTokensPerSec.toFixed(0)} tok/s
+                      </span>
+                    )}
                     {processing.tokensGenerated > 0 ? (
                       <span className="text-[var(--color-text-muted)] font-mono shrink-0">
                         {processing.tokensGenerated.toLocaleString()} /{" "}
