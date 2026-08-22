@@ -11,6 +11,7 @@ public sealed class StatsTracker : IStatsTracker
     private readonly List<double> _latencies = new();
     private long _totalRequests;
     private long _totalTokens;
+    private long _totalPromptTokensCached;
     private long _startTimeTicks;
     private int _switchCount;
     private double _lastSwitchMs;
@@ -53,11 +54,14 @@ public sealed class StatsTracker : IStatsTracker
         Interlocked.Increment(ref _totalRequests);
 
         int tokens = 0;
+        int cachedTokens = 0;
         if (request.Tcs.Task.IsCompletedSuccessfully)
         {
             tokens = request.Tcs.Task.Result.TokensGenerated;
+            cachedTokens = request.Tcs.Task.Result.PromptTokensCached;
         }
         Interlocked.Add(ref _totalTokens, tokens);
+        Interlocked.Add(ref _totalPromptTokensCached, cachedTokens);
 
         _recentCompletions.Enqueue((_clock.UtcNow, tokens));
         PruneRecentCompletions();
@@ -103,6 +107,7 @@ public sealed class StatsTracker : IStatsTracker
             ActiveRequests = _activeRequests.Count,
             AvgLatencyMs = _latencies.Count > 0 ? _latencies.Average() : 0,
             TotalTokensProcessed = Volatile.Read(ref _totalTokens),
+            TotalPromptTokensCached = Volatile.Read(ref _totalPromptTokensCached),
             UptimeSeconds = uptime,
             RequestsPerMinute = rpm,
             ErrorsLast24h = _recentErrors.Count,

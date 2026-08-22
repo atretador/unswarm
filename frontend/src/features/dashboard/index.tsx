@@ -354,10 +354,14 @@ function DashboardContent() {
 
       {/* Quick stats row */}
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.4 }}>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
           <Card padding="sm">
             <p className="text-[var(--color-text-muted)] mb-0.5">Active requests</p>
             <p className="font-mono font-medium text-[var(--color-text-heading)]">{stats.activeRequests}</p>
+          </Card>
+          <Card padding="sm">
+            <p className="text-[var(--color-text-muted)] mb-0.5">Cached prompt tokens</p>
+            <p className="font-mono font-medium text-[var(--color-text-heading)]">{formatTokens(stats.totalPromptTokensCached)}</p>
           </Card>
           <Card padding="sm">
             <p className="text-[var(--color-text-muted)] mb-0.5">Models loaded</p>

@@ -100,6 +100,7 @@ describe("Dashboard", () => {
         activeRequests: 0,
         avgLatencyMs: 50,
         totalTokensProcessed: 1000,
+        totalPromptTokensCached: 0,
         uptimeSeconds: 3600,
         modelsLoaded: 1,
         containersRunning: 1,

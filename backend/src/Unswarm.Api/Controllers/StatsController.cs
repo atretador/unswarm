@@ -36,6 +36,7 @@ public sealed class StatsController : ControllerBase
             ActiveRequests = summary.ActiveRequests,
             AvgLatencyMs = summary.AvgLatencyMs,
             TotalTokensProcessed = summary.TotalTokensProcessed,
+            TotalPromptTokensCached = summary.TotalPromptTokensCached,
             UptimeSeconds = summary.UptimeSeconds,
             ModelsLoaded = models.Count,
             ContainersRunning = containers.Count(c => c.Status == Core.Models.ContainerStatus.Running),

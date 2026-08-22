@@ -297,6 +297,7 @@ public sealed class InferenceProxy : IInferenceProxy
                     var scriptTokens = TryParseCompletionTokens(rawScriptBody);
                     var scriptServerTps = TryParseServerTokensPerSec(rawScriptBody);
                     var scriptPromptTps = TryParsePromptTokensPerSec(rawScriptBody);
+                    var scriptCachedTokens = TryParseCachedTokens(rawScriptBody);
                     return new InferenceResponse
                     {
                         StatusCode = 200,
@@ -304,7 +305,8 @@ public sealed class InferenceProxy : IInferenceProxy
                         Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
                         TokensGenerated = scriptTokens,
                         ServerTokensPerSec = scriptServerTps,
-                        ServerPromptTokensPerSec = scriptPromptTps
+                        ServerPromptTokensPerSec = scriptPromptTps,
+                        PromptTokensCached = scriptCachedTokens
                     };
                 }
             }
@@ -416,6 +418,7 @@ public sealed class InferenceProxy : IInferenceProxy
             var tokens = TryParseCompletionTokens(rawBody);
             var serverTps = TryParseServerTokensPerSec(rawBody);
             var promptTps = TryParsePromptTokensPerSec(rawBody);
+            var cachedTokens = TryParseCachedTokens(rawBody);
 
             return new InferenceResponse
             {
@@ -424,7 +427,8 @@ public sealed class InferenceProxy : IInferenceProxy
                 Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
                 TokensGenerated = tokens,
                 ServerTokensPerSec = serverTps,
-                ServerPromptTokensPerSec = promptTps
+                ServerPromptTokensPerSec = promptTps,
+                PromptTokensCached = cachedTokens
             };
         }
     }
@@ -490,6 +494,45 @@ public sealed class InferenceProxy : IInferenceProxy
         catch
         {
             // best-effort; 0 means fall back to stopwatch-derived value
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Best-effort extraction of prompt tokens served from KV cache.
+    /// Returns the cached token count when the server exposes it, otherwise 0.
+    /// Checks:
+    ///   1. OpenAI-compatible (vLLM, llama.cpp): <c>usage.prompt_tokens_details.cached_tokens</c>
+    ///   2. llama.cpp native: <c>tokens_cached</c>
+    /// </summary>
+    private static int TryParseCachedTokens(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            // 1. OpenAI-compatible: usage.prompt_tokens_details.cached_tokens
+            if (root.TryGetProperty("usage", out var usage)
+                && usage.TryGetProperty("prompt_tokens_details", out var details)
+                && details.TryGetProperty("cached_tokens", out var cached)
+                && cached.ValueKind == System.Text.Json.JsonValueKind.Number
+                && cached.TryGetInt32(out var n))
+            {
+                return n;
+            }
+
+            // 2. llama.cpp native: tokens_cached
+            if (root.TryGetProperty("tokens_cached", out var tc)
+                && tc.ValueKind == System.Text.Json.JsonValueKind.Number
+                && tc.TryGetInt32(out var cachedN))
+            {
+                return cachedN;
+            }
+        }
+        catch
+        {
+            // best-effort
         }
         return 0;
     }
@@ -770,11 +813,13 @@ public sealed class InferenceProxy : IInferenceProxy
         var tokens = 0;
         var serverTps = 0.0;
         var promptTps = 0.0;
+        var cachedTokens = 0;
         if (statusCode2 >= 200 && statusCode2 < 300)
         {
             tokens = TryParseCompletionTokens(bodyStr);
             serverTps = TryParseServerTokensPerSec(bodyStr);
             promptTps = TryParsePromptTokensPerSec(bodyStr);
+            cachedTokens = TryParseCachedTokens(bodyStr);
             if (tokens == 0)
                 _logger.LogWarning("Inference response for model {Model} on port {Port} returned no usage.completion_tokens; benchmark metrics will be n/a", request.ModelName, port);
         }
@@ -785,7 +830,8 @@ public sealed class InferenceProxy : IInferenceProxy
             Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
             TokensGenerated = tokens,
             ServerTokensPerSec = serverTps,
-            ServerPromptTokensPerSec = promptTps
+            ServerPromptTokensPerSec = promptTps,
+            PromptTokensCached = cachedTokens
         };
     }
 }

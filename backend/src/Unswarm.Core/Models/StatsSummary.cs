@@ -6,6 +6,7 @@ public sealed class StatsSummary
     public int ActiveRequests { get; init; }
     public double AvgLatencyMs { get; init; }
     public long TotalTokensProcessed { get; init; }
+    public long TotalPromptTokensCached { get; init; }
     public long UptimeSeconds { get; init; }
     public int ModelsLoaded { get; init; }
     public int ContainersRunning { get; init; }

@@ -219,6 +219,8 @@ export interface StatsSummary {
   activeRequests: number;
   avgLatencyMs: number;
   totalTokensProcessed: number;
+  /** Prompt tokens served from KV cache (best-effort; 0 when engine doesn't report it). */
+  totalPromptTokensCached: number;
   uptimeSeconds: number;
   modelsLoaded: number;
   containersRunning: number;

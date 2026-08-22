@@ -24,6 +24,7 @@ internal sealed class StreamingTokenTapStream : Stream
     private readonly byte[] _crLf = Encoding.UTF8.GetBytes("\r\n");
     private int _deltaCount;
     private int _usageTokens;
+    private int _cachedTokens;
     private double _serverTps;
     private double _promptTps;
     private bool _disposed;
@@ -163,6 +164,24 @@ internal sealed class StreamingTokenTapStream : Stream
                 _usageTokens = n;
             }
 
+            // 1b. Check for usage.prompt_tokens_details.cached_tokens (vLLM / llama.cpp OpenAI-compat)
+            if (root.TryGetProperty("usage", out var usageForCache)
+                && usageForCache.TryGetProperty("prompt_tokens_details", out var details)
+                && details.TryGetProperty("cached_tokens", out var cached)
+                && cached.ValueKind == JsonValueKind.Number
+                && cached.TryGetInt32(out var cn))
+            {
+                _cachedTokens = cn;
+            }
+
+            // 1c. Check for tokens_cached (llama.cpp native endpoint)
+            if (root.TryGetProperty("tokens_cached", out var tc)
+                && tc.ValueKind == JsonValueKind.Number
+                && tc.TryGetInt32(out var tcn))
+            {
+                _cachedTokens = tcn;
+            }
+
             // 2. Check for choices[].delta.content → count as ~1 token each
             if (root.TryGetProperty("choices", out var choices)
                 && choices.ValueKind == JsonValueKind.Array)
@@ -217,5 +236,6 @@ internal sealed class StreamingTokenTapStream : Stream
         _response.TokensGenerated = _usageTokens > 0 ? _usageTokens : _deltaCount;
         _response.ServerTokensPerSec = _serverTps;
         _response.ServerPromptTokensPerSec = _promptTps;
+        _response.PromptTokensCached = _cachedTokens;
     }
 }

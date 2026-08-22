@@ -8,6 +8,7 @@ public sealed class StatsSummaryResponse
     public int ActiveRequests { get; set; }
     public double AvgLatencyMs { get; set; }
     public long TotalTokensProcessed { get; set; }
+    public long TotalPromptTokensCached { get; set; }
     public long UptimeSeconds { get; set; }
     public int ModelsLoaded { get; set; }
     public int ContainersRunning { get; set; }
@@ -25,6 +26,7 @@ public sealed class StatsSummaryResponse
         ActiveRequests = s.ActiveRequests,
         AvgLatencyMs = s.AvgLatencyMs,
         TotalTokensProcessed = s.TotalTokensProcessed,
+        TotalPromptTokensCached = s.TotalPromptTokensCached,
         UptimeSeconds = s.UptimeSeconds,
         ModelsLoaded = s.ModelsLoaded,
         ContainersRunning = s.ContainersRunning,

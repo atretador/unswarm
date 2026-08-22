@@ -633,6 +633,7 @@ const STATS: StatsSummary = {
   activeRequests: 3,
   avgLatencyMs: 142,
   totalTokensProcessed: 24_891_000,
+  totalPromptTokensCached: 9_120_000,
   uptimeSeconds: 86400 * 7 + 3600 * 4,
   modelsLoaded: 2,
   containersRunning: 1,
