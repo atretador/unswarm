@@ -12,6 +12,7 @@ const (
 	TypeHello         = "hello"
 	TypeCommand       = "command"
 	TypeCommandResult = "command_result"
+	TypeCommandChunk  = "command_chunk"
 	TypeTelemetry     = "telemetry"
 	TypeHeartbeat     = "heartbeat"
 	TypeError         = "error"
@@ -35,7 +36,8 @@ const (
 	CmdRemoveContainer  = "remove_container"
 	CmdHealthCheck      = "health_check"
 	CmdDiscoverModels   = "discover_models"
-	CmdChatCompletion   = "chat_completion"
+	CmdChatCompletion       = "chat_completion"
+	CmdChatCompletionStream = "chat_completion_stream"
 
 	// Script management commands (Phase 3).
 	CmdListScripts   = "list_scripts"
@@ -103,6 +105,13 @@ type CommandResultPayload struct {
 	OK    bool        `json:"ok"`
 	Error *string     `json:"error,omitempty"`
 	Data  interface{} `json:"data,omitempty"`
+}
+
+// CommandChunkPayload is one incremental chunk of a streaming command response.
+// Data is the base64-encoded raw response body bytes for this chunk. Chunks are
+// always followed by exactly one final command_result with the same id.
+type CommandChunkPayload struct {
+	Data string `json:"data"`
 }
 
 // TelemetryPayload carries host/container status info.

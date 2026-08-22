@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -188,5 +189,166 @@ func TestDispatchDuplicateRegistrationPanics(t *testing.T) {
 	})
 	d.Register("dup", func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		return protocol.CommandResultPayload{OK: true}
+	})
+}
+
+// TestDispatchStream_ChunksInOrderThenSuccess verifies the streaming handler
+// path: chunks are emitted in order via the emit callback, and a nil handler
+// error maps to success (the caller then sends exactly one final ok result).
+func TestDispatchStream_ChunksInOrderThenSuccess(t *testing.T) {
+	d := New()
+
+	var gotCtx context.Context
+	var gotPayload protocol.CommandPayload
+	d.RegisterStream(protocol.CmdChatCompletionStream, func(ctx context.Context, p protocol.CommandPayload, emit func(chunk []byte) error) error {
+		gotCtx = ctx
+		gotPayload = p
+		for _, chunk := range [][]byte{[]byte("chunk-1"), []byte("chunk-2"), []byte("chunk-3")} {
+			if err := emit(chunk); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	var chunks [][]byte
+	handled, err := d.DispatchStream(context.Background(),
+		protocol.CommandPayload{Command: protocol.CmdChatCompletionStream, Port: 8080},
+		func(chunk []byte) error {
+			chunks = append(chunks, chunk)
+			return nil
+		})
+
+	if !handled {
+		t.Fatal("expected stream handler to be dispatched")
+	}
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	want := []string{"chunk-1", "chunk-2", "chunk-3"}
+	if len(chunks) != len(want) {
+		t.Fatalf("got %d chunks, want %d", len(chunks), len(want))
+	}
+	for i, w := range want {
+		if string(chunks[i]) != w {
+			t.Errorf("chunk[%d] = %q, want %q", i, chunks[i], w)
+		}
+	}
+	if gotCtx == nil {
+		t.Error("stream handler did not receive the context")
+	}
+	if gotPayload.Port != 8080 {
+		t.Errorf("stream handler payload port = %d, want 8080", gotPayload.Port)
+	}
+	if !d.HasStream(protocol.CmdChatCompletionStream) {
+		t.Error("HasStream(chat_completion_stream) = false, want true")
+	}
+	if !d.HasCommand(protocol.CmdChatCompletionStream) {
+		t.Error("HasCommand(chat_completion_stream) = false, want true")
+	}
+}
+
+// TestDispatchStream_HandlerError verifies that a stream handler's error is
+// returned to the caller (which sends exactly one final failed command_result).
+func TestDispatchStream_HandlerError(t *testing.T) {
+	d := New()
+	sentinel := "upstream exploded"
+
+	d.RegisterStream("boom", func(ctx context.Context, p protocol.CommandPayload, emit func(chunk []byte) error) error {
+		if err := emit([]byte("partial")); err != nil {
+			return err
+		}
+		return errors.New(sentinel)
+	})
+
+	var chunks [][]byte
+	handled, err := d.DispatchStream(context.Background(),
+		protocol.CommandPayload{Command: "boom"},
+		func(chunk []byte) error {
+			chunks = append(chunks, chunk)
+			return nil
+		})
+
+	if !handled {
+		t.Fatal("expected stream handler to be dispatched")
+	}
+	if err == nil || err.Error() != sentinel {
+		t.Fatalf("expected error %q, got %v", sentinel, err)
+	}
+	if len(chunks) != 1 {
+		t.Errorf("chunks emitted before error = %d, want 1", len(chunks))
+	}
+}
+
+// TestDispatchStream_NotRegistered verifies the fallback contract: when no
+// stream handler is registered for a command, DispatchStream reports handled=false
+// and returns no error so the caller can fall back to regular dispatch.
+func TestDispatchStream_NotRegistered(t *testing.T) {
+	d := New()
+	d.RegisterContext("plain", func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
+		return protocol.CommandResultPayload{OK: true}
+	})
+
+	emitCalls := 0
+	handled, err := d.DispatchStream(context.Background(),
+		protocol.CommandPayload{Command: "plain"},
+		func(chunk []byte) error {
+			emitCalls++
+			return nil
+		})
+
+	if handled {
+		t.Error("handled = true for non-stream command, want false")
+	}
+	if err != nil {
+		t.Errorf("err = %v, want nil", err)
+	}
+	if emitCalls != 0 {
+		t.Errorf("emit called %d times for non-stream command, want 0", emitCalls)
+	}
+}
+
+// TestRegisterStream_DuplicateAcrossKindsPanics verifies a stream command name
+// cannot collide with an existing plain or context handler (and vice versa).
+func TestRegisterStream_DuplicateAcrossKindsPanics(t *testing.T) {
+	streamHandler := func(ctx context.Context, p protocol.CommandPayload, emit func(chunk []byte) error) error {
+		return nil
+	}
+
+	t.Run("stream over plain", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic on duplicate registration")
+			}
+		}()
+		d := New()
+		d.Register("dup", func(p protocol.CommandPayload) protocol.CommandResultPayload { return protocol.CommandResultPayload{OK: true} })
+		d.RegisterStream("dup", streamHandler)
+	})
+
+	t.Run("stream over context", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic on duplicate registration")
+			}
+		}()
+		d := New()
+		d.RegisterContext("dup", func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
+			return protocol.CommandResultPayload{OK: true}
+		})
+		d.RegisterStream("dup", streamHandler)
+	})
+
+	t.Run("context over stream", func(t *testing.T) {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Error("expected panic on duplicate registration")
+			}
+		}()
+		d := New()
+		d.RegisterStream("dup", streamHandler)
+		d.RegisterContext("dup", func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
+			return protocol.CommandResultPayload{OK: true}
+		})
 	})
 }

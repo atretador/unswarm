@@ -1,3 +1,4 @@
+using System.Text;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Remote;
@@ -118,6 +119,21 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
         return InferFunc is not null
             ? InferFunc(port, requestJson, ct)
             : Task.FromResult(InferResult);
+    }
+
+    /// <summary>
+    /// Scriptable streaming inference. When set, called with (port, requestJson, ct)
+    /// and its returned stream is handed to the caller. When null, the buffered
+    /// InferResult is wrapped in a MemoryStream (simulating an old agent fallback).
+    /// </summary>
+    public Func<int, string, CancellationToken, Task<Stream>>? InferStreamFunc { get; set; }
+
+    public Task<Stream> InferStreamAsync(int port, string requestJson, CancellationToken ct = default)
+    {
+        lock (InferCalls) InferCalls.Add((port, requestJson));
+        return InferStreamFunc is not null
+            ? InferStreamFunc(port, requestJson, ct)
+            : Task.FromResult<Stream>(new MemoryStream(Encoding.UTF8.GetBytes(InferResult)));
     }
 
     /// <summary>Scripts returned by ListScriptsAsync.</summary>

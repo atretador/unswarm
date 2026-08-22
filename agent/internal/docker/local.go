@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"unswarm/agent/internal/protocol"
@@ -109,4 +110,63 @@ func ChatCompletion(ctx context.Context, port int, body json.RawMessage) protoco
 
 	// Return the raw body as a JSON string so the backend can echo it verbatim.
 	return okResult(string(raw))
+}
+
+// ChatCompletionStream forwards a raw OpenAI chat-completions request body to a
+// local OpenAI-compatible endpoint and streams the response body incrementally:
+// each raw byte chunk read from the response is passed to emit as soon as it
+// arrives (raw reads with an 8KB buffer — no line buffering, so SSE streams and
+// arbitrary binary bodies both work). The context is honored: if the backend
+// disconnects/cancels, the HTTP call is aborted. A non-2xx status is an error
+// carrying the status code and response body.
+func ChatCompletionStream(ctx context.Context, port int, jsonBody string, emit func(chunk []byte) error) error {
+	if port <= 0 {
+		return fmt.Errorf("invalid port")
+	}
+	if jsonBody == "" {
+		return fmt.Errorf("empty chat completion body")
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/v1/chat/completions", port)
+	httpClient := &http.Client{Timeout: 120 * time.Second}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(jsonBody))
+	if err != nil {
+		return fmt.Errorf("build chat completion stream request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("chat completion stream cancelled: %w", ctx.Err())
+		}
+		return fmt.Errorf("chat completion stream on port %d: %w", port, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("chat completion stream on port %d returned status %d: %s", port, resp.StatusCode, string(respBody))
+	}
+
+	buf := make([]byte, 8192)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			chunk := make([]byte, n)
+			copy(chunk, buf[:n])
+			if err := emit(chunk); err != nil {
+				return fmt.Errorf("emit chat completion stream chunk: %w", err)
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return fmt.Errorf("chat completion stream cancelled: %w", ctx.Err())
+			}
+			return fmt.Errorf("read chat completion stream response: %w", readErr)
+		}
+	}
 }

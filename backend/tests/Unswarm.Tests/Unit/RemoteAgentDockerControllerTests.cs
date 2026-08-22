@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Models;
@@ -628,5 +629,107 @@ public sealed class RemoteAgentDockerControllerTests
 
         Assert.Single(result);
         Assert.Equal("reg-new", result[0].RegisteredRuntimeId);
+    }
+
+    // --- Streaming inference over the tunnel ---
+
+    private static AgentMessage MakeChunk(string commandId, byte[] data)
+        => new()
+        {
+            Type = RemoteAgentDockerController.CommandChunkType,
+            Id = commandId,
+            Agent = "gpu1",
+            Payload = JsonSerializer.SerializeToElement(new { data = Convert.ToBase64String(data) }, JsonOptions)
+        };
+
+    [Fact]
+    public async Task InferStreamAsync_SendsStreamCommand_YieldsChunksThenEof()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            Assert.Equal("chat_completion_stream", msg.Payload!.Value.GetProperty("command").GetString());
+            // Chunks first, then exactly one final result — mirroring the Go agent.
+            controller.HandleIncomingMessage(MakeChunk(msg.Id!, "data: {\"a\""u8.ToArray()));
+            controller.HandleIncomingMessage(MakeChunk(msg.Id!, ": 1}\n\n"u8.ToArray()));
+            controller.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = true }));
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        await using var stream = await controller.InferStreamAsync(8080, """{"stream":true}""");
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var buffer = new byte[64];
+        var total = 0;
+        int read;
+        while ((read = await stream.ReadAsync(buffer.AsMemory(total), cts.Token)) > 0)
+            total += read;
+
+        Assert.Equal(0, read); // clean EOF after final ok result
+        Assert.Contains("data: {\"a\"", Encoding.UTF8.GetString(buffer, 0, total));
+        Assert.EndsWith(": 1}\n\n", Encoding.UTF8.GetString(buffer, 0, total));
+    }
+
+    [Fact]
+    public async Task InferStreamAsync_ErrorResult_ThrowsOnRead()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            controller.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = false, error = "container not running" }));
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        await using var stream = await controller.InferStreamAsync(8080, "{}");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var ex = await Assert.ThrowsAsync<IOException>(
+            () => stream.ReadAsync(new byte[16], cts.Token).AsTask());
+        Assert.Contains("container not running", ex.Message);
+    }
+
+    [Fact]
+    public async Task InferStreamAsync_UnknownCommand_ThrowsNotSupported()
+    {
+        var controller = CreateController();
+        _registry.OnSend = msg =>
+        {
+            // Older agent: unknown command error result
+            controller.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = false, error = "unknown command: chat_completion_stream" }));
+            return Task.FromResult<AgentMessage?>(null);
+        };
+
+        await using var stream = await controller.InferStreamAsync(8080, "{}");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAsync<NotSupportedException>(
+            () => stream.ReadAsync(new byte[16], cts.Token).AsTask());
+    }
+
+    [Fact]
+    public async Task InferStreamAsync_AgentDisconnect_FaultsPendingRead()
+    {
+        var controller = CreateController();
+
+        await using var stream = await controller.InferStreamAsync(8080, "{}");
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        // Simulate the agent dropping while the read is pending.
+        var readTask = stream.ReadAsync(new byte[16], cts.Token).AsTask();
+        await Task.Delay(50);
+        controller.FailPendingCommands("Agent disconnected");
+
+        await Assert.ThrowsAnyAsync<Exception>(() => readTask);
+    }
+
+    [Fact]
+    public async Task InferStreamAsync_NotConnected_Throws()
+    {
+        _registry.Connected = false;
+        var controller = new RemoteAgentDockerController("gpu1", _registry, _logger);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => controller.InferStreamAsync(8080, "{}"));
+        Assert.Contains("not connected", ex.Message);
     }
 }

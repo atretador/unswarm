@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Unswarm.Core.Contracts;
@@ -35,6 +36,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     private readonly TimeSpan _commandTimeout;
     private readonly TimeSpan _inferTimeout;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<AgentMessage>> _pending = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TunnelStreamOperation> _pendingStreams = new(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -44,6 +46,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
     public const string CommandType = "command";
     public const string CommandResultType = "command_result";
+    public const string CommandChunkType = "command_chunk";
     public const string SyncRegistrationsType = "sync_registrations";
     public const int DefaultContainerPort = 8080;
 
@@ -84,6 +87,15 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             if (_pending.TryRemove(kv.Key, out var tcs))
             {
                 tcs.TrySetException(new OperationCanceledException(reason));
+            }
+        }
+
+        foreach (var kv in _pendingStreams)
+        {
+            if (_pendingStreams.TryRemove(kv.Key, out var op))
+            {
+                op.Completion.TrySetException(new OperationCanceledException(reason));
+                op.Chunks.Writer.TryComplete();
             }
         }
     }
@@ -139,13 +151,54 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         if (message is null || message.Id is null)
             return;
 
+        // Streaming chunks arrive BEFORE the final command_result and must not
+        // consume the pending slot — route them into the operation's channel.
+        if (string.Equals(message.Type, CommandChunkType, StringComparison.Ordinal))
+        {
+            if (_pendingStreams.TryGetValue(message.Id, out var op))
+            {
+                var data = DecodeChunkPayload(message.Payload);
+                if (data is not null && data.Length > 0)
+                    op.Chunks.Writer.TryWrite(data);
+            }
+            else
+            {
+                _logger.LogDebug("No pending stream command for chunk id {CommandId}", message.Id);
+            }
+            return;
+        }
+
+        if (_pendingStreams.TryRemove(message.Id, out var streamOp))
+        {
+            streamOp.Completion.TrySetResult(message);
+        }
+
         if (_pending.TryRemove(message.Id, out var tcs))
         {
             tcs.TrySetResult(message);
         }
-        else
+        else if (!_pendingStreams.ContainsKey(message.Id))
         {
             _logger.LogDebug("No pending command for id {CommandId}", message.Id);
+        }
+    }
+
+    private static byte[]? DecodeChunkPayload(JsonElement? payload)
+    {
+        if (payload is null || !payload.HasValue)
+            return null;
+        if (!payload.Value.TryGetProperty("data", out var dataProp) || dataProp.ValueKind != JsonValueKind.String)
+            return null;
+        var encoded = dataProp.GetString();
+        if (string.IsNullOrEmpty(encoded))
+            return Array.Empty<byte>();
+        try
+        {
+            return Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            return null;
         }
     }
 
@@ -401,6 +454,61 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         return data;
     }
 
+    /// <summary>
+    /// Streaming variant of InferAsync. Sends "chat_completion_stream"; the agent
+    /// forwards response body chunks as command_chunk envelopes (base64) and then
+    /// exactly one final command_result. Returns immediately after the command is
+    /// sent — the returned stream yields chunks as they arrive, returns 0 on clean
+    /// EOF, and throws on error results or agent disconnect. Throws
+    /// NotSupportedException when the agent reports an unknown command (older
+    /// agent) so callers can fall back to buffered inference.
+    /// </summary>
+    public async Task<Stream> InferStreamAsync(int port, string requestJson, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "chat_completion_stream",
+            port,
+            json = requestJson
+        }, JsonOptions);
+
+        var commandId = Guid.NewGuid().ToString("N");
+        var op = new TunnelStreamOperation();
+        _pendingStreams[commandId] = op;
+
+        var message = new AgentMessage
+        {
+            Type = CommandType,
+            Id = commandId,
+            Agent = _agentName,
+            Payload = payload
+        };
+
+        var sent = false;
+        try
+        {
+            sent = await _agentRegistry.SendAsync(_agentName, message, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _pendingStreams.TryRemove(commandId, out _);
+            op.Completion.TrySetException(ex);
+            op.Chunks.Writer.TryComplete();
+            throw new InvalidOperationException($"Failed to send command to agent '{_agentName}': {ex.Message}", ex);
+        }
+
+        if (!sent)
+        {
+            _pendingStreams.TryRemove(commandId, out _);
+            var ex = new InvalidOperationException($"Agent '{_agentName}' is not connected");
+            op.Completion.TrySetException(ex);
+            op.Chunks.Writer.TryComplete();
+            throw ex;
+        }
+
+        return new AgentTunnelStream(op, _agentName, () => _pendingStreams.TryRemove(commandId, out _));
+    }
+
     /// <summary>Lists launcher scripts available on the remote agent.</summary>
     public async Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default)
     {
@@ -568,6 +676,189 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             // slot and propagate so the caller can act on the cancellation.
             _pending.TryRemove(commandId, out _);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// One pending streaming command: chunks are buffered in an unbounded channel
+    /// until the final command_result (or a fault) terminates the operation.
+    /// </summary>
+    internal sealed class TunnelStreamOperation
+    {
+        public Channel<byte[]> Chunks { get; } = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions
+        {
+            SingleReader = true,
+            SingleWriter = true
+        });
+
+        /// <summary>Set by the final command_result, or faulted on error/disconnect.</summary>
+        public TaskCompletionSource<AgentMessage> Completion { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    /// <summary>
+    /// Stream over the agent WebSocket tunnel: reads pull base64-decoded chunks from
+    /// the operation's channel; the final command_result decides clean EOF vs error.
+    /// Exposes <see cref="Drained"/> like HttpResponseMessageStream: completes when
+    /// the body has been fully consumed, disposed, or faulted.
+    /// </summary>
+    internal sealed class AgentTunnelStream : Stream
+    {
+        private readonly ChannelReader<byte[]> _reader;
+        private readonly TaskCompletionSource<AgentMessage> _completion;
+        private readonly string _agentName;
+        private readonly Action _cleanup;
+        private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private byte[]? _currentChunk;
+        private int _chunkOffset;
+        private bool _eof;
+        private Exception? _error;
+        private bool _disposed;
+
+        public AgentTunnelStream(TunnelStreamOperation op, string agentName, Action cleanup)
+        {
+            _reader = op.Chunks.Reader;
+            _completion = op.Completion;
+            _agentName = agentName;
+            _cleanup = cleanup;
+        }
+
+        /// <summary>Completes when the stream reaches EOF, is disposed, or faults.</summary>
+        public Task Drained => _drained.Task;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(AgentTunnelStream));
+            if (buffer.Length == 0) return 0;
+
+            while (true)
+            {
+                if (_eof)
+                {
+                    SignalDrained();
+                    return 0;
+                }
+                if (_error is not null)
+                {
+                    SignalDrained();
+                    throw new IOException($"Agent '{_agentName}' tunnel stream failed", _error);
+                }
+
+                // Serve leftover bytes from a partially consumed chunk first.
+                if (_currentChunk is not null && _chunkOffset < _currentChunk.Length)
+                {
+                    var n = Math.Min(buffer.Length, _currentChunk.Length - _chunkOffset);
+                    _currentChunk.AsMemory(_chunkOffset, n).CopyTo(buffer);
+                    _chunkOffset += n;
+                    if (_chunkOffset >= _currentChunk.Length)
+                    {
+                        _currentChunk = null;
+                        _chunkOffset = 0;
+                    }
+                    return n;
+                }
+
+                if (_reader.TryRead(out var chunk))
+                {
+                    if (chunk.Length == 0) continue;
+                    _currentChunk = chunk;
+                    _chunkOffset = 0;
+                    continue;
+                }
+
+                // Wait for either more chunks or the final result — whichever first.
+                var waitRead = _reader.WaitToReadAsync(ct).AsTask();
+                var finished = await Task.WhenAny(waitRead, _completion.Task).ConfigureAwait(false);
+                if (finished == _completion.Task)
+                {
+                    // Throws OperationCanceledException when faulted (disconnect).
+                    var final = await _completion.Task.ConfigureAwait(false);
+                    EvaluateFinal(final);
+                    continue;
+                }
+                if (!await waitRead.ConfigureAwait(false))
+                {
+                    // Channel closed without a final result — treat as clean EOF.
+                    _eof = true;
+                }
+            }
+        }
+
+        private void EvaluateFinal(AgentMessage final)
+        {
+            var p = final.Payload;
+            if (p is null || !p.HasValue)
+            {
+                _error = new InvalidOperationException(
+                    $"Agent '{_agentName}' chat_completion_stream returned an empty result");
+                return;
+            }
+
+            var error = GetString(p.Value, "error");
+            if (error is not null)
+            {
+                _error = error.Contains("unknown command", StringComparison.OrdinalIgnoreCase)
+                    ? new NotSupportedException($"Agent '{_agentName}' does not support chat_completion_stream")
+                    : new InvalidOperationException($"Agent '{_agentName}' chat_completion_stream failed: {error}");
+                return;
+            }
+
+            if (GetBool(p.Value, "ok") == false)
+            {
+                _error = new InvalidOperationException(
+                    $"Agent '{_agentName}' chat_completion_stream returned failure");
+                return;
+            }
+
+            _eof = true;
+        }
+
+        private void SignalDrained() => _drained.TrySetResult();
+
+        public override void Flush() { }
+
+        public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
+
+        public override int Read(byte[] buffer, int offset, int count)
+            => throw new NotSupportedException("Synchronous reads are not supported on the agent tunnel stream");
+
+        public override long Seek(long offset, SeekOrigin origin)
+            => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override bool CanRead => !_disposed;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            if (disposing)
+            {
+                _cleanup();
+                SignalDrained();
+            }
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _cleanup();
+            SignalDrained();
+            await base.DisposeAsync().ConfigureAwait(false);
         }
     }
 

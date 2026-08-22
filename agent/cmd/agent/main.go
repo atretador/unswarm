@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -360,12 +361,55 @@ func handleCommand(
 
 	logger.Info("command received", "command", cmdPayload.Command, "id", derefStr(env.ID))
 
+	// Streaming commands emit command_chunk envelopes as the response body
+	// arrives, then exactly one final command_result. The invariant: exactly
+	// one command_result per command id, chunks only before it.
+	if disp.HasStream(cmdPayload.Command) {
+		handleStreamCommand(ctx, env, cmdPayload, disp, wsClient, cfg, logger)
+		return
+	}
+
 	// Use the dispatcher for routing; context-aware handlers get the session ctx
 	// so they can cancel in-flight work on backend disconnect.
 	result := disp.DispatchContext(ctx, cmdPayload)
 
 	// Send result back
 	sendCommandResult(ctx, wsClient, cfg, env.ID, result, logger)
+}
+
+// handleStreamCommand dispatches a streaming command: each chunk emitted by the
+// handler is sent as a command_chunk envelope (base64-encoded) echoing the
+// command id; after the handler returns, exactly one final command_result is
+// sent — ok:true on nil error, ok:false with the error message otherwise.
+func handleStreamCommand(
+	ctx context.Context,
+	env protocol.Envelope,
+	cmdPayload protocol.CommandPayload,
+	disp *dispatch.Dispatcher,
+	wsClient *client.WSClient,
+	cfg config.Config,
+	logger *slog.Logger,
+) {
+	emit := func(chunk []byte) error {
+		chunkPayload := protocol.CommandChunkPayload{Data: base64.StdEncoding.EncodeToString(chunk)}
+		chunkEnv := protocol.MustEnvelope(protocol.TypeCommandChunk, env.ID, strPtr(cfg.AgentName), chunkPayload)
+		return wsClient.Send(ctx, chunkEnv)
+	}
+
+	err := func() error {
+		handled, err := disp.DispatchStream(ctx, cmdPayload, emit)
+		if !handled {
+			msg := fmt.Sprintf("unknown command: %s", cmdPayload.Command)
+			return fmt.Errorf("%s", msg)
+		}
+		return err
+	}()
+
+	if err != nil {
+		sendCommandResult(ctx, wsClient, cfg, env.ID, errorResult(err.Error()), logger)
+		return
+	}
+	sendCommandResult(ctx, wsClient, cfg, env.ID, protocol.CommandResultPayload{OK: true}, logger)
 }
 
 // sendCommandResult sends a command_result envelope echoing the command id.
@@ -483,6 +527,14 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("chat completion", "port", p.Port, "jsonBytes", len(p.JsonBody))
 		return docker.ChatCompletion(ctx, p.Port, p.JsonBody)
+	})
+
+	// chat_completion_stream — same endpoint as chat_completion, but the raw
+	// response body is streamed back incrementally as command_chunk envelopes
+	// (base64-encoded), followed by exactly one final command_result.
+	d.RegisterStream(protocol.CmdChatCompletionStream, func(ctx context.Context, p protocol.CommandPayload, emit func([]byte) error) error {
+		logger.Info("chat completion stream", "port", p.Port, "jsonBytes", len(p.JsonBody))
+		return docker.ChatCompletionStream(ctx, p.Port, string(p.JsonBody), emit)
 	})
 
 	// list_scripts
