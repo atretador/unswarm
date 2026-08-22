@@ -21,13 +21,13 @@ type ReconnectConfig struct {
 
 // Config is the top-level agent configuration.
 type Config struct {
-	BackendURL       string          `yaml:"backend_url"`
-	APIKey           string          `yaml:"api_key"`
-	AgentName        string          `yaml:"agent_name"`
-	DockerSocket     string          `yaml:"docker_socket"`
-	ScriptsDir       string          `yaml:"scripts_dir"`
-	AllowInsecureWs  bool            `yaml:"allow_insecure_ws"`
-	Reconnect        ReconnectConfig `yaml:"reconnect"`
+	BackendURL      string          `yaml:"backend_url"`
+	APIKey          string          `yaml:"api_key"`
+	AgentName       string          `yaml:"agent_name"`
+	DockerSocket    string          `yaml:"docker_socket"`
+	ScriptsDir      string          `yaml:"scripts_dir"`
+	AllowInsecureWs bool            `yaml:"allow_insecure_ws"`
+	Reconnect       ReconnectConfig `yaml:"reconnect"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -45,7 +45,8 @@ func DefaultConfig() Config {
 	}
 }
 
-// Load reads a YAML config file, applies defaults, and returns the config.
+// Load reads a YAML config file, applies defaults, applies environment
+// overrides, and returns the config.
 // If path is empty, returns defaults.
 func Load(path string) (Config, error) {
 	cfg := DefaultConfig()
@@ -62,11 +63,30 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
+	cfg.applyEnvOverrides()
+
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config %s: %w", path, err)
 	}
 
 	return cfg, nil
+}
+
+// applyEnvOverrides fills in BackendURL and APIKey from the environment when
+// the corresponding YAML field is empty. Precedence: a non-empty YAML value
+// wins; the environment (UNSWARM_AGENT_BACKEND_URL, UNSWARM_AGENT_API_KEY) is
+// used only as a fallback for empty fields.
+func (c *Config) applyEnvOverrides() {
+	if c.BackendURL == "" {
+		if v := os.Getenv("UNSWARM_AGENT_BACKEND_URL"); v != "" {
+			c.BackendURL = v
+		}
+	}
+	if c.APIKey == "" {
+		if v := os.Getenv("UNSWARM_AGENT_API_KEY"); v != "" {
+			c.APIKey = v
+		}
+	}
 }
 
 // InitialBackoff returns the initial backoff as a time.Duration.
@@ -79,9 +99,21 @@ func (c Config) MaxBackoff() time.Duration {
 	return time.Duration(c.Reconnect.MaxBackoffMs) * time.Millisecond
 }
 
-// Validate checks the config for security issues and returns an error if any
-// are found. Called automatically by Load.
+// Validate checks the config for security issues and missing required fields,
+// returning an error if any are found. Called automatically by Load.
 func (c Config) Validate() error {
+	if strings.TrimSpace(c.BackendURL) == "" {
+		return fmt.Errorf("backend_url is required")
+	}
+	if strings.TrimSpace(c.AgentName) == "" {
+		return fmt.Errorf("agent_name is required")
+	}
+	if c.Reconnect.MaxBackoffMs < c.Reconnect.InitialBackoffMs {
+		return fmt.Errorf(
+			"reconnect.max_backoff_ms (%d) must be >= reconnect.initial_backoff_ms (%d)",
+			c.Reconnect.MaxBackoffMs, c.Reconnect.InitialBackoffMs,
+		)
+	}
 	if err := validateInsecureWs(c.BackendURL, c.AllowInsecureWs); err != nil {
 		return err
 	}

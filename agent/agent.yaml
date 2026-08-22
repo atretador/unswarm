@@ -3,9 +3,15 @@
 
 # Backend WebSocket URL (supports ws://, wss://, http://, https://)
 # For any non-local deployment, use wss:// to encrypt the API key in transit.
+#
+# Precedence: a non-empty value here wins. If this field is empty, the agent
+# falls back to the UNSWARM_AGENT_BACKEND_URL environment variable.
 backend_url: "ws://localhost:5014"
 
 # API key for authentication (empty = no auth)
+#
+# Precedence: a non-empty value here wins. If this field is empty, the agent
+# falls back to the UNSWARM_AGENT_API_KEY environment variable.
 api_key: ""
 
 # Unique agent name — must be unique across all agents on the same backend

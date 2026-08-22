@@ -26,6 +26,11 @@ const readTimeout = 60 * time.Second
 // connection where the peer stopped reading.
 const writeTimeout = 30 * time.Second
 
+// maxMessageSize caps the size of a single inbound WebSocket message (4MB).
+// Without a read limit a malicious or broken peer could exhaust memory with
+// one oversized frame.
+const maxMessageSize = 4 << 20 // 4MB
+
 // WSClient manages a WebSocket connection to the backend.
 type WSClient struct {
 	cfg    config.Config
@@ -88,6 +93,7 @@ func (c *WSClient) Connect(ctx context.Context) error {
 // configureConn sets up keep-alive handling: respond to protocol pings and
 // expire the connection when no data arrives within the read deadline.
 func (c *WSClient) configureConn(conn *websocket.Conn) {
+	conn.SetReadLimit(maxMessageSize)
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})

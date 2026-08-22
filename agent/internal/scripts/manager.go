@@ -6,6 +6,7 @@ package scripts
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -214,7 +215,18 @@ func (m *Manager) StopScriptByPath(path string) error {
 	return m.stopAndClean(resolved, proc)
 }
 
+const (
+	// maxLogReadBytes caps the initial full-file read of a script log so a
+	// huge log file cannot exhaust memory; only the last 1MB is scanned.
+	maxLogReadBytes int64 = 1 << 20 // 1MiB
+	// maxLogLineLen is the maximum log line length returned to callers;
+	// longer lines are skipped instead of failing the whole read.
+	maxLogLineLen = 64 << 10 // 64KiB
+)
+
 // GetScriptLogs returns the last tailLines lines from the script's log file.
+// At most the last 1MB of the file is read, and lines longer than 64KB are
+// skipped rather than causing an error.
 func (m *Manager) GetScriptLogs(path string, tailLines int) ([]string, error) {
 	resolved, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
@@ -230,13 +242,39 @@ func (m *Manager) GetScriptLogs(path string, tailLines int) ([]string, error) {
 	}
 	defer f.Close()
 
-	var lines []string
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+	// Cap the read to the last 1MB of the file.
+	offset := int64(0)
+	if info, statErr := f.Stat(); statErr == nil && info.Size() > maxLogReadBytes {
+		offset = info.Size() - maxLogReadBytes
+		if _, seekErr := f.Seek(offset, io.SeekStart); seekErr != nil {
+			return nil, fmt.Errorf("seek log file: %w", seekErr)
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read log file: %w", err)
+
+	var lines []string
+	reader := bufio.NewReader(f)
+
+	// When starting mid-file, discard the first (likely truncated) line.
+	if offset > 0 {
+		if _, err := reader.ReadString('\n'); err != nil && err != io.EOF {
+			return nil, fmt.Errorf("read log file: %w", err)
+		}
+	}
+
+	for {
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			line = strings.TrimRight(line, "\n")
+			if len(line) <= maxLogLineLen {
+				lines = append(lines, line)
+			}
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				return nil, fmt.Errorf("read log file: %w", readErr)
+			}
+			break
+		}
 	}
 
 	if tailLines > 0 && len(lines) > tailLines {

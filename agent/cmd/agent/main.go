@@ -26,6 +26,16 @@ import (
 
 const version = "0.3.0"
 
+// commandTimeout bounds every non-chat Docker command handler so a hung
+// Docker daemon cannot wedge a session goroutine forever. Container
+// stop/restart keep their own internal 10s stop timeout inside this bound.
+const commandTimeout = 120 * time.Second
+
+// commandContext returns a context for a bounded Docker command handler.
+func commandContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), commandTimeout)
+}
+
 // sessionConfig holds per-session timing knobs (injectable for tests).
 type sessionConfig struct {
 	telemetryInterval time.Duration
@@ -153,6 +163,16 @@ func runSession(
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer wsClient.Close()
+
+	// Interrupt a blocked wsClient.Read() as soon as the session ends: closing
+	// the connection makes ReadMessage return immediately instead of waiting
+	// out the read deadline, so SIGINT/SIGTERM shutdown is not delayed by up
+	// to 60s. The goroutine exits once sessionCtx is cancelled (guaranteed by
+	// the deferred sessionCancel before runSession returns).
+	go func() {
+		<-sessionCtx.Done()
+		wsClient.Close()
+	}()
 
 	// Reset backoff on successful connection
 	bo.Reset()
@@ -360,7 +380,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("start_container")
 		}
 		logger.Info("starting container", "name", name)
-		return dh.StartContainer(context.Background(), name)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.StartContainer(ctx, name)
 	})
 
 	// stop_container
@@ -370,7 +392,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("stop_container")
 		}
 		logger.Info("stopping container", "name", name)
-		return dh.StopContainer(context.Background(), name)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.StopContainer(ctx, name)
 	})
 
 	// restart_container
@@ -380,7 +404,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("restart_container")
 		}
 		logger.Info("restarting container", "name", name)
-		return dh.RestartContainer(context.Background(), name)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.RestartContainer(ctx, name)
 	})
 
 	// inspect_container
@@ -390,7 +416,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("inspect_container")
 		}
 		logger.Info("inspecting container", "name", name)
-		return dh.InspectContainer(context.Background(), name)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.InspectContainer(ctx, name)
 	})
 
 	// list_containers
@@ -399,7 +427,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("list_containers")
 		}
 		logger.Info("listing containers")
-		return dh.ListContainers(context.Background())
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.ListContainers(ctx)
 	})
 
 	// get_container_logs
@@ -409,7 +439,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("get_container_logs")
 		}
 		logger.Info("getting container logs", "name", name, "tailLines", p.TailLines)
-		return dh.GetContainerLogs(context.Background(), name, p.TailLines)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.GetContainerLogs(ctx, name, p.TailLines)
 	})
 
 	// remove_container
@@ -419,19 +451,25 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, logger *slo
 			return notConnectedResult("remove_container")
 		}
 		logger.Info("removing container", "name", name)
-		return dh.RemoveContainer(context.Background(), name)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.RemoveContainer(ctx, name)
 	})
 
 	// health_check
 	d.Register(protocol.CmdHealthCheck, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("health check", "port", p.Port)
-		return docker.HealthCheck(context.Background(), p.Port)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return docker.HealthCheck(ctx, p.Port)
 	})
 
 	// discover_models
 	d.Register(protocol.CmdDiscoverModels, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("discovering models", "port", p.Port)
-		return docker.DiscoverModels(context.Background(), p.Port)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return docker.DiscoverModels(ctx, p.Port)
 	})
 
 	// chat_completion — forwards a raw OpenAI chat-completions body to the local

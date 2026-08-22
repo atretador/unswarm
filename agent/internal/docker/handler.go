@@ -143,6 +143,10 @@ func (h *Handler) ListContainers(ctx context.Context) protocol.CommandResultPayl
 	return okResult(result)
 }
 
+// maxTailLines caps the tailLines parameter of GetContainerLogs so an
+// untrusted payload cannot ask the Docker daemon for an unbounded log read.
+const maxTailLines = 10000
+
 // GetContainerLogs returns the last N lines of container logs.
 // The Docker log stream is multiplexed for non-TTY containers, so the
 // stream is de-multiplexed with stdcopy to produce clean log output.
@@ -151,6 +155,9 @@ func (h *Handler) ListContainers(ctx context.Context) protocol.CommandResultPayl
 func (h *Handler) GetContainerLogs(ctx context.Context, name string, tailLines int) protocol.CommandResultPayload {
 	if tailLines <= 0 {
 		tailLines = 100
+	}
+	if tailLines > maxTailLines {
+		tailLines = maxTailLines
 	}
 
 	// Inspect first: TTY containers reject ShowStderr, and the decode path
