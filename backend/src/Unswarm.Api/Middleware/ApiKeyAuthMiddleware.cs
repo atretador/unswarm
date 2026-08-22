@@ -21,10 +21,11 @@ namespace Unswarm.Api.Middleware;
 ///  2. Each protected path prefix maps to exactly one scope. After key validation
 ///     the key's scope is compared to the path's required scope; a mismatch is
 ///     rejected with 401.
-///  3. Auth is opt-in per scope: a protected path only enforces a key once at
-///     least one active key of that scope exists. This preserves the historical
-///     "empty key = auth disabled" behaviour for environments that run without
-///     keys, while newly created keys flip the relevant surface on.
+///  3. Protected paths are FAIL-CLOSED: they accept only (a) a valid API key of
+///     the required scope, or (b) an already-cookie-authenticated principal
+///     (dashboard admin) so bootstrap key creation still works. When no keys
+///     exist yet and the caller is anonymous, the request is rejected with 401
+///     and a JSON body explaining how to bootstrap (create admin + API key).
 /// </summary>
 public sealed class ApiKeyAuthMiddleware
 {
@@ -70,19 +71,13 @@ public sealed class ApiKeyAuthMiddleware
             return;
         }
 
-        // Opt-in: enforce a key on this surface as soon as any key of the scope
-        // exists (active or retired). Before that, the surface stays open —
-        // backward compatible with no-key setups.
-        if (!await _store.HasAnyAsync(scope, context.RequestAborted))
-        {
-            await _next(context);
-            return;
-        }
-
+        // Fail-closed: a protected path requires a valid API key of the required
+        // scope. There is no opt-in bypass — an empty key store must never leave
+        // the surface anonymous-accessible.
         string? presented = ReadPresentedKey(context.Request);
         if (string.IsNullOrEmpty(presented))
         {
-            await DenyAsync(context);
+            await DenyAsync(context, await _store.HasAnyAsync(scope, context.RequestAborted));
             return;
         }
 
@@ -90,14 +85,14 @@ public sealed class ApiKeyAuthMiddleware
         if (entity is null)
         {
             _logger.LogWarning("Invalid API key for {Path} from {Ip}", path, context.Connection.RemoteIpAddress);
-            await DenyAsync(context);
+            await DenyAsync(context, hasAnyKeys: true);
             return;
         }
 
         if (entity.Scope != scope)
         {
             _logger.LogWarning("API key scope {KeyScope} does not match required scope {RequiredScope} for {Path} from {Ip}", entity.Scope, scope, path, context.Connection.RemoteIpAddress);
-            await DenyAsync(context);
+            await DenyAsync(context, hasAnyKeys: true);
             return;
         }
 
@@ -165,10 +160,23 @@ public sealed class ApiKeyAuthMiddleware
         return new ClaimsPrincipal(identities);
     }
 
-    private static async Task DenyAsync(HttpContext context)
+    /// <summary>
+    /// Reject the request with 401. When the key store has no keys at all, the
+    /// body explains the bootstrap path (create an admin user and generate an
+    /// API key) instead of a generic unauthorized error.
+    /// </summary>
+    private static async Task DenyAsync(HttpContext context, bool hasAnyKeys)
     {
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsync(JsonSerializer.Serialize(new { error = "Unauthorized" }));
+
+        object payload = hasAnyKeys
+            ? new { error = "Unauthorized" }
+            : new
+            {
+                error = "Unauthorized: no API keys exist yet. Bootstrap the server by creating an admin user (unswarm --admin-setup <password> or UNSWARM_ADMIN_PASSWORD), sign in to the dashboard, and generate an API key."
+            };
+
+        await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
     }
 }

@@ -22,9 +22,17 @@ for (int i = 0; i < args.Length - 1; i++)
     if (args[i] == "--admin-setup")
     {
         adminSetupPassword = args[i + 1];
+        // Passing secrets via argv leaks them to `ps` and shell history —
+        // prefer the UNSWARM_ADMIN_PASSWORD environment variable.
+        Console.WriteLine("Warning: --admin-setup passes the admin password via argv, which is visible in process listings and shell history. Prefer the UNSWARM_ADMIN_PASSWORD environment variable instead.");
         break;
     }
 }
+
+// Environment-variable alternative to --admin-setup (argv wins if both set).
+adminSetupPassword ??= Environment.GetEnvironmentVariable("UNSWARM_ADMIN_PASSWORD") is { Length: > 0 } envPassword
+    ? envPassword
+    : null;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -44,7 +52,8 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
     return () =>
     {
         var optionsBuilder = new DbContextOptionsBuilder<UnswarmDbContext>();
-        optionsBuilder.UseSqlite(connectionString);
+        optionsBuilder.UseSqlite(connectionString)
+                      .AddInterceptors(SqliteTuningInterceptor.Instance);
         return new UnswarmDbContext(optionsBuilder.Options);
     };
 });
@@ -205,6 +214,14 @@ builder.Services.AddHostedService<SchedulerHostedService>();
 builder.Services.AddHostedService<LogRetentionService>();
 builder.Services.AddHostedService<ContainerLogProbe>();
 
+// ── Global exception handling ─────────────────────────────────────────────
+// Unhandled exceptions become RFC7807 ProblemDetails instead of an empty 500.
+builder.Services.AddExceptionHandler(_ => { });
+builder.Services.AddProblemDetails();
+
+// ── Health checks ─────────────────────────────────────────────────────────
+builder.Services.AddHealthChecks();
+
 // ── CORS ──────────────────────────────────────────────────────────────────
 builder.Services.AddCors(options =>
 {
@@ -296,6 +313,10 @@ await app.Services.GetRequiredService<HostScriptRuntimeController>()
     .AdoptOrphanedScriptsAsync();
 
 // ── Middleware ────────────────────────────────────────────────────────────
+// Early: unhandled exceptions anywhere in the pipeline become RFC7807
+// ProblemDetails instead of an empty 500.
+app.UseExceptionHandler();
+
 app.UseCors("SpaCors");
 app.UseAuthentication();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
@@ -305,9 +326,12 @@ app.UseWebSockets(new WebSocketOptions
 {
     AllowedOrigins = { "http://localhost:3000", "http://localhost:5173" }
 });
-app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.MapControllers();
+
+// Anonymous liveness probe — deliberately outside any auth surface
+// ("/health" is not a protected prefix in ApiKeyAuthMiddleware).
+app.MapHealthChecks("/health");
 
 app.Run();
 

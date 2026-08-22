@@ -26,6 +26,9 @@ public sealed class ApiKeyAuthMiddlewareTests
         var ctxStore = store ?? TestApiKeyStore.Create();
         var context = new DefaultHttpContext();
         context.Request.Path = path;
+        // Capturable body: the default DefaultHttpContext body discards writes,
+        // so response-body assertions would always read an empty string.
+        context.Response.Body = new MemoryStream();
 
         if (apiKeyHeader != null)
             context.Request.Headers["X-Api-Key"] = apiKeyHeader;
@@ -69,7 +72,8 @@ public sealed class ApiKeyAuthMiddlewareTests
     public async Task NonProtectedPath_PassesThrough()
     {
         var (middleware, context, tracker, _) = CreateSut(
-            new AuthOptions { ProtectedPaths = ["/v1", "/api/agents", "/ws/agent"] });
+            new AuthOptions { ProtectedPaths = ["/v1", "/api/agents", "/ws/agent"] },
+            path: "/api/stats");
 
         await middleware.InvokeAsync(context);
 
@@ -78,16 +82,65 @@ public sealed class ApiKeyAuthMiddlewareTests
     }
 
     [Fact]
-    public async Task ProtectedPath_NoKey_NoKeyOfScope_ActivatesOptIn_PassesThrough()
+    public async Task ProtectedPath_NoKeys_Anonymous_BlockedWithBootstrapHint()
     {
         var (middleware, context, tracker, _) = CreateSut(
-            new AuthOptions { ProtectedPaths = ["/ws/agent"] });
+            new AuthOptions { ProtectedPaths = ["/ws/agent"] }, path: "/ws/agent");
 
-        // No agent key seeded yet -> auth opt-in is off -> allow.
+        // Fail-closed: empty key store + anonymous caller must be rejected.
+        await middleware.InvokeAsync(context);
+
+        Assert.False(tracker.Called);
+        Assert.Equal(401, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProtectedPath_NoKeys_Anonymous_ResponseBodyExplainsBootstrap()
+    {
+        var (middleware, context, _, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/v1"] }, path: "/v1");
+
+        await middleware.InvokeAsync(context);
+
+        context.Response.Body.Position = 0;
+        using var reader = new StreamReader(context.Response.Body);
+        var body = await reader.ReadToEndAsync();
+
+        Assert.Contains("bootstrap", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("API key", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ProtectedPath_NoKeys_CookiePrincipal_Allowed()
+    {
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/api/agents"] });
+
+        // Dashboard admin with a cookie principal must still get through so
+        // the first API key can be created from the UI.
+        context.User = new ClaimsPrincipal(new ClaimsIdentity("Cookie"));
+
         await middleware.InvokeAsync(context);
 
         Assert.True(tracker.Called);
         Assert.Equal(200, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ProtectedPath_NoKeys_ValidKey_Allowed()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("first", ApiKeyScope.Inference, "first-secret");
+
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/v1"] }, store,
+            path: "/v1", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(tracker.Called);
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.True(HasScopeClaim(context, ApiKeyScope.Inference));
     }
 
     [Fact]

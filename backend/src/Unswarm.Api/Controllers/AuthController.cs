@@ -23,10 +23,21 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         var user = await _userManager.FindByNameAsync(request.Username);
-        if (user == null || !await _userManager.CheckPasswordAsync(user, request.Password))
+
+        // CheckPasswordAsync bypasses AccessFailedCount/LockoutEnd, so brute-force
+        // never locks the account. PasswordSignInAsync with lockoutOnFailure:true
+        // increments the failed-access count and enforces LockoutEnd.
+        if (user == null)
             return Unauthorized(new { error = "Invalid username or password" });
 
-        await _signInManager.SignInAsync(user, isPersistent: true);
+        var result = await _signInManager.PasswordSignInAsync(
+            user, request.Password, isPersistent: true, lockoutOnFailure: true);
+
+        // Locked-out and bad-password both return the same generic 401 so the
+        // endpoint does not leak whether the account exists or is locked.
+        if (!result.Succeeded)
+            return Unauthorized(new { error = "Invalid username or password" });
+
         return Ok(new { username = user.UserName, isTempPassword = user.IsTempPassword });
     }
 

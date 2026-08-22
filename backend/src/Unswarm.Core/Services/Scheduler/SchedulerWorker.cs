@@ -23,6 +23,13 @@ public sealed class SchedulerWorker
     /// <summary>Default per-target channel capacity (used when store is unavailable).</summary>
     private const int DefaultTargetQueueDepth = 16;
 
+    /// <summary>
+    /// Cap on terminal (Completed/Failed) entries retained in <see cref="_allItems"/>.
+    /// Recent completions stay queryable via <see cref="_recentCompleted"/>; older
+    /// terminal rows are pruned so long-running instances don't grow memory forever.
+    /// </summary>
+    private const int MaxTerminalTrackedItems = 500;
+
     private readonly Channel<InferenceRequest> _channel;
     private readonly IDockerController _hostDocker;
     private readonly IDockerControllerRouter _router;
@@ -43,6 +50,11 @@ public sealed class SchedulerWorker
 
     // Tracking
     private readonly ConcurrentDictionary<string, QueueItem> _allItems = new();
+    // Live request lookup by id — lets drain/fail paths complete the caller's Tcs.
+    private readonly ConcurrentDictionary<string, InferenceRequest> _requests = new();
+    // FIFO order of terminal item ids, used to prune _allItems beyond the cap.
+    private readonly ConcurrentQueue<string> _terminalOrder = new();
+    private int _terminalCount;
     private readonly ConcurrentDictionary<string, ModelTransition> _activeTransitions = new();
     private readonly ConcurrentQueue<QueueItem> _recentCompleted = new();
     private readonly object _snapshotLock = new();
@@ -158,6 +170,7 @@ public sealed class SchedulerWorker
             await foreach (var request in _channel.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
             {
                 var queueItem = CreateQueueItem(request);
+                _requests.TryAdd(request.Id, request);
                 TryAddItem(queueItem);
 
                 try
@@ -182,7 +195,38 @@ public sealed class SchedulerWorker
             // Normal shutdown
         }
 
+        // Shutdown drain: every item still queued (global channel + per-target
+        // channels) must have its Tcs completed so awaiting HTTP handlers return
+        // promptly instead of hanging until their client times out.
+        DrainQueuedItemsOnShutdown(stoppingToken);
+
         _logStore.Enqueue(LogLevel.Info, "Scheduler", "Scheduler worker stopped");
+    }
+
+    /// <summary>
+    /// Completes the Tcs of every request still sitting in the global channel or in
+    /// any per-target channel. Best-effort: a slot worker may concurrently dequeue an
+    /// item during shutdown, in which case its own cancellation path resolves it.
+    /// </summary>
+    private void DrainQueuedItemsOnShutdown(CancellationToken stoppingToken)
+    {
+        while (_channel.Reader.TryRead(out var pending))
+            FailPendingOnShutdown(pending, stoppingToken);
+
+        foreach (var slot in _slots.Values)
+        {
+            while (slot.Channel.Reader.TryRead(out var pending))
+                FailPendingOnShutdown(pending, stoppingToken);
+        }
+    }
+
+    private void FailPendingOnShutdown(InferenceRequest pending, CancellationToken stoppingToken)
+    {
+        var item = _allItems.TryGetValue(pending.Id, out var existing)
+            ? existing
+            : CreateQueueItem(pending);
+        FailItem(item, "Scheduler shutting down");
+        pending.Tcs.TrySetCanceled(stoppingToken);
     }
 
     private async Task DispatchAsync(InferenceRequest request, QueueItem queueItem, CancellationToken ct)
@@ -256,6 +300,7 @@ public sealed class SchedulerWorker
                 var queueItem = _allItems.TryGetValue(request.Id, out var existing)
                     ? existing
                     : CreateQueueItem(request);
+                _requests.TryAdd(request.Id, request);
 
                 try
                 {
@@ -285,6 +330,11 @@ public sealed class SchedulerWorker
 
     private async Task ProcessRequestAsync(TargetSlot slot, InferenceRequest request, QueueItem queueItem, CancellationToken ct)
     {
+        // Already resolved elsewhere (e.g., cancelled by a batch drain or shutdown):
+        // never run inference for it again — the caller is long gone.
+        if (request.Tcs.Task.IsCompleted)
+            return;
+
         // Ensure correct model is running on this target
         if (slot.ResidentModel != request.ModelName)
         {
@@ -304,9 +354,12 @@ public sealed class SchedulerWorker
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
             $"Processing request {request.Id} for model {request.ModelName} on {slot.TargetId}");
 
+        // Declared outside the try so the catch filters can distinguish a request
+        // timeout from scheduler shutdown.
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.RequestTimeout));
+
         try
         {
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.RequestTimeout));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
@@ -379,10 +432,17 @@ public sealed class SchedulerWorker
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Request {request.Id} completed: {response.TokensGenerated} tokens in {waitMs}ms");
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
             FailItem(queueItem, "Request timed out");
             request.Tcs.TrySetException(new TimeoutException("Request timed out"));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Shutdown (the worker may dequeue a buffered item after cancellation
+            // before observing the token): cancel the caller, never fake a timeout.
+            FailItem(queueItem, "Scheduler shutting down");
+            request.Tcs.TrySetCanceled(ct);
         }
         catch (Exception ex)
         {
@@ -956,9 +1016,17 @@ public sealed class SchedulerWorker
         }
     }
 
-    private async Task DrainCurrentModelAsync(TargetSlot slot, CancellationToken ct)
+    /// <summary>
+    /// Batch-drain of the resident model before a switch: every request still
+    /// WAITING for that model is failed/cancelled via its Tcs so the awaiting
+    /// handler returns immediately. Waiting items are NEVER flipped to Processing
+    /// here — they are not being processed, and pretending otherwise leaves
+    /// callers hanging on a Tcs that will only resolve when the item is dequeued
+    /// again after the switch (if ever).
+    /// </summary>
+    private Task DrainCurrentModelAsync(TargetSlot slot, CancellationToken ct)
     {
-        if (slot.ResidentModel is null) return;
+        if (slot.ResidentModel is null) return Task.CompletedTask;
 
         // Collect all waiting requests for the current model on this target
         var toDrain = _allItems.Values
@@ -967,7 +1035,7 @@ public sealed class SchedulerWorker
             .ThenBy(i => i.CreatedAt)
             .ToList();
 
-        if (toDrain.Count == 0) return;
+        if (toDrain.Count == 0) return Task.CompletedTask;
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
             $"Batch-draining {toDrain.Count} requests for model {slot.ResidentModel} on {slot.TargetId}");
@@ -975,8 +1043,12 @@ public sealed class SchedulerWorker
         foreach (var item in toDrain)
         {
             ct.ThrowIfCancellationRequested();
-            UpdateItemStatus(item, QueueItemStatus.Processing);
+            FailItem(item, "Cancelled during batch-drain before model switch");
+            if (_requests.TryGetValue(item.Id, out var request))
+                request.Tcs.TrySetCanceled(ct);
         }
+
+        return Task.CompletedTask;
     }
 
     private void FailAllForModel(string modelName, string errorMessage)
@@ -1019,6 +1091,9 @@ public sealed class SchedulerWorker
 
     private void UpdateItem(QueueItem item)
     {
+        var wasTerminal = _allItems.TryGetValue(item.Id, out var prev)
+            && prev.Status is QueueItemStatus.Completed or QueueItemStatus.Failed;
+
         _allItems[item.Id] = item;
         if (item.Status is QueueItemStatus.Completed or QueueItemStatus.Failed)
         {
@@ -1027,6 +1102,34 @@ public sealed class SchedulerWorker
             while (_recentCompleted.Count > 100)
             {
                 _recentCompleted.TryDequeue(out _);
+            }
+
+            // Track terminal entries once (re-updates of an already-terminal item
+            // must not double-count) so _allItems can be pruned below.
+            if (!wasTerminal)
+            {
+                _terminalOrder.Enqueue(item.Id);
+                Interlocked.Increment(ref _terminalCount);
+                PruneTerminalItems();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Keeps at most <see cref="MaxTerminalTrackedItems"/> terminal rows in
+    /// _allItems, evicting the oldest. Recent completions remain available via
+    /// _recentCompleted; Waiting items are never touched.
+    /// </summary>
+    private void PruneTerminalItems()
+    {
+        while (Volatile.Read(ref _terminalCount) > MaxTerminalTrackedItems
+               && _terminalOrder.TryDequeue(out var oldestId))
+        {
+            Interlocked.Decrement(ref _terminalCount);
+            if (_allItems.TryGetValue(oldestId, out var old)
+                && old.Status is QueueItemStatus.Completed or QueueItemStatus.Failed)
+            {
+                _allItems.TryRemove(oldestId, out _);
             }
         }
     }
