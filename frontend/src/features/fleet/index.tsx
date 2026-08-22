@@ -613,49 +613,62 @@ function ManageRuntimesModal({
   registered: RegisteredRuntime[];
 }) {
   const [activeTab, setActiveTab] = useState<ManageTab>("containers");
+  const queryClient = useQueryClient();
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
   return (
     <Modal open={open} onClose={onClose} label={`Manage runtimes on ${agentName}`}>
       {/* Tab bar */}
-      <div role="tablist" aria-label="Runtimes" className="flex border-b border-[var(--color-border-subtle)]">
+      <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]">
+        <div className="flex" role="tablist" aria-label="Runtimes">
+          <button
+            type="button"
+            role="tab"
+            id="fleet-tab-containers"
+            aria-selected={activeTab === "containers"}
+            aria-controls="fleet-panel-containers"
+            onClick={() => setActiveTab("containers")}
+            className={`
+              flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
+              ${
+                activeTab === "containers"
+                  ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }
+            `}
+          >
+            <PackageOpen className="size-3" />
+            Containers
+          </button>
+          <button
+            type="button"
+            role="tab"
+            id="fleet-tab-scripts"
+            aria-selected={activeTab === "scripts"}
+            aria-controls="fleet-panel-scripts"
+            onClick={() => setActiveTab("scripts")}
+            className={`
+              flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
+              ${
+                activeTab === "scripts"
+                  ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }
+            `}
+          >
+            <Terminal className="size-3" />
+            Scripts
+          </button>
+        </div>
         <button
           type="button"
-          role="tab"
-          id="fleet-tab-containers"
-          aria-selected={activeTab === "containers"}
-          aria-controls="fleet-panel-containers"
-          onClick={() => setActiveTab("containers")}
-          className={`
-            flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
-            ${
-              activeTab === "containers"
-                ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            }
-          `}
+          onClick={() =>
+            queryClient.invalidateQueries({ queryKey: ["agent-containers", agentName] })
+          }
+          aria-label="Refresh containers"
+          className="mr-2 flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
         >
-          <PackageOpen className="size-3" />
-          Containers
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="fleet-tab-scripts"
-          aria-selected={activeTab === "scripts"}
-          aria-controls="fleet-panel-scripts"
-          onClick={() => setActiveTab("scripts")}
-          className={`
-            flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
-            ${
-              activeTab === "scripts"
-                ? "border-b-2 border-[var(--color-primary)] text-[var(--color-primary)]"
-                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-            }
-          `}
-        >
-          <Terminal className="size-3" />
-          Scripts
+          <RefreshCw className="size-3.5" />
         </button>
       </div>
 
@@ -843,29 +856,10 @@ function ManageContainersBody({
                       }
                     `}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={c.modelName}>
-                        {c.modelName}
-                      </span>
-                      {already ? (
-                        <Badge variant="success" className="shrink-0 gap-1">
-                          <PackageOpen className="size-2.5" />
-                          registered
-                        </Badge>
-                      ) : selectedCard ? (
-                        <Badge variant="info" className="shrink-0">
-                          selected
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                        >
-                          register
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-[var(--color-text-muted)]">
+                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={c.modelName}>
+                      {c.modelName}
+                    </span>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
                       <span className="flex items-center gap-1 capitalize">
                         <StatusDot
                           status={c.status === "stopping" ? "stopped" : c.status}
@@ -881,6 +875,25 @@ function ManageContainersBody({
                       <span className="text-right font-mono">
                         {c.cpuPercent > 0 ? `${c.cpuPercent}%` : "—"}
                       </span>
+                    </div>
+                    <div className="mt-auto pt-1">
+                      {already ? (
+                        <Badge variant="success" className="gap-1">
+                          <PackageOpen className="size-2.5" />
+                          registered
+                        </Badge>
+                      ) : selectedCard ? (
+                        <Badge variant="info">
+                          selected
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          register
+                        </Badge>
+                      )}
                     </div>
                   </button>
                 );
