@@ -238,7 +238,9 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start registered container {Id}", registeredContainerId);
-            return await FailAsync(container, ex.Message, ct).ConfigureAwait(false);
+            // Live token: see StartAndDiscoverAsync catch — a canceled ct must not
+            // prevent persisting the Error state.
+            return await FailAsync(container, ex.Message, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -757,7 +759,11 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to register and start container {Id}", container.Id);
-            return await FailAsync(container, ex.Message, ct).ConfigureAwait(false);
+            // Persist the error state with a live token: when the failure IS a
+            // cancellation (e.g. the registered container was deleted mid-start),
+            // the canceled ct would make this update throw too and leave the
+            // registration stuck in a transient state.
+            return await FailAsync(container, ex.Message, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
