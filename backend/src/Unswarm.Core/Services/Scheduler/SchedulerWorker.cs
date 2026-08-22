@@ -739,7 +739,7 @@ public sealed class SchedulerWorker
             transition = transition with { Status = "switching" };
             _activeTransitions[transitionId] = transition;
 
-            await StopIncompatibleContainersAsync(slot, targetRegisteredContainer, ct).ConfigureAwait(false);
+            await StopIncompatibleContainersAsync(slot, targetModel, targetRegisteredContainer, ct).ConfigureAwait(false);
 
             // Start new container
             transition = transition with { Status = "starting" };
@@ -972,20 +972,35 @@ public sealed class SchedulerWorker
 
     /// <summary>
     /// Stops containers on this target that cannot run alongside the target container.
-    /// With no registry info (legacy path) or an empty canRunAlongWith set, behaves as
+    /// Compatibility is decided by the shared symmetric <see cref="CoexistencePolicy"/>
+    /// (each side must allow-list the other; empty list = runs alone).
+    /// With no registry info or an unresolvable target model, behaves as
     /// single-container mode: every other running container on the target is stopped.
     /// </summary>
-    private async Task StopIncompatibleContainersAsync(TargetSlot slot, RegisteredRuntime? targetContainer, CancellationToken ct)
+    private async Task StopIncompatibleContainersAsync(TargetSlot slot, string targetModel, RegisteredRuntime? targetContainer, CancellationToken ct)
     {
-        // No registry or no mapping for the target model → conservative single-slot behavior
+        // Second-chance resolution: the primary model→registry mapping may have missed,
+        // but the request's model name can still identify the runtime (legacy containers
+        // are named after their model).
+        if (_containerRegistry is not null && targetContainer is null)
+        {
+            targetContainer = await ResolveTargetRuntimeByModelNameAsync(targetModel, ct).ConfigureAwait(false);
+            if (targetContainer is not null)
+                _logger.LogInformation(
+                    "Resolved model {Model} to registered runtime {RegId} via name fallback on {Target}",
+                    targetModel, targetContainer.Id, slot.TargetId);
+        }
+
+        // No registry or unresolvable target → conservative single-slot behavior
         if (_containerRegistry is null || targetContainer is null)
         {
+            _logger.LogWarning(
+                "Target model {Model} on {Target} could not be resolved to a registered runtime{Reason}; stopping ALL running containers as a conservative fallback",
+                targetModel, slot.TargetId,
+                _containerRegistry is null ? " (no container registry available)" : "");
             await StopAllRunningAsync(slot, ct).ConfigureAwait(false);
             return;
         }
-
-        var targetNames = ContainerNames(targetContainer);
-        var targetCanRun = new HashSet<string>(targetContainer.CanRunAlongWith ?? [], StringComparer.OrdinalIgnoreCase);
 
         var toStop = new List<string>();
         foreach (var kv in slot.RunningContainers)
@@ -996,9 +1011,19 @@ public sealed class SchedulerWorker
             if (info.RegisteredRuntimeId is not null && info.RegisteredRuntimeId == targetContainer.Id)
                 continue;
 
-            // Legacy running container (no registry info) → cannot prove compatibility → stop
+            // Legacy running entry (no registry id) → try to prove compatibility from
+            // its identifying fields before falling back to a stop.
             if (info.RegisteredRuntimeId is null)
             {
+                if (await LegacyEntryIsCompatibleAsync(info, targetContainer, ct).ConfigureAwait(false))
+                    continue;
+
+                if (string.IsNullOrEmpty(info.ContainerName))
+                {
+                    _logger.LogWarning(
+                        "Stopping legacy running entry {Key} on {Target}: it has no identifying fields, compatibility cannot be proven",
+                        kv.Key, slot.TargetId);
+                }
                 toStop.Add(kv.Key);
                 continue;
             }
@@ -1010,14 +1035,8 @@ public sealed class SchedulerWorker
                 continue;
             }
 
-            var runningNames = ContainerNames(runningEntity);
-            var runningCanRun = new HashSet<string>(runningEntity.CanRunAlongWith ?? [], StringComparer.OrdinalIgnoreCase);
-
-            // Symmetric compatibility: target accepts running, running accepts target
-            var targetAccepts = runningNames.Any(runningName => targetCanRun.Contains(runningName));
-            var runningAccepts = targetNames.Any(targetName => runningCanRun.Contains(targetName));
-
-            if (!(targetAccepts && runningAccepts))
+            // Symmetric compatibility via the shared policy: each side must allow the other
+            if (!CoexistencePolicy.IsAllowedToCoexist(targetContainer, runningEntity))
                 toStop.Add(kv.Key);
         }
 
@@ -1121,11 +1140,70 @@ public sealed class SchedulerWorker
         return false;
     }
 
-    private static IEnumerable<string> ContainerNames(RegisteredRuntime container)
+    /// <summary>
+    /// Second-chance target resolution when the primary model→registry mapping missed:
+    /// retries the mapping lookup (model id / model name → SourceRuntimeId), then falls
+    /// back to legacy naming where a registered runtime's image or display name equals
+    /// the requested model name.
+    /// </summary>
+    private async Task<RegisteredRuntime?> ResolveTargetRuntimeByModelNameAsync(string modelName, CancellationToken ct)
     {
-        yield return container.Image;
-        if (!string.IsNullOrEmpty(container.DisplayName))
-            yield return container.DisplayName;
+        if (_containerRegistry is null)
+            return null;
+
+        var mappedId = await _containerRegistry.GetContainerIdForModelAsync(modelName, ct).ConfigureAwait(false);
+        if (mappedId is not null)
+        {
+            var mapped = await _containerRegistry.GetAsync(mappedId, ct).ConfigureAwait(false);
+            if (mapped is not null)
+                return mapped;
+        }
+
+        var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+        return allRuntimes.FirstOrDefault(r =>
+            string.Equals(r.Image, modelName, StringComparison.OrdinalIgnoreCase) ||
+            (!string.IsNullOrEmpty(r.DisplayName) &&
+             string.Equals(r.DisplayName, modelName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// Best-effort compatibility proof for legacy running entries without a
+    /// RegisteredRuntimeId. First tries to find the registered runtime backing the
+    /// entry (by runtime container id, then image/display name) and applies the
+    /// symmetric <see cref="CoexistencePolicy"/>; without a registered owner it falls
+    /// back to a one-sided check of the target's allow list against the entry's
+    /// container name.
+    /// </summary>
+    private async Task<bool> LegacyEntryIsCompatibleAsync(RunningContainerInfo info, RegisteredRuntime targetContainer, CancellationToken ct)
+    {
+        if (_containerRegistry is null || string.IsNullOrEmpty(info.ContainerName))
+            return false;
+
+        try
+        {
+            var allRuntimes = await _containerRegistry.ListAllAsync(ct).ConfigureAwait(false);
+            var claimed = allRuntimes.FirstOrDefault(r =>
+                !string.Equals(r.Id, targetContainer.Id, StringComparison.OrdinalIgnoreCase) &&
+                ((!string.IsNullOrEmpty(r.RuntimeContainerId) &&
+                  string.Equals(r.RuntimeContainerId, info.ContainerId, StringComparison.OrdinalIgnoreCase)) ||
+                 string.Equals(r.Image, info.ContainerName, StringComparison.OrdinalIgnoreCase) ||
+                 (!string.IsNullOrEmpty(r.DisplayName) &&
+                  string.Equals(r.DisplayName, info.ContainerName, StringComparison.OrdinalIgnoreCase))));
+
+            if (claimed is not null)
+                return CoexistencePolicy.IsAllowedToCoexist(targetContainer, claimed);
+
+            // No registered owner: one-sided proof — the target explicitly allows this container name.
+            return (targetContainer.CanRunAlongWith ?? []).Any(name =>
+                string.Equals(name, info.ContainerName, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to prove compatibility for legacy running entry {Key} on {Target}; treating as incompatible",
+                info.Key, targetContainer.Id);
+            return false;
+        }
     }
 
     /// <summary>

@@ -860,6 +860,34 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task StartAsync_PeerInAllowList_KeptRunning()
     {
+        // Symmetric consent: BOTH sides must list each other.
+        await _registry.CreateAsync(MakeRuntime("reg-social", "model-a", canRunAlongWith: ["model-b"]));
+        await _registry.CreateAsync(MakeRuntime("reg-peer", "model-b", canRunAlongWith: ["model-a"]));
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "peer-c1",
+                ModelId = "model-b",
+                ModelName = "model-b",
+                Status = ContainerStatus.Running,
+                Port = null
+            }
+        ];
+
+        var service = CreateService();
+        var result = await service.StartAsync("reg-social");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Empty(_docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task StartAsync_OneDirectionalAllowList_StopsPeer()
+    {
+        // Only the starting runtime lists the peer; the peer does NOT list it back.
+        // Symmetric consent is required, so the running peer must be stopped.
         await _registry.CreateAsync(MakeRuntime("reg-social", "model-a", canRunAlongWith: ["model-b"]));
         await _registry.CreateAsync(MakeRuntime("reg-peer", "model-b"));
 
@@ -877,6 +905,33 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var service = CreateService();
         var result = await service.StartAsync("reg-social");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Contains("peer-c1", _docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task StartAsync_AllowListByDisplayName_Symmetric_KeptRunning()
+    {
+        // Allow-lists reference DisplayNames while images differ — matching must work
+        // on display name too, symmetrically.
+        await _registry.CreateAsync(MakeRuntime("reg-a", "img-a", canRunAlongWith: ["Beta"]) with { DisplayName = "Alpha" });
+        await _registry.CreateAsync(MakeRuntime("reg-b", "img-b", canRunAlongWith: ["Alpha"]) with { DisplayName = "Beta" });
+
+        _docker.ListedContainers =
+        [
+            new ContainerInfo
+            {
+                Id = "peer-c1",
+                ModelId = "img-b",
+                ModelName = "img-b",
+                Status = ContainerStatus.Running,
+                Port = null
+            }
+        ];
+
+        var service = CreateService();
+        var result = await service.StartAsync("reg-a");
 
         Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
         Assert.Empty(_docker.StoppedContainerIds);

@@ -39,9 +39,11 @@ public sealed class LogRetentionService : BackgroundService
                 var dbFactory = scope.ServiceProvider.GetRequiredService<Func<UnswarmDbContext>>();
                 await using var db = dbFactory();
 
-                // Fetch IDs first, then bulk delete by PK (SQLite can't translate ExecuteDelete with DateTimeOffset)
+                // Filter on the long ticks mirror — SQLite cannot translate
+                // DateTimeOffset comparisons in WHERE clauses at all.
+                var cutoffTicks = cutoff.UtcTicks;
                 var idsToDelete = await db.Logs
-                    .Where(l => l.Timestamp < cutoff)
+                    .Where(l => l.TimestampTicks < cutoffTicks)
                     .Select(l => l.Id)
                     .ToListAsync(stoppingToken);
 

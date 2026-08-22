@@ -295,6 +295,103 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
     }
 
     [Fact]
+    public async Task CanRunAlongWith_DisplayNameDiffersFromImage_CompatibleContainersStayRunning()
+    {
+        // Allow-lists reference DisplayNames while the images differ — compatibility
+        // must match on image OR display name, symmetrically.
+        await RegisterContainerAsync("reg-a", "img-a", ["Beta"], displayName: "Alpha");
+        await RegisterContainerAsync("reg-b", "img-b", ["Alpha"], displayName: "Beta");
+        await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+        await _containerRegistry.AddModelMappingAsync("reg-b", "model-b");
+
+        var host = new FakeDockerController { IdPrefix = "host" };
+        CreateWorker(HostAndAgentRouter(host, new FakeDockerController()), HostAndAgentResolver());
+
+        var allDone = new TaskCompletionSource();
+        var remaining = 2;
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (Interlocked.Decrement(ref remaining) == 0)
+                allDone.TrySetResult();
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
+        };
+
+        await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("model-b", id: "r2"));
+
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Both containers started, neither stopped
+        Assert.Equal(["img-a", "img-b"], host.StartedModels);
+        Assert.Empty(host.StoppedContainerIds);
+
+        await ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task CanRunAlongWith_OneDirectionalAllowList_StopsOldContainer()
+    {
+        // Only reg-a lists reg-b; reg-b does NOT list reg-a back. Symmetric consent
+        // is required, so the old container must be stopped.
+        await RegisterContainerAsync("reg-a", "container-a", ["container-b"]);
+        await RegisterContainerAsync("reg-b", "container-b", []);
+        await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+        await _containerRegistry.AddModelMappingAsync("reg-b", "model-b");
+
+        var host = new FakeDockerController { IdPrefix = "host" };
+        CreateWorker(HostAndAgentRouter(host, new FakeDockerController()), HostAndAgentResolver());
+
+        var allDone = new TaskCompletionSource();
+        var remaining = 2;
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (Interlocked.Decrement(ref remaining) == 0)
+                allDone.TrySetResult();
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
+        };
+
+        await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("model-b", id: "r2"));
+
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["container-a", "container-b"], host.StartedModels);
+        Assert.Single(host.StoppedContainerIds);
+
+        await ShutdownAsync();
+    }
+
+    [Fact]
+    public async Task CanRunAlongWith_TargetMappingMissing_FallsBackToStopAll_DoesNotThrow()
+    {
+        // The second model has no registry mapping and matches no registered runtime
+        // by name → compatibility cannot be proven → conservative stop-all fallback.
+        await RegisterContainerAsync("reg-a", "container-a", []);
+        await _containerRegistry.AddModelMappingAsync("reg-a", "model-a");
+
+        var host = new FakeDockerController { IdPrefix = "host" };
+        CreateWorker(HostAndAgentRouter(host, new FakeDockerController()), HostAndAgentResolver());
+
+        var allDone = new TaskCompletionSource();
+        var remaining = 2;
+        _inference.InvokeFunc = (req, ct) =>
+        {
+            if (Interlocked.Decrement(ref remaining) == 0)
+                allDone.TrySetResult();
+            return Task.FromResult(new InferenceResponse { StatusCode = 200, TokensGenerated = 1 });
+        };
+
+        await EnqueueAsync(MakeRequest("model-a", id: "r1"), MakeRequest("unknown-model", id: "r2"));
+
+        // Both requests complete without throwing; the unmapped target ran alone.
+        await allDone.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(["container-a", "unknown-model"], host.StartedModels);
+        // container-a was stopped before the unresolvable model started
+        Assert.Single(host.StoppedContainerIds);
+
+        await ShutdownAsync();
+    }
+
+    [Fact]
     public async Task AgentTarget_Routing_ResolvesToAgent()
     {
         var host = new FakeDockerController { IdPrefix = "host" };
@@ -390,12 +487,16 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         await ShutdownAsync();
     }
 
-    private async Task RegisterContainerAsync(string id, string image, IReadOnlyList<string> canRunAlongWith)
+    private async Task RegisterContainerAsync(
+        string id,
+        string image,
+        IReadOnlyList<string> canRunAlongWith,
+        string? displayName = null)
     {
         await _containerRegistry.CreateAsync(new RegisteredRuntime
         {
             Id = id,
-            DisplayName = image,
+            DisplayName = displayName ?? image,
             Image = image,
             CanRunAlongWith = canRunAlongWith,
             CreatedAt = DateTimeOffset.UtcNow,

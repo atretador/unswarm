@@ -137,6 +137,7 @@ public sealed class LogStore : ILogStore
             {
                 Id = entry.Id,
                 Timestamp = entry.Timestamp,
+                TimestampTicks = entry.Timestamp.UtcTicks,
                 Level = entry.Level.ToString(),
                 Source = entry.Source,
                 Message = entry.Message,

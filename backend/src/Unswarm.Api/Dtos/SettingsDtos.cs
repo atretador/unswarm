@@ -4,8 +4,6 @@ namespace Unswarm.Api.Dtos;
 
 public sealed class SettingsResponse
 {
-    public int MaxConcurrentModels { get; set; } = 1;
-    public string? DefaultModel { get; set; }
     public int RequestTimeout { get; set; } = 120;
     public int HealthCheckInterval { get; set; } = 10;
     public bool AutoShutdownIdle { get; set; } = true;
@@ -21,8 +19,6 @@ public sealed class SettingsResponse
 
     public static SettingsResponse FromSettings(Settings s) => new()
     {
-        MaxConcurrentModels = s.MaxConcurrentModels,
-        DefaultModel = s.DefaultModel,
         RequestTimeout = s.RequestTimeout,
         HealthCheckInterval = s.HealthCheckInterval,
         AutoShutdownIdle = s.AutoShutdownIdle,
@@ -39,8 +35,6 @@ public sealed class SettingsResponse
 
 public sealed class SettingsUpdateRequest
 {
-    public int? MaxConcurrentModels { get; set; }
-    public string? DefaultModel { get; set; }
     public int? RequestTimeout { get; set; }
     public int? HealthCheckInterval { get; set; }
     public bool? AutoShutdownIdle { get; set; }

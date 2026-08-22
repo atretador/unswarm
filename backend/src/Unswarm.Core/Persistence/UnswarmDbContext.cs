@@ -44,6 +44,13 @@ public sealed class LogEntity
 {
     public string Id { get; set; } = string.Empty;
     public DateTimeOffset Timestamp { get; set; }
+
+    /// <summary>
+    /// UtcTicks mirror of <see cref="Timestamp"/> as a plain long so SQLite can
+    /// translate range comparisons (the provider cannot translate DateTimeOffset
+    /// comparisons in WHERE clauses).
+    /// </summary>
+    public long TimestampTicks { get; set; }
     public string Level { get; set; } = nameof(LogLevel.Info);
     public string Source { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
@@ -53,8 +60,6 @@ public sealed class LogEntity
 public sealed class SettingsEntity
 {
     public string Id { get; set; } = "default";
-    public int MaxConcurrentModels { get; set; } = 1;
-    public string? DefaultModel { get; set; }
     public int RequestTimeout { get; set; } = 120;
     public int HealthCheckInterval { get; set; } = 10;
     public bool AutoShutdownIdle { get; set; } = true;
@@ -217,7 +222,6 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasData(new SettingsEntity
             {
                 Id = "default",
-                MaxConcurrentModels = 1,
                 RequestTimeout = 120,
                 HealthCheckInterval = 10,
                 AutoShutdownIdle = true,

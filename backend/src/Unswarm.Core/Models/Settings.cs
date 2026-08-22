@@ -2,8 +2,6 @@ namespace Unswarm.Core.Models;
 
 public sealed class Settings
 {
-    public int MaxConcurrentModels { get; init; } = 1;
-    public string? DefaultModel { get; init; }
     public int RequestTimeout { get; init; } = 120;
     public int HealthCheckInterval { get; init; } = 10;
     public bool AutoShutdownIdle { get; init; } = true;

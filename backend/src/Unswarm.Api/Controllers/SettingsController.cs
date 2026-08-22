@@ -30,8 +30,6 @@ public sealed class SettingsController : ControllerBase
 
         var updated = new Settings
         {
-            MaxConcurrentModels = request.MaxConcurrentModels ?? current.MaxConcurrentModels,
-            DefaultModel = request.DefaultModel ?? current.DefaultModel,
             RequestTimeout = request.RequestTimeout ?? current.RequestTimeout,
             HealthCheckInterval = request.HealthCheckInterval ?? current.HealthCheckInterval,
             AutoShutdownIdle = request.AutoShutdownIdle ?? current.AutoShutdownIdle,

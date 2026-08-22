@@ -11,8 +11,6 @@ public sealed class SettingsTests
         var store = new FakeSettingsStore();
         var settings = await store.GetAsync();
 
-        Assert.Equal(1, settings.MaxConcurrentModels);
-        Assert.Null(settings.DefaultModel);
         Assert.Equal(120, settings.RequestTimeout);
         Assert.Equal(10, settings.HealthCheckInterval);
         Assert.True(settings.AutoShutdownIdle);
@@ -31,8 +29,6 @@ public sealed class SettingsTests
         var store = new FakeSettingsStore();
         var updated = new Settings
         {
-            MaxConcurrentModels = 4,
-            DefaultModel = "llama",
             RequestTimeout = 300,
             HealthCheckInterval = 5,
             AutoShutdownIdle = false,
@@ -47,8 +43,6 @@ public sealed class SettingsTests
 
         var result = await store.UpdateAsync(updated);
 
-        Assert.Equal(4, result.MaxConcurrentModels);
-        Assert.Equal("llama", result.DefaultModel);
         Assert.Equal(300, result.RequestTimeout);
         Assert.False(result.AutoShutdownIdle);
         Assert.Equal("priority", result.PriorityMode);
@@ -64,16 +58,12 @@ public sealed class SettingsTests
 
         await store.UpdateAsync(new Settings
         {
-            MaxConcurrentModels = 2,
-            DefaultModel = "mistral",
             PriorityMode = "priority",
             LazyStop = false
         });
 
         var fetched = await store.GetAsync();
 
-        Assert.Equal(2, fetched.MaxConcurrentModels);
-        Assert.Equal("mistral", fetched.DefaultModel);
         Assert.Equal("priority", fetched.PriorityMode);
         Assert.False(fetched.LazyStop);
         // Unchanged defaults still apply for non-updated fields
@@ -86,13 +76,12 @@ public sealed class SettingsTests
     {
         var store = new FakeSettingsStore();
 
-        await store.UpdateAsync(new Settings { MaxConcurrentModels = 2, DefaultModel = "a" });
-        await store.UpdateAsync(new Settings { MaxConcurrentModels = 8, DefaultModel = "b" });
+        await store.UpdateAsync(new Settings { PriorityMode = "a" });
+        await store.UpdateAsync(new Settings { PriorityMode = "b" });
 
         var result = await store.GetAsync();
 
-        Assert.Equal(8, result.MaxConcurrentModels);
-        Assert.Equal("b", result.DefaultModel);
+        Assert.Equal("b", result.PriorityMode);
     }
 
     [Fact]
@@ -100,8 +89,6 @@ public sealed class SettingsTests
     {
         var s = new Settings();
 
-        Assert.Equal(1, s.MaxConcurrentModels);
-        Assert.Null(s.DefaultModel);
         Assert.Equal(120, s.RequestTimeout);
         Assert.Equal(10, s.HealthCheckInterval);
         Assert.True(s.AutoShutdownIdle);

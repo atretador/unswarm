@@ -30,8 +30,6 @@ public sealed class SettingsStore : ISettingsStore
         var entity = await db.Settings.FindAsync(["default"], ct).ConfigureAwait(false)
             ?? new SettingsEntity { Id = "default" };
 
-        entity.MaxConcurrentModels = settings.MaxConcurrentModels;
-        entity.DefaultModel = settings.DefaultModel;
         entity.RequestTimeout = settings.RequestTimeout;
         entity.HealthCheckInterval = settings.HealthCheckInterval;
         entity.AutoShutdownIdle = settings.AutoShutdownIdle;
@@ -57,8 +55,6 @@ public sealed class SettingsStore : ISettingsStore
 
     private static Settings MapToSettings(SettingsEntity e) => new()
     {
-        MaxConcurrentModels = e.MaxConcurrentModels,
-        DefaultModel = e.DefaultModel,
         RequestTimeout = e.RequestTimeout,
         HealthCheckInterval = e.HealthCheckInterval,
         AutoShutdownIdle = e.AutoShutdownIdle,

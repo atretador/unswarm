@@ -1180,7 +1180,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         foreach (var peer in peers)
         {
-            if (IsAllowedToCoexist(target, peer)) continue;
+            // Shared symmetric policy: each side must allow-list the other.
+            if (CoexistencePolicy.IsAllowedToCoexist(target, peer)) continue;
 
             if (peer.RuntimeKind == RuntimeKind.Script)
             {
@@ -1255,20 +1256,6 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         static string Normalize(string? agent) =>
             string.IsNullOrWhiteSpace(agent) ? ExecutionTarget.HostId : agent.Trim();
         return string.Equals(Normalize(left), Normalize(right), StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Allow-list membership test: <paramref name="other"/> may coexist with
-    /// <paramref name="target"/> only when its image or display name appears in the
-    /// target's CanRunAlongWith list. Empty list = runs alone.
-    /// </summary>
-    private static bool IsAllowedToCoexist(RegisteredRuntime target, RegisteredRuntime other)
-    {
-        if (target.CanRunAlongWith.Count == 0) return false;
-        return target.CanRunAlongWith.Any(n =>
-            string.Equals(n, other.Image, StringComparison.OrdinalIgnoreCase) ||
-            (!string.IsNullOrEmpty(other.DisplayName) &&
-             string.Equals(n, other.DisplayName, StringComparison.OrdinalIgnoreCase)));
     }
 
     /// <summary>

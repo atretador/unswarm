@@ -96,6 +96,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             {
                 op.Completion.TrySetException(new OperationCanceledException(reason));
                 op.Chunks.Writer.TryComplete();
+                op.FirstSignal.TrySetResult();
             }
         }
     }
@@ -159,7 +160,10 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             {
                 var data = DecodeChunkPayload(message.Payload);
                 if (data is not null && data.Length > 0)
+                {
                     op.Chunks.Writer.TryWrite(data);
+                    op.FirstSignal.TrySetResult();
+                }
             }
             else
             {
@@ -171,6 +175,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         if (_pendingStreams.TryRemove(message.Id, out var streamOp))
         {
             streamOp.Completion.TrySetResult(message);
+            streamOp.FirstSignal.TrySetResult();
         }
 
         if (_pending.TryRemove(message.Id, out var tcs))
@@ -494,6 +499,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             _pendingStreams.TryRemove(commandId, out _);
             op.Completion.TrySetException(ex);
             op.Chunks.Writer.TryComplete();
+            op.FirstSignal.TrySetResult();
             throw new InvalidOperationException($"Failed to send command to agent '{_agentName}': {ex.Message}", ex);
         }
 
@@ -503,7 +509,24 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             var ex = new InvalidOperationException($"Agent '{_agentName}' is not connected");
             op.Completion.TrySetException(ex);
             op.Chunks.Writer.TryComplete();
+            op.FirstSignal.TrySetResult();
             throw ex;
+        }
+
+        // Wait for the first chunk or the final result. If the agent fails
+        // immediately (unknown command on older agents, container not running,
+        // disconnect), surface the error from THIS call so callers can fall back
+        // to buffered inference instead of discovering it mid-stream.
+        await op.FirstSignal.Task.WaitAsync(ct).ConfigureAwait(false);
+
+        if (op.Completion.Task.IsCompleted)
+        {
+            _pendingStreams.TryRemove(commandId, out _);
+            var final = await op.Completion.Task.ConfigureAwait(false); // throws OCE when faulted
+            var error = AgentTunnelStream.FinalToException(final, _agentName);
+            if (error is not null)
+                throw error;
+            // ok:true with zero chunks — empty body; return an already-drained stream.
         }
 
         return new AgentTunnelStream(op, _agentName, () => _pendingStreams.TryRemove(commandId, out _));
@@ -694,6 +717,14 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         /// <summary>Set by the final command_result, or faulted on error/disconnect.</summary>
         public TaskCompletionSource<AgentMessage> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>
+        /// Signalled as soon as the FIRST chunk arrives OR the operation completes/faults,
+        /// so InferStreamAsync can surface immediate failures (e.g. unknown command from
+        /// an older agent) before returning the stream to the caller.
+        /// </summary>
+        public TaskCompletionSource FirstSignal { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     /// <summary>
@@ -727,6 +758,37 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         /// <summary>Completes when the stream reaches EOF, is disposed, or faults.</summary>
         public Task Drained => _drained.Task;
 
+        /// <summary>
+        /// Maps a final command_result to the exception to surface, or null when it
+        /// is a clean ok:true (EOF). NotSupportedException is returned for unknown
+        /// command errors so callers can fall back to buffered inference.
+        /// </summary>
+        internal static Exception? FinalToException(AgentMessage final, string agentName)
+        {
+            var p = final.Payload;
+            if (p is null || !p.HasValue)
+            {
+                return new InvalidOperationException(
+                    $"Agent '{agentName}' chat_completion_stream returned an empty result");
+            }
+
+            var error = GetString(p.Value, "error");
+            if (error is not null)
+            {
+                return error.Contains("unknown command", StringComparison.OrdinalIgnoreCase)
+                    ? new NotSupportedException($"Agent '{agentName}' does not support chat_completion_stream")
+                    : new InvalidOperationException($"Agent '{agentName}' chat_completion_stream failed: {error}");
+            }
+
+            if (GetBool(p.Value, "ok") == false)
+            {
+                return new InvalidOperationException(
+                    $"Agent '{agentName}' chat_completion_stream returned failure");
+            }
+
+            return null;
+        }
+
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(AgentTunnelStream));
@@ -742,6 +804,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
                 if (_error is not null)
                 {
                     SignalDrained();
+                    if (_error is NotSupportedException notSupported)
+                        throw notSupported; // keep the fallback signal unwrapped
                     throw new IOException($"Agent '{_agentName}' tunnel stream failed", _error);
                 }
 
@@ -787,31 +851,11 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
         private void EvaluateFinal(AgentMessage final)
         {
-            var p = final.Payload;
-            if (p is null || !p.HasValue)
-            {
-                _error = new InvalidOperationException(
-                    $"Agent '{_agentName}' chat_completion_stream returned an empty result");
-                return;
-            }
-
-            var error = GetString(p.Value, "error");
+            var error = FinalToException(final, _agentName);
             if (error is not null)
-            {
-                _error = error.Contains("unknown command", StringComparison.OrdinalIgnoreCase)
-                    ? new NotSupportedException($"Agent '{_agentName}' does not support chat_completion_stream")
-                    : new InvalidOperationException($"Agent '{_agentName}' chat_completion_stream failed: {error}");
-                return;
-            }
-
-            if (GetBool(p.Value, "ok") == false)
-            {
-                _error = new InvalidOperationException(
-                    $"Agent '{_agentName}' chat_completion_stream returned failure");
-                return;
-            }
-
-            _eof = true;
+                _error = error;
+            else
+                _eof = true;
         }
 
         private void SignalDrained() => _drained.TrySetResult();
