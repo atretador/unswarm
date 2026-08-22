@@ -39,7 +39,15 @@ public sealed class ApiKeyController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(new { error = "Name is required." });
 
-        var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.Agent, ct: ct);
+        // Optional permanent binding: a key created with a bound agent name can
+        // only ever authenticate as that agent in the /ws/agent handshake.
+        if (request.BoundAgentName is not null && string.IsNullOrWhiteSpace(request.BoundAgentName))
+            return BadRequest(new { error = "boundAgentName must be a non-empty string when provided." });
+
+        var created = await _keys.CreateAsync(
+            request.Name.Trim(), ApiKeyScope.Agent,
+            boundAgentName: string.IsNullOrWhiteSpace(request.BoundAgentName) ? null : request.BoundAgentName.Trim(),
+            ct: ct);
         return Ok(Map(created));
     }
 
@@ -85,6 +93,7 @@ public sealed class ApiKeyController : ControllerBase
         KeyPrefix = r.KeyPrefix,
         Scope = r.Scope,
         IsActive = r.IsActive,
+        BoundAgentName = r.BoundAgentName,
         CreatedAt = r.CreatedAt,
         LastUsedAt = r.LastUsedAt,
         Secret = r.Secret,
@@ -97,6 +106,7 @@ public sealed class ApiKeyController : ControllerBase
         KeyPrefix = item.KeyPrefix,
         Scope = item.Scope,
         IsActive = item.IsActive,
+        BoundAgentName = item.BoundAgentName,
         CreatedAt = item.CreatedAt,
         LastUsedAt = item.LastUsedAt,
     };

@@ -118,4 +118,126 @@ public sealed class ApiKeyStoreTests
         Assert.Equal(second.Id, list[0].Id);
         Assert.Equal(first.Id, list[1].Id);
     }
+
+    // ── Per-agent key binding ─────────────────────────────────────────
+
+    [Fact]
+    public async Task CreateAsync_WithBoundAgentName_PersistsBinding()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("alpha key", ApiKeyScope.Agent, boundAgentName: "alpha");
+
+        Assert.Equal("alpha", created.BoundAgentName);
+
+        var item = await store.GetAsync(created.Id);
+        Assert.NotNull(item);
+        Assert.Equal("alpha", item!.BoundAgentName);
+        Assert.Equal(ApiKeyScope.Agent, item.Scope);
+    }
+
+    [Fact]
+    public async Task CreateAsync_WithoutBoundAgentName_StaysUnbound()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("free agent", ApiKeyScope.Agent);
+
+        Assert.Null(created.BoundAgentName);
+
+        var item = await store.GetAsync(created.Id);
+        Assert.Null(item!.BoundAgentName);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateAsync_BlankBoundAgentName_Throws(string boundAgentName)
+    {
+        var store = NewStore();
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => store.CreateAsync("bad", ApiKeyScope.Agent, boundAgentName: boundAgentName));
+    }
+
+    [Fact]
+    public async Task ResolveAgentBinding_FirstUseBinds_AndSubsequentMismatchRejected()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("consumable", ApiKeyScope.Agent);
+
+        // First use: unbound key binds to the claimed name.
+        Assert.Equal(AgentKeyBindingResult.Allowed,
+            await store.ResolveAgentBindingAsync(created.Id, "first-agent"));
+
+        // Binding persisted immediately.
+        var item = await store.GetAsync(created.Id);
+        Assert.Equal("first-agent", item!.BoundAgentName);
+
+        // Same name still allowed; any other name is rejected forever.
+        Assert.Equal(AgentKeyBindingResult.Allowed,
+            await store.ResolveAgentBindingAsync(created.Id, "first-agent"));
+        Assert.Equal(AgentKeyBindingResult.Mismatch,
+            await store.ResolveAgentBindingAsync(created.Id, "other-agent"));
+    }
+
+    [Fact]
+    public async Task ResolveAgentBinding_KeyBoundAtCreation_RejectsOtherNamesImmediately()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("bound", ApiKeyScope.Agent, boundAgentName: "alpha");
+
+        Assert.Equal(AgentKeyBindingResult.Allowed,
+            await store.ResolveAgentBindingAsync(created.Id, "alpha"));
+        Assert.Equal(AgentKeyBindingResult.Mismatch,
+            await store.ResolveAgentBindingAsync(created.Id, "beta"));
+
+        // Creation-time binding was never overwritten by the rejected claim.
+        Assert.Equal("alpha", (await store.GetAsync(created.Id))!.BoundAgentName);
+    }
+
+    [Fact]
+    public async Task ResolveAgentBinding_ConcurrentFirstUse_ExactlyOneNameWins()
+    {
+        // File-backed DB so each context gets its own connection — a real race.
+        string dbPath = Path.Combine(Path.GetTempPath(), $"unswarm-keyrace-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = TestApiKeyStore.Create(dbPath);
+            var created = await store.CreateAsync("raced", ApiKeyScope.Agent);
+
+            string[] claimants = ["agent-a", "agent-b", "agent-c", "agent-d"];
+            var results = await Task.WhenAll(claimants.Select(
+                name => store.ResolveAgentBindingAsync(created.Id, name)));
+
+            Assert.Single(results, r => r == AgentKeyBindingResult.Allowed);
+            Assert.Equal(3, results.Count(r => r == AgentKeyBindingResult.Mismatch));
+
+            // The persisted binding is the single winner's name and is final.
+            var winner = (await store.GetAsync(created.Id))!.BoundAgentName;
+            Assert.Contains(winner, claimants);
+            Assert.Equal(AgentKeyBindingResult.Allowed,
+                await store.ResolveAgentBindingAsync(created.Id, winner!));
+            Assert.Equal(AgentKeyBindingResult.Mismatch,
+                await store.ResolveAgentBindingAsync(created.Id, "post-race-impostor"));
+        }
+        finally
+        {
+            foreach (var suffix in new[] { "", "-wal", "-shm" })
+            {
+                var file = dbPath + suffix;
+                if (File.Exists(file)) File.Delete(file);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ResolveAgentBinding_UnknownOrInactiveKey_Mismatches()
+    {
+        var store = NewStore();
+        Assert.Equal(AgentKeyBindingResult.Mismatch,
+            await store.ResolveAgentBindingAsync("no-such-key", "any"));
+
+        var created = await store.CreateAsync("revoked", ApiKeyScope.Agent);
+        await store.RevokeAsync(created.Id);
+        Assert.Equal(AgentKeyBindingResult.Mismatch,
+            await store.ResolveAgentBindingAsync(created.Id, "any"));
+    }
 }

@@ -73,6 +73,68 @@ public sealed class ApiKeyControllerTests
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
+    // ── Agent key binding (boundAgentName) ────────────────────────────
+
+    [Fact]
+    public async Task CreateAgent_WithBoundAgentName_ReturnsAndPersistsBinding()
+    {
+        var store = NewStore();
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.CreateAgent(
+            new CreateApiKeyRequest("alpha key", BoundAgentName: "alpha"), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var resp = Assert.IsType<ApiKeyCreateResponse>(ok.Value);
+        Assert.Equal("alpha", resp.BoundAgentName);
+
+        // Binding persisted; the secret authenticates to the bound entity.
+        var entity = await store.AuthenticateAsync(resp.Secret);
+        Assert.NotNull(entity);
+        Assert.Equal("alpha", entity!.BoundAgentName);
+    }
+
+    [Fact]
+    public async Task CreateAgent_WithoutBoundAgentName_StaysUnbound()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.CreateAgent(new CreateApiKeyRequest("free"), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var resp = Assert.IsType<ApiKeyCreateResponse>(ok.Value);
+        Assert.Null(resp.BoundAgentName);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CreateAgent_BlankBoundAgentName_ReturnsBadRequest(string boundAgentName)
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.CreateAgent(
+            new CreateApiKeyRequest("bad", BoundAgentName: boundAgentName), CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task List_IncludesBoundAgentName()
+    {
+        var store = NewStore();
+        var ctrl = CreateController(store);
+
+        await ctrl.Create(new CreateApiKeyRequest("inf-key"), CancellationToken.None);
+        await ctrl.CreateAgent(new CreateApiKeyRequest("ag-key", BoundAgentName: "alpha"), CancellationToken.None);
+
+        var result = await ctrl.List(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var items = Assert.IsAssignableFrom<IEnumerable<ApiKeyListItem>>(ok.Value).ToList();
+
+        Assert.Null(items.Single(i => i.Name == "inf-key").BoundAgentName);
+        Assert.Equal("alpha", items.Single(i => i.Name == "ag-key").BoundAgentName);
+    }
+
     // ── Stored-hash authenticates ─────────────────────────────────────
 
     [Fact]

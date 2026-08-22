@@ -14,9 +14,11 @@ public interface IApiKeyStore
     /// <summary>
     /// Create a key. <paramref name="explicitKey"/> (used only by the static-key
     /// migration) lets the caller supply the plaintext; otherwise a fresh random
-    /// key is generated. Returns the secret exactly once.
+    /// key is generated. Returns the secret exactly once. When
+    /// <paramref name="boundAgentName"/> is non-empty the key is permanently bound
+    /// to that agent name (agent keys); it must be null/empty for unbound keys.
     /// </summary>
-    Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, CancellationToken ct = default);
+    Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, CancellationToken ct = default);
 
     /// <summary>All keys, secret-free (prefix only). Ordered newest first.</summary>
     Task<IReadOnlyList<ApiKeyItem>> ListAsync(CancellationToken ct = default);
@@ -43,4 +45,13 @@ public interface IApiKeyStore
 
     /// <summary>Stamp <see cref="ApiKeyEntity.LastUsedAt"/> after a successful authenticate.</summary>
     Task UpdateLastUsedAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
+    /// Resolve the agent-name binding for an agent-scope key during the /ws/agent
+    /// handshake. A key already bound to X only allows the claim "X". An unbound
+    /// key atomically consumes its first use: it binds to
+    /// <paramref name="claimedAgentName"/> (persisted immediately; concurrent
+    /// first-use races resolve to exactly one winner) and allows that claim.
+    /// </summary>
+    Task<AgentKeyBindingResult> ResolveAgentBindingAsync(string keyId, string claimedAgentName, CancellationToken ct = default);
 }

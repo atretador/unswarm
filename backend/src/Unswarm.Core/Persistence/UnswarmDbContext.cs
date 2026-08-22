@@ -153,6 +153,13 @@ public sealed class ApiKeyEntity
     public string KeyPrefix { get; set; } = string.Empty;
     public ApiKeyScope Scope { get; set; } = ApiKeyScope.Inference;
     public bool IsActive { get; set; } = true;
+    /// <summary>
+    /// Agent name this key is permanently bound to, or null for an unbound key.
+    /// A key created with a bound name can only ever authenticate as that agent;
+    /// an unbound agent-scope key binds to the first agent_name claimed during
+    /// the /ws/agent handshake and is then permanently fixed to it.
+    /// </summary>
+    public string? BoundAgentName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
 }

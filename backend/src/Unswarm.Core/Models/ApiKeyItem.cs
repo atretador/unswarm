@@ -26,8 +26,21 @@ public class ApiKeyItem
     public string KeyPrefix { get; set; } = string.Empty;
     public ApiKeyScope Scope { get; set; } = ApiKeyScope.Inference;
     public bool IsActive { get; set; } = true;
+    /// <summary>Agent name this key is permanently bound to (null = unbound).</summary>
+    public string? BoundAgentName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
+}
+
+/// <summary>
+/// Outcome of resolving an agent-scope key's binding during the /ws/agent
+/// handshake: the claimed agent_name either matches the key's binding (or the
+/// key consumed its first use to bind to it), or it does not.
+/// </summary>
+public enum AgentKeyBindingResult
+{
+    Allowed = 0,
+    Mismatch = 1,
 }
 
 /// <summary>

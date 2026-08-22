@@ -16,8 +16,11 @@ public sealed class ApiKeyStore : IApiKeyStore
         _dbFactory = dbFactory;
     }
 
-    public async Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, CancellationToken ct = default)
+    public async Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, CancellationToken ct = default)
     {
+        if (boundAgentName is not null && string.IsNullOrWhiteSpace(boundAgentName))
+            throw new ArgumentException("Bound agent name must be a non-empty string when provided.", nameof(boundAgentName));
+
         await using var db = _dbFactory();
         var now = DateTimeOffset.UtcNow;
 
@@ -32,6 +35,7 @@ public sealed class ApiKeyStore : IApiKeyStore
             KeyPrefix = secret[..Math.Min(8, secret.Length)],
             Scope = scope,
             IsActive = true,
+            BoundAgentName = string.IsNullOrWhiteSpace(boundAgentName) ? null : boundAgentName.Trim(),
             CreatedAt = now,
         };
         db.ApiKeys.Add(entity);
@@ -110,6 +114,39 @@ public sealed class ApiKeyStore : IApiKeyStore
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<AgentKeyBindingResult> ResolveAgentBindingAsync(string keyId, string claimedAgentName, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.ApiKeys.FindAsync([keyId], ct);
+        if (entity is null || !entity.IsActive || string.IsNullOrWhiteSpace(claimedAgentName))
+            return AgentKeyBindingResult.Mismatch;
+
+        // Already bound: the claim must match exactly, forever.
+        if (entity.BoundAgentName is not null)
+            return entity.BoundAgentName == claimedAgentName
+                ? AgentKeyBindingResult.Allowed
+                : AgentKeyBindingResult.Mismatch;
+
+        // First-use consumption: bind atomically. The single UPDATE with a
+        // "BoundAgentName IS NULL" guard makes concurrent first-use races safe —
+        // exactly one claimant's row update can succeed.
+        var rows = await db.ApiKeys
+            .Where(k => k.Id == keyId && k.BoundAgentName == null)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.BoundAgentName, claimedAgentName), ct);
+        if (rows == 1)
+            return AgentKeyBindingResult.Allowed;
+
+        // Lost the race: re-read whoever won and compare against this claim.
+        var winner = await db.ApiKeys
+            .AsNoTracking()
+            .Where(k => k.Id == keyId)
+            .Select(k => k.BoundAgentName)
+            .FirstOrDefaultAsync(ct);
+        return winner == claimedAgentName
+            ? AgentKeyBindingResult.Allowed
+            : AgentKeyBindingResult.Mismatch;
+    }
+
     public async Task<bool> HasAnyAsync(ApiKeyScope scope, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
@@ -140,6 +177,7 @@ public sealed class ApiKeyStore : IApiKeyStore
         KeyPrefix = e.KeyPrefix,
         Scope = e.Scope,
         IsActive = e.IsActive,
+        BoundAgentName = e.BoundAgentName,
         CreatedAt = e.CreatedAt,
         LastUsedAt = e.LastUsedAt,
         Secret = secret,
@@ -152,6 +190,7 @@ public sealed class ApiKeyStore : IApiKeyStore
         KeyPrefix = e.KeyPrefix,
         Scope = e.Scope,
         IsActive = e.IsActive,
+        BoundAgentName = e.BoundAgentName,
         CreatedAt = e.CreatedAt,
         LastUsedAt = e.LastUsedAt,
     };

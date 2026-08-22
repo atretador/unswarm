@@ -32,6 +32,12 @@ public sealed class ApiKeyAuthMiddleware
     /// <summary>Claim type holding the key's scope ("Inference").</summary>
     public const string ScopeClaimType = "unswarm:key-scope";
 
+    /// <summary>
+    /// Claim type holding the key's permanently bound agent name, when the key
+    /// has one. Consumed by AgentController to enforce per-agent key bindings.
+    /// </summary>
+    public const string BoundAgentClaimType = "unswarm:key-bound-agent";
+
     /// <summary>Required scope per protected path prefix (case-insensitive).</summary>
     private static readonly Dictionary<string, ApiKeyScope> PathScope = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -148,14 +154,16 @@ public sealed class ApiKeyAuthMiddleware
         if (existing.Identity is ClaimsIdentity ci)
             identities.Add(ci);
 
-        identities.Add(new ClaimsIdentity(
-            new[]
-            {
-                new Claim(ClaimTypes.Name, entity.Name),
-                new Claim("unswarm:key-id", entity.Id),
-                new Claim(ScopeClaimType, entity.Scope.ToString()),
-            },
-            authenticationType: "ApiKey"));
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, entity.Name),
+            new("unswarm:key-id", entity.Id),
+            new(ScopeClaimType, entity.Scope.ToString()),
+        };
+        if (entity.BoundAgentName is not null)
+            claims.Add(new Claim(BoundAgentClaimType, entity.BoundAgentName));
+
+        identities.Add(new ClaimsIdentity(claims, authenticationType: "ApiKey"));
 
         return new ClaimsPrincipal(identities);
     }
