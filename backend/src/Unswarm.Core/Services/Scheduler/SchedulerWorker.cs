@@ -58,6 +58,7 @@ public sealed class SchedulerWorker
     private readonly ConcurrentDictionary<string, ModelTransition> _activeTransitions = new();
     private readonly ConcurrentQueue<QueueItem> _recentCompleted = new();
     private readonly object _snapshotLock = new();
+    private readonly IDisposable? _queueDepthRegistration;
     private Task? _runTask;
 
     public SchedulerWorker(
@@ -90,6 +91,22 @@ public sealed class SchedulerWorker
         _resolver = resolver ?? new HostOnlyTargetResolver();
         _scriptController = scriptController;
         _settingsStore = settingsStore;
+
+        // Publish total queue depth (global channel + per-target channels) to the
+        // "unswarm.queue.depth" gauge. No-op unless an OTel provider listens to the
+        // "Unswarm" meter.
+        _queueDepthRegistration = Telemetry.UnswarmMetrics.RegisterQueueDepthProvider(GetTotalQueueDepth);
+    }
+
+    /// <summary>Total requests waiting across the global channel and all target channels.</summary>
+    private long GetTotalQueueDepth()
+    {
+        var depth = (long)_channel.Reader.Count;
+        foreach (var slot in _slots.Values)
+        {
+            depth += slot.Channel.Reader.Count;
+        }
+        return depth;
     }
 
     /// <summary>
@@ -460,6 +477,8 @@ public sealed class SchedulerWorker
         var transitionId = Guid.NewGuid().ToString("N");
         var fromModel = slot.ResidentModel ?? "(none)";
         var switchStart = _clock.UtcNow;
+
+        Telemetry.UnswarmMetrics.RecordModelSwitch(fromModel, targetModel, slot.TargetId);
 
         var transition = new ModelTransition
         {

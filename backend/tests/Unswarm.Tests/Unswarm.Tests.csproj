@@ -12,6 +12,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- In-memory metric collection (OpenTelemetry.Metrics.MetricCollector). -->
+    <PackageReference Include="OpenTelemetry" Version="1.18.0" />
   </ItemGroup>
 
   <ItemGroup>

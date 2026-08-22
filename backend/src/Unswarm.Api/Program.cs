@@ -14,6 +14,12 @@ using Unswarm.Core.Services.Validation;
 using System.Threading.Channels;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.RateLimiting;
+using OpenTelemetry;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using Unswarm.Core.Telemetry;
 
 // ── CLI args ───────────────────────────────────────────────────────────────
 string? adminSetupPassword = null;
@@ -183,6 +189,51 @@ builder.Services.AddSingleton<Unswarm.Core.Services.Benchmarks.AutoBenchmarkServ
         sp.GetRequiredService<ILogger<Unswarm.Core.Services.Benchmarks.AutoBenchmarkService>>());
 });
 
+// ── OpenTelemetry ─────────────────────────────────────────────────────────
+// Traces + metrics for ASP.NET Core and HttpClient, plus Unswarm's custom
+// "Unswarm" meter. OTLP export is enabled only when OTEL_EXPORTER_OTLP_ENDPOINT
+// is set; Prometheus scraping is always available at /metrics. With no exporter
+// configured everything stays in-process and cheap (no-op instruments).
+var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: builder.Environment.ApplicationName ?? "Unswarm.Api"))
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation()
+               .AddHttpClientInstrumentation();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(otlpEndpoint);
+                options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            });
+        }
+    });
+
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(
+        serviceName: builder.Environment.ApplicationName ?? "Unswarm.Api"))
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation()
+               .AddHttpClientInstrumentation()
+               .AddMeter(UnswarmMetrics.MeterName)
+               .AddPrometheusExporter();
+
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            metrics.AddOtlpExporter((options, metricReaderOptions) =>
+            {
+                options.Endpoint = new Uri(otlpEndpoint);
+                options.Protocol = OtlpExportProtocol.HttpProtobuf;
+            });
+        }
+    });
+
 // ── Controllers ───────────────────────────────────────────────────────────
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
@@ -300,6 +351,11 @@ app.MapControllers();
 // Anonymous liveness probe — deliberately outside any auth surface
 // ("/health" is not a protected prefix in ApiKeyAuthMiddleware).
 app.MapHealthChecks("/health");
+
+// Anonymous Prometheus scrape endpoint — same treatment as /health ("/metrics"
+// is not a protected prefix in ApiKeyAuthMiddleware). Serves whatever the
+// OpenTelemetry metric provider has collected, including the "Unswarm" meter.
+app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
 
 app.Run();
 

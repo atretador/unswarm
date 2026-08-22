@@ -47,6 +47,30 @@ public sealed class InferenceProxy : IInferenceProxy
     public async Task<InferenceResponse> InvokeAsync(InferenceRequest request, CancellationToken ct = default)
     {
         var targetId = request.TargetId ?? ExecutionTarget.HostId;
+        var isHostTarget = targetId == ExecutionTarget.HostId;
+
+        try
+        {
+            var response = await InvokeCoreAsync(request, ct).ConfigureAwait(false);
+            var success = response.StatusCode < 400;
+            Telemetry.UnswarmMetrics.RecordInferenceRequest(request.ModelName, isHostTarget, success);
+            if (!success)
+            {
+                Telemetry.UnswarmMetrics.RecordInferenceFailure(request.ModelName, isHostTarget);
+            }
+            return response;
+        }
+        catch (Exception)
+        {
+            Telemetry.UnswarmMetrics.RecordInferenceRequest(request.ModelName, isHostTarget, success: false);
+            Telemetry.UnswarmMetrics.RecordInferenceFailure(request.ModelName, isHostTarget);
+            throw;
+        }
+    }
+
+    private async Task<InferenceResponse> InvokeCoreAsync(InferenceRequest request, CancellationToken ct)
+    {
+        var targetId = request.TargetId ?? ExecutionTarget.HostId;
         var controller = _router.GetController(targetId);
 
         if (targetId != ExecutionTarget.HostId)
