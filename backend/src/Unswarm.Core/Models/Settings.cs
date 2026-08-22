@@ -21,4 +21,10 @@ public sealed class Settings
 
     /// <summary>Max parallel slots the scheduler may skip before giving up on placement (1-1000).</summary>
     public int ParallelSlotSkipLimit { get; init; } = 3;
+
+    /// <summary>Whether the scheduler may skip parallel slots when placing queue items.</summary>
+    public bool EnableParallelSlotSkip { get; init; }
+
+    /// <summary>How many queue items are processed before the per-target parallel-slot skip counter resets.</summary>
+    public int QueueStepsTillReset { get; init; } = 3;
 }

@@ -66,6 +66,8 @@ public sealed class SettingsStore : ISettingsStore
         LazyStop = e.LazyStop,
         MaxQueueDepth = e.MaxQueueDepth,
         MaxConcurrentTargets = e.MaxConcurrentTargets,
-        ParallelSlotSkipLimit = e.ParallelSlotSkipLimit
+        ParallelSlotSkipLimit = e.ParallelSlotSkipLimit,
+        EnableParallelSlotSkip = e.EnableParallelSlotSkip,
+        QueueStepsTillReset = e.QueueStepsTillReset
     };
 }

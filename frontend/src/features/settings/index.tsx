@@ -39,6 +39,7 @@ function SchedulerPolicySection() {
 
   const [draftMaxQueue, setDraftMaxQueue] = useState<string>("");
   const [draftParallelSkip, setDraftParallelSkip] = useState<string>("");
+  const [draftQueueStepsTillReset, setDraftQueueStepsTillReset] = useState<string>("");
   const [draftRequestTimeout, setDraftRequestTimeout] = useState<string>("");
   const [draftIdleTimeout, setDraftIdleTimeout] = useState<string>("");
   const [draftHealthCheckInterval, setDraftHealthCheckInterval] = useState<string>("");
@@ -49,6 +50,7 @@ function SchedulerPolicySection() {
     if (settings) {
       setDraftMaxQueue(String(settings.maxQueueDepth));
       setDraftParallelSkip(String(settings.parallelSlotSkipLimit));
+      setDraftQueueStepsTillReset(String(settings.queueStepsTillReset));
       setDraftRequestTimeout(String(settings.requestTimeout));
       setDraftIdleTimeout(String(settings.idleTimeout));
       setDraftHealthCheckInterval(String(settings.healthCheckInterval));
@@ -61,6 +63,7 @@ function SchedulerPolicySection() {
       field:
         | "maxQueueDepth"
         | "parallelSlotSkipLimit"
+        | "queueStepsTillReset"
         | "requestTimeout"
         | "idleTimeout"
         | "healthCheckInterval",
@@ -69,7 +72,7 @@ function SchedulerPolicySection() {
       const num = Number(raw);
       if (!Number.isFinite(num)) return;
       const clamped =
-        field === "parallelSlotSkipLimit"
+        field === "parallelSlotSkipLimit" || field === "queueStepsTillReset"
           ? Math.max(1, Math.min(1000, num))
           : field === "maxQueueDepth"
             ? Math.max(0, num)
@@ -135,6 +138,13 @@ function SchedulerPolicySection() {
       field: "lazyStop",
     },
     {
+      key: "enable-parallel-slot-skip",
+      label: "Enable parallel slot skip",
+      desc: "Skip busy parallel slots and defer requests to later slots",
+      checked: settings.enableParallelSlotSkip,
+      field: "enableParallelSlotSkip",
+    },
+    {
       key: "enable-benchmarking",
       label: "Enable benchmarking",
       desc: "Auto-run the default benchmark when a model is registered",
@@ -177,16 +187,35 @@ function SchedulerPolicySection() {
               if (e.key === "Enter") commitDraft("maxQueueDepth", draftMaxQueue);
             }}
           />
-          <Input
-            label="Parallel slot skip limit"
-            type="number"
-            value={draftParallelSkip}
-            onChange={(e) => setDraftParallelSkip(e.target.value)}
-            onBlur={() => commitDraft("parallelSlotSkipLimit", draftParallelSkip)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitDraft("parallelSlotSkipLimit", draftParallelSkip);
-            }}
-          />
+          {settings.enableParallelSlotSkip && (
+            <>
+              <Input
+                label="Parallel slot skip limit"
+                type="number"
+                value={draftParallelSkip}
+                onChange={(e) => setDraftParallelSkip(e.target.value)}
+                onBlur={() => commitDraft("parallelSlotSkipLimit", draftParallelSkip)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitDraft("parallelSlotSkipLimit", draftParallelSkip);
+                }}
+              />
+              <div>
+                <Input
+                  label="Queue steps till skip reset"
+                  type="number"
+                  value={draftQueueStepsTillReset}
+                  onChange={(e) => setDraftQueueStepsTillReset(e.target.value)}
+                  onBlur={() => commitDraft("queueStepsTillReset", draftQueueStepsTillReset)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") commitDraft("queueStepsTillReset", draftQueueStepsTillReset);
+                  }}
+                />
+                <p className="text-[10px] text-[var(--color-text-muted)]">
+                  How many queue items are processed before the parallel-slot skip counter resets
+                </p>
+              </div>
+            </>
+          )}
           <Input
             label="Request timeout (seconds)"
             type="number"

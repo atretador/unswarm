@@ -40,7 +40,9 @@ public sealed class SettingsController : ControllerBase
             BatchDrain = request.BatchDrain ?? current.BatchDrain,
             LazyStop = request.LazyStop ?? current.LazyStop,
             MaxQueueDepth = Math.Clamp(request.MaxQueueDepth ?? current.MaxQueueDepth, 1, 10000),
-            ParallelSlotSkipLimit = Math.Clamp(request.ParallelSlotSkipLimit ?? current.ParallelSlotSkipLimit, 1, 1000)
+            ParallelSlotSkipLimit = Math.Clamp(request.ParallelSlotSkipLimit ?? current.ParallelSlotSkipLimit, 1, 1000),
+            EnableParallelSlotSkip = request.EnableParallelSlotSkip ?? current.EnableParallelSlotSkip,
+            QueueStepsTillReset = Math.Clamp(request.QueueStepsTillReset ?? current.QueueStepsTillReset, 1, 1000)
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

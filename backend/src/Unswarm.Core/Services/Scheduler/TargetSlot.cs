@@ -63,6 +63,20 @@ public sealed class TargetSlot
     /// <see cref="SchedulerSettings.ParallelSlotSkipLimit"/>.
     /// </summary>
     public int SkipsUsed;
+
+    /// <summary>
+    /// Sequentially processed queue items since the last skip-counter reset.
+    /// When it reaches <see cref="SchedulerSettings.QueueStepsTillReset"/>, both
+    /// this counter and <see cref="SkipsUsed"/> are reset to zero.
+    /// </summary>
+    public int SequentialStepsProcessed;
+
+    /// <summary>
+    /// Serializes model switches on this target so concurrent (coexistence-allowed)
+    /// requests never mutate container state at the same time. Unlike
+    /// <see cref="ConcurrencyGate"/> it is never replaced — create once per slot.
+    /// </summary>
+    public SemaphoreSlim SwitchLock { get; } = new(1, 1);
 }
 
 public sealed record RunningContainerInfo

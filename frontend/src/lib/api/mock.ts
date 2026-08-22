@@ -709,6 +709,8 @@ const SETTINGS: Settings = {
   lazyStop: true,
   maxQueueDepth: 32,
   parallelSlotSkipLimit: 3,
+  enableParallelSlotSkip: false,
+  queueStepsTillReset: 3,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────

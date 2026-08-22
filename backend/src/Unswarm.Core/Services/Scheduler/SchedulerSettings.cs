@@ -21,6 +21,12 @@ public sealed class SchedulerSettings
     /// <summary>Max parallel slots the scheduler may skip before giving up on placement (1-1000).</summary>
     public int ParallelSlotSkipLimit { get; init; } = 3;
 
+    /// <summary>Master toggle for the parallel-slot skip mechanism. When false, requests on a target are fully sequential.</summary>
+    public bool EnableParallelSlotSkip { get; init; }
+
+    /// <summary>Sequentially processed queue items before the per-target skip counter resets (1-1000).</summary>
+    public int QueueStepsTillReset { get; init; } = 3;
+
     public static SchedulerSettings FromSettings(Settings s) => new()
     {
         LazyStop = s.LazyStop,
@@ -30,6 +36,8 @@ public sealed class SchedulerSettings
         RequestTimeout = s.RequestTimeout,
         MaxConcurrentTargets = s.MaxConcurrentTargets,
         HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds,
-        ParallelSlotSkipLimit = Math.Clamp(s.ParallelSlotSkipLimit, 1, 1000)
+        ParallelSlotSkipLimit = Math.Clamp(s.ParallelSlotSkipLimit, 1, 1000),
+        EnableParallelSlotSkip = s.EnableParallelSlotSkip,
+        QueueStepsTillReset = Math.Clamp(s.QueueStepsTillReset, 1, 1000)
     };
 }

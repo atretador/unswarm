@@ -18,6 +18,8 @@ export interface BenchmarkResult {
   timestamp: string;
   status: BenchmarkStatus;
   errorMessage?: string | null;
+  /** Raw LLM output text. Null/absent when the run errored or text wasn't captured. */
+  response?: string | null;
 }
 
 /**
@@ -260,6 +262,8 @@ export interface Settings {
   lazyStop: boolean;
   maxQueueDepth: number;
   parallelSlotSkipLimit: number;
+  enableParallelSlotSkip: boolean;
+  queueStepsTillReset: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────

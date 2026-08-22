@@ -72,6 +72,8 @@ public sealed class SettingsEntity
     public int MaxQueueDepth { get; set; } = 32;
     public int MaxConcurrentTargets { get; set; }
     public int ParallelSlotSkipLimit { get; set; } = 3;
+    public bool EnableParallelSlotSkip { get; set; }
+    public int QueueStepsTillReset { get; set; } = 3;
 }
 
 /// <summary>
@@ -233,7 +235,9 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 LazyStop = true,
                 MaxQueueDepth = 32,
                 MaxConcurrentTargets = 0,
-                ParallelSlotSkipLimit = 3
+                ParallelSlotSkipLimit = 3,
+                EnableParallelSlotSkip = false,
+                QueueStepsTillReset = 3
             });
         });
 

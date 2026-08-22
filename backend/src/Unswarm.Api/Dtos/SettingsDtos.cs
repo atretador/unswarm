@@ -16,6 +16,8 @@ public sealed class SettingsResponse
     public int MaxQueueDepth { get; set; } = 32;
 
     public int ParallelSlotSkipLimit { get; set; } = 3;
+    public bool EnableParallelSlotSkip { get; set; }
+    public int QueueStepsTillReset { get; set; } = 3;
 
     public static SettingsResponse FromSettings(Settings s) => new()
     {
@@ -29,7 +31,9 @@ public sealed class SettingsResponse
         BatchDrain = s.BatchDrain,
         LazyStop = s.LazyStop,
         MaxQueueDepth = s.MaxQueueDepth,
-        ParallelSlotSkipLimit = s.ParallelSlotSkipLimit
+        ParallelSlotSkipLimit = s.ParallelSlotSkipLimit,
+        EnableParallelSlotSkip = s.EnableParallelSlotSkip,
+        QueueStepsTillReset = s.QueueStepsTillReset
     };
 }
 
@@ -47,4 +51,6 @@ public sealed class SettingsUpdateRequest
     public int? MaxQueueDepth { get; set; }
 
     public int? ParallelSlotSkipLimit { get; set; }
+    public bool? EnableParallelSlotSkip { get; set; }
+    public int? QueueStepsTillReset { get; set; }
 }

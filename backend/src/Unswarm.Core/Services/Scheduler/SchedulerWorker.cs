@@ -368,15 +368,37 @@ public sealed class SchedulerWorker
 
                 var requestModel = request.ModelName;
                 var modelMatches = slot.ResidentModel == requestModel;
+                var enableSkip = _settings.EnableParallelSlotSkip;
                 // +1 accounts for the sequential path consuming one slot;
                 // with MaxConcurrency=1 this is always false → fully sequential.
-                var hasConcurrentCapacity = Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
-                var skipsRemaining = _settings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed);
+                var skipsRemaining = enableSkip
+                    ? _settings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed)
+                    : 0;
 
-                if (modelMatches && hasConcurrentCapacity && skipsRemaining > 0)
+                var goParallel = false;
+                if (skipsRemaining > 0)
+                {
+                    if (modelMatches)
+                    {
+                        goParallel = Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
+                    }
+                    else if (Volatile.Read(ref slot.ActiveInferences) > 0)
+                    {
+                        // Coexistence-aware: a different model may run alongside the
+                        // active one when every running container allows it. The
+                        // switch inside ProcessRequestAsync keeps compatible
+                        // containers alive, so no drain is needed.
+                        goParallel = await CanRunAlongsideRunningAsync(slot, requestModel, stoppingToken)
+                            .ConfigureAwait(false);
+                    }
+                    // ActiveInferences == 0 with a model mismatch → nothing to gain
+                    // from the parallel path; the sequential path switches cheaply.
+                }
+
+                if (goParallel)
                 {
                     // ── Parallel path ──────────────────────────────────────
-                    // Same model, capacity available, skip limit not reached.
+                    // Same model with capacity, or coexistence-compatible model.
                     // Launch processing concurrently without awaiting; the next
                     // iteration of the loop reads the next request immediately.
                     Interlocked.Increment(ref slot.SkipsUsed);
@@ -412,10 +434,19 @@ public sealed class SchedulerWorker
                 else
                 {
                     // ── Sequential path ────────────────────────────────────
-                    // Different model or limits hit: reset skip counter and
-                    // process one-at-a-time, awaiting completion before the
-                    // next dequeue.
-                    Interlocked.Exchange(ref slot.SkipsUsed, 0);
+                    // Skip budget exhausted, skip disabled, or incompatible
+                    // model: process one-at-a-time, awaiting completion before
+                    // the next dequeue.
+                    //
+                    // The skip counter no longer resets on EVERY sequential item;
+                    // it resets only after QueueStepsTillReset items have been
+                    // processed sequentially.
+                    var steps = Interlocked.Increment(ref slot.SequentialStepsProcessed);
+                    if (steps >= _settings.QueueStepsTillReset)
+                    {
+                        Interlocked.Exchange(ref slot.SkipsUsed, 0);
+                        Interlocked.Exchange(ref slot.SequentialStepsProcessed, 0);
+                    }
 
                     // If the model differs and active inferences are still
                     // running for the previous model, wait for them to drain
@@ -626,12 +657,31 @@ public sealed class SchedulerWorker
 
     private async Task SwitchModelAsync(TargetSlot slot, string targetModel, CancellationToken ct)
     {
-        // Safety gate: ensure no active inferences are running before we begin
-        // a model switch. RunTargetAsync should already guarantee this, but
-        // guard against races if a fire-and-forget task is still winding down.
-        while (Volatile.Read(ref slot.ActiveInferences) > 0)
+        // Serialize switches per target: concurrent (coexistence-allowed) requests
+        // may each trigger a switch; container state mutations must not interleave.
+        await slot.SwitchLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            await Task.Delay(50, ct).ConfigureAwait(false);
+            await SwitchModelLockedAsync(slot, targetModel, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            slot.SwitchLock.Release();
+        }
+    }
+
+    private async Task SwitchModelLockedAsync(TargetSlot slot, string targetModel, CancellationToken ct)
+    {
+        // Drain gate: only wait for active inferences to finish when the switch
+        // will STOP one of their containers (incompatible target). Coexistence-
+        // compatible targets start alongside without draining.
+        if (slot.RunningContainers.Count > 0
+            && !await CanRunAlongsideRunningAsync(slot, targetModel, ct).ConfigureAwait(false))
+        {
+            while (Volatile.Read(ref slot.ActiveInferences) > 0)
+            {
+                await Task.Delay(50, ct).ConfigureAwait(false);
+            }
         }
 
         var transitionId = Guid.NewGuid().ToString("N");
@@ -674,8 +724,10 @@ public sealed class SchedulerWorker
             var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
 
             // Update concurrency limit from the registered runtime (if available).
-            // Safety gate above ensures ActiveInferences == 0, so the gate is not in use.
-            if (targetRegisteredContainer is not null)
+            // Only safe when nothing is in flight — with coexistence-allowed
+            // switches, active inferences may still be running; the next quiet
+            // switch picks up the new limit.
+            if (targetRegisteredContainer is not null && Volatile.Read(ref slot.ActiveInferences) == 0)
             {
                 var newMax = targetRegisteredContainer.MaxConcurrentInferences;
                 slot.MaxConcurrency = newMax;
@@ -1164,6 +1216,48 @@ public sealed class SchedulerWorker
             string.Equals(r.Image, modelName, StringComparison.OrdinalIgnoreCase) ||
             (!string.IsNullOrEmpty(r.DisplayName) &&
              string.Equals(r.DisplayName, modelName, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// Coexistence-aware parallel eligibility: returns true when the incoming
+    /// request's model resolves to a registered runtime that may run alongside
+    /// EVERY container currently tracked on the slot (symmetric policy check,
+    /// mirroring <see cref="StopIncompatibleContainersAsync"/>). When true, the
+    /// scheduler may launch the request concurrently — the model switch inside
+    /// processing will start the new container while keeping compatible ones alive.
+    /// </summary>
+    private async Task<bool> CanRunAlongsideRunningAsync(TargetSlot slot, string modelName, CancellationToken ct)
+    {
+        if (_containerRegistry is null || slot.RunningContainers.Count == 0)
+            return false;
+
+        var target = await ResolveTargetRuntimeByModelNameAsync(modelName, ct).ConfigureAwait(false);
+        if (target is null)
+            return false;
+
+        foreach (var kv in slot.RunningContainers)
+        {
+            var info = kv.Value;
+
+            // Same registered runtime → same-container case; handled by the
+            // modelMatches branch, but treat as compatible here regardless.
+            if (info.RegisteredRuntimeId is not null && info.RegisteredRuntimeId == target.Id)
+                continue;
+
+            if (info.RegisteredRuntimeId is null)
+            {
+                // Legacy entry: must prove compatibility from identifying fields.
+                if (await LegacyEntryIsCompatibleAsync(info, target, ct).ConfigureAwait(false))
+                    continue;
+                return false;
+            }
+
+            var runningEntity = await _containerRegistry.GetAsync(info.RegisteredRuntimeId, ct).ConfigureAwait(false);
+            if (runningEntity is null || !CoexistencePolicy.IsAllowedToCoexist(target, runningEntity))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>
