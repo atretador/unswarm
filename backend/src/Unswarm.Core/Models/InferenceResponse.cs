@@ -4,7 +4,7 @@ public sealed class InferenceResponse
 {
     public int StatusCode { get; init; }
     public string ContentType { get; init; } = "application/json";
-    public Stream? Body { get; init; }
+    public Stream? Body { get; set; }
 
     /// <summary>
     /// Token counts may be updated incrementally by the streaming token tap.
@@ -20,5 +20,5 @@ public sealed class InferenceResponse
     /// the next request (and potentially switching models) while the upstream
     /// body is still being consumed by the API controller.
     /// </summary>
-    public Task? BodyDrained { get; init; }
+    public Task? BodyDrained { get; set; }
 }

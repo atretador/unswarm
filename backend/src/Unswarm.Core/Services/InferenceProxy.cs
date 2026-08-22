@@ -701,16 +701,14 @@ public sealed class InferenceProxy : IInferenceProxy
                 // BodyDrained is set after the tap stream wraps responseStream
             };
 
-            // Tap the SSE stream to count tokens incrementally
-            var tapStream = new StreamingTokenTapStream(responseStream, inferenceResponse);
+            // Tap the SSE stream to count tokens incrementally.
+            // The tap stream writes final token counts back into inferenceResponse
+            // on EOF/dispose, so we must return the *same* object the tap stream
+            // is writing to — not a copy — otherwise the stats path never sees them.
+            inferenceResponse.Body = new StreamingTokenTapStream(responseStream, inferenceResponse);
+            inferenceResponse.BodyDrained = responseStream.Drained;
 
-            return new InferenceResponse
-            {
-                StatusCode = statusCode,
-                ContentType = contentType,
-                Body = tapStream,
-                BodyDrained = responseStream.Drained
-            };
+            return inferenceResponse;
         }
 
         using var response2 = await SharedHttp.PostAsync(url, httpContent, ct)

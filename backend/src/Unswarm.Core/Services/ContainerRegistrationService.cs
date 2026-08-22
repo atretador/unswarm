@@ -261,25 +261,44 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var isRemote = controller is IRemoteDockerController;
         var mappedPort = container.MappedPort!.Value;
 
-        IReadOnlyList<DiscoveredModel> discovered;
-        try
+        IReadOnlyList<DiscoveredModel> discovered = Array.Empty<DiscoveredModel>();
+        const int MaxDiscoveryRetries = 5;
+        Exception? lastException = null;
+
+        for (var attempt = 1; attempt <= MaxDiscoveryRetries; attempt++)
         {
-            discovered = isRemote
-                ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false)
-                : await _discoveryService.DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false);
+            try
+            {
+                discovered = isRemote
+                    ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false)
+                    : await _discoveryService.DiscoverModelsAsync(mappedPort, ct).ConfigureAwait(false);
+                lastException = null;
+                break; // success
+            }
+            catch (Exception ex) when (attempt < MaxDiscoveryRetries && IsTransientDiscoveryError(ex))
+            {
+                lastException = ex;
+                var delayMs = Math.Min(1000 * (1 << (attempt - 1)), 8000); // 1s, 2s, 4s, 8s
+                _logger.LogWarning(ex, "Discovery attempt {Attempt}/{Max} failed for container {ContainerId} on port {Port}; retrying in {Delay}ms",
+                    attempt, MaxDiscoveryRetries, registeredContainerId, mappedPort, delayMs);
+                await Task.Delay(delayMs, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                break; // non-transient, no retry
+            }
         }
-        catch (Exception ex)
+
+        if (lastException is not null)
         {
-            // Transport failure (e.g. the runtime container was OOM-killed and its port
-            // is dead). Surface it: mark the container Error instead of silently
-            // flipping it back to Ready with zero models.
-            _logger.LogError(ex, "Model discovery failed for container {ContainerId} on port {Port}",
-                registeredContainerId, mappedPort);
+            _logger.LogError(lastException, "Model discovery failed for container {ContainerId} on port {Port} after {Max} attempts",
+                registeredContainerId, mappedPort, MaxDiscoveryRetries);
 
             var errored = await _registry.UpdateAsync(registeredContainerId, container with
             {
                 Status = ContainerRegistrationStatus.Error,
-                ErrorMessage = $"Model discovery failed: {ex.Message}"
+                ErrorMessage = $"Model discovery failed: {lastException.Message}"
             }, ct).ConfigureAwait(false);
 
             return new RegisteredRuntimeWithModels
@@ -437,6 +456,56 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         _logger.LogInformation("Updated CanRunAlongWith for container {Id} ({Count} entries)", id, canRunAlongWith.Count);
         return container;
+    }
+
+    public async Task<(RegisteredRuntime A, RegisteredRuntime B)?> ToggleConcurrencyAsync(
+        string runtimeAId, string runtimeBId, bool canRunAlongWith, CancellationToken ct = default)
+    {
+        var containerA = await _registry.GetAsync(runtimeAId, ct).ConfigureAwait(false);
+        var containerB = await _registry.GetAsync(runtimeBId, ct).ConfigureAwait(false);
+        if (containerA is null || containerB is null)
+            return null;
+
+        // Build the updated lists for both peers symmetrically.
+        List<string> newAList, newBList;
+
+        if (canRunAlongWith)
+        {
+            // Toggle ON: add peer display name if not already present.
+            newAList = containerA.CanRunAlongWith
+                .Where(n => !string.Equals(n, containerB.DisplayName, StringComparison.OrdinalIgnoreCase))
+                .Append(containerB.DisplayName)
+                .ToList();
+            newBList = containerB.CanRunAlongWith
+                .Where(n => !string.Equals(n, containerA.DisplayName, StringComparison.OrdinalIgnoreCase))
+                .Append(containerA.DisplayName)
+                .ToList();
+        }
+        else
+        {
+            // Toggle OFF: remove peer display name and image (case-insensitive).
+            newAList = containerA.CanRunAlongWith
+                .Where(n => !string.Equals(n, containerB.DisplayName, StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(n, containerB.Image, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            newBList = containerB.CanRunAlongWith
+                .Where(n => !string.Equals(n, containerA.DisplayName, StringComparison.OrdinalIgnoreCase)
+                         && !string.Equals(n, containerA.Image, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        var result = await _registry.UpdateConcurrencyPairAsync(
+            runtimeAId, newAList,
+            runtimeBId, newBList,
+            ct).ConfigureAwait(false);
+
+        if (result is null)
+            return null;
+
+        _logger.LogInformation(
+            "Toggled concurrency between {IdA} and {IdB} (canRunAlongWith={Value})",
+            runtimeAId, runtimeBId, canRunAlongWith);
+        return result;
     }
 
     public async Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default)
@@ -1296,6 +1365,17 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         }
         return false;
     }
+
+    /// <summary>
+    /// Returns true for transient network errors (connection refused, socket timeout,
+    /// HTTP 503) that are likely to resolve after the container's inference server
+    /// finishes starting up.
+    /// </summary>
+    private static bool IsTransientDiscoveryError(Exception ex) =>
+        ex is HttpRequestException httpEx
+            && (httpEx.StatusCode is System.Net.HttpStatusCode.ServiceUnavailable
+                || httpEx.InnerException is System.Net.Sockets.SocketException
+                || ex.Message.Contains("Connection refused", StringComparison.OrdinalIgnoreCase));
 
     private async Task<RegisteredRuntimeWithModels> FailAsync(RegisteredRuntime container, string errorMessage, CancellationToken ct)
     {
