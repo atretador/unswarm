@@ -16,7 +16,6 @@ import type {
   Settings,
   StatsSummary,
   ToggleConcurrencyPayload,
-  ToggleConcurrencyResponse,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -1102,7 +1101,7 @@ export const mockClient: UnswarmClient = {
       activeTransitions: QUEUE_SNAPSHOT.activeTransitions.map((t) => ({ ...t })),
     };
   },
-  async cancelQueueItem(itemId: string) {
+  async cancelQueueItem(_itemId: string) {
     await delay(rand(20, 60));
     // Mock: just return void (success)
   },
