@@ -1,0 +1,56 @@
+name: unswarm
+
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    volumes:
+      - unswarm-data:/data
+    environment:
+      # API key for agent authentication (empty = auth disabled)
+      UNSWARM_API_KEY: ${UNSWARM_API_KEY:-}
+      # Optional: bootstrap/reset the admin password on first run
+      # UNSWARM_ADMIN_PASSWORD: ${UNSWARM_ADMIN_PASSWORD:-}
+      # CORS origins for browser access if not same-origin via the frontend proxy
+      # Cors__AllowedOrigins: https://unswarm.example.com
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5014/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # ── Optional: run an agent inside this compose network ────────────────────
+  # In production, agents typically run on REMOTE hosts with access to that
+  # host's Docker daemon — prefer a bare-metal install (see deploy/README.md).
+  # Only use this profile for a local all-in-one stack:
+  #
+  #   docker compose --profile agent up -d
+  #
+  # The agent needs the host Docker socket to manage model containers.
+  # agent:
+  #   build: ./agent
+  #   profiles: ["agent"]
+  #   restart: unless-stopped
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   group_add:
+  #     - "${DOCKER_GID:-999}"   # GID of the host's docker.socket group; set DOCKER_GID in .env
+  #   environment:
+  #     # wss:// requires TLS termination in front of the backend; ws:// is only
+  #     # allowed to loopback unless allow_insecure_ws is set in agent.yaml.
+  #     BACKEND_URL: ws://backend:5014
+  #     API_KEY: ${UNSWARM_API_KEY:-}
+  #     AGENT_NAME: compose-local
+
+volumes:
+  unswarm-data:

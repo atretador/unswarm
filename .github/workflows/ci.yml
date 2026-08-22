@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend (.NET)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+      - name: Build
+        run: dotnet build Unswarm.slnx
+        working-directory: backend
+      - name: Test
+        run: dotnet test --no-build
+        working-directory: backend
+
+  agent:
+    name: Agent (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Vet
+        run: go vet ./...
+        working-directory: agent
+      - name: Test
+        run: go test ./...
+        working-directory: agent
+
+  frontend:
+    name: Frontend (React)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: Lint
+        run: pnpm lint
+        working-directory: frontend
+      - name: Test
+        run: pnpm test
+        working-directory: frontend
+      - name: Build
+        run: pnpm build
+        working-directory: frontend

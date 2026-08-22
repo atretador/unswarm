@@ -1,0 +1,29 @@
+[Unit]
+Description=Unswarm Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=unswarm
+Group=unswarm
+ExecStart=/usr/local/bin/unswarm -config /etc/unswarm/agent.yaml
+Restart=always
+RestartSec=5
+
+# ── Hardening ─────────────────────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadWritePaths=/var/lib/unswarm
+
+[Install]
+WantedBy=multi-user.target

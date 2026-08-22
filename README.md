@@ -159,6 +159,7 @@ Environment variables:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `UNSWARM_API_KEY` | API key for authentication | (empty — auth disabled) |
+| `UNSWARM_ADMIN_PASSWORD` | Bootstrap/reset the admin password on first run (alternative to the `--admin-setup` flag) | (unset) |
 | `ASPNETCORE_URLS` | Listening URLs | `http://localhost:5014` |
 
 Settings in `appsettings.json`:
@@ -168,6 +169,9 @@ Settings in `appsettings.json`:
   "Auth": {
     "ApiKey": "",
     "ProtectedPaths": ["/api/agents", "/ws/agent"]
+  },
+  "Cors": {
+    "AllowedOrigins": ["http://localhost:3000", "http://localhost:5173"]
   }
 }
 ```
@@ -214,6 +218,56 @@ cd agent
 go build ./cmd/agent
 go test ./...
 ```
+
+## Production Deployment
+
+### Docker Compose Quickstart
+
+```bash
+export UNSWARM_API_KEY="$(openssl rand -hex 32)"
+docker compose up -d --build
+```
+
+The dashboard is served at `http://localhost:8080`, with `/api`, `/v1`, `/ws`,
+and `/health` proxied to the backend by nginx. SQLite persists in the
+`unswarm-data` named volume.
+
+To also run an agent inside the compose network (local testing only — agents
+normally run on remote hosts):
+
+```bash
+docker compose --profile agent up -d
+```
+
+See the commented `agent` service in [docker-compose.yml](docker-compose.yml)
+for the host Docker socket mount and `docker.socket` group setup.
+
+### Reverse Proxy / TLS
+
+Terminate TLS at your reverse proxy (Caddy, Traefik, nginx) in front of the
+frontend container and proxy WebSocket upgrades through. HTTPS is required:
+the auth cookie is issued with `SecurePolicy.Always`, so logins only work over
+HTTPS. Set `Cors__AllowedOrigins` on the backend if you serve the SPA from a
+different origin than the API; same-origin via the bundled proxy needs no CORS.
+
+### Backups
+
+All state lives in one SQLite file (`/data/.config/unswarm/unswarm.db` inside
+the backend container). To back up safely:
+
+```bash
+# Preferred: consistent online backup
+docker compose exec backend sqlite3 /data/.config/unswarm/unswarm.db ".backup '/data/.config/unswarm/backup.db'"
+
+# Or stop the backend first for a plain file copy
+docker compose stop backend && docker cp unswarm-backend-1:/data/.config/unswarm/unswarm.db ./unswarm.db.bak
+```
+
+### Bare-Metal Agents
+
+Agents typically run directly on GPU hosts with access to the local Docker
+daemon. See [deploy/README.md](deploy/README.md) for the systemd install
+(hardened unit, dedicated user, config at `/etc/unswarm/agent.yaml`).
 
 ## Project Structure
 
