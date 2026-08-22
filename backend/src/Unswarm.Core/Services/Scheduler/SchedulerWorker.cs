@@ -368,40 +368,45 @@ public sealed class SchedulerWorker
 
                 var requestModel = request.ModelName;
                 var modelMatches = slot.ResidentModel == requestModel;
-                var enableSkip = _settings.EnableParallelSlotSkip;
                 // +1 accounts for the sequential path consuming one slot;
                 // with MaxConcurrency=1 this is always false → fully sequential.
-                var skipsRemaining = enableSkip
+                var skipsRemaining = _settings.EnableParallelSlotSkip
                     ? _settings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed)
                     : 0;
 
                 var goParallel = false;
-                if (skipsRemaining > 0)
+                if (modelMatches)
                 {
-                    if (modelMatches)
-                    {
-                        goParallel = Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
-                    }
-                    else if (Volatile.Read(ref slot.ActiveInferences) > 0)
-                    {
-                        // Coexistence-aware: a different model may run alongside the
-                        // active one when every running container allows it. The
-                        // switch inside ProcessRequestAsync keeps compatible
-                        // containers alive, so no drain is needed.
-                        goParallel = await CanRunAlongsideRunningAsync(slot, requestModel, stoppingToken)
-                            .ConfigureAwait(false);
-                    }
-                    // ActiveInferences == 0 with a model mismatch → nothing to gain
-                    // from the parallel path; the sequential path switches cheaply.
+                    // ── PARALLELISM ────────────────────────────────────────
+                    // Same runtime serving multiple streams. Governed by the
+                    // skip settings: only when enabled, budget remaining, and
+                    // the runtime declares concurrent-inference capacity.
+                    goParallel = skipsRemaining > 0
+                        && Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
                 }
+                else if (Volatile.Read(ref slot.ActiveInferences) > 0)
+                {
+                    // ── CONCURRENCY ────────────────────────────────────────
+                    // A different runtime that is allowed to run together with
+                    // every container currently up on this target. Always
+                    // permitted (not gated by the skip settings): the switch
+                    // inside ProcessRequestAsync keeps compatible containers
+                    // alive, so no drain is needed.
+                    goParallel = await CanRunAlongsideRunningAsync(slot, requestModel, stoppingToken)
+                        .ConfigureAwait(false);
+                }
+                // ActiveInferences == 0 with a model mismatch → nothing to gain
+                // from the parallel path; the sequential path switches cheaply.
 
                 if (goParallel)
                 {
                     // ── Parallel path ──────────────────────────────────────
-                    // Same model with capacity, or coexistence-compatible model.
-                    // Launch processing concurrently without awaiting; the next
-                    // iteration of the loop reads the next request immediately.
-                    Interlocked.Increment(ref slot.SkipsUsed);
+                    // Same runtime with capacity (skip-budgeted), or a
+                    // coexistence-compatible runtime (not budgeted — separate
+                    // concern from parallelism). Launch processing concurrently
+                    // without awaiting; the next iteration reads the next request.
+                    if (modelMatches)
+                        Interlocked.Increment(ref slot.SkipsUsed);
                     Interlocked.Increment(ref slot.ActiveInferences);
 
                     var capturedRequest = request;

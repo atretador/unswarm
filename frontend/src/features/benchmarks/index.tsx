@@ -5,7 +5,10 @@ import {
   Activity,
   AlertTriangle,
   BookOpen,
+  Check,
+  Copy,
   Eye,
+  FileText,
   History,
   Play,
   Plus,
@@ -527,7 +530,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
 
 // ─── Benchmark row ────────────────────────────────────────────────
 
-function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResult; index: number; onShowHistory?: (modelId: string, modelName: string) => void }) {
+function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result: BenchmarkResult; index: number; onShowHistory?: (modelId: string, modelName: string) => void; onShowResults?: (result: BenchmarkResult) => void }) {
   const [expanded, setExpanded] = useState(false);
   const isError = result.status === "error";
 
@@ -591,8 +594,17 @@ function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResul
           </span>
         </div>
 
-        {/* Status + history */}
+        {/* Status + results + history */}
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => onShowResults?.(result)}
+            className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
+            aria-label={`Results for ${result.modelName} run`}
+            title="View run results"
+          >
+            <FileText className="size-3.5" />
+          </button>
           <button
             type="button"
             onClick={() => onShowHistory?.(result.modelId, result.modelName)}
@@ -626,6 +638,131 @@ function BenchmarkRow({ result, index, onShowHistory }: { result: BenchmarkResul
         </div>
       )}
     </motion.div>
+  );
+}
+
+// ─── Run results modal ────────────────────────────────────────────
+
+function StatTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+        {label}
+      </p>
+      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[var(--color-text-heading)]">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function RunResultModal({ result, onClose }: { result: BenchmarkResult; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const isError = result.status === "error";
+  const hasResponse = typeof result.response === "string" && result.response.length > 0;
+
+  const handleCopy = useCallback(() => {
+    if (!hasResponse) return;
+    navigator.clipboard
+      .writeText(result.response as string)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        // Clipboard unavailable (permissions/insecure context) — nothing sensible to do.
+      });
+  }, [hasResponse, result.response]);
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title={`${result.modelName} — run details`}
+      className="sm:max-w-3xl"
+    >
+      <div className="flex flex-col gap-4 p-5">
+        {/* Header: status + when */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          {isError ? (
+            <Badge variant="error">error</Badge>
+          ) : (
+            <Badge variant="success">completed</Badge>
+          )}
+          <span className="text-xs text-[var(--color-text-muted)]" title={new Date(result.timestamp).toLocaleString()}>
+            {formatTimestamp(result.timestamp)} · {formatRelativeTime(result.timestamp)}
+          </span>
+          {(result.promptName || result.promptVersion != null) && (
+            <span className="ml-auto truncate text-[10px] text-[var(--color-text-muted)]">
+              {result.promptName ?? "Built-in prompt"}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
+            </span>
+          )}
+        </div>
+
+        {/* Metrics */}
+        <div className="grid grid-cols-3 gap-2">
+          <StatTile label="Tokens generated" value={formatTokens(result.tokensGenerated)} />
+          <StatTile label="Throughput" value={formatTokensPerSec(result.tokensPerSec)} />
+          <StatTile label="Latency" value={formatLatency(result.latencyMs)} />
+        </div>
+
+        {/* Prompt */}
+        <div className="flex min-h-0 flex-col gap-1.5">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            Prompt
+          </span>
+          <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
+            {result.prompt}
+          </div>
+        </div>
+
+        {/* Response / error */}
+        <div className="flex min-h-0 flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+              Response
+            </span>
+            {hasResponse && (
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
+                aria-label="Copy response to clipboard"
+              >
+                {copied ? (
+                  <>
+                    <Check className="size-3" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-3" />
+                    Copy
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+
+          {isError && result.errorMessage ? (
+            <div className="flex items-start gap-1.5 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3 py-2.5">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--color-status-error)]" />
+              <span className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--color-status-error)]">
+                {result.errorMessage}
+              </span>
+            </div>
+          ) : hasResponse ? (
+            <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-heading)]">
+              {result.response}
+            </pre>
+          ) : (
+            <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
+              No response captured
+            </div>
+          )}
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -847,8 +984,8 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
 
 export default function Benchmarks() {
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
-  const [resultsModal, setResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
-  const [historyModal, setHistoryModal] = useState<{ modelId: string; modelName: string } | null>(null);
+  const [modelResultsModal, setModelResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
+  const [runResult, setRunResult] = useState<BenchmarkResult | null>(null);
 
   const {
     data: results,
@@ -909,7 +1046,7 @@ export default function Benchmarks() {
 
       <RunBenchmarkBar
         onManagePrompts={() => setShowPromptLibrary(true)}
-        onShowResults={(modelId, modelName) => setResultsModal({ modelId, modelName })}
+        onShowResults={(modelId, modelName) => setModelResultsModal({ modelId, modelName })}
       />
 
       {!results || results.length === 0 ? (
@@ -927,7 +1064,8 @@ export default function Benchmarks() {
               key={r.id}
               result={r}
               index={i}
-              onShowHistory={(modelId, modelName) => setHistoryModal({ modelId, modelName })}
+              onShowHistory={(modelId, modelName) => setModelResultsModal({ modelId, modelName })}
+              onShowResults={setRunResult}
             />
           ))}
         </Card>
@@ -938,17 +1076,17 @@ export default function Benchmarks() {
         onClose={() => setShowPromptLibrary(false)}
       />
       <ModelResultsModal
-        modelId={resultsModal?.modelId ?? ""}
-        modelName={resultsModal?.modelName ?? ""}
-        open={resultsModal !== null}
-        onClose={() => setResultsModal(null)}
+        modelId={modelResultsModal?.modelId ?? ""}
+        modelName={modelResultsModal?.modelName ?? ""}
+        open={modelResultsModal !== null}
+        onClose={() => setModelResultsModal(null)}
       />
-      <ModelResultsModal
-        modelId={historyModal?.modelId ?? ""}
-        modelName={historyModal?.modelName ?? ""}
-        open={historyModal !== null}
-        onClose={() => setHistoryModal(null)}
-      />
+      {runResult && (
+        <RunResultModal
+          result={runResult}
+          onClose={() => setRunResult(null)}
+        />
+      )}
     </div>
   );
 }
