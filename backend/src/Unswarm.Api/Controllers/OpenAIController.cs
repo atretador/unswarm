@@ -139,12 +139,24 @@ public sealed class OpenAIController : ControllerBase
 
         if (inferenceResponse.Body is not null)
         {
-            var buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = await inferenceResponse.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+            try
             {
-                await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
-                await Response.Body.FlushAsync(ct);
+                var buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = await inferenceResponse.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                {
+                    await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
+                    await Response.Body.FlushAsync(ct);
+                }
+            }
+            finally
+            {
+                // Always release the upstream body — including on client
+                // disconnect (OperationCanceledException) or write failure.
+                // Disposing completes BodyDrained, which the scheduler awaits
+                // before freeing the target slot; without this a cancelled
+                // mid-stream request leaves the queue stuck forever.
+                await inferenceResponse.Body.DisposeAsync();
             }
         }
 
