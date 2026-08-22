@@ -25,4 +25,15 @@ public sealed class FakeSchedulerQueue : ISchedulerQueue
 
     public Task<QueueSnapshot> GetSnapshotAsync(CancellationToken ct = default)
         => Task.FromResult(new QueueSnapshot());
+
+    public Task<bool> CancelItemAsync(string itemId, CancellationToken ct = default)
+    {
+        lock (EnqueuedRequests)
+        {
+            var item = EnqueuedRequests.FirstOrDefault(r => r.Id == itemId);
+            if (item is null) return Task.FromResult(false);
+            EnqueuedRequests.Remove(item);
+            return Task.FromResult(true);
+        }
+    }
 }

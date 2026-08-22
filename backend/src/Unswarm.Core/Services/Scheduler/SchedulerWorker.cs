@@ -512,6 +512,9 @@ public sealed class SchedulerWorker
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
 
+            // RequestTimeout only covers time-to-first-response; never abort an active stream drain.
+            timeoutCts.CancelAfter(Timeout.InfiniteTimeSpan);
+
             if (response.StatusCode >= 400)
             {
                 FailItem(queueItem, $"Inference returned HTTP {response.StatusCode}");
