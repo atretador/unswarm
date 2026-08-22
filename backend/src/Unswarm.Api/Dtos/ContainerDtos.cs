@@ -53,6 +53,7 @@ public sealed class RegisterRuntimeRequestDto
     public string Agent { get; set; } = "host";
     public List<string>? CanRunAlongWith { get; set; }
     public Dictionary<string, string>? ExtraLabels { get; set; }
+    public int MaxConcurrentInferences { get; set; } = 1;
 
     public ContainerRegistrationRequest ToRequest() => new()
     {
@@ -73,6 +74,7 @@ public sealed class RegisterRuntimeRequestDto
 public sealed class UpdateRuntimeConcurrencyRequestDto
 {
     public List<string>? CanRunAlongWith { get; set; }
+    public int? MaxConcurrentInferences { get; set; }
 }
 
 /// <summary>
@@ -95,6 +97,7 @@ public sealed class RegisteredRuntimeResponse
     public string? ErrorMessage { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastDiscoveredAt { get; set; }
+    public int MaxConcurrentInferences { get; set; } = 1;
     public List<ModelResponse> DiscoveredModels { get; set; } = [];
 
     public static RegisteredRuntimeResponse From(
@@ -116,6 +119,7 @@ public sealed class RegisteredRuntimeResponse
         ErrorMessage = container.ErrorMessage,
         CreatedAt = container.CreatedAt,
         LastDiscoveredAt = container.LastDiscoveredAt,
+        MaxConcurrentInferences = container.MaxConcurrentInferences,
         DiscoveredModels = discoveredModels.Select(ModelResponse.FromDefinition).ToList()
     };
 }

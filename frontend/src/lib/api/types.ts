@@ -74,6 +74,7 @@ export interface RegisterRuntimePayload {
 /** Full-replacement payload for updating a runtime's concurrency list. */
 export interface UpdateRuntimeConcurrencyPayload {
   canRunAlongWith: string[];
+  maxConcurrentInferences?: number;
 }
 
 export interface RegisteredRuntime {
@@ -93,6 +94,7 @@ export interface RegisteredRuntime {
   runtimeKind?: 'container' | 'script';
   launcherPath?: string | null;
   runtimeProcessId?: number | null;
+  maxConcurrentInferences: number;
 }
 
 // ─── Fleet / Containers ───────────────────────────────────────────
@@ -241,6 +243,7 @@ export interface Settings {
   batchDrain: boolean;
   lazyStop: boolean;
   maxQueueDepth: number;
+  parallelSlotSkipLimit: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────

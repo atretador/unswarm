@@ -17,6 +17,8 @@ public sealed class SettingsResponse
     public bool LazyStop { get; set; } = true;
     public int MaxQueueDepth { get; set; } = 32;
 
+    public int ParallelSlotSkipLimit { get; set; } = 3;
+
     public static SettingsResponse FromSettings(Settings s) => new()
     {
         MaxConcurrentModels = s.MaxConcurrentModels,
@@ -30,7 +32,8 @@ public sealed class SettingsResponse
         PriorityMode = s.PriorityMode,
         BatchDrain = s.BatchDrain,
         LazyStop = s.LazyStop,
-        MaxQueueDepth = s.MaxQueueDepth
+        MaxQueueDepth = s.MaxQueueDepth,
+        ParallelSlotSkipLimit = s.ParallelSlotSkipLimit
     };
 }
 
@@ -48,4 +51,6 @@ public sealed class SettingsUpdateRequest
     public bool? BatchDrain { get; set; }
     public bool? LazyStop { get; set; }
     public int? MaxQueueDepth { get; set; }
+
+    public int? ParallelSlotSkipLimit { get; set; }
 }

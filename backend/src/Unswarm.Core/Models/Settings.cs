@@ -20,4 +20,7 @@ public sealed class Settings
     public int MaxConcurrentTargets { get; init; }
 
     public int HealthCheckTimeoutSeconds { get; init; } = 120;
+
+    /// <summary>Max parallel slots the scheduler may skip before giving up on placement (1-1000).</summary>
+    public int ParallelSlotSkipLimit { get; init; } = 3;
 }

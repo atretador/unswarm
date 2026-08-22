@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Threading.Channels;
 using Unswarm.Core.Models;
 
@@ -8,6 +9,8 @@ namespace Unswarm.Core.Services.Scheduler;
 /// owns a bounded channel, a sequential worker, and single-slot model state.
 /// Cross-target requests run concurrently; within a target, requests are processed
 /// one at a time and container stop/start switching is scoped to this target only.
+/// When <see cref="MaxConcurrency"/> &gt; 1, multiple requests for the same model may
+/// be processed concurrently, gated by <see cref="ConcurrencyGate"/>.
 /// </summary>
 public sealed class TargetSlot
 {
@@ -31,6 +34,35 @@ public sealed class TargetSlot
     /// (or "legacy:&lt;containerId&gt;" for unregistered models). Used for canRunAlongWith checks.
     /// </summary>
     public Dictionary<string, RunningContainerInfo> RunningContainers { get; } = new(StringComparer.Ordinal);
+
+    // ── Concurrency control ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Maximum concurrent inferences for this target, derived from
+    /// <see cref="RegisteredRuntime.MaxConcurrentInferences"/> when the slot is created.
+    /// </summary>
+    public int MaxConcurrency { get; set; } = 1;
+
+    /// <summary>
+    /// Gates how many requests may execute concurrently on this target.
+    /// Initialized to <c>new SemaphoreSlim(MaxConcurrency, MaxConcurrency)</c>.
+    /// </summary>
+    public SemaphoreSlim? ConcurrencyGate { get; set; }
+
+    /// <summary>
+    /// Number of inferences currently in-flight on this target.
+    /// Managed via <see cref="Interlocked"/> for thread-safe increment/decrement.
+    /// Used by the parallel dispatcher to decide when to wait for drain
+    /// before switching models.
+    /// </summary>
+    public int ActiveInferences;
+
+    /// <summary>
+    /// How many same-model requests have been "skipped" (launched concurrently)
+    /// since the last model switch or limit reset. Bounded by
+    /// <see cref="SchedulerSettings.ParallelSlotSkipLimit"/>.
+    /// </summary>
+    public int SkipsUsed;
 }
 
 public sealed record RunningContainerInfo

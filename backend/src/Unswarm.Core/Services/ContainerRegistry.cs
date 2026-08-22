@@ -63,7 +63,8 @@ public sealed class ContainerRegistry : IContainerRegistry
             ErrorMessage = container.ErrorMessage,
             CreatedAt = now,
             UpdatedAt = now,
-            LastDiscoveredAt = container.LastDiscoveredAt
+            LastDiscoveredAt = container.LastDiscoveredAt,
+            MaxConcurrentInferences = container.MaxConcurrentInferences
         };
         db.RegisteredRuntimes.Add(entity);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -93,6 +94,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         entity.MappedPort = container.MappedPort;
         entity.ErrorMessage = container.ErrorMessage;
         entity.LastDiscoveredAt = container.LastDiscoveredAt;
+        entity.MaxConcurrentInferences = container.MaxConcurrentInferences;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -194,6 +196,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         ErrorMessage = e.ErrorMessage,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt,
-        LastDiscoveredAt = e.LastDiscoveredAt
+        LastDiscoveredAt = e.LastDiscoveredAt,
+        MaxConcurrentInferences = e.MaxConcurrentInferences
     };
 }

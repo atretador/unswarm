@@ -42,4 +42,5 @@ public sealed record RegisteredRuntime
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
     public DateTimeOffset? LastDiscoveredAt { get; init; }
+    public int MaxConcurrentInferences { get; init; } = 1;
 }

@@ -18,6 +18,9 @@ public sealed class SchedulerSettings
     /// <summary>Max retries when a container start fails (1 = no retries, default 3).</summary>
     public int MaxContainerStartRetries { get; init; } = 3;
 
+    /// <summary>Max parallel slots the scheduler may skip before giving up on placement (1-1000).</summary>
+    public int ParallelSlotSkipLimit { get; init; } = 3;
+
     public static SchedulerSettings FromSettings(Settings s) => new()
     {
         LazyStop = s.LazyStop,
@@ -26,6 +29,7 @@ public sealed class SchedulerSettings
         MaxQueueDepth = s.MaxQueueDepth,
         RequestTimeout = s.RequestTimeout,
         MaxConcurrentTargets = s.MaxConcurrentTargets,
-        HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds
+        HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds,
+        ParallelSlotSkipLimit = Math.Clamp(s.ParallelSlotSkipLimit, 1, 1000)
     };
 }

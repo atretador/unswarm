@@ -695,6 +695,7 @@ const SETTINGS: Settings = {
   batchDrain: false,
   lazyStop: true,
   maxQueueDepth: 32,
+  parallelSlotSkipLimit: 3,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────
@@ -763,6 +764,7 @@ let registeredRuntimes: RegisteredRuntime[] = [
       { ...MODELS[0], sourceRuntimeId: "rc1" },
       { ...MODELS[4], sourceRuntimeId: "rc1" },
     ],
+    maxConcurrentInferences: 2,
   },
   {
     id: "rc2",
@@ -778,6 +780,7 @@ let registeredRuntimes: RegisteredRuntime[] = [
     createdAt: NOW,
     lastDiscoveredAt: null,
     discoveredModels: [],
+    maxConcurrentInferences: 1,
   },
 ];
 let settings = { ...SETTINGS };
@@ -848,6 +851,7 @@ export const mockClient: UnswarmClient = {
       discoveredModels: [],
       ...(data.runtimeKind ? { runtimeKind: data.runtimeKind } : {}),
       ...(data.launcherPath ? { launcherPath: data.launcherPath } : {}),
+      maxConcurrentInferences: 1,
     };
     registeredRuntimes.push(rc);
     return { ...rc, discoveredModels: [] };
@@ -937,11 +941,14 @@ export const mockClient: UnswarmClient = {
     registeredRuntimes.splice(idx, 1);
   },
 
-  async updateRuntimeConcurrency(runtimeId: string, payload: { canRunAlongWith: string[] }) {
+  async updateRuntimeConcurrency(runtimeId: string, payload: { canRunAlongWith: string[]; maxConcurrentInferences?: number }) {
     await delay(rand(80, 200));
     const rc = registeredRuntimes.find((x) => x.id === runtimeId);
     if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
     rc.canRunAlongWith = [...payload.canRunAlongWith];
+    if (payload.maxConcurrentInferences !== undefined) {
+      rc.maxConcurrentInferences = payload.maxConcurrentInferences;
+    }
     return {
       ...rc,
       discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),

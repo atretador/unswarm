@@ -66,6 +66,7 @@ public sealed class SettingsEntity
     public bool LazyStop { get; set; } = true;
     public int MaxQueueDepth { get; set; } = 32;
     public int MaxConcurrentTargets { get; set; }
+    public int ParallelSlotSkipLimit { get; set; } = 3;
 }
 
 /// <summary>
@@ -102,6 +103,7 @@ public sealed class RegisteredRuntimeEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? LastDiscoveredAt { get; set; }
+    public int MaxConcurrentInferences { get; set; } = 1;
 
     public ICollection<ContainerModelMappingEntity> ContainerModelMappings { get; set; } = [];
 }
@@ -211,6 +213,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<SettingsEntity>(e =>
         {
             e.HasKey(s => s.Id);
+            e.Property(s => s.ParallelSlotSkipLimit).HasDefaultValue(3);
             e.HasData(new SettingsEntity
             {
                 Id = "default",
@@ -225,13 +228,15 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 BatchDrain = false,
                 LazyStop = true,
                 MaxQueueDepth = 32,
-                MaxConcurrentTargets = 0
+                MaxConcurrentTargets = 0,
+                ParallelSlotSkipLimit = 3
             });
         });
 
         modelBuilder.Entity<RegisteredRuntimeEntity>(e =>
         {
             e.HasKey(r => r.Id);
+            e.Property(r => r.MaxConcurrentInferences).HasDefaultValue(1);
         });
 
         modelBuilder.Entity<ContainerModelMappingEntity>(e =>

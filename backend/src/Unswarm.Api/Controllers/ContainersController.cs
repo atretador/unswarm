@@ -191,6 +191,7 @@ public sealed class ContainersController : ControllerBase
             ErrorMessage = container.ErrorMessage,
             CreatedAt = container.CreatedAt,
             LastDiscoveredAt = container.LastDiscoveredAt,
+            MaxConcurrentInferences = container.MaxConcurrentInferences,
             DiscoveredModels = models
         };
     }
@@ -260,6 +261,15 @@ public sealed class ContainersController : ControllerBase
         var container = await _registrationService.UpdateCanRunAlongWithAsync(id, cleaned, ct).ConfigureAwait(false);
         if (container is null)
             return NotFound(new { error = "Registered runtime not found" });
+
+        // Update MaxConcurrentInferences if provided
+        if (dto.MaxConcurrentInferences.HasValue)
+        {
+            container = await _containerRegistry.UpdateAsync(id, container with
+            {
+                MaxConcurrentInferences = dto.MaxConcurrentInferences.Value
+            }, ct).ConfigureAwait(false);
+        }
 
         return Ok(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
     }

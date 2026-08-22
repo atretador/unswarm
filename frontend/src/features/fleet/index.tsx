@@ -12,6 +12,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Box,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -24,6 +25,7 @@ import {
   MemoryStick,
   Monitor,
   PackageOpen,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -1400,6 +1402,8 @@ function RegisteredContainerCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [ringActive, setRingActive] = useState(highlight);
   const [rediscoverError, setRediscoverError] = useState<string | null>(null);
+  const [editingSlots, setEditingSlots] = useState(false);
+  const [slotsValue, setSlotsValue] = useState(container.maxConcurrentInferences);
 
   // Clear the highlight ring after a short window so it doesn't linger.
   useEffect(() => {
@@ -1463,6 +1467,18 @@ function RegisteredContainerCard({
         promptName: result.promptName,
         promptVersion: result.promptVersion,
       });
+    },
+  });
+
+  const updateConcurrencyMutation = useMutation({
+    mutationFn: (value: number) =>
+      client.updateRuntimeConcurrency(container.id, {
+        canRunAlongWith: container.canRunAlongWith,
+        maxConcurrentInferences: value,
+      }),
+    onSuccess: () => {
+      invalidate();
+      setEditingSlots(false);
     },
   });
 
@@ -1537,7 +1553,7 @@ function RegisteredContainerCard({
         </div>
 
         {/* Metrics */}
-        <div className="grid grid-cols-3 gap-2 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] px-2.5 py-2 text-[10px]">
+        <div className="grid grid-cols-4 gap-2 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] px-2.5 py-2 text-[10px]">
           <div>
             <p className="text-[var(--color-text-muted)]">Port</p>
             <p className="font-mono text-[var(--color-text-heading)]">
@@ -1549,6 +1565,66 @@ function RegisteredContainerCard({
             <p className="font-mono text-[var(--color-text-heading)]">
               {container.discoveredModels.length > 0 ? container.discoveredModels.length : "—"}
             </p>
+          </div>
+          <div className="group/slots relative">
+            <p className="text-[var(--color-text-muted)]">Parallel Slots</p>
+            {editingSlots ? (
+              <div className="flex items-center gap-1">
+                <input
+                  type="number"
+                  min={1}
+                  max={128}
+                  value={slotsValue}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v)) setSlotsValue(Math.max(1, Math.min(128, v)));
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") updateConcurrencyMutation.mutate(slotsValue);
+                    if (e.key === "Escape") {
+                      setEditingSlots(false);
+                      setSlotsValue(container.maxConcurrentInferences);
+                    }
+                  }}
+                  autoFocus
+                  className="h-5 w-10 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] px-1 font-mono text-[var(--color-text-heading)] outline-none focus:border-[var(--color-accent)]"
+                />
+                <button
+                  type="button"
+                  disabled={updateConcurrencyMutation.isPending}
+                  onClick={() => updateConcurrencyMutation.mutate(slotsValue)}
+                  className="rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-success)] hover:bg-[color-mix(in_srgb,var(--color-status-success)_14%,transparent)] disabled:opacity-50"
+                  aria-label="Confirm parallel slots"
+                >
+                  <Check className="size-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingSlots(false);
+                    setSlotsValue(container.maxConcurrentInferences);
+                  }}
+                  className="rounded-[var(--radius-sm)] p-0.5 text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text-muted)_14%,transparent)]"
+                  aria-label="Cancel editing parallel slots"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setSlotsValue(container.maxConcurrentInferences);
+                  setEditingSlots(true);
+                }}
+                className="group/edit flex items-center gap-1 rounded-[var(--radius-sm)] px-0.5 -mx-0.5 text-left hover:bg-[color-mix(in_srgb,var(--color-text-muted)_8%,transparent)]"
+              >
+                <span className="font-mono text-[var(--color-text-heading)]">
+                  {container.maxConcurrentInferences}
+                </span>
+                <Pencil className="size-2.5 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover/slots:opacity-100 group-hover/edit:opacity-100" />
+              </button>
+            )}
           </div>
           <div className="min-w-0">
             <p className="text-[var(--color-text-muted)]">Discovered</p>

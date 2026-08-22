@@ -122,6 +122,14 @@ function SchedulerPolicySection() {
               updateMutation.mutate({ maxQueueDepth: Number(e.target.value) || 0 })
             }
           />
+          <Input
+            label="Parallel slot skip limit"
+            type="number"
+            value={String(settings.parallelSlotSkipLimit)}
+            onChange={(e) =>
+              updateMutation.mutate({ parallelSlotSkipLimit: Math.max(1, Math.min(1000, Number(e.target.value) || 1)) })
+            }
+          />
         </div>
       </div>
     </Card>

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
@@ -283,14 +284,17 @@ public sealed class SchedulerWorker
         // Existing slots are not resized on settings change — acceptable trade-off.
         var depth = ClampQueueDepth(currentSettings.MaxQueueDepth);
 
-        return _slots.GetOrAdd(targetId, _ => new TargetSlot
+        var slot = _slots.GetOrAdd(targetId, _ => new TargetSlot
         {
             TargetId = targetId,
             Channel = Channel.CreateBounded<InferenceRequest>(new BoundedChannelOptions(depth)
             {
                 FullMode = BoundedChannelFullMode.Wait
-            })
+            }),
+            ConcurrencyGate = new SemaphoreSlim(1, 1)
         });
+
+        return slot;
     }
 
     private void EnsureSlotWorkerStarted(TargetSlot slot, CancellationToken ct)
@@ -312,34 +316,108 @@ public sealed class SchedulerWorker
 
         try
         {
-            await foreach (var request in slot.Channel.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+            // Manual loop instead of await foreach so we can control whether to
+            // fire-and-forget a concurrent request or await sequentially.
+            while (await slot.Channel.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
             {
+                if (!slot.Channel.Reader.TryRead(out var request))
+                    continue;
+
                 var queueItem = _allItems.TryGetValue(request.Id, out var existing)
                     ? existing
                     : CreateQueueItem(request);
                 _requests.TryAdd(request.Id, request);
 
-                try
+                var requestModel = request.ModelName;
+                var modelMatches = slot.ResidentModel == requestModel;
+                // +1 accounts for the sequential path consuming one slot;
+                // with MaxConcurrency=1 this is always false → fully sequential.
+                var hasConcurrentCapacity = Volatile.Read(ref slot.ActiveInferences) + 1 < slot.MaxConcurrency;
+                var skipsRemaining = _settings.ParallelSlotSkipLimit - Volatile.Read(ref slot.SkipsUsed);
+
+                if (modelMatches && hasConcurrentCapacity && skipsRemaining > 0)
                 {
-                    await ProcessRequestAsync(slot, request, queueItem, stoppingToken).ConfigureAwait(false);
+                    // ── Parallel path ──────────────────────────────────────
+                    // Same model, capacity available, skip limit not reached.
+                    // Launch processing concurrently without awaiting; the next
+                    // iteration of the loop reads the next request immediately.
+                    Interlocked.Increment(ref slot.SkipsUsed);
+                    Interlocked.Increment(ref slot.ActiveInferences);
+
+                    var capturedRequest = request;
+                    var capturedQueueItem = queueItem;
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await ProcessRequestAsync(slot, capturedRequest, capturedQueueItem, stoppingToken)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                        {
+                            FailItem(capturedQueueItem, "Scheduler shutting down");
+                            capturedRequest.Tcs.TrySetCanceled(stoppingToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
+                                capturedRequest.Id, slot.TargetId);
+                            FailItem(capturedQueueItem, ex.Message);
+                            capturedRequest.Tcs.TrySetException(ex);
+                        }
+                        finally
+                        {
+                            Interlocked.Decrement(ref slot.ActiveInferences);
+                        }
+                    }, stoppingToken);
                 }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                else
                 {
-                    FailItem(queueItem, "Scheduler shutting down");
-                    request.Tcs.TrySetCanceled(stoppingToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
-                        request.Id, slot.TargetId);
-                    FailItem(queueItem, ex.Message);
-                    request.Tcs.TrySetException(ex);
+                    // ── Sequential path ────────────────────────────────────
+                    // Different model or limits hit: reset skip counter and
+                    // process one-at-a-time, awaiting completion before the
+                    // next dequeue.
+                    Interlocked.Exchange(ref slot.SkipsUsed, 0);
+
+                    // If the model differs and active inferences are still
+                    // running for the previous model, wait for them to drain
+                    // before issuing a model switch.
+                    if (!modelMatches)
+                    {
+                        while (Volatile.Read(ref slot.ActiveInferences) > 0)
+                        {
+                            await Task.Delay(50, stoppingToken).ConfigureAwait(false);
+                        }
+                    }
+
+                    try
+                    {
+                        await ProcessRequestAsync(slot, request, queueItem, stoppingToken).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                    {
+                        FailItem(queueItem, "Scheduler shutting down");
+                        request.Tcs.TrySetCanceled(stoppingToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Unexpected error processing request {Id} on target {Target}",
+                            request.Id, slot.TargetId);
+                        FailItem(queueItem, ex.Message);
+                        request.Tcs.TrySetException(ex);
+                    }
                 }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             // Normal shutdown
+        }
+
+        // Drain any fire-and-forget tasks still running before logging worker stop.
+        while (Volatile.Read(ref slot.ActiveInferences) > 0)
+        {
+            await Task.Delay(50, stoppingToken).ConfigureAwait(false);
         }
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler", $"Target worker stopped for {slot.TargetId}");
@@ -474,6 +552,14 @@ public sealed class SchedulerWorker
 
     private async Task SwitchModelAsync(TargetSlot slot, string targetModel, CancellationToken ct)
     {
+        // Safety gate: ensure no active inferences are running before we begin
+        // a model switch. RunTargetAsync should already guarantee this, but
+        // guard against races if a fire-and-forget task is still winding down.
+        while (Volatile.Read(ref slot.ActiveInferences) > 0)
+        {
+            await Task.Delay(50, ct).ConfigureAwait(false);
+        }
+
         var transitionId = Guid.NewGuid().ToString("N");
         var fromModel = slot.ResidentModel ?? "(none)";
         var switchStart = _clock.UtcNow;
@@ -512,6 +598,17 @@ public sealed class SchedulerWorker
 
             // Load live settings once per switch for LazyStop / BatchDrain evaluation
             var currentSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+
+            // Update concurrency limit from the registered runtime (if available).
+            // Safety gate above ensures ActiveInferences == 0, so the gate is not in use.
+            if (targetRegisteredContainer is not null)
+            {
+                var newMax = targetRegisteredContainer.MaxConcurrentInferences;
+                slot.MaxConcurrency = newMax;
+                var oldGate = slot.ConcurrencyGate;
+                slot.ConcurrencyGate = new SemaphoreSlim(newMax, newMax);
+                oldGate?.Dispose();
+            }
 
             // Container-aware: same registered container as resident → instant switch
             if (targetRegisteredRuntimeId is not null
