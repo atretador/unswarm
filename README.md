@@ -42,15 +42,50 @@ These trade-offs are inherent to shared-VRAM scheduling. Unswarm is designed for
 
 ## Architecture
 
+Unswarm separates **control plane** traffic (managing the fleet) from the **inference data plane** (serving model requests). Both flow through the backend — agents and containers are never exposed directly.
+
+### Control Plane
+
+The dashboard talks to the backend over REST only (polling). Agents dial *out* to the backend over a persistent WebSocket; the backend never connects to agents directly. Container management uses the Docker SDK on the backend's own host, and WebSocket commands relayed through the agent for remote hosts.
+
 ```
-┌──────────────┐       WebSocket        ┌──────────────┐       Docker SDK       ┌──────────────────┐
-│              │ ◄──────────────────────►│              │ ◄─────────────────────►│  Docker Engine   │
-│   Frontend   │        REST API        │   Backend    │                        │  (agent host)    │
-│  (React/TS)  │ ◄────────────────────► │  (.NET 10)   │                        └──────────────────┘
-│              │                        │              │       WebSocket        ┌──────────────────┐
-└──────────────┘                        │  SQLite DB   │ ◄────────────────────►│   Agent (Go)     │
-                                        │              │                        │  (remote host)   │
-                                        └──────────────┘                        └──────────────────┘
+┌──────────────┐   REST API    ┌──────────────┐  Docker SDK   ┌────────────────┐
+│   Frontend   │◄─────────────►│   Backend    │──────────────►│  Docker Engine │
+│  (React/TS)  │   (polling)   │  (.NET 10)   │               │ (backend host) │
+└──────────────┘               │              │               └────────────────┘
+                               │  SQLite DB   │
+                               └──────▲───────┘
+                                      │ WebSocket /ws/agent (agent-initiated)
+                               ┌──────┴───────┐  Docker SDK   ┌────────────────┐
+                               │  Agent (Go)  │──────────────►│  Docker Engine │
+                               │ (remote host)│               │  (agent host)  │
+                               └──────────────┘               └────────────────┘
+```
+
+### Inference Data Plane
+
+API clients send OpenAI-compatible requests to the backend. The scheduler queue decides where the target model runs and proxies accordingly — callers never talk to agents or containers directly.
+
+```
+┌──────────────┐ POST /v1/chat/completions ┌──────────────┐
+│ API client / │──────────────────────────►│   Backend    │
+│ OpenAI SDK   │                           │   scheduler  │
+└──────────────┘                           │    queue     │
+                                           └──┬────────▲──┘
+                     model runs on backend    │        │ response
+                     host?                    ▼        │
+                         ┌─────────────────────────┐    │
+                         │  HTTP proxy to          │────┘
+                         │  127.0.0.1:<port>       │
+                         └─────────────────────────┘
+                                              │ else: tunnel request over
+                                              │ agent WebSocket
+                                              ▼
+                                     ┌──────────────┐   HTTP    ┌──────────────┐
+                                     │  Agent (Go)  │──────────►│  Container   │
+                                     │ calls local  │           │ (llama.cpp,  │
+                                     │   server     │           │  vLLM, …)    │
+                                     └──────────────┘           └──────────────┘
 ```
 
 | Component | Stack | Description |
@@ -68,7 +103,7 @@ These trade-offs are inherent to shared-VRAM scheduling. Unswarm is designed for
 - **Model Groups** — Define exclusive groups (one model at a time) and co-located groups (models that share VRAM) to match your hardware constraints.
 - **Inference Queue** — Bounded request queue with scheduler for managing concurrent inference workloads across the fleet.
 - **Benchmarks** — Run benchmark prompts against models and track performance history (latency, tokens generated).
-- **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the dashboard in real time.
+- **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
 - **Settings** — Configurable idle shutdown, health check intervals, log retention, and auth.
 
