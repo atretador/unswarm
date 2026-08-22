@@ -215,8 +215,6 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     }
   };
 
-  if (!open) return null;
-
   return (
     <Dialog
       open={open}

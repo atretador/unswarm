@@ -47,6 +47,7 @@ export function Dialog({
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
 
   // ── Escape key ──────────────────────────────────────────────────
   const handleKeyDown = useCallback(
@@ -77,38 +78,39 @@ export function Dialog({
   );
 
   // ── Open / close lifecycle ──────────────────────────────────────
+  // Track open→close transitions so one-time effects (focus-steal, scroll
+  // lock, focus restore) run exactly once per transition, not on every
+  // re-render caused by a changing handleKeyDown reference.
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      // ── Opening ────────────────────────────────────────────────
+      wasOpenRef.current = true;
+      previousFocusRef.current = document.activeElement as HTMLElement;
+
+      requestAnimationFrame(() => {
+        const panel = panelRef.current;
+        if (!panel) return;
+        const firstFocusable = panel.querySelector<HTMLElement>(FOCUSABLE);
+        (firstFocusable ?? panel).focus();
+      });
+
+      document.body.style.overflow = "hidden";
+      document.body.style.touchAction = "none";
+    } else if (!open && wasOpenRef.current) {
+      // ── Closing ────────────────────────────────────────────────
+      wasOpenRef.current = false;
+      document.body.style.overflow = "";
+      document.body.style.touchAction = "";
+      previousFocusRef.current?.focus();
+    }
+  }, [open]);
+
+  // Keep the keydown listener in sync with the latest handleKeyDown without
+  // re-running the open/close lifecycle above.
   useEffect(() => {
     if (!open) return;
-
-    // Save the element that was focused before the dialog opened so we can
-    // restore focus when it closes.
-    previousFocusRef.current = document.activeElement as HTMLElement;
-
-    // Move focus into the dialog on the next frame so the DOM has painted.
-    requestAnimationFrame(() => {
-      const panel = panelRef.current;
-      if (!panel) return;
-      // Prefer the first focusable element inside the panel, otherwise the panel itself.
-      const firstFocusable = panel.querySelector<HTMLElement>(FOCUSABLE);
-      (firstFocusable ?? panel).focus();
-    });
-
-    // Lock background scroll.
-    const prevOverflow = document.body.style.overflow;
-    const prevTouchAction = document.body.style.touchAction;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-
     document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = prevOverflow;
-      document.body.style.touchAction = prevTouchAction;
-
-      // Restore focus to the element that was focused before the dialog opened.
-      previousFocusRef.current?.focus();
-    };
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, [open, handleKeyDown]);
 
   if (!open) return null;
@@ -119,11 +121,15 @@ export function Dialog({
       role="dialog"
       aria-modal="true"
       aria-labelledby={title ? titleId : undefined}
+      onClick={(e) => {
+        // Only close when clicking the backdrop itself (the outer container),
+        // not when clicking inside the panel or its children.
+        if (e.target === e.currentTarget) onOpenChange(false);
+      }}
     >
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-[var(--color-bg-overlay)] backdrop-blur-[2px]"
-        onClick={() => onOpenChange(false)}
         aria-hidden="true"
       />
 
