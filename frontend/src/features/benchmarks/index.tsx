@@ -12,10 +12,10 @@ import {
   RotateCcw,
   Star,
   Trash2,
-  X,
   Zap,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
+import { Dialog } from "../../components/ui/Dialog";
 import {
   Card,
   Badge,
@@ -83,9 +83,6 @@ function benchmarkDisabledReason(model: Model | undefined): string | null {
 
 // ─── Prompt Library Modal ─────────────────────────────────────────
 
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
 function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -98,53 +95,6 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
   const [selectedVersion, setSelectedVersion] = useState<PromptVersion | null>(null);
   const [confirmRollbackVersion, setConfirmRollbackVersion] = useState<PromptVersion | null>(null);
   const saveRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current = document.activeElement as HTMLElement;
-    closeRef.current?.focus();
-    document.addEventListener("keydown", handleKeyDown);
-
-    // Lock background scroll while the dialog is open; restore on close.
-    const previousOverflow = document.body.style.overflow;
-    const previousTouchAction = document.body.style.touchAction;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      document.body.style.touchAction = previousTouchAction;
-      previousFocusRef.current?.focus();
-    };
-  }, [open, handleKeyDown]);
 
 
   const { data: prompts, isLoading } = useQuery({
@@ -268,30 +218,13 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
   if (!open) return null;
 
   return (
-    <div
-      ref={dialogRef}
-      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Prompt library"
+    <Dialog
+      open={open}
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title="Prompt library"
+      className="sm:max-w-4xl min-h-[420px] sm:min-h-[480px]"
     >
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-4xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh] min-h-[420px] sm:min-h-[480px]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-5 py-4">
-          <h2 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">Prompt Library</h2>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] cursor-pointer"
-            aria-label="Close"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
-        {/* Body */}
+      {/* Body */}
         <div className="flex flex-1 min-h-0 flex-col sm:flex-row">
           {/* Left: prompt list */}
           <div className="w-full sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-[var(--color-border-subtle)] flex flex-col sm:max-h-[70vh]">
@@ -574,7 +507,6 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
             )}
           </div>
         </div>
-      </div>
 
       <ConfirmDialog
         open={confirmRollbackVersion !== null}
@@ -591,7 +523,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
         }}
         onCancel={() => setConfirmRollbackVersion(null)}
       />
-    </div>
+    </Dialog>
   );
 }
 
@@ -712,51 +644,18 @@ function ModelResultsModal({
   open: boolean;
   onClose: () => void;
 }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    closeRef.current?.focus();
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
-
   const { data: results, isLoading } = useQuery({
     queryKey: ["benchmarks", modelId],
     queryFn: () => client.listBenchmarks(modelId),
     enabled: open,
   });
 
-  if (!open) return null;
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${modelName} benchmark results`}
+    <Dialog
+      open={open}
+      onOpenChange={(o) => { if (!o) onClose(); }}
+      title={`${modelName} — benchmark results`}
     >
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 flex w-full flex-col overflow-hidden rounded-t-2xl border border-[var(--color-border)] bg-[var(--color-bg-surface)] shadow-xl sm:max-w-3xl sm:rounded-2xl sm:max-h-[85vh] max-h-[92dvh] min-h-[360px] sm:min-h-[420px]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)] px-5 py-4">
-          <h2 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">
-            {modelName} — benchmark results
-          </h2>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] cursor-pointer"
-            aria-label="Close"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
-
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
           {isLoading ? (
@@ -819,8 +718,7 @@ function ModelResultsModal({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 }
 

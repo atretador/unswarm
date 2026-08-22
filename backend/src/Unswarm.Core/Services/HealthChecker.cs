@@ -13,28 +13,34 @@ public sealed class HealthChecker : Contracts.IHealthChecker
     }
 
     public async Task WaitForReadyAsync(int port, int timeoutSeconds = 120, CancellationToken ct = default)
+        => await WaitForReadyAsync(port, "127.0.0.1", timeoutSeconds, ct).ConfigureAwait(false);
+
+    public async Task WaitForReadyAsync(int port, string host, int timeoutSeconds = 120, CancellationToken ct = default)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         while (DateTimeOffset.UtcNow < deadline)
         {
             ct.ThrowIfCancellationRequested();
-            if (await CheckAsync(port, ct).ConfigureAwait(false)) return;
+            if (await CheckAsync(port, host, ct).ConfigureAwait(false)) return;
             await Task.Delay(500, ct).ConfigureAwait(false);
         }
-        throw new TimeoutException($"Health check timed out on port {port} after {timeoutSeconds}s — container may still be loading the model");
+        throw new TimeoutException($"Health check timed out on {host}:{port} after {timeoutSeconds}s — container may still be loading the model");
     }
 
     public async Task<bool> CheckAsync(int port, CancellationToken ct = default)
+        => await CheckAsync(port, "127.0.0.1", ct).ConfigureAwait(false);
+
+    public async Task<bool> CheckAsync(int port, string host, CancellationToken ct = default)
     {
         // TCP check
-        if (!await TcpConnectAsync(port, ct).ConfigureAwait(false))
+        if (!await TcpConnectAsync(port, host, ct).ConfigureAwait(false))
             return false;
 
         // HTTP /health
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var response = await http.GetAsync($"http://127.0.0.1:{port}/health", ct).ConfigureAwait(false);
+            var response = await http.GetAsync($"http://{host}:{port}/health", ct).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch
@@ -43,12 +49,12 @@ public sealed class HealthChecker : Contracts.IHealthChecker
         }
     }
 
-    private static async Task<bool> TcpConnectAsync(int port, CancellationToken ct)
+    private static async Task<bool> TcpConnectAsync(int port, string host, CancellationToken ct)
     {
         try
         {
             using var client = new TcpClient();
-            await client.ConnectAsync("127.0.0.1", port, ct).ConfigureAwait(false);
+            await client.ConnectAsync(host, port, ct).ConfigureAwait(false);
             return true;
         }
         catch

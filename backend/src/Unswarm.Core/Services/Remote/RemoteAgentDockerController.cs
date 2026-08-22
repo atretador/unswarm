@@ -73,6 +73,22 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     public int PendingCommandCount => _pending.Count;
 
     /// <summary>
+    /// Fails all pending commands for this agent with an
+    /// <see cref="OperationCanceledException"/>. Called when the agent disconnects
+    /// so callers don't hang waiting for responses that will never arrive.
+    /// </summary>
+    public void FailPendingCommands(string reason = "Agent disconnected")
+    {
+        foreach (var kv in _pending)
+        {
+            if (_pending.TryRemove(kv.Key, out var tcs))
+            {
+                tcs.TrySetException(new OperationCanceledException(reason));
+            }
+        }
+    }
+
+    /// <summary>
     /// Sends a full snapshot of this agent's registered runtime set to the agent
     /// via a "sync_registrations" message. The agent gates container lifecycle
     /// commands against this set (registeredRuntimeId → container name/id), so it

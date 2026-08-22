@@ -72,7 +72,7 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
-	cfg.applyEnvOverrides()
+	cfg.ApplyEnvOverrides()
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, fmt.Errorf("validate config %s: %w", path, err)
@@ -81,11 +81,11 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// applyEnvOverrides fills in BackendURL and APIKey from the environment when
+// ApplyEnvOverrides fills in BackendURL and APIKey from the environment when
 // the corresponding YAML field is empty. Precedence: a non-empty YAML value
 // wins; the environment (UNSWARM_AGENT_BACKEND_URL, UNSWARM_AGENT_API_KEY) is
 // used only as a fallback for empty fields.
-func (c *Config) applyEnvOverrides() {
+func (c *Config) ApplyEnvOverrides() {
 	if c.BackendURL == "" {
 		if v := os.Getenv("UNSWARM_AGENT_BACKEND_URL"); v != "" {
 			c.BackendURL = v

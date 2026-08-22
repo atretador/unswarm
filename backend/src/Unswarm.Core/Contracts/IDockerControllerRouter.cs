@@ -20,4 +20,10 @@ public interface IDockerControllerRouter
     /// be correlated and completed. No-op when the agent has no cached controller.
     /// </summary>
     void HandleIncomingMessage(string agentName, AgentMessage message);
+
+    /// <summary>
+    /// Notifies the router that an agent has disconnected. Fails all pending
+    /// commands for that agent so callers don't hang for the full command timeout.
+    /// </summary>
+    void NotifyAgentDisconnected(string agentName);
 }

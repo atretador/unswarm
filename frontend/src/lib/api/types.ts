@@ -77,6 +77,19 @@ export interface UpdateRuntimeConcurrencyPayload {
   maxConcurrentInferences?: number;
 }
 
+/** Atomically toggle concurrency between two runtimes. */
+export interface ToggleConcurrencyPayload {
+  runtimeAId: string;
+  runtimeBId: string;
+  canRunAlongWith: boolean;
+}
+
+/** Response from the atomic toggle endpoint. */
+export interface ToggleConcurrencyResponse {
+  a: RegisteredRuntime;
+  b: RegisteredRuntime;
+}
+
 export interface RegisteredRuntime {
   id: string;
   displayName: string;
@@ -171,6 +184,7 @@ export interface QueueItem {
   id: string;
   modelRequested: string;
   modelAssigned: string | null;
+  targetId: string | null;
   status: QueueItemStatus;
   priority: number;
   tokensRequested: number;

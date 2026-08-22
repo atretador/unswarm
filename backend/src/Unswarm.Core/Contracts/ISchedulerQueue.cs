@@ -6,4 +6,5 @@ public interface ISchedulerQueue
 {
     Task<InferenceResponse> EnqueueAsync(InferenceRequest request, CancellationToken ct = default);
     Task<QueueSnapshot> GetSnapshotAsync(CancellationToken ct = default);
+    Task<bool> CancelItemAsync(string itemId, CancellationToken ct = default);
 }

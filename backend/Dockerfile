@@ -12,6 +12,7 @@ RUN dotnet publish src/Unswarm.Api -c Release -o /app --no-restore
 
 # ── Runtime ───────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Program.cs resolves the SQLite path as $HOME/.config/unswarm/unswarm.db

@@ -479,6 +479,62 @@ public sealed class ContainersControllerTests
     // ── DTO completeness tests ────────────────────────────────────────
 
     [Fact]
+    public async Task ToggleConcurrency_ReturnsBothUpdatedRuntimes()
+    {
+        var containerA = MakeContainer("reg-a", "llama:latest") with { DisplayName = "llama-server" };
+        var containerB = MakeContainer("reg-b", "vllm:latest") with { DisplayName = "vllm-server" };
+        await _containerRegistry.CreateAsync(containerA);
+        await _containerRegistry.CreateAsync(containerB);
+
+        _registrationService.ToggleConcurrencyResult = (
+            containerA with { CanRunAlongWith = ["vllm-server"] },
+            containerB with { CanRunAlongWith = ["llama-server"] }
+        );
+
+        var result = await CreateController().ToggleConcurrency(
+            new ToggleConcurrencyRequestDto
+            {
+                RuntimeAId = "reg-a",
+                RuntimeBId = "reg-b",
+                CanRunAlongWith = true
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        // Anonymous type → extract via reflection-like approach using Dictionary
+        var dict = ok.Value!.GetType().GetProperties()
+            .ToDictionary(p => p.Name, p => p.GetValue(ok.Value));
+
+        var responseA = Assert.IsType<RegisteredRuntimeResponse>(dict["A"]);
+        var responseB = Assert.IsType<RegisteredRuntimeResponse>(dict["B"]);
+        Assert.Equal("reg-a", responseA.Id);
+        Assert.Equal("reg-b", responseB.Id);
+        Assert.Contains("vllm-server", responseA.CanRunAlongWith);
+        Assert.Contains("llama-server", responseB.CanRunAlongWith);
+        Assert.Single(_registrationService.ToggledConcurrencyPairs);
+        Assert.Equal(("reg-a", "reg-b", true), _registrationService.ToggledConcurrencyPairs[0]);
+    }
+
+    [Fact]
+    public async Task ToggleConcurrency_OneMissing_ReturnsNotFound()
+    {
+        _registrationService.ToggleConcurrencyReturnsNull = true;
+
+        var result = await CreateController().ToggleConcurrency(
+            new ToggleConcurrencyRequestDto
+            {
+                RuntimeAId = "reg-a",
+                RuntimeBId = "nope",
+                CanRunAlongWith = true
+            },
+            CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    // ── DTO completeness tests ────────────────────────────────────────
+
+    [Fact]
     public async Task GetRegistered_ScriptRuntime_ShowsRuntimeKindLauncherPathRuntimeProcessId()
     {
         var container = MakeContainer("reg-script") with

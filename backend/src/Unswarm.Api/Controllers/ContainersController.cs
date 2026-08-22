@@ -274,6 +274,27 @@ public sealed class ContainersController : ControllerBase
         return Ok(await BuildRegisteredResponseAsync(container, ct).ConfigureAwait(false));
     }
 
+    /// <summary>
+    /// Atomically toggle concurrency between two runtimes. Updates both directions
+    /// in a single DB transaction to prevent inconsistent state.
+    /// </summary>
+    [Authorize(Roles = "Admin")]
+    [HttpPost("registered/concurrency")]
+    public async Task<IActionResult> ToggleConcurrency([FromBody] ToggleConcurrencyRequestDto dto, CancellationToken ct)
+    {
+        var result = await _registrationService.ToggleConcurrencyAsync(
+            dto.RuntimeAId, dto.RuntimeBId, dto.CanRunAlongWith, ct).ConfigureAwait(false);
+
+        if (result is null)
+            return NotFound(new { error = "One or both runtimes not found" });
+
+        return Ok(new
+        {
+            A = await BuildRegisteredResponseAsync(result.Value.A, ct).ConfigureAwait(false),
+            B = await BuildRegisteredResponseAsync(result.Value.B, ct).ConfigureAwait(false),
+        });
+    }
+
     [Authorize(Roles = "Admin")]
     [HttpPost("registered/{id}/stop")]
     public async Task<IActionResult> StopRegistered(string id, CancellationToken ct)

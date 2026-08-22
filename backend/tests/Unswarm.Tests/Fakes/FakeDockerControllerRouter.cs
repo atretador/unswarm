@@ -34,4 +34,6 @@ public sealed class FakeDockerControllerRouter : IDockerControllerRouter
 
     public void HandleIncomingMessage(string agentName, AgentMessage message)
         => OnIncoming?.Invoke(agentName, message);
+
+    public void NotifyAgentDisconnected(string agentName) { }
 }

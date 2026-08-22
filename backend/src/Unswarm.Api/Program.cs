@@ -292,14 +292,31 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+    {
+        // /v1 inference endpoints: higher limit, keyed by API key ID
+        if (context.Request.Path.StartsWithSegments("/v1"))
+        {
+            var apiKeyId = context.User.FindFirst("unswarm:key-id")?.Value ?? "unknown";
+            return RateLimitPartition.GetFixedWindowLimiter(
+                partitionKey: $"apikey:{apiKeyId}",
+                factory: _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = 600,
+                    QueueLimit = 0,
+                    Window = TimeSpan.FromMinutes(1)
+                });
+        }
+
+        // Management endpoints: standard per-IP rate limit
+        return RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: $"ip:{context.Connection.RemoteIpAddress}",
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 60,
                 QueueLimit = 0,
                 Window = TimeSpan.FromMinutes(1)
-            }));
+            });
+    });
 });
 
 var app = builder.Build();

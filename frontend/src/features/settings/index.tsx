@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Settings as SettingsIcon, Shield, Users, Plus } from "lucide-react";
 import { client } from "../../lib/query-client";
+import { ApiError } from "../../lib/api/httpClient";
 import {
   Card,
   Skeleton,
@@ -35,9 +36,38 @@ function SchedulerPolicySection() {
     queryFn: () => client.getSettings(),
   });
 
+  const [draftMaxQueue, setDraftMaxQueue] = useState<string>("");
+  const [draftParallelSkip, setDraftParallelSkip] = useState<string>("");
+  const draftInitRef = useState(true);
+
+  // Reset draft when server data changes
+  useEffect(() => {
+    if (settings) {
+      setDraftMaxQueue(String(settings.maxQueueDepth));
+      setDraftParallelSkip(String(settings.parallelSlotSkipLimit));
+      draftInitRef[1](false);
+    }
+  }, [settings]);
+
+  const commitDraft = useCallback(
+    (field: "maxQueueDepth" | "parallelSlotSkipLimit", raw: string) => {
+      const num = Number(raw) || (field === "parallelSlotSkipLimit" ? 1 : 0);
+      const clamped = field === "parallelSlotSkipLimit"
+        ? Math.max(1, Math.min(1000, num))
+        : Math.max(0, num);
+      if (settings && clamped !== settings[field]) {
+        updateMutation.mutate({ [field]: clamped });
+      }
+    },
+    [settings],
+  );
+
   const updateMutation = useMutation({
     mutationFn: (patch: Record<string, boolean | number>) => client.updateSettings(patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+    onError: (err: Error) => {
+      console.error("Failed to update settings:", err.message);
+    },
   });
 
   if (isLoading || !settings) {
@@ -117,18 +147,22 @@ function SchedulerPolicySection() {
           <Input
             label="Max queue depth"
             type="number"
-            value={String(settings.maxQueueDepth)}
-            onChange={(e) =>
-              updateMutation.mutate({ maxQueueDepth: Number(e.target.value) || 0 })
-            }
+            value={draftMaxQueue}
+            onChange={(e) => setDraftMaxQueue(e.target.value)}
+            onBlur={() => commitDraft("maxQueueDepth", draftMaxQueue)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDraft("maxQueueDepth", draftMaxQueue);
+            }}
           />
           <Input
             label="Parallel slot skip limit"
             type="number"
-            value={String(settings.parallelSlotSkipLimit)}
-            onChange={(e) =>
-              updateMutation.mutate({ parallelSlotSkipLimit: Math.max(1, Math.min(1000, Number(e.target.value) || 1)) })
-            }
+            value={draftParallelSkip}
+            onChange={(e) => setDraftParallelSkip(e.target.value)}
+            onBlur={() => commitDraft("parallelSlotSkipLimit", draftParallelSkip)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitDraft("parallelSlotSkipLimit", draftParallelSkip);
+            }}
           />
         </div>
       </div>
@@ -412,7 +446,7 @@ function UsersTab() {
   const [resetTarget, setResetTarget] = useState<User | null>(null);
 
   // 403 detection — non-admin
-  if (error && (error as Error).message?.includes("403")) {
+  if (error && error instanceof ApiError && error.status === 403) {
     return null;
   }
 
@@ -531,7 +565,7 @@ export default function Settings() {
     queryFn: () => client.listUsers(),
     retry: false,
   });
-  const isAdmin = !(usersError && (usersError as Error).message?.includes("403"));
+  const isAdmin = !(usersError && usersError instanceof ApiError && usersError.status === 403);
 
   const visibleTabs = TABS.filter((t) => {
     if (t.key === "users" && !isAdmin) return false;

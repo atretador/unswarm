@@ -20,4 +20,12 @@ public sealed class QueueController : ControllerBase
         var snapshot = await _queue.GetSnapshotAsync(ct);
         return Ok(QueueSnapshotResponse.FromSnapshot(snapshot));
     }
+
+    [HttpDelete("{itemId}")]
+    public async Task<IActionResult> CancelItem(string itemId, CancellationToken ct)
+    {
+        var result = await _queue.CancelItemAsync(itemId, ct);
+        if (!result) return NotFound();
+        return Ok(new { cancelled = true });
+    }
 }

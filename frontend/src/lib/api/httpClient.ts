@@ -15,6 +15,8 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  ToggleConcurrencyPayload,
+  ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   User,
 } from "./types";
@@ -27,6 +29,22 @@ import type { UnswarmClient } from "./client";
  */
 export const BASE_URL =
   (import.meta.env.VITE_API_URL as string | undefined) || "";
+
+// ─── Error class ─────────────────────────────────────────────────
+
+/**
+ * Typed HTTP error that carries the status code for reliable
+ * downstream matching (e.g. 403 admin gating).
+ */
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -98,7 +116,7 @@ async function request<T>(
       // response body wasn't JSON — use status text
       message = res.statusText || message;
     }
-    throw new Error(message);
+    throw new ApiError(res.status, message);
   }
 
   // 2xx with no body (safety net beyond 204)
@@ -193,6 +211,13 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  toggleRuntimeConcurrency(payload: ToggleConcurrencyPayload) {
+    return request<ToggleConcurrencyResponse>(
+      "/api/containers/registered/concurrency",
+      { method: "POST", body: JSON.stringify(payload) },
+    );
+  },
+
   // ── Fleet / Containers ────────────────────────────────────────
   listContainers() {
     return request<Container[]>("/api/containers");
@@ -260,6 +285,9 @@ export const httpClient: UnswarmClient = {
   // ── Queue ─────────────────────────────────────────────────────
   getQueueSnapshot() {
     return request<QueueSnapshot>("/api/queue/snapshot");
+  },
+  cancelQueueItem(itemId: string) {
+    return request<void>(`/api/queue/${itemId}`, { method: "DELETE" });
   },
 
   // ── Stats ─────────────────────────────────────────────────────

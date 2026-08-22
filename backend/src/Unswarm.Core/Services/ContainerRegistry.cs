@@ -176,6 +176,29 @@ public sealed class ContainerRegistry : IContainerRegistry
         return model?.SourceRuntimeId;
     }
 
+    public async Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(
+        string idA, IReadOnlyList<string> newCanRunAlongWithA,
+        string idB, IReadOnlyList<string> newCanRunAlongWithB,
+        CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entityA = await db.RegisteredRuntimes.FindAsync([idA], ct).ConfigureAwait(false);
+        var entityB = await db.RegisteredRuntimes.FindAsync([idB], ct).ConfigureAwait(false);
+        if (entityA is null || entityB is null)
+            return null;
+
+        entityA.CanRunAlongWithJson = JsonSerializer.Serialize(newCanRunAlongWithA ?? []);
+        entityA.UpdatedAt = _clock.UtcNow;
+        entityB.CanRunAlongWithJson = JsonSerializer.Serialize(newCanRunAlongWithB ?? []);
+        entityB.UpdatedAt = _clock.UtcNow;
+
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        _logger.LogInformation(
+            "Atomically toggled concurrency between {IdA} and {IdB} (canRunAlongWith={CountA}/{CountB})",
+            idA, idB, newCanRunAlongWithA.Count, newCanRunAlongWithB.Count);
+        return (MapToModel(entityA), MapToModel(entityB));
+    }
+
     private static RegisteredRuntime MapToModel(RegisteredRuntimeEntity e) => new()
     {
         Id = e.Id,

@@ -39,17 +39,14 @@ public sealed class LogRetentionService : BackgroundService
                 var dbFactory = scope.ServiceProvider.GetRequiredService<Func<UnswarmDbContext>>();
                 await using var db = dbFactory();
 
-                // Materialize first, then filter in memory (SQLite can't translate DateTimeOffset comparison)
-                var oldLogs = db.Logs
-                    .AsEnumerable()
+                // B5: Bulk delete with server-side filtering instead of loading entire table into memory
+                var deletedCount = await db.Logs
                     .Where(l => l.Timestamp < cutoff)
-                    .ToList();
+                    .ExecuteDeleteAsync(stoppingToken);
 
-                if (oldLogs.Count > 0)
+                if (deletedCount > 0)
                 {
-                    db.Logs.RemoveRange(oldLogs);
-                    await db.SaveChangesAsync(stoppingToken);
-                    _logger.LogInformation("Pruned {Count} log entries older than {Hours}h", oldLogs.Count, retentionHours);
+                    _logger.LogInformation("Pruned {Count} log entries older than {Hours}h", deletedCount, retentionHours);
                 }
 
                 // Run every hour

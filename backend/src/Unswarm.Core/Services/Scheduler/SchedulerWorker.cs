@@ -45,6 +45,7 @@ public sealed class SchedulerWorker
     private readonly IContainerRegistry? _containerRegistry;
     private readonly HostScriptRuntimeController? _scriptController;
     private readonly ISettingsStore? _settingsStore;
+    private readonly IAgentRegistry? _agentRegistry;
 
     // Per-target state
     private readonly ConcurrentDictionary<string, TargetSlot> _slots = new(StringComparer.Ordinal);
@@ -76,7 +77,8 @@ public sealed class SchedulerWorker
         IDockerControllerRouter? router = null,
         IModelTargetResolver? resolver = null,
         HostScriptRuntimeController? scriptController = null,
-        ISettingsStore? settingsStore = null)
+        ISettingsStore? settingsStore = null,
+        IAgentRegistry? agentRegistry = null)
     {
         _channel = channel;
         _hostDocker = docker;
@@ -92,6 +94,7 @@ public sealed class SchedulerWorker
         _resolver = resolver ?? new HostOnlyTargetResolver();
         _scriptController = scriptController;
         _settingsStore = settingsStore;
+        _agentRegistry = agentRegistry;
 
         // Publish total queue depth (global channel + per-target channels) to the
         // "unswarm.queue.depth" gauge. No-op unless an OTel provider listens to the
@@ -135,6 +138,26 @@ public sealed class SchedulerWorker
     /// <summary>Clamps a queue depth value to the valid range [1, 10000].</summary>
     private static int ClampQueueDepth(int value) => Math.Clamp(value, 1, 10000);
 
+    /// <summary>
+    /// Resolves the health-check host for a given target. Returns "127.0.0.1" for
+    /// host targets or the agent's reported hostname for remote agent targets.
+    /// Falls back to the agent name when hostname telemetry hasn't arrived yet.
+    /// </summary>
+    private string ResolveHealthCheckHost(string targetId)
+    {
+        var target = ExecutionTarget.FromId(targetId);
+        if (!target.IsAgent || target.AgentName is null)
+            return "127.0.0.1";
+
+        // Try to get the agent's reported hostname from the registry
+        var connection = _agentRegistry?.Get(target.AgentName);
+        if (connection is { Hostname: { Length: > 0 } hostname })
+            return hostname;
+
+        // Fallback: use the agent name as hostname (works when DNS resolves it)
+        return target.AgentName;
+    }
+
     public void Start(CancellationToken ct)
     {
         _runTask = RunAsync(ct);
@@ -159,6 +182,9 @@ public sealed class SchedulerWorker
                 .ThenBy(i => i.CreatedAt)
                 .ToList();
 
+            var current = _allItems.Values
+                .FirstOrDefault(i => i.Status == QueueItemStatus.Processing);
+
             var recent = _recentCompleted.ToArray()
                 .OrderByDescending(i => i.CreatedAt)
                 .Take(20)
@@ -170,6 +196,7 @@ public sealed class SchedulerWorker
 
             return new QueueSnapshot
             {
+                CurrentSlot = current,
                 Waiting = waiting,
                 RecentCompleted = recent,
                 ActiveTransitions = transitions
@@ -194,6 +221,14 @@ public sealed class SchedulerWorker
                 try
                 {
                     await DispatchAsync(request, queueItem, stoppingToken).ConfigureAwait(false);
+
+                    // Update queueItem with resolved TargetId now that dispatch has set it
+                    if (request.TargetId is not null)
+                    {
+                        var updatedItem = queueItem with { TargetId = request.TargetId };
+                        _allItems[request.Id] = updatedItem;
+                        queueItem = updatedItem;
+                    }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -455,7 +490,7 @@ public sealed class SchedulerWorker
 
         try
         {
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token, request.CancellationToken);
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
 
@@ -499,38 +534,46 @@ public sealed class SchedulerWorker
                 }
 
                 // Token counts are now final (written by the tap stream on EOF/dispose).
-                // Update the queue item with the final token count.
+                // Update the queue item with the final token count and timing.
                 var finalTokens = response.TokensGenerated;
+                var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
                 UpdateItem(queueItem with
                 {
                     Status = QueueItemStatus.Completed,
-                    TokensGenerated = finalTokens
+                    TokensGenerated = finalTokens,
+                    ElapsedMs = waitMs,
+                    WaitMs = waitMs
                 });
             }
             else
             {
                 // Buffered (non-streaming) path: response body already consumed.
+                var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
                 UpdateItem(queueItem with
                 {
                     Status = QueueItemStatus.Completed,
-                    TokensGenerated = response.TokensGenerated
+                    TokensGenerated = response.TokensGenerated,
+                    ElapsedMs = waitMs,
+                    WaitMs = waitMs
                 });
             }
 
-            // Record completion AFTER drain so token counts are final.
-            var waitMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
-            queueItem = queueItem with { ElapsedMs = waitMs, WaitMs = waitMs };
-            UpdateItem(queueItem);
-
             _statsTracker.RecordCompletion(request);
 
+            var totalMs = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                $"Request {request.Id} completed: {response.TokensGenerated} tokens in {waitMs}ms");
+                $"Request {request.Id} completed: {response.TokensGenerated} tokens in {totalMs}ms");
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
             FailItem(queueItem, "Request timed out");
             request.Tcs.TrySetException(new TimeoutException("Request timed out"));
+        }
+        catch (OperationCanceledException) when (request.CancellationToken.IsCancellationRequested)
+        {
+            // Client disconnected — cancel the caller and free the slot.
+            FailItem(queueItem, "Client disconnected");
+            request.Tcs.TrySetCanceled(request.CancellationToken);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -705,7 +748,7 @@ public sealed class SchedulerWorker
                             _logStore.Enqueue(LogLevel.Error, "Scheduler",
                                 $"Script start failed on {slot.TargetId} for model {targetModel}: {scriptResult.ErrorMessage}");
 
-                            FailAllForModel(targetModel, $"Script start failed: {scriptResult.ErrorMessage}");
+                            FailAllForModel(targetModel, slot.TargetId, $"Script start failed: {scriptResult.ErrorMessage}");
 
                             transition = transition with { Status = "complete" };
                             _activeTransitions[transitionId] = transition;
@@ -720,7 +763,7 @@ public sealed class SchedulerWorker
                     _logStore.Enqueue(LogLevel.Error, "Scheduler",
                         $"Script start failed on {slot.TargetId} for model {targetModel}: {ex.Message}");
 
-                    FailAllForModel(targetModel, $"Script start failed: {ex.Message}");
+                    FailAllForModel(targetModel, slot.TargetId, $"Script start failed: {ex.Message}");
 
                     transition = transition with { Status = "complete" };
                     _activeTransitions[transitionId] = transition;
@@ -731,7 +774,8 @@ public sealed class SchedulerWorker
                 var scriptPort = targetRegisteredContainer.ContainerPort;
 
                 // Wait for health
-                await _healthChecker.WaitForReadyAsync(scriptPort, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                var healthHost = ResolveHealthCheckHost(slot.TargetId);
+                await _healthChecker.WaitForReadyAsync(scriptPort, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
 
                 slot.ResidentModel = targetModel;
                 slot.ResidentContainerId = scriptKey;
@@ -822,7 +866,7 @@ public sealed class SchedulerWorker
                 _logStore.Enqueue(LogLevel.Error, "Scheduler",
                     $"Container start failed after {maxRetries} attempts on {slot.TargetId} for model {targetModel}: {errorMsg}");
 
-                FailAllForModel(targetModel, $"Container start failed after {maxRetries} attempts: {errorMsg}");
+                FailAllForModel(targetModel, slot.TargetId, $"Container start failed after {maxRetries} attempts: {errorMsg}");
 
                 transition = transition with { Status = "complete" };
                 _activeTransitions[transitionId] = transition;
@@ -832,7 +876,8 @@ public sealed class SchedulerWorker
             // Wait for health
             if (startResult.MappedPort.HasValue)
             {
-                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                var healthHost = ResolveHealthCheckHost(slot.TargetId);
+                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
             }
 
             slot.ResidentModel = targetModel;
@@ -885,7 +930,7 @@ public sealed class SchedulerWorker
             _logger.LogError(ex, "Model switch failed on {Target}: {From} -> {To}", slot.TargetId, fromModel, targetModel);
 
             // Fail all queued requests for the target model
-            FailAllForModel(targetModel, $"Model switch failed: {ex.Message}");
+            FailAllForModel(targetModel, slot.TargetId, $"Model switch failed: {ex.Message}");
 
             transition = transition with { Status = "complete" };
             _activeTransitions[transitionId] = transition;
@@ -1146,7 +1191,7 @@ public sealed class SchedulerWorker
 
         // Collect all waiting requests for the current model on this target
         var toDrain = _allItems.Values
-            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == slot.ResidentModel)
+            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == slot.ResidentModel && i.TargetId == slot.TargetId)
             .OrderBy(i => i.Priority)
             .ThenBy(i => i.CreatedAt)
             .ToList();
@@ -1167,10 +1212,10 @@ public sealed class SchedulerWorker
         return Task.CompletedTask;
     }
 
-    private void FailAllForModel(string modelName, string errorMessage)
+    private void FailAllForModel(string modelName, string targetId, string errorMessage)
     {
         var toFail = _allItems.Values
-            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == modelName)
+            .Where(i => i.Status == QueueItemStatus.Waiting && i.ModelRequested == modelName && i.TargetId == targetId)
             .ToList();
 
         foreach (var item in toFail)
@@ -1187,6 +1232,7 @@ public sealed class SchedulerWorker
         {
             Id = request.Id,
             ModelRequested = request.ModelName,
+            TargetId = request.TargetId,
             Status = QueueItemStatus.Waiting,
             Priority = request.Priority,
             TokensRequested = 0,
@@ -1248,6 +1294,23 @@ public sealed class SchedulerWorker
                 _allItems.TryRemove(oldestId, out _);
             }
         }
+    }
+
+    internal bool CancelItem(string itemId)
+    {
+        if (!_allItems.TryGetValue(itemId, out var item))
+            return false;
+
+        if (item.Status is QueueItemStatus.Completed or QueueItemStatus.Failed)
+            return false;
+
+        if (_requests.TryGetValue(itemId, out var request))
+        {
+            request.Tcs.TrySetCanceled();
+        }
+
+        FailItem(item, "Cancelled by user");
+        return true;
     }
 
     private void FailItem(QueueItem item, string errorMessage)

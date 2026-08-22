@@ -20,7 +20,10 @@ export type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  ToggleConcurrencyPayload,
+  ToggleConcurrencyResponse,
 } from "./types";
 
 export type { UnswarmClient } from "./client";
 export { httpClient } from "./httpClient";
+export { ApiError } from "./httpClient";

@@ -4,6 +4,7 @@ public sealed record QueueItem
 {
     public required string Id { get; init; }
     public required string ModelRequested { get; init; }
+    public string? TargetId { get; init; }
     public string? ModelAssigned { get; init; }
     public QueueItemStatus Status { get; init; } = QueueItemStatus.Waiting;
     public int Priority { get; init; }

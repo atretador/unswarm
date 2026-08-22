@@ -9,7 +9,7 @@ namespace Unswarm.Core.Services;
 
 public sealed class AgentRegistry : IAgentRegistry
 {
-    private readonly ConcurrentDictionary<string, (AgentConnection Connection, WebSocket Socket)> _agents = new();
+    private readonly ConcurrentDictionary<string, AgentRegistryEntry> _agents = new(StringComparer.Ordinal);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -24,10 +24,11 @@ public sealed class AgentRegistry : IAgentRegistry
         if (_agents.TryRemove(name, out var old))
         {
             old.Connection.IsConnected = false;
+            old.SendLock.Dispose();
             _ = TryCloseSocketAsync(old.Socket);
         }
 
-        _agents[name] = (connection, socket);
+        _agents[name] = new AgentRegistryEntry(connection, socket);
     }
 
     // M1: connectionId-based unregister — only remove if the stored connection matches
@@ -37,6 +38,7 @@ public sealed class AgentRegistry : IAgentRegistry
         {
             entry.Connection.IsConnected = false;
             _agents.TryRemove(name, out _);
+            entry.SendLock.Dispose();
         }
     }
 
@@ -61,6 +63,16 @@ public sealed class AgentRegistry : IAgentRegistry
         return _agents.Values
             .Select(e => ToInfo(e.Connection))
             .ToList();
+    }
+
+    /// <summary>
+    /// Fail all pending commands for a disconnected agent. Called from the
+    /// WebSocket disconnect path so callers don't hang for 60-120s.
+    /// </summary>
+    public void NotifyAgentDisconnected(string name)
+    {
+        // This is handled by RemoteAgentDockerController.FailPendingCommands
+        // via the DockerControllerRouter — no-op here; the registry just tracks connections.
     }
 
     private static AgentInfo ToInfo(AgentConnection connection) => new()
@@ -90,8 +102,13 @@ public sealed class AgentRegistry : IAgentRegistry
         if (socket.State != WebSocketState.Open)
             return false;
 
+        await entry.SendLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Re-check state after acquiring the lock — socket may have closed while waiting
+            if (socket.State != WebSocketState.Open)
+                return false;
+
             var json = JsonSerializer.Serialize(message, JsonOptions);
             var bytes = Encoding.UTF8.GetBytes(json);
             await socket.SendAsync(
@@ -104,6 +121,28 @@ public sealed class AgentRegistry : IAgentRegistry
         catch
         {
             return false;
+        }
+        finally
+        {
+            entry.SendLock.Release();
+        }
+    }
+
+    private sealed class AgentRegistryEntry : IDisposable
+    {
+        public AgentConnection Connection { get; }
+        public WebSocket Socket { get; }
+        public SemaphoreSlim SendLock { get; } = new(1, 1);
+
+        public AgentRegistryEntry(AgentConnection connection, WebSocket socket)
+        {
+            Connection = connection;
+            Socket = socket;
+        }
+
+        public void Dispose()
+        {
+            SendLock.Dispose();
         }
     }
 

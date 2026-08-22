@@ -78,6 +78,16 @@ public sealed class UpdateRuntimeConcurrencyRequestDto
 }
 
 /// <summary>
+/// DTO for atomically toggling concurrency between two runtimes.
+/// </summary>
+public sealed class ToggleConcurrencyRequestDto
+{
+    public string RuntimeAId { get; set; } = "";
+    public string RuntimeBId { get; set; } = "";
+    public bool CanRunAlongWith { get; set; }
+}
+
+/// <summary>
 /// DTO for returning a registered container and its discovered models.
 /// </summary>
 public sealed class RegisteredRuntimeResponse

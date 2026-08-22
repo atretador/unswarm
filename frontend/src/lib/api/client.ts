@@ -15,6 +15,8 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  ToggleConcurrencyPayload,
+  ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   User,
 } from "./types";
@@ -45,6 +47,9 @@ export interface UnswarmClient {
   /** Update the concurrency list for a registered runtime (full replacement). */
   updateRuntimeConcurrency(id: string, payload: UpdateRuntimeConcurrencyPayload): Promise<RegisteredRuntime>;
 
+  /** Atomically toggle concurrency between two runtimes in a single DB transaction. */
+  toggleRuntimeConcurrency(payload: ToggleConcurrencyPayload): Promise<ToggleConcurrencyResponse>;
+
   // Fleet
   listContainers(): Promise<Container[]>;
   startContainer(modelId: string): Promise<Container>;
@@ -71,6 +76,7 @@ export interface UnswarmClient {
 
   // Queue
   getQueueSnapshot(): Promise<QueueSnapshot>;
+  cancelQueueItem(itemId: string): Promise<void>;
 
   // Stats
   getStats(): Promise<StatsSummary>;

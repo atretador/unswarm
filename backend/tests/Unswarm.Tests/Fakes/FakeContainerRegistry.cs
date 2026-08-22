@@ -78,4 +78,19 @@ public sealed class FakeContainerRegistry : IContainerRegistry
         _modelToContainer.TryGetValue(modelName, out var containerId);
         return Task.FromResult(containerId);
     }
+
+    public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(
+        string idA, IReadOnlyList<string> newCanRunAlongWithA,
+        string idB, IReadOnlyList<string> newCanRunAlongWithB,
+        CancellationToken ct = default)
+    {
+        if (!_containers.TryGetValue(idA, out var containerA) || !_containers.TryGetValue(idB, out var containerB))
+            return Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
+
+        var updatedA = containerA with { CanRunAlongWith = newCanRunAlongWithA.ToList() };
+        var updatedB = containerB with { CanRunAlongWith = newCanRunAlongWithB.ToList() };
+        _containers[idA] = updatedA;
+        _containers[idB] = updatedB;
+        return Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>((updatedA, updatedB));
+    }
 }

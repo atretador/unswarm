@@ -23,6 +23,7 @@ public sealed class QueueItemResponse
     public string Id { get; set; } = "";
     public string ModelRequested { get; set; } = "";
     public string? ModelAssigned { get; set; }
+    public string? TargetId { get; set; }
     public QueueItemStatus Status { get; set; }
     public int Priority { get; set; }
     public int TokensRequested { get; set; }
@@ -37,6 +38,7 @@ public sealed class QueueItemResponse
         Id = i.Id,
         ModelRequested = i.ModelRequested,
         ModelAssigned = i.ModelAssigned,
+        TargetId = i.TargetId,
         Status = i.Status,
         Priority = i.Priority,
         TokensRequested = i.TokensRequested,

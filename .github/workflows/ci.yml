@@ -32,8 +32,11 @@ jobs:
       - name: Vet
         run: go vet ./...
         working-directory: agent
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: agent
       - name: Test
-        run: go test ./...
+        run: go test -race ./...
         working-directory: agent
 
   frontend:
@@ -61,3 +64,12 @@ jobs:
       - name: Build
         run: pnpm build
         working-directory: frontend
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build ./backend
+      - run: docker build ./frontend
+      - run: docker build ./agent

@@ -139,8 +139,13 @@ public sealed class OpenAIController : ControllerBase
 
         if (inferenceResponse.Body is not null)
         {
-            await inferenceResponse.Body.CopyToAsync(Response.Body, ct);
-            await Response.Body.FlushAsync(ct);
+            var buffer = new byte[8192];
+            int bytesRead;
+            while ((bytesRead = await inferenceResponse.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+            {
+                await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
+                await Response.Body.FlushAsync(ct);
+            }
         }
 
         return new EmptyResult();

@@ -25,7 +25,21 @@ public sealed class SchedulerQueue : ISchedulerQueue
         // Write to channel — will throw if full (natural backpressure via FullMode=Wait)
         await _channel.Writer.WriteAsync(request, ct).ConfigureAwait(false);
 
-        // Await the result via the request's Tcs
+        // Link the caller's CancellationToken with the request's own CancellationToken
+        // so that client disconnects are observed and the request is cleaned up.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, request.CancellationToken);
+        using var timeoutCts = new CancellationTokenSource(Timeout.Infinite);
+        using var registration = linkedCts.Token.Register(() => timeoutCts.Cancel());
+
+        var completedTask = await Task.WhenAny(request.Tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token)).ConfigureAwait(false);
+
+        if (completedTask != request.Tcs.Task)
+        {
+            // Client disconnected — let the worker know this request is abandoned
+            request.Tcs.TrySetCanceled(request.CancellationToken);
+            throw new OperationCanceledException(request.CancellationToken);
+        }
+
         return await request.Tcs.Task.ConfigureAwait(false);
     }
 
@@ -33,5 +47,11 @@ public sealed class SchedulerQueue : ISchedulerQueue
     {
         var snapshot = _worker.GetSnapshot();
         return Task.FromResult(snapshot);
+    }
+
+    public Task<bool> CancelItemAsync(string itemId, CancellationToken ct = default)
+    {
+        var result = _worker.CancelItem(itemId);
+        return Task.FromResult(result);
     }
 }

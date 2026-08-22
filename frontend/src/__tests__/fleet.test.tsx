@@ -1320,13 +1320,23 @@ describe("Fleet", () => {
     expect(llamaWithMistral).not.toBeChecked();
   });
 
-  it("toggling cell OFF->ON calls updateRuntimeConcurrency twice with symmetric payloads", async () => {
+  it("toggling cell OFF->ON calls toggleRuntimeConcurrency once with correct payload", async () => {
     seedRegisteredRuntimes(CONCURRENCY_RCS);
     const user = userEvent.setup();
-    const updateSpy = vi.spyOn(mockClient, "updateRuntimeConcurrency").mockImplementation(
-      async (id, payload) => {
-        const rc = CONCURRENCY_RCS.find((r) => r.id === id) ?? CONCURRENCY_RCS[0];
-        return { ...rc, canRunAlongWith: payload.canRunAlongWith };
+    const toggleSpy = vi.spyOn(mockClient, "toggleRuntimeConcurrency").mockImplementation(
+      async (payload) => {
+        const rcA = CONCURRENCY_RCS.find((r) => r.id === payload.runtimeAId) ?? CONCURRENCY_RCS[0];
+        const rcB = CONCURRENCY_RCS.find((r) => r.id === payload.runtimeBId) ?? CONCURRENCY_RCS[2];
+        const newA = payload.canRunAlongWith
+          ? [...rcA.canRunAlongWith, rcB.displayName]
+          : rcA.canRunAlongWith.filter((n) => n !== rcB.displayName);
+        const newB = payload.canRunAlongWith
+          ? [...rcB.canRunAlongWith, rcA.displayName]
+          : rcB.canRunAlongWith.filter((n) => n !== rcA.displayName);
+        return {
+          a: { ...rcA, canRunAlongWith: newA },
+          b: { ...rcB, canRunAlongWith: newB },
+        };
       },
     );
 
@@ -1351,18 +1361,14 @@ describe("Fleet", () => {
     await user.click(switchEl);
 
     await waitFor(() => {
-      expect(updateSpy).toHaveBeenCalledTimes(2);
+      expect(toggleSpy).toHaveBeenCalledTimes(1);
     });
 
-    // First call: llama-server gets vllm-script displayName appended
-    const [firstId, firstPayload] = updateSpy.mock.calls[0];
-    expect(firstId).toBe("rc1");
-    expect(firstPayload.canRunAlongWith).toContain("vllm-script");
-
-    // Second call: vllm-script gets llama-server displayName appended
-    const [secondId, secondPayload] = updateSpy.mock.calls[1];
-    expect(secondId).toBe("rc3");
-    expect(secondPayload.canRunAlongWith).toContain("llama-server");
+    // Single atomic call with both runtime IDs and canRunAlongWith=true
+    const [callPayload] = toggleSpy.mock.calls[0];
+    expect(callPayload.runtimeAId).toBe("rc1");
+    expect(callPayload.runtimeBId).toBe("rc3");
+    expect(callPayload.canRunAlongWith).toBe(true);
   });
 
   it("empty-list runtime shows the runs-alone hint", async () => {

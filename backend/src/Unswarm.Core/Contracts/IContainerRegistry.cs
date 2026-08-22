@@ -13,4 +13,12 @@ public interface IContainerRegistry
     Task RemoveModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetModelIdsForContainerAsync(string registeredContainerId, CancellationToken ct = default);
     Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Atomically update two runtimes' CanRunAlongWith lists in a single DB transaction.
+    /// </summary>
+    Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(
+        string idA, IReadOnlyList<string> newCanRunAlongWithA,
+        string idB, IReadOnlyList<string> newCanRunAlongWithB,
+        CancellationToken ct = default);
 }

@@ -1,10 +1,8 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
@@ -39,6 +37,7 @@ import {
   Zap,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
+import { Dialog } from "../../components/ui/Dialog";
 import {
   Card,
   Badge,
@@ -234,129 +233,11 @@ function displayNameFromContainer(c: Container): string {
   );
 }
 
-// ─── Focus-trap modal shell ───────────────────────────────────────
-
-const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-function Modal({
-  open,
-  onClose,
-  label,
-  children,
-}: {
-  open: boolean;
-  onClose: () => void;
-  label: string;
-  children: ReactNode;
-}) {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const previousFocusRef = useRef<HTMLElement | null>(null);
-
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab" || !dialogRef.current) return;
-      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE);
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else if (document.activeElement === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    },
-    [onClose],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    previousFocusRef.current = document.activeElement as HTMLElement;
-    closeRef.current?.focus();
-    document.addEventListener("keydown", handleKeyDown);
-
-    // Lock background scroll while the dialog is open; restore on close.
-    const previousOverflow = document.body.style.overflow;
-    const previousTouchAction = document.body.style.touchAction;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = previousOverflow;
-      document.body.style.touchAction = previousTouchAction;
-      previousFocusRef.current?.focus();
-    };
-  }, [open, handleKeyDown]);
-
-  return (
-    <AnimatePresence>
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-          {/* Overlay */}
-          <motion.div
-            key="overlay"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18 }}
-            className="absolute inset-0 bg-[var(--color-bg-overlay)] backdrop-blur-[2px]"
-            onClick={onClose}
-            aria-hidden="true"
-          />
-          {/* Dialog: bottom sheet on mobile, centered card on desktop */}
-          <motion.div
-            key="dialog"
-            ref={dialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label={label}
-            initial={{ opacity: 0, y: 32, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 24, scale: 0.98 }}
-            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className={`
-              relative flex max-h-[92dvh] w-full flex-col overflow-hidden
-              rounded-t-[var(--radius-2xl)] sm:rounded-[var(--radius-2xl)]
-              border border-[var(--color-border)] bg-[var(--color-bg-surface)]
-              shadow-xl sm:max-w-2xl
-            `}
-          >
-            <div className="flex items-center justify-between gap-4 border-b border-[var(--color-border-subtle)] px-5 py-4">
-              <h3 className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">
-                {label}
-              </h3>
-              <button
-                ref={closeRef}
-                onClick={onClose}
-                aria-label="Close dialog"
-                className="flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-              >
-                <X className="size-4" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto">{children}</div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
-  );
-}
-
 // ─── Add agent modal ──────────────────────────────────────────────
 
 function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Modal open={open} onClose={onClose} label="Add an agent">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title="Add an agent">
       <div className="space-y-5 p-5">
         <p className="text-sm leading-relaxed text-[var(--color-text-muted)]">
           Agents run on machines where you want to serve models. Install the agent binary
@@ -407,7 +288,7 @@ function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }
           </Button>
         </div>
       </div>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -448,22 +329,11 @@ function ConcurrencyModal({
     const key = `${a.id}:${b.id}`;
     setPendingKey(key);
     try {
-      // Compute the new lists for both peers symmetrically.
-      const newAList = currentlyOn
-        ? a.canRunAlongWith.filter(
-            (n) => n.toLowerCase() !== b.displayName.toLowerCase() && n.toLowerCase() !== b.image.toLowerCase(),
-          )
-        : [...a.canRunAlongWith, b.displayName];
-      const newBList = currentlyOn
-        ? b.canRunAlongWith.filter(
-            (n) => n.toLowerCase() !== a.displayName.toLowerCase() && n.toLowerCase() !== a.image.toLowerCase(),
-          )
-        : [...b.canRunAlongWith, a.displayName];
-
-      await Promise.all([
-        client.updateRuntimeConcurrency(a.id, { canRunAlongWith: newAList }),
-        client.updateRuntimeConcurrency(b.id, { canRunAlongWith: newBList }),
-      ]);
+      await client.toggleRuntimeConcurrency({
+        runtimeAId: a.id,
+        runtimeBId: b.id,
+        canRunAlongWith: !currentlyOn,
+      });
       invalidate();
     } catch (err) {
       setToggleError(err instanceof Error ? err.message : "Failed to update concurrency");
@@ -486,7 +356,7 @@ function ConcurrencyModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} label={`Concurrency on ${agentName}`}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={`Concurrency on ${agentName}`}>
       <div className="p-5">
         {agentRcs.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -593,7 +463,7 @@ function ConcurrencyModal({
           </div>
         )}
       </div>
-    </Modal>
+    </Dialog>
   );
 }
 
@@ -619,7 +489,7 @@ function ManageRuntimesModal({
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
   return (
-    <Modal open={open} onClose={onClose} label={`Manage runtimes on ${agentName}`}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={`Manage runtimes on ${agentName}`}>
       {/* Tab bar */}
       <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]">
         <div className="flex" role="tablist" aria-label="Runtimes">
@@ -693,7 +563,7 @@ function ManageRuntimesModal({
           />
         </div>
       )}
-    </Modal>
+    </Dialog>
   );
 }
 

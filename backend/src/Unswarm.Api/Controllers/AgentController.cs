@@ -153,6 +153,12 @@ public sealed class AgentController : ControllerBase
                 _registry.Unregister(agentName, connectionId);
             }
 
+            // B2: Fail all pending commands for this agent so callers don't hang
+            if (agentName is not null)
+            {
+                _router?.NotifyAgentDisconnected(agentName);
+            }
+
             if (socket.State == WebSocketState.Open || socket.State == WebSocketState.CloseReceived)
             {
                 try

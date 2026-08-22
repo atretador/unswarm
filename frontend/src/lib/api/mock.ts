@@ -15,6 +15,8 @@ import type {
   RegisteredRuntime,
   Settings,
   StatsSummary,
+  ToggleConcurrencyPayload,
+  ToggleConcurrencyResponse,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -563,6 +565,7 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
     id: "q1",
     modelRequested: "llama-3.1-70b",
     modelAssigned: "llama-3.1-70b",
+    targetId: "host",
     status: "processing",
     priority: 1,
     tokensRequested: 4096,
@@ -576,6 +579,7 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
       id: "q2",
       modelRequested: "mistral-large-2",
       modelAssigned: null,
+      targetId: "agent:gpu-node-1",
       status: "waiting",
       priority: 2,
       tokensRequested: 2048,
@@ -588,6 +592,7 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
       id: "q3",
       modelRequested: "llama-3.1-70b",
       modelAssigned: null,
+      targetId: "host",
       status: "waiting",
       priority: 3,
       tokensRequested: 1024,
@@ -602,6 +607,7 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
       id: "q4",
       modelRequested: "llama-3.1-70b",
       modelAssigned: "llama-3.1-70b",
+      targetId: "host",
       status: "completed",
       priority: 1,
       tokensRequested: 2048,
@@ -955,6 +961,37 @@ export const mockClient: UnswarmClient = {
     };
   },
 
+  async toggleRuntimeConcurrency(payload: ToggleConcurrencyPayload) {
+    await delay(rand(80, 200));
+    const rcA = registeredRuntimes.find((x) => x.id === payload.runtimeAId);
+    const rcB = registeredRuntimes.find((x) => x.id === payload.runtimeBId);
+    if (!rcA) throw new Error(`Registered runtime ${payload.runtimeAId} not found`);
+    if (!rcB) throw new Error(`Registered runtime ${payload.runtimeBId} not found`);
+
+    if (payload.canRunAlongWith) {
+      // Toggle ON: add peer displayName if not present
+      if (!rcA.canRunAlongWith.some((n) => n.toLowerCase() === rcB.displayName.toLowerCase())) {
+        rcA.canRunAlongWith = [...rcA.canRunAlongWith, rcB.displayName];
+      }
+      if (!rcB.canRunAlongWith.some((n) => n.toLowerCase() === rcA.displayName.toLowerCase())) {
+        rcB.canRunAlongWith = [...rcB.canRunAlongWith, rcA.displayName];
+      }
+    } else {
+      // Toggle OFF: remove peer displayName/image
+      rcA.canRunAlongWith = rcA.canRunAlongWith.filter(
+        (n) => n.toLowerCase() !== rcB.displayName.toLowerCase() && n.toLowerCase() !== rcB.image.toLowerCase(),
+      );
+      rcB.canRunAlongWith = rcB.canRunAlongWith.filter(
+        (n) => n.toLowerCase() !== rcA.displayName.toLowerCase() && n.toLowerCase() !== rcA.image.toLowerCase(),
+      );
+    }
+
+    return {
+      a: { ...rcA, discoveredModels: rcA.discoveredModels.map((m) => ({ ...m })) },
+      b: { ...rcB, discoveredModels: rcB.discoveredModels.map((m) => ({ ...m })) },
+    };
+  },
+
   // Fleet
   async listContainers() {
     await delay(rand(80, 200));
@@ -1055,6 +1092,10 @@ export const mockClient: UnswarmClient = {
       recentCompleted: QUEUE_SNAPSHOT.recentCompleted.map((r) => ({ ...r })),
       activeTransitions: QUEUE_SNAPSHOT.activeTransitions.map((t) => ({ ...t })),
     };
+  },
+  async cancelQueueItem(itemId: string) {
+    await delay(rand(20, 60));
+    // Mock: just return void (success)
   },
 
   // Stats

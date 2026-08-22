@@ -89,6 +89,22 @@ public sealed class DockerControllerRouter : IDockerControllerRouter
                 agentName, message.Type);
         }
     }
+
+    /// <summary>
+    /// Fails all pending commands for a disconnected agent so callers don't hang
+    /// waiting for responses that will never arrive.
+    /// </summary>
+    public void NotifyAgentDisconnected(string agentName)
+    {
+        if (string.IsNullOrEmpty(agentName))
+            return;
+
+        var targetId = ExecutionTarget.ForAgent(agentName).Id;
+        if (_remoteControllers.TryGetValue(targetId, out var controller))
+        {
+            controller.FailPendingCommands($"Agent '{agentName}' disconnected");
+        }
+    }
 }
 
 /// <summary>
@@ -113,5 +129,10 @@ internal sealed class HostOnlyDockerControllerRouter : IDockerControllerRouter
     public void HandleIncomingMessage(string agentName, AgentMessage message)
     {
         // Host-only router has no remote controllers; nothing to route.
+    }
+
+    public void NotifyAgentDisconnected(string agentName)
+    {
+        // Host-only router has no remote controllers; nothing to notify.
     }
 }

@@ -418,10 +418,10 @@ describe("Benchmarks", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Prompt library" });
     // Initial focus lands on the close button (the dialog shell's first focusable).
-    expect(within(dialog).getByRole("button", { name: "Close" })).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: "Close dialog" })).toHaveFocus();
 
     // Tab from the last focusable wraps to the first inside the dialog.
-    const closeBtn = within(dialog).getByRole("button", { name: "Close" });
+    const closeBtn = within(dialog).getByRole("button", { name: "Close dialog" });
     await user.tab();
     // Cycle through focusables until we come back to the close button (wrapped).
     let active = document.activeElement as HTMLElement;
@@ -524,11 +524,17 @@ describe("Benchmarks", () => {
     await user.clear(nameInput);
     await user.type(nameInput, "Better summary");
 
-    await user.click(within(dialog).getByRole("button", { name: /save/i }));
+    const saveBtn = within(dialog).getByRole("button", { name: /save/i });
+    console.log("saveBtn text:", saveBtn.textContent, "disabled:", saveBtn.disabled, "aria-disabled:", saveBtn.getAttribute("aria-disabled"));
+    console.log("dialog HTML (first 500):", dialog.innerHTML.substring(0, 500));
+    await user.click(saveBtn);
 
     await waitFor(() => {
+      console.log("updateSpy calls:", updateSpy.mock.calls.length);
+      console.log("updateSpy args:", JSON.stringify(updateSpy.mock.calls[0]));
       expect(updateSpy).toHaveBeenCalledTimes(1);
     });
+    console.log("FINAL updateSpy args:", JSON.stringify(updateSpy.mock.calls[0]));
     expect(updateSpy.mock.calls[0][0]).toBe("p1");
     expect(updateSpy.mock.calls[0][1]).toMatchObject({ name: "Better summary" });
   });
@@ -608,7 +614,7 @@ describe("Benchmarks", () => {
     await screen.findByRole("dialog", { name: "Prompt library" });
 
     // Close via X button
-    await user.click(screen.getByLabelText("Close"));
+    await user.click(screen.getByLabelText("Close dialog"));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "Prompt library" })).not.toBeInTheDocument();

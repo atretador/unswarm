@@ -14,7 +14,7 @@ services:
       # CORS origins for browser access if not same-origin via the frontend proxy
       # Cors__AllowedOrigins: https://unswarm.example.com
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5014/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5014/health"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -24,7 +24,7 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "8080:8080"
     depends_on:
       backend:
         condition: service_healthy
@@ -37,20 +37,19 @@ services:
   #   docker compose --profile agent up -d
   #
   # The agent needs the host Docker socket to manage model containers.
-  # agent:
-  #   build: ./agent
-  #   profiles: ["agent"]
-  #   restart: unless-stopped
-  #   volumes:
-  #     - /var/run/docker.sock:/var/run/docker.sock
-  #   group_add:
-  #     - "${DOCKER_GID:-999}"   # GID of the host's docker.socket group; set DOCKER_GID in .env
-  #   environment:
-  #     # wss:// requires TLS termination in front of the backend; ws:// is only
-  #     # allowed to loopback unless allow_insecure_ws is set in agent.yaml.
-  #     BACKEND_URL: ws://backend:5014
-  #     API_KEY: ${UNSWARM_API_KEY:-}
-  #     AGENT_NAME: compose-local
+  agent:
+    build: ./agent
+    profiles: ["agent"]
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"   # GID of the host's docker.socket group; set DOCKER_GID in .env
+    environment:
+      # wss:// requires TLS termination in front of the backend; ws:// is only
+      # allowed to loopback unless allow_insecure_ws is set in agent.yaml.
+      UNSWARM_AGENT_BACKEND_URL: ws://backend:5014
+      UNSWARM_AGENT_API_KEY: ${UNSWARM_API_KEY:-}
 
 volumes:
   unswarm-data:

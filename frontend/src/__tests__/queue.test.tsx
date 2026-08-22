@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 describe("Queue", () => {
-  it("renders current slot from mock API", async () => {
+  it("renders target sections and active items from mock API", async () => {
     render(
       <TestWrapper>
         <Queue />
@@ -22,13 +22,14 @@ describe("Queue", () => {
       expect(screen.getByText("Queue")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Current slot")).toBeInTheDocument();
-    // llama-3.1-70b appears in current slot, waiting, and completed sections
+    // Both host and agent targets should always be visible
+    expect(screen.getByText("Host (local)")).toBeInTheDocument();
+    expect(screen.getByText("Agent: gpu-node-1")).toBeInTheDocument();
+    // Processing item shows model name
     expect(screen.getAllByText("llama-3.1-70b").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("processing")).toBeInTheDocument();
   });
 
-  it("renders waiting queue items", async () => {
+  it("renders waiting queue items grouped by target", async () => {
     render(
       <TestWrapper>
         <Queue />
@@ -36,11 +37,11 @@ describe("Queue", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Waiting (2)")).toBeInTheDocument();
+      expect(screen.getByText("Host (local)")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("#1")).toBeInTheDocument();
-    expect(screen.getByText("#2")).toBeInTheDocument();
+    // Waiting items are numbered per-target within their sections
+    expect(screen.getByText("mistral-large-2")).toBeInTheDocument();
   });
 
   it("shows recent completed items", async () => {

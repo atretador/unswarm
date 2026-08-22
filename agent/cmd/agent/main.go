@@ -185,9 +185,6 @@ func runSession(
 		wsClient.Close()
 	}()
 
-	// Reset backoff on successful connection
-	bo.Reset()
-
 	// Send hello
 	if err := wsClient.SendHello(sessionCtx, version); err != nil {
 		return fmt.Errorf("send hello: %w", err)
@@ -197,6 +194,10 @@ func runSession(
 	if err := wsClient.WaitForHelloAck(sessionCtx); err != nil {
 		return fmt.Errorf("hello ack: %w", err)
 	}
+
+	// Reset backoff only after a full handshake succeeds so that a
+	// misconfigured agent backs off instead of hammering the backend.
+	bo.Reset()
 
 	logger.Info("handshake complete, entering message loop")
 
@@ -548,8 +549,15 @@ func loadConfig(path string) (config.Config, error) {
 			return config.Config{}, fmt.Errorf("config %s: %w", p, err)
 		}
 	}
-	// No config file present anywhere: use defaults.
-	return config.DefaultConfig(), nil
+	// No config file present anywhere: use defaults and apply env overrides
+	// so that UNSWARM_AGENT_BACKEND_URL / UNSWARM_AGENT_API_KEY are not
+	// silently ignored.
+	cfg := config.DefaultConfig()
+	cfg.ApplyEnvOverrides()
+	if err := cfg.Validate(); err != nil {
+		return config.Config{}, fmt.Errorf("validate default config: %w", err)
+	}
+	return cfg, nil
 }
 
 // reachedMaxRetries reports whether the reconnect loop should give up.

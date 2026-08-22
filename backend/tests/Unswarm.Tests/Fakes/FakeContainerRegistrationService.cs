@@ -72,6 +72,25 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
         return Task.FromResult<RegisteredRuntime?>(UpdateConcurrencyResult);
     }
 
+    // ── ToggleConcurrencyAsync ───────────────────────────────────────
+
+    public List<(string A, string B, bool Value)> ToggledConcurrencyPairs { get; } = [];
+
+    /// <summary>Scriptable ToggleConcurrencyAsync result; when set, returned for any pair.</summary>
+    public (RegisteredRuntime A, RegisteredRuntime B)? ToggleConcurrencyResult { get; set; }
+
+    /// <summary>When set, ToggleConcurrencyAsync returns null (simulates unknown id).</summary>
+    public bool ToggleConcurrencyReturnsNull { get; set; }
+
+    public Task<(RegisteredRuntime A, RegisteredRuntime B)?> ToggleConcurrencyAsync(
+        string runtimeAId, string runtimeBId, bool canRunAlongWith, CancellationToken ct = default)
+    {
+        ToggledConcurrencyPairs.Add((runtimeAId, runtimeBId, canRunAlongWith));
+        if (ToggleConcurrencyReturnsNull)
+            return Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
+        return Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(ToggleConcurrencyResult);
+    }
+
     // ── StopAsync ──────────────────────────────────────────────────────
 
     public List<string> StoppedIds { get; } = [];
