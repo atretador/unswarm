@@ -46,7 +46,9 @@ public sealed class SettingsController : ControllerBase
             EnableConversationAffinity = request.EnableConversationAffinity ?? current.EnableConversationAffinity,
             ConversationDwellSeconds = Math.Max(1, request.ConversationDwellSeconds ?? current.ConversationDwellSeconds),
             HideOriginPrefix = request.HideOriginPrefix ?? current.HideOriginPrefix,
-            AgentDisplayNames = request.AgentDisplayNames ?? current.AgentDisplayNames
+            AgentDisplayNames = request.AgentDisplayNames ?? current.AgentDisplayNames,
+            UsageRetentionDays = Math.Max(0, request.UsageRetentionDays ?? current.UsageRetentionDays),
+            ProviderBudgetsJson = request.ProviderBudgetsJson ?? current.ProviderBudgetsJson
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

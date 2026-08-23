@@ -35,4 +35,14 @@ public sealed class InferenceResponse
     /// body is still being consumed by the API controller.
     /// </summary>
     public Task? BodyDrained { get; set; }
+
+    /// <summary>
+    /// Registered runtime that served the request, stamped by the scheduler just
+    /// before completion. Used for per-runtime usage attribution; null when the
+    /// response never went through the scheduler (errors, cloud proxy).
+    /// </summary>
+    public string? ServedByRuntimeId { get; set; }
+
+    /// <summary>Serving runtime's display name (falls back to its id when unnamed).</summary>
+    public string? ServedByRuntimeName { get; set; }
 }

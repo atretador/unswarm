@@ -21,7 +21,8 @@ public sealed class UsageRecorder : IUsageRecorder
         _logger = logger;
     }
 
-    public async Task RecordAsync(string provider, string model, int promptTokens, int completionTokens, int cachedTokens, bool isStreaming, double? elapsedMs)
+    public async Task RecordAsync(string provider, string model, int promptTokens, int completionTokens, int cachedTokens, bool isStreaming, double? elapsedMs,
+        string? apiKeyId = null, string? apiKeyName = null, string providerKind = "local")
     {
         try
         {
@@ -35,16 +36,34 @@ public sealed class UsageRecorder : IUsageRecorder
                 Timestamp = now,
                 TimestampTicks = now.Ticks,
                 Provider = provider,
+                ProviderKind = providerKind,
                 Model = model,
                 PromptTokens = promptTokens,
                 CompletionTokens = completionTokens,
                 CachedTokens = cachedTokens,
                 IsStreaming = isStreaming,
-                ElapsedMs = (long)(elapsedMs ?? 0)
+                ElapsedMs = (long)(elapsedMs ?? 0),
+                ApiKeyId = apiKeyId,
+                ApiKeyName = apiKeyName
             };
 
             db.UsageRecords.Add(entity);
             await db.SaveChangesAsync();
+
+            // Live-tail fan-out after the record is durably persisted. The
+            // broadcaster is a singleton resolved from this throwaway scope;
+            // absence (unit-test fakes) must never fail recording.
+            scope.ServiceProvider.GetService<IUsageLiveTailBroadcaster>()?.Publish(new UsageLiveTailEvent(
+                entity.Id,
+                entity.Timestamp,
+                entity.Provider,
+                entity.ProviderKind,
+                entity.Model,
+                entity.PromptTokens,
+                entity.CompletionTokens,
+                entity.CachedTokens,
+                entity.IsStreaming,
+                entity.ElapsedMs));
         }
         catch (Exception ex)
         {

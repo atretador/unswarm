@@ -25,6 +25,9 @@ public sealed class SettingsResponse
     public bool HideOriginPrefix { get; set; }
     public string AgentDisplayNames { get; set; } = "{}";
 
+    public int UsageRetentionDays { get; set; } = 30;
+    public string ProviderBudgetsJson { get; set; } = "{}";
+
     public static SettingsResponse FromSettings(Settings s) => new()
     {
         RequestTimeout = s.RequestTimeout,
@@ -43,7 +46,9 @@ public sealed class SettingsResponse
         EnableConversationAffinity = s.EnableConversationAffinity,
         ConversationDwellSeconds = s.ConversationDwellSeconds,
         HideOriginPrefix = s.HideOriginPrefix,
-        AgentDisplayNames = s.AgentDisplayNames
+        AgentDisplayNames = s.AgentDisplayNames,
+        UsageRetentionDays = s.UsageRetentionDays,
+        ProviderBudgetsJson = s.ProviderBudgetsJson
     };
 }
 
@@ -69,4 +74,7 @@ public sealed class SettingsUpdateRequest
 
     public bool? HideOriginPrefix { get; set; }
     public string? AgentDisplayNames { get; set; }
+
+    public int? UsageRetentionDays { get; set; }
+    public string? ProviderBudgetsJson { get; set; }
 }

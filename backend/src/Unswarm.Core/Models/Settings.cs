@@ -46,4 +46,13 @@ public sealed class Settings
     /// JSON map of agent names to user-chosen display names. E.g. {"host": "My Workstation"}.
     /// </summary>
     public string AgentDisplayNames { get; init; } = "{}";
+
+    /// <summary>Usage records older than this many days are eligible for purge (0 = keep forever).</summary>
+    public int UsageRetentionDays { get; init; } = 30;
+
+    /// <summary>
+    /// JSON map of provider name to monthly budget object, e.g.
+    /// {"cloud":{"tokenBudget":1000000,"costBudget":25.0}}.
+    /// </summary>
+    public string ProviderBudgetsJson { get; init; } = "{}";
 }

@@ -155,6 +155,9 @@ builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
 builder.Services.AddScoped<IUsageRecorder, UsageRecorder>();
+// Singleton: usage records are fanned out to /ws/metrics live-tail subscribers
+// from UsageRecorder's throwaway scopes.
+builder.Services.AddSingleton<IUsageLiveTailBroadcaster, UsageLiveTailBroadcaster>();
 
 // Cloud providers: scoped store (Func<UnswarmDbContext> holder, like other scoped stores)
 builder.Services.AddSingleton<IApiKeyEncryptor, DataProtectionEncryptor>();

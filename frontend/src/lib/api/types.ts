@@ -331,6 +331,17 @@ export interface Settings {
   hideOriginPrefix: boolean;
   /** Map of agent names to custom display names (e.g. { "host": "My Workstation" }). */
   agentDisplayNames: Record<string, string>;
+  /**
+   * How long raw usage records are kept before purging (days, ≥0).
+   * Optional — older backends may not expose it yet.
+   */
+  usageRetentionDays?: number;
+  /**
+   * Server-side per-provider monthly budgets as a JSON string:
+   * `{"provider":{"tokenBudget":number,"costBudget":number}}`.
+   * Optional — older backends may not expose it yet.
+   */
+  providerBudgetsJson?: string;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────
@@ -476,4 +487,6 @@ export interface UsageRecordResponse {
   cachedTokens: number;
   isStreaming: boolean;
   elapsedMs: number;
+  /** Name of the API key that authenticated the request, when known. */
+  apiKeyName?: string | null;
 }

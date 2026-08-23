@@ -1141,6 +1141,13 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 return;
             }
 
+            // Stamp the serving runtime identity for usage attribution before
+            // handing the response to the caller. Cache-first lookup, so this is
+            // cheap even on the hot path.
+            var servingRuntime = await GetRuntimeEntityAsync(lane.RuntimeId, ct).ConfigureAwait(false);
+            response.ServedByRuntimeId = lane.RuntimeId;
+            response.ServedByRuntimeName = servingRuntime?.DisplayName ?? lane.RuntimeId;
+
             // Signal the caller that the response headers are ready and the body
             // stream is available. For streaming responses the body is still being
             // consumed by the API controller at this point.

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -97,6 +98,11 @@ public sealed class OpenAIController : ControllerBase
 
     private async Task<IActionResult> HandleInferenceAsync(CancellationToken ct)
     {
+        // Usage attribution: ApiKeyAuthMiddleware stamps the managed key identity
+        // for /v1 requests; cookie-authenticated admins carry no key id (null).
+        string? apiKeyId = User.FindFirst("unswarm:key-id")?.Value;
+        string? apiKeyName = apiKeyId is null ? null : User.FindFirst(ClaimTypes.Name)?.Value;
+
         using var reader = new StreamReader(Request.Body);
         var rawBody = await reader.ReadToEndAsync(ct);
 
@@ -184,13 +190,16 @@ public sealed class OpenAIController : ControllerBase
                 }
 
                 _ = _usageRecorder.RecordAsync(
-                    "cloud",
+                    ExtractCloudProviderName(modelName) ?? "cloud",
                     modelName,
                     cloudTokenResponse.PromptTokens,
                     cloudTokenResponse.TokensGenerated,
                     cloudTokenResponse.PromptTokensCached,
                     isStream,
-                    cloudElapsedMs);
+                    cloudElapsedMs,
+                    apiKeyId,
+                    apiKeyName,
+                    providerKind: "cloud");
             }
 
             return new EmptyResult();
@@ -282,15 +291,33 @@ public sealed class OpenAIController : ControllerBase
         }
 
         _ = _usageRecorder.RecordAsync(
-            "local",
+            inferenceResponse.ServedByRuntimeName ?? request.TargetId ?? "local",
             modelName,
             inferenceResponse.PromptTokens,
             inferenceResponse.TokensGenerated,
             inferenceResponse.PromptTokensCached,
             isStream,
-            elapsedMs);
+            elapsedMs,
+            apiKeyId,
+            apiKeyName,
+            providerKind: "local");
 
         return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Extracts the concrete cloud provider name from a "cloud/&lt;provider&gt;/&lt;model&gt;"
+    /// model id — the same segment CloudForwardingService resolves via
+    /// GetByNameAsync. Returns null for malformed ids (caller falls back to "cloud").
+    /// </summary>
+    private static string? ExtractCloudProviderName(string modelName)
+    {
+        if (!modelName.StartsWith("cloud/", StringComparison.Ordinal))
+            return null;
+
+        var rest = modelName["cloud/".Length..];
+        var slashIdx = rest.IndexOf('/');
+        return slashIdx > 0 ? rest[..slashIdx] : null;
     }
 
     /// <summary>

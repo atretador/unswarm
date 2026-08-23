@@ -48,6 +48,8 @@ public sealed class SettingsStore : ISettingsStore
         entity.ConversationDwellSeconds = settings.ConversationDwellSeconds;
         entity.HideOriginPrefix = settings.HideOriginPrefix;
         entity.AgentDisplayNames = settings.AgentDisplayNames;
+        entity.UsageRetentionDays = settings.UsageRetentionDays;
+        entity.ProviderBudgetsJson = settings.ProviderBudgetsJson;
 
         if (entity.Id == "default" && db.Entry(entity).State == EntityState.Detached)
         {
@@ -78,6 +80,8 @@ public sealed class SettingsStore : ISettingsStore
         EnableConversationAffinity = e.EnableConversationAffinity,
         ConversationDwellSeconds = e.ConversationDwellSeconds,
         HideOriginPrefix = e.HideOriginPrefix,
-        AgentDisplayNames = e.AgentDisplayNames
+        AgentDisplayNames = e.AgentDisplayNames,
+        UsageRetentionDays = e.UsageRetentionDays,
+        ProviderBudgetsJson = e.ProviderBudgetsJson
     };
 }

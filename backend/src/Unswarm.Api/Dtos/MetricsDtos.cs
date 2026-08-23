@@ -8,6 +8,7 @@ public sealed class MetricsTimeBucket
     public DateTimeOffset BucketStart { get; set; }
     public DateTimeOffset BucketEnd { get; set; }
     public int RequestCount { get; set; }
+    public int StreamingRequests { get; set; }
     public long PromptTokens { get; set; }
     public long CompletionTokens { get; set; }
     public long CachedTokens { get; set; }
@@ -22,10 +23,15 @@ public sealed class ModelUsageSummary
     public string Provider { get; set; } = string.Empty;
     public string Model { get; set; } = string.Empty;
     public int RequestCount { get; set; }
+    public int StreamingRequests { get; set; }
     public long PromptTokens { get; set; }
     public long CompletionTokens { get; set; }
     public long CachedTokens { get; set; }
     public double AvgLatencyMs { get; set; }
+    public double P50LatencyMs { get; set; }
+    public double P95LatencyMs { get; set; }
+    public double P99LatencyMs { get; set; }
+    public long MaxLatencyMs { get; set; }
 }
 
 /// <summary>
@@ -35,9 +41,46 @@ public sealed class ProviderUsageSummary
 {
     public string Provider { get; set; } = string.Empty;
     public int RequestCount { get; set; }
+    public int StreamingRequests { get; set; }
     public long PromptTokens { get; set; }
     public long CompletionTokens { get; set; }
     public long CachedTokens { get; set; }
+}
+
+/// <summary>
+/// Per-API-key usage summary (same shape as <see cref="ProviderUsageSummary"/> plus key identity).
+/// </summary>
+public sealed class ApiKeyUsageSummary
+{
+    public string ApiKeyId { get; set; } = string.Empty;
+    public string KeyName { get; set; } = string.Empty;
+    public int RequestCount { get; set; }
+    public int StreamingRequests { get; set; }
+    public long PromptTokens { get; set; }
+    public long CompletionTokens { get; set; }
+    public long CachedTokens { get; set; }
+}
+
+/// <summary>
+/// One entry of the provider catalog: a name usable as a provider filter plus
+/// its kind ("cloud" or "local").
+/// </summary>
+public sealed class ProviderCatalogItem
+{
+    public string Name { get; set; } = string.Empty;
+    public string Kind { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// One latency band in the latency-distribution response.
+/// MaxMs is null for the open-ended top band ("&gt;10s").
+/// </summary>
+public sealed class LatencyBandResponse
+{
+    public string Label { get; set; } = string.Empty;
+    public long MinMs { get; set; }
+    public long? MaxMs { get; set; }
+    public int Count { get; set; }
 }
 
 /// <summary>
@@ -48,10 +91,15 @@ public sealed class UsageTotalsResponse
     public DateTimeOffset From { get; set; }
     public DateTimeOffset To { get; set; }
     public int TotalRequests { get; set; }
+    public int TotalStreamingRequests { get; set; }
     public long TotalPromptTokens { get; set; }
     public long TotalCompletionTokens { get; set; }
     public long TotalCachedTokens { get; set; }
     public double AvgLatencyMs { get; set; }
+    public double P50LatencyMs { get; set; }
+    public double P95LatencyMs { get; set; }
+    public double P99LatencyMs { get; set; }
+    public long MaxLatencyMs { get; set; }
 }
 
 /// <summary>
@@ -68,4 +116,5 @@ public sealed class UsageRecordResponse
     public int CachedTokens { get; set; }
     public bool IsStreaming { get; set; }
     public long ElapsedMs { get; set; }
+    public string? ApiKeyName { get; set; }
 }

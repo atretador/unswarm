@@ -100,6 +100,15 @@ public sealed class SettingsEntity
     /// JSON map of agent names to user-chosen display names. E.g. {"host": "My Workstation"}.
     /// </summary>
     public string AgentDisplayNames { get; set; } = "{}";
+
+    /// <summary>Usage records older than this many days are eligible for purge (0 = keep forever).</summary>
+    public int UsageRetentionDays { get; set; } = 30;
+
+    /// <summary>
+    /// JSON map of provider name to monthly budget object, e.g.
+    /// {"cloud":{"tokenBudget":1000000,"costBudget":25.0}}.
+    /// </summary>
+    public string ProviderBudgetsJson { get; set; } = "{}";
 }
 
 /// <summary>
@@ -234,12 +243,26 @@ public sealed class UsageRecordEntity
     /// </summary>
     public long TimestampTicks { get; set; }
     public string Provider { get; set; } = string.Empty;  // "local" or cloud provider name
+    /// <summary>
+    /// Discriminator for <see cref="Provider"/>: "cloud" (named cloud subscription)
+    /// or "local" (self-hosted registered runtime).
+    /// </summary>
+    public string ProviderKind { get; set; } = "local";
     public string Model { get; set; } = string.Empty;
     public int PromptTokens { get; set; }
     public int CompletionTokens { get; set; }
     public int CachedTokens { get; set; }
     public bool IsStreaming { get; set; }
     public long ElapsedMs { get; set; }
+
+    /// <summary>Managed API key id that made the request, when attributable.</summary>
+    public string? ApiKeyId { get; set; }
+
+    /// <summary>
+    /// Snapshot of the key's display name at record time — kept denormalized so
+    /// attribution survives key deletion.
+    /// </summary>
+    public string? ApiKeyName { get; set; }
 }
 
 public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
@@ -312,7 +335,9 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 EnableConversationAffinity = false,
                 ConversationDwellSeconds = 45,
                 HideOriginPrefix = false,
-                AgentDisplayNames = "{}"
+                AgentDisplayNames = "{}",
+                UsageRetentionDays = 30,
+                ProviderBudgetsJson = "{}"
             });
         });
 
@@ -382,8 +407,13 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasKey(u => u.Id);
             e.HasIndex(u => u.TimestampTicks);
             e.HasIndex(u => new { u.Provider, u.Model });
+            e.HasIndex(u => u.ApiKeyId);
             e.Property(u => u.Provider).IsRequired().HasMaxLength(128);
             e.Property(u => u.Model).IsRequired().HasMaxLength(256);
+            e.Property(u => u.ApiKeyName).HasMaxLength(256);
+            // DB-level default backfills existing rows when the column is added;
+            // the migration additionally flips Provider == 'cloud' rows to 'cloud'.
+            e.Property(u => u.ProviderKind).IsRequired().HasDefaultValue("local").HasMaxLength(16);
         });
     }
 }
