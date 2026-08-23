@@ -2,7 +2,9 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
+  ArrowDown,
   ArrowRight,
+  ArrowUp,
   Clock,
   ChevronDown,
   ChevronRight,
@@ -347,6 +349,13 @@ export default function Queue() {
   // or has budget available; fully hidden when skip is off and unused.
   const showSkipBudget = skipsRemaining > 0 || skipsUsed > 0;
 
+  // Transition tallies for the accessible live region.
+  const stoppingCount = activeTransitions.reduce(
+    (n, t) => n + t.stopping.length,
+    0,
+  );
+  const startingCount = activeTransitions.length;
+
   // Build full target list: host + all agents
   const allTargets = [
     "host",
@@ -428,24 +437,57 @@ export default function Queue() {
             {activeTransitions.map((t) => (
               <div
                 key={t.id}
-                className="flex items-center justify-between px-4 py-2.5 text-xs"
+                className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs"
               >
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-[var(--color-text-heading)]">
-                    {t.fromModel}
-                  </span>
-                  <ArrowRight className="size-3 text-[var(--color-primary)]" />
-                  <span className="font-mono text-[var(--color-text-heading)]">
-                    {t.toModel}
-                  </span>
-                  {t.runtimeId && (
-                    <span
-                      className="rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px font-mono text-[10px] text-[var(--color-text-muted)]"
-                      title={`Switching on runtime ${t.runtimeId}`}
-                    >
-                      {t.runtimeId}
-                    </span>
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  {t.stopping.length > 0 && (
+                    <>
+                      <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                        <span
+                          className="flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-[var(--color-status-error)]"
+                          title={`${t.stopping.length} runtime${t.stopping.length === 1 ? "" : "s"} going down`}
+                        >
+                          <ArrowDown className="size-3" />
+                          down
+                        </span>
+                        {t.stopping.map((s) => (
+                          <span
+                            key={s.runtimeId}
+                            className="flex items-center gap-1"
+                            title={`Stopping on runtime ${s.runtimeId}`}
+                          >
+                            <span className="font-mono text-[var(--color-text-muted)] line-through decoration-[var(--color-border-subtle)]">
+                              {s.model}
+                            </span>
+                            <span className="rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px font-mono text-[10px] text-[var(--color-text-muted)]">
+                              {s.runtimeId}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                      <ArrowRight className="size-3 shrink-0 text-[var(--color-text-muted)]" />
+                    </>
                   )}
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-[var(--color-primary)]"
+                      title="Model coming up"
+                    >
+                      <ArrowUp className="size-3" />
+                      up
+                    </span>
+                    <span className="font-mono font-medium text-[var(--color-text-heading)]">
+                      {t.toModel}
+                    </span>
+                    {t.runtimeId && (
+                      <span
+                        className="rounded-full border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-1.5 py-px font-mono text-[10px] text-[var(--color-primary)]"
+                        title={`Starting on runtime ${t.runtimeId}`}
+                      >
+                        {t.runtimeId}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <Badge variant={t.status === "complete" ? "success" : "info"}>
                   {t.status}
@@ -508,6 +550,8 @@ export default function Queue() {
           : "idle"}
         {activeTransitions.length > 0 &&
           `, ${activeTransitions.length} active transition(s)`}
+        {stoppingCount > 0 && `, ${stoppingCount} runtime(s) going down`}
+        {startingCount > 0 && `, ${startingCount} model(s) coming up`}
       </div>
     </div>
   );

@@ -224,8 +224,11 @@ export interface QueueSnapshot {
 
 export interface ModelTransition {
   id: string;
-  fromModel: string;
+  /** Model being replaced, or null when nothing is stopped/replaced. */
+  fromModel: string | null;
   toModel: string;
+  /** All runtimes this transition stops, each with its resident model ("going down"). */
+  stopping: Array<{ runtimeId: string; model: string }>;
   /** Registered runtime id whose lane performed this switch. */
   runtimeId?: string | null;
   status: "draining" | "switching" | "starting" | "complete";
@@ -235,8 +238,10 @@ export interface ModelTransition {
 
 export interface ModelTransition {
   id: string;
-  fromModel: string;
+  fromModel: string | null;
   toModel: string;
+  /** All runtimes this transition stops, each with its resident model ("going down"). */
+  stopping: Array<{ runtimeId: string; model: string }>;
   status: "draining" | "switching" | "starting" | "complete";
   startedAt: string;
   estimatedCompletion: string | null;
