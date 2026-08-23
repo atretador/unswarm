@@ -18,4 +18,5 @@ unswarm-agent
 .env
 .env.*
 !.env.example
-unswarm.db.tmp-ddcheck/
+unswarm.db
+.tmp-ddcheck/
