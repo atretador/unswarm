@@ -54,4 +54,10 @@ public sealed class SchedulerQueue : ISchedulerQueue
         var result = _worker.CancelItem(itemId);
         return Task.FromResult(result);
     }
+
+    public Task<bool> ReleaseConversationHoldsAsync(string targetId, CancellationToken ct = default)
+    {
+        var result = _worker.ReleaseConversationHolds(targetId);
+        return Task.FromResult(result);
+    }
 }

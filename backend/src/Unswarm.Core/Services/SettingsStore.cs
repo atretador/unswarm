@@ -44,6 +44,8 @@ public sealed class SettingsStore : ISettingsStore
         entity.ParallelSlotSkipLimit = settings.ParallelSlotSkipLimit;
         entity.EnableParallelSlotSkip = settings.EnableParallelSlotSkip;
         entity.QueueStepsTillReset = settings.QueueStepsTillReset;
+        entity.EnableConversationAffinity = settings.EnableConversationAffinity;
+        entity.ConversationDwellSeconds = settings.ConversationDwellSeconds;
 
         if (entity.Id == "default" && db.Entry(entity).State == EntityState.Detached)
         {
@@ -70,6 +72,8 @@ public sealed class SettingsStore : ISettingsStore
         MaxConcurrentTargets = e.MaxConcurrentTargets,
         ParallelSlotSkipLimit = e.ParallelSlotSkipLimit,
         EnableParallelSlotSkip = e.EnableParallelSlotSkip,
-        QueueStepsTillReset = e.QueueStepsTillReset
+        QueueStepsTillReset = e.QueueStepsTillReset,
+        EnableConversationAffinity = e.EnableConversationAffinity,
+        ConversationDwellSeconds = e.ConversationDwellSeconds
     };
 }

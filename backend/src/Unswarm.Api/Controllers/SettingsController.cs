@@ -42,7 +42,9 @@ public sealed class SettingsController : ControllerBase
             MaxQueueDepth = Math.Clamp(request.MaxQueueDepth ?? current.MaxQueueDepth, 1, 10000),
             ParallelSlotSkipLimit = Math.Clamp(request.ParallelSlotSkipLimit ?? current.ParallelSlotSkipLimit, 1, 1000),
             EnableParallelSlotSkip = request.EnableParallelSlotSkip ?? current.EnableParallelSlotSkip,
-            QueueStepsTillReset = Math.Clamp(request.QueueStepsTillReset ?? current.QueueStepsTillReset, 1, 1000)
+            QueueStepsTillReset = Math.Clamp(request.QueueStepsTillReset ?? current.QueueStepsTillReset, 1, 1000),
+            EnableConversationAffinity = request.EnableConversationAffinity ?? current.EnableConversationAffinity,
+            ConversationDwellSeconds = Math.Max(1, request.ConversationDwellSeconds ?? current.ConversationDwellSeconds)
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

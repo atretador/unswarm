@@ -27,4 +27,13 @@ public sealed class Settings
 
     /// <summary>How many queue items are processed before the per-target parallel-slot skip counter resets.</summary>
     public int QueueStepsTillReset { get; init; } = 3;
+
+    /// <summary>
+    /// Whether recently-active conversations hold their runtime against eviction
+    /// for the dwell window (tool-call-loop thrash protection).
+    /// </summary>
+    public bool EnableConversationAffinity { get; init; }
+
+    /// <summary>How long a conversation keeps its runtime held after its last request (seconds).</summary>
+    public int ConversationDwellSeconds { get; init; } = 45;
 }

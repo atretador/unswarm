@@ -27,6 +27,12 @@ public sealed class SchedulerSettings
     /// <summary>Sequentially processed queue items before the per-target skip counter resets (1-1000).</summary>
     public int QueueStepsTillReset { get; init; } = 3;
 
+    /// <summary>Master toggle for conversation-affinity eviction holds.</summary>
+    public bool EnableConversationAffinity { get; init; }
+
+    /// <summary>How long a conversation holds its runtime after its last request, in seconds (clamped to >= 1).</summary>
+    public int ConversationDwellSeconds { get; init; } = 45;
+
     public static SchedulerSettings FromSettings(Settings s) => new()
     {
         LazyStop = s.LazyStop,
@@ -38,6 +44,8 @@ public sealed class SchedulerSettings
         HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds,
         ParallelSlotSkipLimit = Math.Clamp(s.ParallelSlotSkipLimit, 1, 1000),
         EnableParallelSlotSkip = s.EnableParallelSlotSkip,
-        QueueStepsTillReset = Math.Clamp(s.QueueStepsTillReset, 1, 1000)
+        QueueStepsTillReset = Math.Clamp(s.QueueStepsTillReset, 1, 1000),
+        EnableConversationAffinity = s.EnableConversationAffinity,
+        ConversationDwellSeconds = Math.Max(1, s.ConversationDwellSeconds)
     };
 }

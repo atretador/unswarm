@@ -28,4 +28,17 @@ public sealed class QueueController : ControllerBase
         if (!result) return NotFound();
         return Ok(new { cancelled = true });
     }
+
+    /// <summary>
+    /// Immediately clears all conversation-affinity holds on one target
+    /// (user "skip timer"): waiting requests proceed without waiting out the
+    /// dwell window.
+    /// </summary>
+    [HttpPost("targets/{targetId}/hold/release")]
+    public async Task<IActionResult> ReleaseHold(string targetId, CancellationToken ct)
+    {
+        var result = await _queue.ReleaseConversationHoldsAsync(targetId, ct);
+        if (!result) return NotFound();
+        return Ok(new { released = true });
+    }
 }

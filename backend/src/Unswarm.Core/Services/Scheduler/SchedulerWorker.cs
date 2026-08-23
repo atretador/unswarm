@@ -278,6 +278,19 @@ public sealed class SchedulerWorker
                     inFlightRuntimes.Add(lane.RuntimeId);
             }
 
+            // Hot-conversation runtime ids per target (affinity hold) — used both as
+            // additional blockers and to expose the hold indicator on waiting items.
+            var hotByTarget = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            if (_settings.EnableConversationAffinity)
+            {
+                foreach (var targetId in _targets.Keys)
+                {
+                    var hot = HotConversationRuntimeIds(targetId, _settings);
+                    if (hot.Count > 0)
+                        hotByTarget[targetId] = hot;
+                }
+            }
+
             // Flattened pending view across lanes in lane-creation order; within a
             // lane, priority then age. Blocking runtime ids are computed at snapshot
             // time using the same coexistence rules the scheduler applies.
@@ -293,7 +306,10 @@ public sealed class SchedulerWorker
                     .ThenBy(i => i.CreatedAt))
                 {
                     seen.Add(item.Id);
-                    waiting.Add(item with { BlockedByRuntimeIds = ComputeBlockedBy(item, inFlightRuntimes) });
+                    var (blocked, hold) = ComputeBlockers(
+                        item, inFlightRuntimes,
+                        hotByTarget.TryGetValue(item.TargetId ?? "", out var hot) ? hot : []);
+                    waiting.Add(item with { BlockedByRuntimeIds = blocked, HeldByConversation = hold });
                 }
             }
 
@@ -301,7 +317,13 @@ public sealed class SchedulerWorker
             waiting.AddRange(_allItems.Values
                 .Where(i => i.Status == QueueItemStatus.Waiting && !seen.Contains(i.Id))
                 .OrderBy(i => i.CreatedAt)
-                .Select(i => i with { BlockedByRuntimeIds = ComputeBlockedBy(i, inFlightRuntimes) }));
+                .Select(i =>
+                {
+                    var (blocked, hold) = ComputeBlockers(
+                        i, inFlightRuntimes,
+                        hotByTarget.TryGetValue(i.TargetId ?? "", out var hot) ? hot : []);
+                    return i with { BlockedByRuntimeIds = blocked, HeldByConversation = hold };
+                }));
 
             var recent = _recentCompleted.ToArray()
                 .OrderByDescending(i => i.CreatedAt)
@@ -334,25 +356,169 @@ public sealed class SchedulerWorker
     /// <summary>Clamps a skip-limit setting to its valid range [1, 1000].</summary>
     private static int ClampSkipLimit(int value) => Math.Clamp(value, 1, 1000);
 
+    // ── Conversation affinity ─────────────────────────────────────────────────
+
     /// <summary>
-    /// Computes which in-flight runtime ids block <paramref name="item"/> under the
-    /// scheduler's coexistence rules (a different in-flight runtime that may not run
-    /// alongside the item's runtime). Same-runtime in-flight work never blocks here —
-    /// that is a capacity concern, not a coexistence one.
+    /// Records a terminal completion for <paramref name="conversationKey"/> on the
+    /// target: refreshes LastSeen, bumps RequestCount (Interlocked), and prunes
+    /// entries that aged out of the dwell window. Schedules a scheduler wake when
+    /// the hold expires so blocked lane heads re-evaluate (dwell expiry is not a
+    /// natural scheduling event).
     /// </summary>
-    private IReadOnlyList<string> ComputeBlockedBy(QueueItem item, List<string> inFlightRuntimes)
+    private void RecordConversationActivity(string targetId, string conversationKey, string runtimeId, int dwellSeconds)
     {
-        if (inFlightRuntimes.Count == 0 || item.RuntimeId is null)
+        var group = GetTargetGroup(targetId);
+        var now = DateTime.UtcNow;
+        var activity = group.RecentConversations.GetOrAdd(conversationKey, _ => new ConversationActivity());
+        activity.LastSeenUtc = now;
+        activity.RuntimeId = runtimeId;
+        Interlocked.Increment(ref activity.RequestCount);
+
+        // Opportunistic prune of conversations older than the dwell window
+        // (never the entry just touched).
+        var dwell = TimeSpan.FromSeconds(dwellSeconds);
+        foreach (var kv in group.RecentConversations)
+        {
+            if (string.Equals(kv.Key, conversationKey, StringComparison.Ordinal))
+                continue;
+            if (now - kv.Value.LastSeenUtc > dwell)
+                group.RecentConversations.TryRemove(kv.Key, out _);
+        }
+
+        // Wake the scheduler shortly after this hold expires so waiting lanes
+        // re-scan (a small margin avoids racing the dwell boundary).
+        _ = Task.Delay(dwell + TimeSpan.FromMilliseconds(200))
+            .ContinueWith(_ => WakeScheduler(), TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Distinct runtime ids on <paramref name="targetId"/> currently hosting a hot
+    /// conversation (LastSeen within the dwell window). Empty when none.
+    /// </summary>
+    private List<string> HotConversationRuntimeIds(string? targetId, SchedulerSettings settings)
+    {
+        List<string>? hot = null;
+        if (targetId is null || !_targets.TryGetValue(targetId, out var group))
             return [];
 
+        var now = DateTime.UtcNow;
+        var dwell = TimeSpan.FromSeconds(Math.Max(1, settings.ConversationDwellSeconds));
+        foreach (var activity in group.RecentConversations.Values)
+        {
+            if (now - activity.LastSeenUtc > dwell || string.IsNullOrEmpty(activity.RuntimeId))
+                continue;
+            hot ??= [];
+            if (!hot.Contains(activity.RuntimeId))
+                hot.Add(activity.RuntimeId);
+        }
+
+        return hot ?? [];
+    }
+
+    /// <summary>
+    /// True when a hot conversation is hosted on this target by a runtime that
+    /// cannot coexist with <paramref name="candidate"/> — i.e. the switch would
+    /// evict a container still holding a recently-active conversation. The
+    /// switching lane's own runtime never counts (it shares its container).
+    /// </summary>
+    private bool AnyHotConversationOnTarget(RuntimeLane lane, RegisteredRuntime candidate, SchedulerSettings settings)
+    {
+        if (!_targets.TryGetValue(lane.TargetId, out var group))
+            return false;
+
+        var now = DateTime.UtcNow;
+        var dwell = TimeSpan.FromSeconds(Math.Max(1, settings.ConversationDwellSeconds));
+        foreach (var activity in group.RecentConversations.Values)
+        {
+            if (now - activity.LastSeenUtc > dwell)
+                continue;
+            if (string.Equals(activity.RuntimeId, lane.RuntimeId, StringComparison.Ordinal))
+                continue;
+            if (!CanCoexist(candidate.Id, activity.RuntimeId))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Computes which runtime ids block <paramref name="item"/> under the
+    /// scheduler's coexistence rules, and whether the item is held out by a hot
+    /// conversation (a blocking runtime that hosts a recently-active conversation
+    /// rather than active in-flight work). Same-runtime work never blocks here —
+    /// that is a capacity concern, not a coexistence one.
+    /// </summary>
+    private (IReadOnlyList<string> Blocked, ConversationHold? Hold) ComputeBlockers(
+        QueueItem item,
+        List<string> inFlightRuntimes,
+        List<string> hotRuntimes)
+    {
+        if (item.RuntimeId is null || (inFlightRuntimes.Count == 0 && hotRuntimes.Count == 0))
+            return ([], null);
+
         List<string>? blocked = null;
+        ConversationHold? hold = null;
+
         foreach (var runtimeId in inFlightRuntimes)
         {
             if (!CanCoexist(item.RuntimeId, runtimeId))
                 (blocked ??= []).Add(runtimeId);
         }
 
-        return (IReadOnlyList<string>?)blocked ?? Array.Empty<string>();
+        foreach (var runtimeId in hotRuntimes)
+        {
+            // Already reported as active in-flight work — not a conversation hold.
+            if (inFlightRuntimes.Contains(runtimeId))
+                continue;
+
+            if (!CanCoexist(item.RuntimeId, runtimeId))
+            {
+                (blocked ??= []).Add(runtimeId);
+                hold ??= BuildConversationHold(item.TargetId, runtimeId);
+            }
+        }
+
+        return ((IReadOnlyList<string>?)blocked ?? Array.Empty<string>(), hold);
+    }
+
+    /// <summary>
+    /// Builds the hold indicator for a waiting item blocked by a hot conversation
+    /// on <paramref name="runtimeId"/>: the holding runtime's resident model plus
+    /// that runtime's hottest live conversation's request count.
+    /// </summary>
+    private ConversationHold? BuildConversationHold(string? targetId, string runtimeId)
+    {
+        if (targetId is null || !_targets.TryGetValue(targetId, out var group))
+            return null;
+
+        var residentModel = group.Lanes.TryGetValue(runtimeId, out var lane)
+            ? lane.ResidentModel
+            : null;
+
+        var now = DateTime.UtcNow;
+        var dwellSeconds = Math.Max(1, _settings.ConversationDwellSeconds);
+        var dwell = TimeSpan.FromSeconds(dwellSeconds);
+        ConversationActivity? hottest = null;
+        foreach (var activity in group.RecentConversations.Values)
+        {
+            if (!string.Equals(activity.RuntimeId, runtimeId, StringComparison.Ordinal))
+                continue;
+            if (now - activity.LastSeenUtc > dwell)
+                continue;
+            if (hottest is null || activity.RequestCount > hottest.RequestCount)
+                hottest = activity;
+        }
+
+        if (hottest is null)
+            return null;
+
+        return new ConversationHold
+        {
+            Model = residentModel ?? "",
+            RuntimeId = runtimeId,
+            RequestCount = hottest.RequestCount,
+            HoldExpiresAt = new DateTimeOffset(hottest.LastSeenUtc, TimeSpan.Zero) + dwell
+        };
     }
 
     // ── Dispatcher ────────────────────────────────────────────────────────────
@@ -619,6 +785,24 @@ public sealed class SchedulerWorker
             // applies across targets.
             var inFlightByTarget = ComputeInFlightRuntimeIdsByTarget(lanes);
 
+            // Conversation affinity: a runtime hosting a hot conversation counts as
+            // occupied — incompatible lane heads wait (no eviction start) between
+            // tool-call-loop iterations even though ActiveInferences is 0.
+            if (settings.EnableConversationAffinity)
+            {
+                foreach (var targetId in _targets.Keys)
+                {
+                    var hot = HotConversationRuntimeIds(targetId, settings);
+                    if (hot.Count == 0)
+                        continue;
+                    if (!inFlightByTarget.TryGetValue(targetId, out var onTarget))
+                        inFlightByTarget[targetId] = onTarget = [];
+                    foreach (var runtimeId in hot)
+                        if (!onTarget.Contains(runtimeId))
+                            onTarget.Add(runtimeId);
+                }
+            }
+
             // Heads that are hard-blocked right now (capacity / coexistence /
             // exclusivity — independent of the skip budget). Starting any other
             // lane's head while these exist is a bypass and consumes skip budget.
@@ -854,6 +1038,25 @@ public sealed class SchedulerWorker
         finally
         {
             Interlocked.Decrement(ref lane.ActiveInferences);
+
+            // Conversation-affinity tracking: record terminal completion of any
+            // request carrying a conversation key on the serving lane's target —
+            // regardless of success/failure. A recently-active conversation holds
+            // its runtime against eviction for the dwell window.
+            if (!string.IsNullOrEmpty(request.ConversationKey))
+            {
+                try
+                {
+                    var affinitySettings = await GetCurrentSettingsAsync(CancellationToken.None).ConfigureAwait(false);
+                    RecordConversationActivity(
+                        lane.TargetId, request.ConversationKey, lane.RuntimeId,
+                        Math.Max(1, affinitySettings.ConversationDwellSeconds));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to record conversation activity on {Target}", lane.TargetId);
+                }
+            }
 
             // Sequential-step accounting: after QueueStepsTillReset completions on
             // this lane, reset the skip budget so future bypasses are permitted.
@@ -1091,7 +1294,13 @@ public sealed class SchedulerWorker
         // shares this lane's runtime container, so only sibling lanes matter here.
         if (!await CanRunAlongsideRunningAsync(lane, targetRuntime, ct).ConfigureAwait(false))
         {
-            while (AnyIncompatibleInFlightOnTarget(lane, targetRuntime))
+            // Live settings: the affinity hold must respect the current toggle and
+            // dwell window without a restart. Time-bounded by the dwell window, so
+            // this loop can never deadlock permanently.
+            var gateSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+            while (AnyIncompatibleInFlightOnTarget(lane, targetRuntime)
+                   || (gateSettings.EnableConversationAffinity
+                       && AnyHotConversationOnTarget(lane, targetRuntime, gateSettings)))
             {
                 await Task.Delay(50, ct).ConfigureAwait(false);
             }
@@ -1815,6 +2024,23 @@ public sealed class SchedulerWorker
         }
 
         FailItem(item, "Cancelled by user");
+        return true;
+    }
+
+    /// <summary>
+    /// Immediately clears all conversation holds on <paramref name="targetId"/>
+    /// ("skip timer"): removes every entry from the target's
+    /// <see cref="TargetGroup.RecentConversations"/> and wakes the scheduler so
+    /// held lane heads re-evaluate without waiting out the dwell window.
+    /// Returns false when the target id is unknown.
+    /// </summary>
+    public bool ReleaseConversationHolds(string targetId)
+    {
+        if (!_targets.TryGetValue(targetId, out var group))
+            return false;
+
+        group.RecentConversations.Clear();
+        WakeScheduler();
         return true;
     }
 

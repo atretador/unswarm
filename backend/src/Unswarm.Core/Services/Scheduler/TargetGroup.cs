@@ -23,4 +23,26 @@ public sealed class TargetGroup
     /// concurrent dictionary.
     /// </summary>
     public ConcurrentDictionary<string, RunningContainerInfo> RunningContainers { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Recently-active conversations on this target, keyed by conversation key.
+    /// A conversation whose <see cref="ConversationActivity.LastSeenUtc"/> is within
+    /// the dwell window HOLDS the runtime that served it against eviction. Entries
+    /// are pruned opportunistically when they age out of the dwell window.
+    /// </summary>
+    public ConcurrentDictionary<string, ConversationActivity> RecentConversations { get; } =
+        new(StringComparer.Ordinal);
+}
+
+/// <summary>
+/// Per-conversation activity record: last time a request belonging to the
+/// conversation completed on this target, how many requests have completed, and
+/// the registered runtime id currently hosting it. Mutated concurrently by lane
+/// runners — <see cref="RequestCount"/> is only ever touched via Interlocked.
+/// </summary>
+public sealed class ConversationActivity
+{
+    public DateTime LastSeenUtc;
+    public int RequestCount;
+    public string RuntimeId = "";
 }

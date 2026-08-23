@@ -24,4 +24,25 @@ public sealed record QueueItem
     /// (computed at snapshot-build time; always empty on stored items).
     /// </summary>
     public IReadOnlyList<string> BlockedByRuntimeIds { get; init; } = [];
+
+    /// <summary>
+    /// Snapshot projection only: set when this waiting item is held out by a hot
+    /// conversation (recently active within the dwell window) rather than active
+    /// in-flight work; null otherwise.
+    /// </summary>
+    public ConversationHold? HeldByConversation { get; init; }
+}
+
+/// <summary>
+/// Describes the conversation currently holding a runtime against eviction for a
+/// waiting queue item (UI hold indicator).
+/// </summary>
+public sealed record ConversationHold
+{
+    public required string Model { get; init; }
+    public required string RuntimeId { get; init; }
+    public int RequestCount { get; init; }
+
+    /// <summary>When the hold lapses (last conversation activity + dwell window).</summary>
+    public DateTimeOffset HoldExpiresAt { get; init; }
 }

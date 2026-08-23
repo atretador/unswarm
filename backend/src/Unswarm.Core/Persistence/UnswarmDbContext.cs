@@ -88,6 +88,8 @@ public sealed class SettingsEntity
     public int ParallelSlotSkipLimit { get; set; } = 3;
     public bool EnableParallelSlotSkip { get; set; }
     public int QueueStepsTillReset { get; set; } = 3;
+    public bool EnableConversationAffinity { get; set; }
+    public int ConversationDwellSeconds { get; set; } = 45;
 }
 
 /// <summary>
@@ -256,7 +258,9 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 MaxConcurrentTargets = 0,
                 ParallelSlotSkipLimit = 3,
                 EnableParallelSlotSkip = false,
-                QueueStepsTillReset = 3
+                QueueStepsTillReset = 3,
+                EnableConversationAffinity = false,
+                ConversationDwellSeconds = 45
             });
         });
 

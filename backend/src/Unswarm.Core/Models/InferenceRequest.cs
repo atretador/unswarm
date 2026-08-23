@@ -16,4 +16,12 @@ public sealed class InferenceRequest
     /// Set after dispatch; consumed by the inference proxy for container lookup.
     /// </summary>
     public string? TargetId { get; set; }
+
+    /// <summary>
+    /// Stable fingerprint grouping consecutive tool-call-loop requests into one
+    /// conversation ("sid:&lt;value&gt;" or "conv:&lt;sha256&gt;"). Null when no
+    /// affinity signal exists. Used by the scheduler to hold a runtime against
+    /// eviction while its conversation is recently active.
+    /// </summary>
+    public string? ConversationKey { get; set; }
 }

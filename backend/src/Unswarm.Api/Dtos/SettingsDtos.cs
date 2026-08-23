@@ -19,6 +19,9 @@ public sealed class SettingsResponse
     public bool EnableParallelSlotSkip { get; set; }
     public int QueueStepsTillReset { get; set; } = 3;
 
+    public bool EnableConversationAffinity { get; set; }
+    public int ConversationDwellSeconds { get; set; } = 45;
+
     public static SettingsResponse FromSettings(Settings s) => new()
     {
         RequestTimeout = s.RequestTimeout,
@@ -33,7 +36,9 @@ public sealed class SettingsResponse
         MaxQueueDepth = s.MaxQueueDepth,
         ParallelSlotSkipLimit = s.ParallelSlotSkipLimit,
         EnableParallelSlotSkip = s.EnableParallelSlotSkip,
-        QueueStepsTillReset = s.QueueStepsTillReset
+        QueueStepsTillReset = s.QueueStepsTillReset,
+        EnableConversationAffinity = s.EnableConversationAffinity,
+        ConversationDwellSeconds = s.ConversationDwellSeconds
     };
 }
 
@@ -53,4 +58,7 @@ public sealed class SettingsUpdateRequest
     public int? ParallelSlotSkipLimit { get; set; }
     public bool? EnableParallelSlotSkip { get; set; }
     public int? QueueStepsTillReset { get; set; }
+
+    public bool? EnableConversationAffinity { get; set; }
+    public int? ConversationDwellSeconds { get; set; }
 }

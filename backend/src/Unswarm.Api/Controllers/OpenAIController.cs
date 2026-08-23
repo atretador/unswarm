@@ -71,6 +71,7 @@ public sealed class OpenAIController : ControllerBase
 
         string modelName;
         bool isStream;
+        string? conversationKey;
 
         try
         {
@@ -78,6 +79,7 @@ public sealed class OpenAIController : ControllerBase
             var root = doc.RootElement;
             modelName = root.GetProperty("model").GetString() ?? "";
             isStream = root.TryGetProperty("stream", out var streamProp) && streamProp.GetBoolean();
+            conversationKey = ExtractConversationKey(root, Request.Headers["X-Session-Id"].FirstOrDefault());
         }
         catch
         {
@@ -97,7 +99,8 @@ public sealed class OpenAIController : ControllerBase
             EnqueuedAt = _clock.UtcNow,
             Tcs = new TaskCompletionSource<InferenceResponse>(
                 TaskCreationOptions.RunContinuationsAsynchronously),
-            CancellationToken = ct
+            CancellationToken = ct,
+            ConversationKey = conversationKey
         };
 
         var startTime = _clock.UtcNow;
@@ -161,5 +164,54 @@ public sealed class OpenAIController : ControllerBase
         }
 
         return new EmptyResult();
+    }
+
+    /// <summary>
+    /// Fingerprints a chat-completions request into a stable conversation key used
+    /// by the scheduler's affinity hold. Precedence: non-empty OpenAI "user" body
+    /// field, then non-empty X-Session-Id header (both → "sid:&lt;value&gt;").
+    /// Otherwise a SHA256 fingerprint over the first up-to-2 messages (each
+    /// contributing role + "\n" + content truncated to 2048 chars), hex-prefixed
+    /// "conv:" — stable across tool-call-loop iterations because harnesses resend
+    /// the full history. No messages → null (no affinity).
+    /// </summary>
+    private static string? ExtractConversationKey(JsonElement root, string? sessionIdHeader)
+    {
+        if (root.TryGetProperty("user", out var user) && user.ValueKind == JsonValueKind.String)
+        {
+            var userId = user.GetString();
+            if (!string.IsNullOrWhiteSpace(userId))
+                return "sid:" + userId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sessionIdHeader))
+            return "sid:" + sessionIdHeader;
+
+        if (!root.TryGetProperty("messages", out var messages) || messages.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var count = Math.Min(2, messages.GetArrayLength());
+        if (count == 0)
+            return null;
+
+        using var buffer = new MemoryStream();
+        for (var i = 0; i < count; i++)
+        {
+            var message = messages[i];
+            var role = message.TryGetProperty("role", out var roleProp) && roleProp.ValueKind == JsonValueKind.String
+                ? roleProp.GetString() ?? ""
+                : "";
+            var content = message.TryGetProperty("content", out var contentProp) && contentProp.ValueKind == JsonValueKind.String
+                ? contentProp.GetString() ?? ""
+                : "";
+            if (content.Length > 2048)
+                content = content[..2048];
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(role + "\n" + content);
+            buffer.Write(bytes, 0, bytes.Length);
+        }
+
+        var hash = System.Security.Cryptography.SHA256.HashData(buffer.ToArray());
+        return "conv:" + Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

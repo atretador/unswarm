@@ -36,4 +36,12 @@ public sealed class FakeSchedulerQueue : ISchedulerQueue
             return Task.FromResult(true);
         }
     }
+
+    public List<string> ReleasedHoldTargets { get; } = [];
+
+    public Task<bool> ReleaseConversationHoldsAsync(string targetId, CancellationToken ct = default)
+    {
+        lock (ReleasedHoldTargets) ReleasedHoldTargets.Add(targetId);
+        return Task.FromResult(true);
+    }
 }

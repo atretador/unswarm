@@ -45,6 +45,12 @@ public sealed class QueueItemResponse
     /// <summary>In-flight runtime ids currently blocking this waiting item (coexistence rules).</summary>
     public List<string> BlockedByRuntimeIds { get; set; } = [];
 
+    /// <summary>
+    /// Set when this waiting item is held out by a hot conversation (recently
+    /// active within the dwell window) rather than active in-flight work.
+    /// </summary>
+    public ConversationHoldResponse? HeldByConversation { get; set; }
+
     public QueueItemStatus Status { get; set; }
     public int Priority { get; set; }
     public int TokensRequested { get; set; }
@@ -64,6 +70,15 @@ public sealed class QueueItemResponse
         TargetId = i.TargetId,
         RuntimeId = i.RuntimeId,
         BlockedByRuntimeIds = i.BlockedByRuntimeIds.ToList(),
+        HeldByConversation = i.HeldByConversation is null
+            ? null
+            : new ConversationHoldResponse
+            {
+                Model = i.HeldByConversation.Model,
+                RuntimeId = i.HeldByConversation.RuntimeId,
+                RequestCount = i.HeldByConversation.RequestCount,
+                HoldExpiresAt = i.HeldByConversation.HoldExpiresAt
+            },
         Status = i.Status,
         Priority = i.Priority,
         TokensRequested = i.TokensRequested,
@@ -75,6 +90,21 @@ public sealed class QueueItemResponse
         CreatedAt = i.CreatedAt,
         ErrorMessage = i.ErrorMessage
     };
+}
+
+public sealed record ConversationHoldResponse
+{
+    /// <summary>Resident model of the runtime hosting the hot conversation.</summary>
+    public string Model { get; set; } = "";
+
+    /// <summary>Holding runtime id.</summary>
+    public string RuntimeId { get; set; } = "";
+
+    /// <summary>Requests completed within the current conversation.</summary>
+    public int RequestCount { get; set; }
+
+    /// <summary>When the hold lapses (last conversation activity + dwell window).</summary>
+    public DateTimeOffset HoldExpiresAt { get; set; }
 }
 
 public sealed class RuntimeModelChangeResponse
