@@ -50,6 +50,7 @@ export interface Model {
   contextWindow: number;
   containerImage: string;
   sourceRuntimeId: string | null;
+  sourceRuntimeName: string | null;
   createdAt: string;
   updatedAt: string;
 }

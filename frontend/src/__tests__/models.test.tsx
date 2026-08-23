@@ -89,6 +89,7 @@ describe("Models", () => {
         contextWindow: 4096,
         containerImage: "test/sparse",
         sourceRuntimeId: null,
+        sourceRuntimeName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -150,6 +151,7 @@ describe("Models", () => {
         contextWindow: 4096,
         containerImage: "test/zero",
         sourceRuntimeId: null,
+        sourceRuntimeName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -182,7 +184,7 @@ describe("Models", () => {
 
     // llama-3.1-70b and gemma-2-27b both have sourceRuntimeId rc1 → deep links
     const links = screen.getAllByRole("link", {
-      name: "View source runtime rc1 on the Fleet page",
+      name: "View source runtime on the Fleet page",
     });
     expect(links.length).toBeGreaterThanOrEqual(1);
     expect(links[0]).toHaveAttribute("href", "/fleet?focus=rc1");

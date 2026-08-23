@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "motion/react";
-import { Box, Clock, ExternalLink, Gauge, Hash, Trash2 } from "lucide-react";
+import { Box, Clock, ExternalLink, Gauge, Hash, Search, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { client } from "../../lib/query-client";
 import type { ReactNode } from "react";
@@ -168,17 +168,16 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
         </div>
 
         {/* Actions */}
-        <div className="ml-auto flex shrink-0 items-center gap-1">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {model.sourceRuntimeId ? (
-            <Tooltip content={`View ${model.sourceRuntimeId} on the Fleet page`}>
-              <Link
-                to={`/fleet?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
-                aria-label={`View source runtime ${model.sourceRuntimeId} on the Fleet page`}
-                className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
-              >
-                <ExternalLink className="size-3.5" />
-              </Link>
-            </Tooltip>
+            <Link
+              to={`/fleet?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
+              aria-label={`View source runtime on the Fleet page`}
+              className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+            >
+              <ExternalLink className="size-2.5" />
+              <span className="truncate max-w-[140px]">{model.sourceRuntimeName || model.sourceRuntimeId}</span>
+            </Link>
           ) : (
             <span className="text-[10px] italic text-[var(--color-text-muted)]">not registered</span>
           )}
@@ -214,6 +213,7 @@ function ModelRow({ model, index }: { model: Model; index: number }) {
 // ─── Main Models page ─────────────────────────────────────────────
 
 export default function Models() {
+  const [filter, setFilter] = useState("");
   const {
     data: models,
     isLoading,
@@ -224,6 +224,18 @@ export default function Models() {
     queryKey: ["models"],
     queryFn: () => client.listModels(),
   });
+
+  const filteredModels = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return models ?? [];
+    return (models ?? []).filter(
+      (m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.family.toLowerCase().includes(q) ||
+        m.parameterSize.toLowerCase().includes(q) ||
+        (m.sourceRuntimeName ?? "").toLowerCase().includes(q),
+    );
+  }, [models, filter]);
 
   if (isLoading) {
     return (
@@ -268,6 +280,20 @@ export default function Models() {
         </p>
       </div>
 
+      {models && models.length > 0 && (
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
+          <input
+            type="search"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search models by name, family, or runtime..."
+            aria-label="Search models"
+            className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
+          />
+        </div>
+      )}
+
       {!models || models.length === 0 ? (
         <Card padding="none">
           <EmptyState
@@ -278,7 +304,7 @@ export default function Models() {
         </Card>
       ) : (
         <Card padding="none">
-          {models.map((model, i) => (
+          {filteredModels.map((model, i) => (
             <ModelRow key={model.id} model={model} index={i} />
           ))}
         </Card>

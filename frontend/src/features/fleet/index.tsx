@@ -1751,9 +1751,21 @@ function AgentSection({
     defaultExpanded ||
       (focusContainerId !== null && agentRcs.some((rc) => rc.id === focusContainerId)),
   );
+  const [filter, setFilter] = useState("");
   const connectivity = agentConnectivity(agent);
   const isHost = agent.name === "host";
   const focusedCardRef = useRef<HTMLDivElement | null>(null);
+
+  const filteredContainers = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return agentRcs;
+    return agentRcs.filter(
+      (c) =>
+        c.displayName.toLowerCase().includes(q) ||
+        c.image.toLowerCase().includes(q) ||
+        c.discoveredModels.some((m) => m.name.toLowerCase().includes(q)),
+    );
+  }, [agentRcs, filter]);
 
   // Deep-link: once the focused card mounts (after the expand animation),
   // bring it into view. Guarded so it only scrolls once per focus target.
@@ -1877,24 +1889,39 @@ function AgentSection({
           >
             <div className="pb-4 pl-9">
               {agentRcs.length > 0 ? (
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {agentRcs.map((rc) => {
-                    const focused = focusContainerId === rc.id;
-                    const runtimeStatus =
-                      rc.runtimeKind === "script"
-                        ? runtimeStatusForScript(agent.scripts, rc)
-                        : runtimeStatusFor(agent.containers, rc);
-                    return (
-                      <div key={rc.id} ref={focused ? focusedCardRef : undefined}>
-                        <RegisteredContainerCard
-                          container={rc}
-                          highlight={focused}
-                          runtimeStatus={runtimeStatus}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
+                <>
+                  {agentRcs.length >= 2 && (
+                    <div className="relative mb-3">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
+                      <input
+                        type="search"
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                        placeholder="Search runtimes..."
+                        aria-label="Search registered containers"
+                        className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
+                      />
+                    </div>
+                  )}
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {filteredContainers.map((rc) => {
+                      const focused = focusContainerId === rc.id;
+                      const runtimeStatus =
+                        rc.runtimeKind === "script"
+                          ? runtimeStatusForScript(agent.scripts, rc)
+                          : runtimeStatusFor(agent.containers, rc);
+                      return (
+                        <div key={rc.id} ref={focused ? focusedCardRef : undefined}>
+                          <RegisteredContainerCard
+                            container={rc}
+                            highlight={focused}
+                            runtimeStatus={runtimeStatus}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
               ) : (
                 <Card
                   padding="md"

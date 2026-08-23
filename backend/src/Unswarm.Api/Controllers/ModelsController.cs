@@ -13,22 +13,42 @@ public sealed class ModelsController : ControllerBase
 {
     private readonly IModelRegistry _registry;
     private readonly IBenchmarkHistory _benchmarks;
+    private readonly IContainerRegistry _containerRegistry;
 
-    public ModelsController(IModelRegistry registry, IBenchmarkHistory benchmarks)
+    public ModelsController(IModelRegistry registry, IBenchmarkHistory benchmarks, IContainerRegistry containerRegistry)
     {
         _registry = registry;
         _benchmarks = benchmarks;
+        _containerRegistry = containerRegistry;
     }
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
         var models = await _registry.ListAllAsync(ct);
+
+        // Batch-load runtime names for models that have a source runtime
+        var runtimeIds = models
+            .Where(m => !string.IsNullOrEmpty(m.SourceRuntimeId))
+            .Select(m => m.SourceRuntimeId!)
+            .Distinct()
+            .ToList();
+        var runtimeNameMap = new Dictionary<string, string>();
+        foreach (var rid in runtimeIds)
+        {
+            var rt = await _containerRegistry.GetAsync(rid, ct).ConfigureAwait(false);
+            if (rt is not null)
+                runtimeNameMap[rid] = string.IsNullOrEmpty(rt.DisplayName) ? rt.Image : rt.DisplayName;
+        }
+
         var responses = new List<ModelResponse>(models.Count);
         foreach (var model in models)
         {
             var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
-            responses.Add(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
+            var response = ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last));
+            if (!string.IsNullOrEmpty(model.SourceRuntimeId) && runtimeNameMap.TryGetValue(model.SourceRuntimeId, out var rtName))
+                response.SourceRuntimeName = rtName;
+            responses.Add(response);
         }
         return Ok(responses);
     }

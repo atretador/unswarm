@@ -29,6 +29,7 @@ public sealed class ModelResponse
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = "";
     public string? SourceRuntimeId { get; set; }
+    public string? SourceRuntimeName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
