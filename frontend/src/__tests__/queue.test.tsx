@@ -41,8 +41,49 @@ describe("Queue", () => {
     });
 
     // Waiting items are numbered per-target within their sections.
-    // mistral-large-2 appears twice: one lane processing it + one waiting copy.
-    expect(screen.getAllByText("mistral-large-2").length).toBe(2);
+    // mistral-large-2 appears three times: one lane processing it, one waiting
+    // copy, and once inside its conversation-hold indicator.
+    expect(screen.getAllByText("mistral-large-2").length).toBe(3);
+  });
+
+  it("renders a conversation hold indicator with model and request count", async () => {
+    render(
+      <TestWrapper>
+        <Queue />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Host (local)")).toBeInTheDocument();
+    });
+
+    const hold = screen.getByTestId("conversation-hold");
+    expect(hold).toHaveTextContent("held by conversation");
+    // Model name and request count are part of the indicator
+    expect(hold).toHaveTextContent("mistral-large-2");
+    expect(hold).toHaveTextContent("7 reqs");
+  });
+
+  it("keeps the plain blocked-by pill when heldByConversation is absent", async () => {
+    render(
+      <TestWrapper>
+        <Queue />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Host (local)")).toBeInTheDocument();
+    });
+
+    // gemma-2-27b is blocked by rt-host-main without any conversation hold
+    expect(screen.getByText(/blocked by rt-host-main/)).toBeInTheDocument();
+
+    // The plain block pill must not carry hold content
+    const blockedPill = screen.getByText(/blocked by rt-host-main/);
+    expect(blockedPill).not.toHaveTextContent("held by conversation");
+
+    // Only the held item exposes the hold indicator
+    expect(screen.getAllByTestId("conversation-hold")).toHaveLength(1);
   });
 
   it("shows recent completed items", async () => {

@@ -615,6 +615,15 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
       targetId: "agent:gpu-node-1",
       runtimeId: "rt-gpu-node-1-b",
       blockedByRuntimeIds: ["rt-gpu-node-1-a"],
+      // Conversation affinity demo: held by an active tool-call conversation
+      // on the same runtime that is also listed as blocking.
+      heldByConversation: {
+        model: "mistral-large-2",
+        runtimeId: "rt-gpu-node-1-a",
+        requestCount: 7,
+        // Countdown demo: hold lapses ~45s from module load
+        holdExpiresAt: new Date(Date.now() + 45_000).toISOString(),
+      },
       status: "waiting",
       priority: 2,
       tokensRequested: 2048,
@@ -640,6 +649,23 @@ const QUEUE_SNAPSHOT: QueueSnapshot = {
       generationTokensPerSec: 0,
       elapsedMs: 0,
       waitMs: 5100,
+      createdAt: NOW,
+    },
+    {
+      id: "q6",
+      modelRequested: "gemma-2-27b",
+      modelAssigned: null,
+      targetId: "host",
+      runtimeId: null,
+      blockedByRuntimeIds: ["rt-host-main"],
+      status: "waiting",
+      priority: 4,
+      tokensRequested: 512,
+      tokensGenerated: 0,
+      promptTokensPerSec: 0,
+      generationTokensPerSec: 0,
+      elapsedMs: 0,
+      waitMs: 2400,
       createdAt: NOW,
     },
   ],
@@ -748,6 +774,8 @@ const SETTINGS: Settings = {
   parallelSlotSkipLimit: 3,
   enableParallelSlotSkip: false,
   queueStepsTillReset: 3,
+  enableConversationAffinity: true,
+  conversationDwellSeconds: 45,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────
@@ -1143,6 +1171,15 @@ export const mockClient: UnswarmClient = {
   async cancelQueueItem(_itemId: string) {
     await delay(rand(20, 60));
     // Mock: just return void (success)
+  },
+  async releaseTargetHold(_targetId: string) {
+    await delay(rand(20, 60));
+    // Mock: clear any conversation holds on this target
+    for (const w of QUEUE_SNAPSHOT.waiting) {
+      if (w.heldByConversation && (w.targetId ?? "host") === _targetId) {
+        w.heldByConversation = null;
+      }
+    }
   },
 
   // Stats

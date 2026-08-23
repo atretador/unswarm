@@ -206,7 +206,8 @@ function DashboardContent() {
     },
   ];
 
-  const hourLabels = stats.requestsPerMinute.map((_, i) => `${i}m`);
+  const minuteLabels = stats.requestsPerMinute.map((_, i) => `${i}m`);
+  const secondLabels = stats.tokensPerSecond.map((_, i) => `${i}s`);
 
   // BASE_URL is '' for same-origin deployments — show the current origin instead.
   const displayBaseUrl = BASE_URL || window.location.origin;
@@ -284,7 +285,7 @@ function DashboardContent() {
           </p>
           <Suspense fallback={<ChartSkeleton />}>
             <LazyResponsiveContainer width="100%" height={200}>
-              <LazyAreaChart data={stats.requestsPerMinute.map((v, i) => ({ time: hourLabels[i], value: v }))}>
+              <LazyAreaChart data={stats.requestsPerMinute.map((v, i) => ({ time: minuteLabels[i], value: v }))}>
                 <defs>
                   <linearGradient id="rpmGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.3} />
@@ -322,7 +323,7 @@ function DashboardContent() {
           </p>
           <Suspense fallback={<ChartSkeleton />}>
             <LazyResponsiveContainer width="100%" height={200}>
-              <LazyAreaChart data={stats.tokensPerSecond.map((v, i) => ({ time: hourLabels[i], value: v }))}>
+              <LazyAreaChart data={stats.tokensPerSecond.map((v, i) => ({ time: secondLabels[i], value: v }))}>
                 <defs>
                   <linearGradient id="tpsGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="var(--color-status-running)" stopOpacity={0.3} />

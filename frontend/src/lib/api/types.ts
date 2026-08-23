@@ -193,6 +193,18 @@ export interface QueueItem {
   runtimeId: string | null;
   /** In-flight runtime ids currently blocking this waiting item (empty = could start next). */
   blockedByRuntimeIds: string[];
+  /**
+   * Present when this item is held back because an active tool-call
+   * conversation occupies its runtime (not by active inference work).
+   * `blockedByRuntimeIds` may still be non-empty alongside this.
+   */
+  heldByConversation?: {
+    model: string;
+    runtimeId: string;
+    requestCount: number;
+    /** ISO DateTimeOffset when the conversation hold lapses. */
+    holdExpiresAt: string;
+  } | null;
   status: QueueItemStatus;
   priority: number;
   tokensRequested: number;
@@ -297,6 +309,13 @@ export interface Settings {
   parallelSlotSkipLimit: number;
   enableParallelSlotSkip: boolean;
   queueStepsTillReset: number;
+  /**
+   * When true, a recently-active tool-call conversation holds its runtime
+   * against eviction by incompatible models (conversation affinity).
+   */
+  enableConversationAffinity: boolean;
+  /** How long a conversation keeps its hold after its last request (seconds). */
+  conversationDwellSeconds: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────

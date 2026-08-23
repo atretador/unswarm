@@ -292,6 +292,12 @@ export const httpClient: UnswarmClient = {
   cancelQueueItem(itemId: string) {
     return request<void>(`/api/queue/${itemId}`, { method: "DELETE" });
   },
+  releaseTargetHold(targetId: string) {
+    return request<void>(
+      `/api/queue/targets/${encodeURIComponent(targetId)}/hold/release`,
+      { method: "POST" },
+    );
+  },
 
   // ── Stats ─────────────────────────────────────────────────────
   getStats() {

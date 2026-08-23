@@ -57,12 +57,39 @@ describe("Settings", () => {
     expect(screen.getByText("Batch drain")).toBeInTheDocument();
     expect(screen.getByText("Lazy stop")).toBeInTheDocument();
     expect(screen.getByText("Enable benchmarking")).toBeInTheDocument();
+    expect(screen.getByText("Conversation affinity")).toBeInTheDocument();
 
     // New scheduler fields
     expect(screen.getByText("Request timeout (seconds)")).toBeInTheDocument();
     expect(screen.getByText("Idle timeout (seconds)")).toBeInTheDocument();
     expect(screen.getByText("Health check interval (seconds)")).toBeInTheDocument();
     expect(screen.getByText("Priority mode")).toBeInTheDocument();
+
+    // Conversation affinity is on in mock seed, so its dwell input is enabled
+    const dwell = screen.getByLabelText("Conversation hold window (seconds)");
+    expect(dwell).toBeEnabled();
+    expect(dwell).toHaveValue(45);
+  });
+
+  it("disables conversation dwell input when conversation affinity is off", async () => {
+    const seed = await mockClient.getSettings();
+    vi.spyOn(mockClient, "getSettings").mockResolvedValueOnce({
+      ...seed,
+      enableConversationAffinity: false,
+    });
+
+    render(
+      <TestWrapper initialEntries={["/settings?tab=scheduler"]}>
+        <Settings />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Scheduler Policy")).toBeInTheDocument();
+    });
+
+    const dwell = screen.getByLabelText("Conversation hold window (seconds)");
+    expect(dwell).toBeDisabled();
   });
 
   it("shows Users tab with user table for admin", async () => {

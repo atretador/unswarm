@@ -40,6 +40,7 @@ function SchedulerPolicySection() {
   const [draftMaxQueue, setDraftMaxQueue] = useState<string>("");
   const [draftParallelSkip, setDraftParallelSkip] = useState<string>("");
   const [draftQueueStepsTillReset, setDraftQueueStepsTillReset] = useState<string>("");
+  const [draftConversationDwell, setDraftConversationDwell] = useState<string>("");
   const [draftRequestTimeout, setDraftRequestTimeout] = useState<string>("");
   const [draftIdleTimeout, setDraftIdleTimeout] = useState<string>("");
   const [draftHealthCheckInterval, setDraftHealthCheckInterval] = useState<string>("");
@@ -51,6 +52,7 @@ function SchedulerPolicySection() {
       setDraftMaxQueue(String(settings.maxQueueDepth));
       setDraftParallelSkip(String(settings.parallelSlotSkipLimit));
       setDraftQueueStepsTillReset(String(settings.queueStepsTillReset));
+      setDraftConversationDwell(String(settings.conversationDwellSeconds));
       setDraftRequestTimeout(String(settings.requestTimeout));
       setDraftIdleTimeout(String(settings.idleTimeout));
       setDraftHealthCheckInterval(String(settings.healthCheckInterval));
@@ -64,6 +66,7 @@ function SchedulerPolicySection() {
         | "maxQueueDepth"
         | "parallelSlotSkipLimit"
         | "queueStepsTillReset"
+        | "conversationDwellSeconds"
         | "requestTimeout"
         | "idleTimeout"
         | "healthCheckInterval",
@@ -74,7 +77,9 @@ function SchedulerPolicySection() {
       const clamped =
         field === "parallelSlotSkipLimit" || field === "queueStepsTillReset"
           ? Math.max(1, Math.min(1000, num))
-          : field === "maxQueueDepth"
+          : field === "conversationDwellSeconds"
+            ? Math.max(1, num)
+            : field === "maxQueueDepth"
             ? Math.max(0, num)
             : field === "requestTimeout"
               ? Math.max(5, num)
@@ -145,6 +150,13 @@ function SchedulerPolicySection() {
       field: "enableParallelSlotSkip",
     },
     {
+      key: "conversation-affinity",
+      label: "Conversation affinity",
+      desc: "Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls",
+      checked: settings.enableConversationAffinity,
+      field: "enableConversationAffinity",
+    },
+    {
       key: "enable-benchmarking",
       label: "Enable benchmarking",
       desc: "Auto-run the default benchmark when a model is registered",
@@ -177,6 +189,22 @@ function SchedulerPolicySection() {
         ))}
 
         <div className="pt-2 border-t border-[var(--color-border-subtle)]">
+          <div className={!settings.enableConversationAffinity ? "opacity-50" : ""}>
+            <Input
+              label="Conversation hold window (seconds)"
+              type="number"
+              value={draftConversationDwell}
+              disabled={!settings.enableConversationAffinity}
+              onChange={(e) => setDraftConversationDwell(e.target.value)}
+              onBlur={() => commitDraft("conversationDwellSeconds", draftConversationDwell)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitDraft("conversationDwellSeconds", draftConversationDwell);
+              }}
+            />
+            <p className="text-[10px] text-[var(--color-text-muted)]">
+              How long a conversation keeps its runtime reserved after its last request (minimum 1)
+            </p>
+          </div>
           <Input
             label="Max queue depth"
             type="number"

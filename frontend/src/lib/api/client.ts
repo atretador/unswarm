@@ -78,6 +78,8 @@ export interface UnswarmClient {
   // Queue
   getQueueSnapshot(): Promise<QueueSnapshot>;
   cancelQueueItem(itemId: string): Promise<void>;
+  /** Immediately clear conversation holds on a target so held items proceed. */
+  releaseTargetHold(targetId: string): Promise<void>;
 
   // Stats
   getStats(): Promise<StatsSummary>;

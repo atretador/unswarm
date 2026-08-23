@@ -8,8 +8,10 @@ import {
   Clock,
   ChevronDown,
   ChevronRight,
+  Pause,
   Server,
   Monitor,
+  SkipForward,
   X,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
@@ -42,6 +44,31 @@ function parseTarget(
   return { label: `Agent: ${name}`, kind: "agent" };
 }
 
+/**
+ * Live countdown of a conversation hold, ticking every second.
+ * Clamps at 0s and shows "expiring…" until the next poll refreshes.
+ * Same per-second tick pattern as the processing elapsed timer below.
+ */
+function HoldCountdown({ expiresAt }: { expiresAt: string }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const remainingMs = new Date(expiresAt).getTime() - Date.now();
+  const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
+
+  return (
+    <span
+      className="rounded-full bg-[color-mix(in_srgb,var(--color-status-warning)_18%,transparent)] px-1 font-mono"
+      data-testid="hold-countdown"
+    >
+      {remaining > 0 ? `hold ${remaining}s` : "expiring…"}
+    </span>
+  );
+}
+
 // ─── Target Section ─────────────────────────────────────────────────
 
 function TargetSection({
@@ -49,11 +76,13 @@ function TargetSection({
   processing,
   waiting,
   cancelMutation,
+  releaseHoldMutation,
 }: {
   targetId: string;
   processing: QueueItem[];
   waiting: QueueItem[];
   cancelMutation: ReturnType<typeof useMutation<void, Error, string>>;
+  releaseHoldMutation: ReturnType<typeof useMutation<void, Error, string>>;
 }) {
   const idle = processing.length === 0 && waiting.length === 0;
   const [expanded, setExpanded] = useState(!idle);
@@ -195,12 +224,13 @@ function TargetSection({
                 <div className="divide-y divide-[var(--color-border-subtle)]">
                   {waiting.map((item, i) => {
                     const blocked = item.blockedByRuntimeIds.length > 0;
+                    const held = item.heldByConversation ?? null;
                     return (
                       <div
                         key={item.id}
                         className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                           <span className="text-[var(--color-text-muted)] font-mono w-5 text-center shrink-0">
                             #{i + 1}
                           </span>
@@ -208,12 +238,12 @@ function TargetSection({
                           <span className="font-mono text-[var(--color-text-heading)] truncate">
                             {item.modelRequested}
                           </span>
-                          {!blocked && i === 0 && (
+                          {!blocked && !held && i === 0 && (
                             <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-primary)]">
                               next up
                             </span>
                           )}
-                          {blocked && (
+                          {blocked && !held && (
                             <span
                               className="shrink-0 rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px text-[10px] text-[var(--color-text-muted)]"
                               title={`Waiting for ${item.blockedByRuntimeIds.join(", ")} to finish`}
@@ -224,6 +254,21 @@ function TargetSection({
                                 : `${item.blockedByRuntimeIds.length} runtime(s)`}
                             </span>
                           )}
+                          {held && (
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-status-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-warning)_12%,transparent)] px-1.5 py-px text-[10px] text-[var(--color-status-warning)]"
+                              title={`Held by an active tool-call conversation on runtime ${held.runtimeId} — ${held.requestCount} request${held.requestCount === 1 ? "" : "s"} in flight`}
+                              data-testid="conversation-hold"
+                            >
+                              <Pause className="size-2.5 shrink-0" aria-hidden />
+                              held by conversation
+                              <span className="font-mono">{held.model}</span>
+                              <span className="rounded-full bg-[color-mix(in_srgb,var(--color-status-warning)_18%,transparent)] px-1 font-mono">
+                                {held.requestCount} reqs
+                              </span>
+                              <HoldCountdown expiresAt={held.holdExpiresAt} />
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-4 text-[var(--color-text-muted)] shrink-0">
                           <span className="flex items-center gap-1">
@@ -231,6 +276,21 @@ function TargetSection({
                             {formatMs(item.waitMs)}
                           </span>
                           <Badge variant="outline">P{item.priority}</Badge>
+                          {held && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-[var(--color-text-muted)] hover:text-[var(--color-primary)]"
+                              onClick={() =>
+                                releaseHoldMutation.mutate(item.targetId ?? "host")
+                              }
+                              disabled={releaseHoldMutation.isPending}
+                              aria-label={`Skip — release conversation hold for ${item.modelRequested}`}
+                              title="Release the conversation hold immediately so this request can proceed"
+                            >
+                              <SkipForward className="size-3.5" />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost"
                             size="sm"
@@ -282,6 +342,11 @@ export default function Queue() {
 
   const cancelMutation = useMutation({
     mutationFn: (itemId: string) => client.cancelQueueItem(itemId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["queue"] }),
+  });
+
+  const releaseHoldMutation = useMutation({
+    mutationFn: (targetId: string) => client.releaseTargetHold(targetId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["queue"] }),
   });
 
@@ -355,6 +420,9 @@ export default function Queue() {
     0,
   );
   const startingCount = activeTransitions.length;
+
+  // Waiting items currently held by an active conversation.
+  const heldCount = waiting.filter((w) => w.heldByConversation).length;
 
   // Build full target list: host + all agents
   const allTargets = [
@@ -507,6 +575,7 @@ export default function Queue() {
             processing={group.processing}
             waiting={group.waiting}
             cancelMutation={cancelMutation}
+            releaseHoldMutation={releaseHoldMutation}
           />
         ))}
       </div>
@@ -550,6 +619,8 @@ export default function Queue() {
           : "idle"}
         {activeTransitions.length > 0 &&
           `, ${activeTransitions.length} active transition(s)`}
+        {heldCount > 0 &&
+          `, ${heldCount} waiting item${heldCount === 1 ? "" : "s"} held by conversation`}
         {stoppingCount > 0 && `, ${stoppingCount} runtime(s) going down`}
         {startingCount > 0 && `, ${startingCount} model(s) coming up`}
       </div>

@@ -49,6 +49,17 @@ describe("mockClient", () => {
       expect(Array.isArray(snap.waiting)).toBe(true);
       expect(Array.isArray(snap.recentCompleted)).toBe(true);
     });
+
+    it("exposes heldByConversation on a waiting item", async () => {
+      const snap = await mockClient.getQueueSnapshot();
+      const held = snap.waiting.find((w) => w.heldByConversation);
+      expect(held).toBeDefined();
+      expect(held!.heldByConversation).toMatchObject({
+        model: "mistral-large-2",
+        runtimeId: "rt-gpu-node-1-a",
+        requestCount: 7,
+      });
+    });
   });
 
   describe("container lifecycle transitions", () => {
@@ -115,6 +126,15 @@ describe("mockClient", () => {
       expect(s).toHaveProperty("idleTimeout");
       expect(s).toHaveProperty("healthCheckInterval");
       expect(s).toHaveProperty("logRetention");
+      expect(s).toHaveProperty("enableConversationAffinity");
+      expect(s).toHaveProperty("conversationDwellSeconds");
+
+      const affinityUpdated = await mockClient.updateSettings({
+        enableConversationAffinity: false,
+        conversationDwellSeconds: 1,
+      });
+      expect(affinityUpdated.enableConversationAffinity).toBe(false);
+      expect(affinityUpdated.conversationDwellSeconds).toBe(1);
 
       const updated = await mockClient.updateSettings({ requestTimeout: 999 });
       expect(updated.requestTimeout).toBe(999);
