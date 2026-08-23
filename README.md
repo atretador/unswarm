@@ -117,7 +117,11 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 - **Benchmarks** — Run benchmark prompts against models and track performance history (latency, tokens generated).
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
-- **Settings** — Configurable idle shutdown, health check intervals, log retention, and auth.
+- **Cloud Providers** — Register external cloud inference providers (OpenAI, Anthropic, etc.) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
+- **Usage Analytics** — Metrics dashboard tracking every request: tokens (prompt/completion/cached), streaming split, latency percentiles (p50/p95/p99/max) with distribution bands, hourly heatmap, period-over-period comparison, live request tail over WebSocket, per-provider/per-model/per-API-key breakdowns, drill-down from any chart point to the raw request feed, CSV export, saved filter presets, and configurable data retention with admin purge.
+- **Cost Tracking & Budgets** — Three pricing modes per provider: per-1M-token API rates, fixed monthly subscriptions, and self-hosted flat monthly cost (power/hardware) with a derived $/1M figure so you can compare against cloud pricing. Estimated-cost cards, cost columns, cost chart series, cache-savings estimates, and per-provider monthly token/cost budgets with progress bars.
+- **API Key Access Control** — Scope each API key to specific providers (cloud or self-hosted agents) and models via a manage modal; restricted keys get OpenAI-style 403 rejections outside their grants. Per-key usage is tracked automatically (requests, tokens, per-model breakdown).
+- **Settings** — Configurable idle shutdown, health check intervals, log retention, usage retention, and auth. Idle shutdown is anchored to last scheduler activity (not container lifetime) and never stops a runtime with in-flight or queued work.
 
 ## Quick Start
 
@@ -235,6 +239,20 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 | `POST /api/api-keys/agent` | Create an agent API key |
 | `DELETE /api/api-keys/{id}` | Delete an API key |
 | `POST /api/api-keys/{id}/rotate` | Rotate an API key |
+| `GET /api/api-keys/{id}/access` | Get a key's provider/model access grants |
+| `PUT /api/api-keys/{id}/access` | Update a key's access grants |
+| `GET /api/provider-model-catalog` | List providers (cloud + self-hosted) with their servable models |
+| **Usage & Metrics** | |
+| `GET /api/metrics/usage` | Paginated raw usage records (filterable, `?since=` cursor) |
+| `GET /api/metrics/summary` | Time-bucketed usage aggregates |
+| `GET /api/metrics/models` | Per-model usage summaries with latency percentiles |
+| `GET /api/metrics/providers` | Per-provider usage summaries |
+| `GET /api/metrics/totals` | Usage totals for a window |
+| `GET /api/metrics/latency-bands` | Latency distribution histogram |
+| `GET /api/metrics/api-keys` | Per-API-key usage aggregation |
+| `GET /api/metrics/api-keys/{keyId}/usage` | Detailed usage for one API key |
+| `GET /api/metrics/provider-catalog` | Distinct providers seen in usage + configured ones |
+| `DELETE /api/metrics/usage/purge` | Purge usage records older than retention (admin) |
 | **System** | |
 | `GET /api/logs` | Query logs |
 | `GET /api/settings` | Get settings |
@@ -244,6 +262,8 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 ### WebSocket Protocol
 
 Agents connect to `ws://<backend>/ws/agent` using a JSON envelope protocol. See [agent protocol documentation](backend/docs/agent-protocol.md) for message types, command formats, and the connection handshake.
+
+Authenticated dashboard clients can also connect to `ws://<backend>/ws/metrics` for a live tail of usage records — one JSON event per completed inference (id, timestamp, provider, model, token counts, streaming flag, elapsed ms).
 
 ## Configuration
 
