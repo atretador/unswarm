@@ -5,6 +5,7 @@ import LoginPage from "./features/login";
 import Dashboard from "./features/dashboard";
 import Models from "./features/models";
 import Fleet from "./features/fleet";
+import Providers from "./features/providers";
 import Benchmarks from "./features/benchmarks";
 import Queue from "./features/queue";
 import Logs from "./features/logs";
@@ -26,6 +27,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/models" element={<Models />} />
                 <Route path="/fleet" element={<Fleet />} />
+                <Route path="/providers" element={<Providers />} />
                 <Route path="/benchmarks" element={<Benchmarks />} />
                 <Route path="/queue" element={<Queue />} />
                 <Route path="/logs" element={<Logs />} />

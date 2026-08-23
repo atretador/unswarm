@@ -5,7 +5,12 @@ import type {
   ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
+  CloudProvider,
+  CloudProviderInput,
+  CloudProviderRead,
+  CloudProviderUpdateInput,
   Container,
+  FetchModelsResult,
   LogEntry,
   Model,
   Prompt,
@@ -481,6 +486,45 @@ export const httpClient: UnswarmClient = {
   rotateApiKey(id: string) {
     return request<ApiKeyCreateResponse>(
       `/api/api-keys/${encodeURIComponent(id)}/rotate`,
+      { method: "POST" },
+    );
+  },
+
+  // ── Cloud Providers ──────────────────────────────────────────
+  listCloudProviders() {
+    return request<CloudProvider[]>("/api/cloudproviders");
+  },
+
+  getCloudProvider(id: string) {
+    return request<CloudProviderRead>(
+      `/api/cloudproviders/${encodeURIComponent(id)}`,
+    );
+  },
+
+  createCloudProvider(data: CloudProviderInput) {
+    return request<CloudProviderRead>("/api/cloudproviders", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateCloudProvider(id: string, data: CloudProviderUpdateInput) {
+    return request<CloudProviderRead>(
+      `/api/cloudproviders/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+  },
+
+  deleteCloudProvider(id: string) {
+    return request<void>(
+      `/api/cloudproviders/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  fetchCloudProviderModels(id: string) {
+    return request<FetchModelsResult>(
+      `/api/cloudproviders/${encodeURIComponent(id)}/fetch-models`,
       { method: "POST" },
     );
   },

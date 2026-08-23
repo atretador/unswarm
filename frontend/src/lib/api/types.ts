@@ -379,3 +379,35 @@ export interface ApiKeyItem {
 export interface ApiKeyCreateResponse extends ApiKeyItem {
   secret: string;
 }
+
+// ─── Cloud Providers ──────────────────────────────────────────────
+
+export interface CloudProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  apiKeyHint: string;
+  modelCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloudProviderRead extends CloudProvider {
+  baseUrlFull: string;
+}
+
+export interface CloudProviderInput {
+  name: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface CloudProviderUpdateInput {
+  baseUrl: string;
+  apiKey?: string | null;
+  apiKeyHint?: string | null;
+}
+
+export interface FetchModelsResult {
+  modelIds: string[];
+}

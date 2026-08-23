@@ -4,7 +4,11 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyItem,
   BenchmarkResult,
+  CloudProvider,
+  CloudProviderRead,
+  CloudProviderUpdateInput,
   Container,
+  FetchModelsResult,
   LastBenchmarkResult,
   LogEntry,
   Model,
@@ -826,6 +830,31 @@ function stopLogStreamIfIdle() {
   }
 }
 
+// ─── Cloud Providers Seed ───────────────────────────────────────
+
+const CLOUD_PROVIDERS: (CloudProvider & { apiKey?: string })[] = [
+  {
+    id: "cp-seed-001",
+    name: "openai",
+    baseUrl: "https://api.openai.com",
+    apiKeyHint: "sk-proj…x9aZ",
+    apiKey: "sk-proj-real-key-placeholder",
+    modelCount: 2,
+    createdAt: NOW,
+    updatedAt: NOW,
+  },
+  {
+    id: "cp-seed-002",
+    name: "anthropic",
+    baseUrl: "https://api.anthropic.com",
+    apiKeyHint: "sk-ant…3f9a",
+    apiKey: "sk-ant-real-key-placeholder",
+    modelCount: 3,
+    createdAt: NOW,
+    updatedAt: NOW,
+  },
+];
+
 // ─── Mutable state ────────────────────────────────────────────────
 
 let models = [...MODELS];
@@ -1482,6 +1511,82 @@ export const mockClient: UnswarmClient = {
       lastUsedAt: null,
     });
     return { ...key, secret };
+  },
+
+  // ── Cloud Providers ──────────────────────────────────────────
+  async listCloudProviders() {
+    await delay(rand(80, 200));
+    return CLOUD_PROVIDERS.map(({ apiKey: _, ...p }) => ({ ...p }));
+  },
+
+  async getCloudProvider(providerId: string) {
+    await delay(rand(60, 150));
+    const p = CLOUD_PROVIDERS.find((x) => x.id === providerId);
+    if (!p) throw new Error(`Cloud provider ${providerId} not found`);
+    const { apiKey: _, ...rest } = p;
+    return { ...rest, baseUrlFull: p.baseUrl };
+  },
+
+  async createCloudProvider(data: { name: string; baseUrl: string; apiKey: string }) {
+    await delay(rand(100, 300));
+    if (!data.name.trim()) throw new Error("Name is required.");
+    if (CLOUD_PROVIDERS.some((p) => p.name === data.name.trim())) {
+      throw new Error("Provider name already exists.");
+    }
+    const hint = data.apiKey.length > 16
+      ? data.apiKey.slice(0, 8) + "…" + data.apiKey.slice(-4)
+      : data.apiKey.slice(0, 4) + "…" + data.apiKey.slice(-4);
+    const provider: CloudProvider & { apiKey?: string } = {
+      id: `cp-${++nextId}`,
+      name: data.name.trim(),
+      baseUrl: data.baseUrl.trim().replace(/\/+$/, ""),
+      apiKeyHint: hint,
+      apiKey: data.apiKey,
+      modelCount: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    CLOUD_PROVIDERS.push(provider);
+    const { apiKey: _, ...rest } = provider;
+    return { ...rest, baseUrlFull: provider.baseUrl };
+  },
+
+  async updateCloudProvider(providerId: string, data: { baseUrl: string; apiKey?: string | null; apiKeyHint?: string | null }) {
+    await delay(rand(80, 200));
+    const p = CLOUD_PROVIDERS.find((x) => x.id === providerId);
+    if (!p) throw new Error(`Cloud provider ${providerId} not found`);
+    p.baseUrl = data.baseUrl.trim().replace(/\/+$/, "");
+    if (data.apiKey) {
+      p.apiKey = data.apiKey;
+      p.apiKeyHint = data.apiKey.length > 16
+        ? data.apiKey.slice(0, 8) + "…" + data.apiKey.slice(-4)
+        : data.apiKey.slice(0, 4) + "…" + data.apiKey.slice(-4);
+    }
+    p.updatedAt = new Date().toISOString();
+    const { apiKey: _, ...rest } = p;
+    return { ...rest, baseUrlFull: p.baseUrl };
+  },
+
+  async deleteCloudProvider(providerId: string) {
+    await delay(rand(60, 150));
+    const idx = CLOUD_PROVIDERS.findIndex((x) => x.id === providerId);
+    if (idx === -1) throw new Error(`Cloud provider ${providerId} not found`);
+    CLOUD_PROVIDERS.splice(idx, 1);
+  },
+
+  async fetchCloudProviderModels(providerId: string) {
+    await delay(rand(300, 800));
+    const p = CLOUD_PROVIDERS.find((x) => x.id === providerId);
+    if (!p) throw new Error(`Cloud provider ${providerId} not found`);
+    // Mock: return fake model list based on provider name
+    const modelMap: Record<string, string[]> = {
+      openai: ["gpt-4o", "gpt-4o-mini", "o1-preview", "o1-mini"],
+      anthropic: ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
+    };
+    const modelIds = modelMap[p.name] ?? ["model-1", "model-2"];
+    p.modelCount = modelIds.length;
+    p.updatedAt = new Date().toISOString();
+    return { modelIds };
   },
 
 };

@@ -5,7 +5,12 @@ import type {
   ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
+  CloudProvider,
+  CloudProviderInput,
+  CloudProviderRead,
+  CloudProviderUpdateInput,
   Container,
+  FetchModelsResult,
   LogEntry,
   Model,
   Prompt,
@@ -136,4 +141,12 @@ export interface UnswarmClient {
   getApiKey(id: string): Promise<ApiKeyItem>;
   revokeApiKey(id: string): Promise<void>;
   rotateApiKey(id: string): Promise<ApiKeyCreateResponse>;
+
+  // Cloud Providers
+  listCloudProviders(): Promise<CloudProvider[]>;
+  getCloudProvider(id: string): Promise<CloudProviderRead>;
+  createCloudProvider(data: CloudProviderInput): Promise<CloudProviderRead>;
+  updateCloudProvider(id: string, data: CloudProviderUpdateInput): Promise<CloudProviderRead>;
+  deleteCloudProvider(id: string): Promise<void>;
+  fetchCloudProviderModels(id: string): Promise<FetchModelsResult>;
 }
