@@ -154,6 +154,7 @@ builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationS
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
+builder.Services.AddScoped<IUsageRecorder, UsageRecorder>();
 
 // Cloud providers: scoped store (Func<UnswarmDbContext> holder, like other scoped stores)
 builder.Services.AddSingleton<IApiKeyEncryptor, DataProtectionEncryptor>();
@@ -189,6 +190,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<SchedulerSettings>();
 builder.Services.AddSingleton<SchedulerWorker>();
 builder.Services.AddSingleton<ISchedulerQueue, SchedulerQueue>();
+builder.Services.AddSingleton<ISchedulerDrainer>(sp => sp.GetRequiredService<SchedulerWorker>());
 
 // ── Auto-benchmark ────────────────────────────────────────────────────────
 // Singleton so it can be captured by ContainerRegistrationService's fire-and-forget

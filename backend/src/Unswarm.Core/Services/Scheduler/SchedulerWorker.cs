@@ -20,7 +20,7 @@ namespace Unswarm.Core.Services.Scheduler;
 /// started item runs as a fire-and-forget task; container stop/start switching is
 /// serialized per lane and scoped to the lane's target only.
 /// </summary>
-public sealed class SchedulerWorker
+public sealed class SchedulerWorker : ISchedulerDrainer
 {
     /// <summary>
     /// Cap on terminal (Completed/Failed) entries retained in <see cref="_allItems"/>.
@@ -1647,6 +1647,23 @@ public sealed class SchedulerWorker
         {
             var info = runningOnTarget[key];
 
+            // Drain gate: wait for active inferences on this container to finish
+            // before stopping it, so we never kill a container mid-stream.
+            if (!info.ContainerId.StartsWith("script:", StringComparison.Ordinal)
+                && HasActiveInferences(info.ContainerId))
+            {
+                var drainSettings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+                var drainTimeout = TimeSpan.FromSeconds(drainSettings.RequestTimeout);
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"Draining active inferences on {info.ContainerName} before stopping (timeout {drainSettings.RequestTimeout}s)");
+
+                if (!await DrainContainerAsync(info.ContainerId, drainTimeout, ct).ConfigureAwait(false))
+                {
+                    _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                        $"Drain timeout for {info.ContainerName} — stopping anyway to avoid deadlock");
+                }
+            }
+
             _logStore.Enqueue(LogLevel.Info, "Scheduler",
                 $"Stopping incompatible container {info.ContainerName} on {lane.TargetId}");
 
@@ -2052,6 +2069,34 @@ public sealed class SchedulerWorker
             ErrorMessage = errorMessage
         };
         UpdateItem(updated);
+    }
+
+    // ── ISchedulerDrainer implementation ──────────────────────────────────────
+
+    /// <inheritdoc/>
+    public bool HasActiveInferences(string containerId)
+    {
+        foreach (var group in _targets.Values)
+        foreach (var lane in group.Lanes.Values)
+        {
+            if (string.Equals(lane.ResidentContainerId, containerId, StringComparison.Ordinal)
+                && Volatile.Read(ref lane.ActiveInferences) > 0)
+                return true;
+        }
+        return false;
+    }
+
+    /// <inheritdoc/>
+    public async Task<bool> DrainContainerAsync(string containerId, TimeSpan timeout, CancellationToken ct)
+    {
+        var deadline = _clock.UtcNow + timeout;
+        while (_clock.UtcNow < deadline)
+        {
+            if (!HasActiveInferences(containerId))
+                return true;
+            await Task.Delay(100, ct).ConfigureAwait(false);
+        }
+        return !HasActiveInferences(containerId);
     }
 
     private sealed class HostOnlyTargetResolver : IModelTargetResolver

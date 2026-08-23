@@ -30,6 +30,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly TimeSpan _remoteHealthPollInterval;
     private readonly HostScriptRuntimeController? _scriptController;
     private readonly AutoBenchmarkService? _autoBenchmark;
+    private readonly ISchedulerDrainer? _schedulerDrainer;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -42,7 +43,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         TimeSpan? remoteHealthTimeout = null,
         TimeSpan? remoteHealthPollInterval = null,
         HostScriptRuntimeController? scriptController = null,
-        AutoBenchmarkService? autoBenchmark = null)
+        AutoBenchmarkService? autoBenchmark = null,
+        ISchedulerDrainer? schedulerDrainer = null)
     {
         _registry = registry;
         _router = router;
@@ -55,6 +57,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
         _scriptController = scriptController;
         _autoBenchmark = autoBenchmark;
+        _schedulerDrainer = schedulerDrainer;
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -1199,6 +1202,25 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             var containers = await controller.ListContainersAsync(ct).ConfigureAwait(false);
             var runningPeerContainer = FindRunningRuntimeContainer(containers, peer);
             if (runningPeerContainer is null) continue; // not running → nothing to stop
+
+            // Drain gate: wait for active inferences on the peer container to finish
+            // before stopping it, so we never kill a container mid-stream.
+            if (_schedulerDrainer is not null && _schedulerDrainer.HasActiveInferences(runningPeerContainer.Id))
+            {
+                _logger.LogInformation(
+                    "Draining active inferences on incompatible container {ContainerId} before stopping",
+                    runningPeerContainer.Id[..Math.Min(12, runningPeerContainer.Id.Length)]);
+
+                var drained = await _schedulerDrainer.DrainContainerAsync(
+                    runningPeerContainer.Id, TimeSpan.FromSeconds(120), ct).ConfigureAwait(false);
+
+                if (!drained)
+                {
+                    _logger.LogWarning(
+                        "Drain timeout for incompatible container {ContainerId} — stopping anyway",
+                        runningPeerContainer.Id[..Math.Min(12, runningPeerContainer.Id.Length)]);
+                }
+            }
 
             _logger.LogInformation(
                 "Stopping incompatible container {ContainerId} ({Image}) — not in allow list of {Requested}",

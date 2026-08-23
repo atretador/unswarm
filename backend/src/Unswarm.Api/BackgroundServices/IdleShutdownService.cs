@@ -70,6 +70,15 @@ public sealed class IdleShutdownService : BackgroundService
 
                     if (container.Uptime > 0 && TimeSpan.FromSeconds(container.Uptime) > idleThreshold)
                     {
+                        // Skip containers with active inferences — don't kill mid-stream.
+                        var drainer = scope.ServiceProvider.GetService<ISchedulerDrainer>();
+                        if (drainer is not null && drainer.HasActiveInferences(container.Id))
+                        {
+                            logStore.Enqueue(LogLevel.Debug, "IdleShutdown",
+                                $"Skipping container {container.Id[..12]} — has active inferences");
+                            continue;
+                        }
+
                         logStore.Enqueue(LogLevel.Info, "IdleShutdown",
                             $"Shutting down idle container {container.Id[..12]} (model: {container.ModelName}, uptime: {container.Uptime}s)");
 
