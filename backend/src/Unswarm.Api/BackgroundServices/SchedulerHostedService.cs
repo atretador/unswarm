@@ -22,11 +22,15 @@ public sealed class SchedulerHostedService : IHostedService
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (_cts is not null)
+        // Idempotent + race-safe: the host may invoke StopAsync more than once
+        // (e.g. explicit stop followed by disposal); cancelling a disposed CTS
+        // would throw ObjectDisposedException and fail host shutdown.
+        var cts = Interlocked.Exchange(ref _cts, null);
+        if (cts is not null)
         {
-            _cts.Cancel();
+            await cts.CancelAsync();
             await _worker.WaitForShutdownAsync();
-            _cts.Dispose();
+            cts.Dispose();
         }
     }
 }

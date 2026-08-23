@@ -633,11 +633,8 @@ public sealed class SchedulerWorker
                     blockedHeads.Add(lane);
             }
 
-            foreach (var lane in lanes)
+            foreach (var lane in OrderLanesForScan(lanes, settings.EnableParallelSlotSkip))
             {
-                if (lane.Pending.Reader.Count == 0)
-                    continue;
-
                 if (!lane.Pending.Reader.TryPeek(out _))
                     continue;
 
@@ -679,6 +676,43 @@ public sealed class SchedulerWorker
 
         return progressed;
     }
+
+    /// <summary>
+    /// Deterministic scan order for lane heads. With parallel slot skip DISABLED,
+    /// resident-continuation lanes come first — their head runs on the still-live
+    /// container without a model switch (legacy BatchDrain slot semantics: drain
+    /// the resident model's queued work before churning containers). With skip
+    /// ENABLED, ordering is purely by oldest head arrival time: lane-hopping is
+    /// exclusively budget-mediated, so residency grants no free priority. The
+    /// arrival tie-break in both modes guarantees that arbitrary lane iteration
+    /// order can never reorder FIFO within a target when several runtimes are
+    /// waiting on an idle machine.
+    /// </summary>
+    private static IEnumerable<RuntimeLane> OrderLanesForScan(
+        List<RuntimeLane> lanes, bool skipEnabled)
+    {
+        var heads = lanes
+            .Where(l => l.Pending.Reader.Count > 0)
+            .Select(l => (Lane: l, Head: l.Pending.Reader.TryPeek(out var h) ? h : null))
+            .Where(x => x.Head is not null)
+            .ToList();
+
+        return skipEnabled
+            ? heads.OrderBy(x => x.Head!.CreatedAt).Select(x => x.Lane)
+            : heads
+                .OrderByDescending(x => IsResidentContinuation(x.Lane, x.Head!))
+                .ThenBy(x => x.Head!.CreatedAt)
+                .Select(x => x.Lane);
+    }
+
+    /// <summary>
+    /// True when the lane's head can be served by its current residency without a
+    /// switch. Stopping a container clears the owning lane's ResidentModel, so a
+    /// non-null match implies the container is still live for this runtime.
+    /// </summary>
+    private static bool IsResidentContinuation(RuntimeLane lane, QueueItem head)
+        => lane.ResidentModel is not null
+           && string.Equals(lane.ResidentModel, head.ModelRequested, StringComparison.Ordinal);
 
     private static List<string> InFlightExcluding(
         Dictionary<string, List<string>> inFlightByTarget,
