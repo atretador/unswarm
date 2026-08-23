@@ -77,11 +77,26 @@ public sealed class QueueItemResponse
     };
 }
 
+public sealed class RuntimeModelChangeResponse
+{
+    public string RuntimeId { get; set; } = "";
+    public string Model { get; set; } = "";
+
+    public static RuntimeModelChangeResponse FromChange(RuntimeModelChange c) => new()
+    {
+        RuntimeId = c.RuntimeId,
+        Model = c.Model
+    };
+}
+
 public sealed class ModelTransitionResponse
 {
     public string Id { get; set; } = "";
-    public string FromModel { get; set; } = "";
+    /// <summary>Primary model being replaced, or null when nothing is stopped/replaced.</summary>
+    public string? FromModel { get; set; }
     public string ToModel { get; set; } = "";
+    /// <summary>All runtimes (with their resident models) this transition stops.</summary>
+    public List<RuntimeModelChangeResponse> Stopping { get; set; } = [];
 
     /// <summary>Registered runtime id whose lane performed this switch.</summary>
     public string? RuntimeId { get; set; }
@@ -95,6 +110,7 @@ public sealed class ModelTransitionResponse
         Id = t.Id,
         FromModel = t.FromModel,
         ToModel = t.ToModel,
+        Stopping = t.Stopping.Select(RuntimeModelChangeResponse.FromChange).ToList(),
         RuntimeId = t.RuntimeId,
         Status = t.Status,
         StartedAt = t.StartedAt,

@@ -1054,6 +1054,35 @@ public sealed class SchedulerWorker
         }
     }
 
+    /// <summary>
+    /// Resolves everything a switch is replacing, for transition reporting.
+    /// The switching lane's own residency is authoritative for <c>FromModel</c>;
+    /// when the lane is fresh (per-runtime lanes start empty), fall back to the
+    /// first sibling lane on this target whose resident runtime will be stopped
+    /// (coexistence-incompatible). Returns every sibling runtime this switch will
+    /// stop. Empty ⇒ nothing is being replaced (cold start or coexistence start).
+    /// </summary>
+    private async Task<List<RuntimeModelChange>> ResolveStoppingSiblingsAsync(RuntimeLane lane, RegisteredRuntime targetRuntime, CancellationToken ct)
+    {
+        var stopping = new List<RuntimeModelChange>();
+        var targetGroup = GetTargetGroup(lane.TargetId);
+        foreach (var sibling in targetGroup.Lanes.Values)
+        {
+            if (ReferenceEquals(sibling, lane) || sibling.ResidentModel is null)
+                continue;
+
+            // Only a live sibling container can be replaced by this switch.
+            if (!targetGroup.RunningContainers.TryGetValue(sibling.RuntimeId, out _))
+                continue;
+
+            var entity = await _containerRegistry!.GetAsync(sibling.RuntimeId, ct).ConfigureAwait(false);
+            if (entity is null || !CoexistencePolicy.IsAllowedToCoexist(targetRuntime, entity))
+                stopping.Add(new RuntimeModelChange(sibling.RuntimeId, sibling.ResidentModel));
+        }
+
+        return stopping;
+    }
+
     private async Task SwitchModelLockedAsync(RuntimeLane lane, string targetModel, RegisteredRuntime targetRuntime, CancellationToken ct)
     {
         // Drain gate: only wait for active inferences to finish when the switch will
@@ -1069,16 +1098,18 @@ public sealed class SchedulerWorker
         }
 
         var transitionId = Guid.NewGuid().ToString("N");
-        var fromModel = lane.ResidentModel ?? "(none)";
+        var stopping = await ResolveStoppingSiblingsAsync(lane, targetRuntime, ct).ConfigureAwait(false);
+        var fromModel = lane.ResidentModel ?? (stopping.Count > 0 ? stopping[0].Model : null);
         var switchStart = _clock.UtcNow;
 
-        Telemetry.UnswarmMetrics.RecordModelSwitch(fromModel, targetModel, lane.TargetId);
+        Telemetry.UnswarmMetrics.RecordModelSwitch(fromModel ?? "(new)", targetModel, lane.TargetId);
 
         var transition = new ModelTransition
         {
             Id = transitionId,
             FromModel = fromModel,
             ToModel = targetModel,
+            Stopping = stopping,
             RuntimeId = lane.RuntimeId,
             Status = "switching",
             StartedAt = _clock.UtcNow
@@ -1086,7 +1117,9 @@ public sealed class SchedulerWorker
         _activeTransitions[transitionId] = transition;
 
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
-            $"Switching model on {lane.TargetId} (runtime {lane.RuntimeId}): {fromModel} -> {targetModel}");
+            fromModel is null
+                ? $"Starting model {targetModel} on {lane.TargetId} (runtime {lane.RuntimeId})"
+                : $"Switching model on {lane.TargetId} (runtime {lane.RuntimeId}): {fromModel} -> {targetModel}");
 
         try
         {
@@ -1112,7 +1145,9 @@ public sealed class SchedulerWorker
             if (targetGroup.RunningContainers.TryGetValue(lane.RuntimeId, out var alreadyRunning))
             {
                 _logStore.Enqueue(LogLevel.Info, "Scheduler",
-                    $"Instant switch on {lane.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
+                    fromModel is null
+                        ? $"Instant switch on {lane.TargetId}: starting {targetModel} (container {alreadyRunning.ContainerName} already running)"
+                        : $"Instant switch on {lane.TargetId}: {fromModel} -> {targetModel} (container {alreadyRunning.ContainerName} already running)");
 
                 lane.ResidentModel = targetModel;
                 lane.ResidentContainerId = alreadyRunning.ContainerId;
