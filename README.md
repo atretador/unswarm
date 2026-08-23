@@ -30,6 +30,17 @@ Not all models need to be exclusive. Unswarm supports **model groups** that cont
 
 This lets you define which models compete for resources and which can coexist, matching your actual hardware constraints.
 
+### Conversation Affinity
+
+Agentic workloads are chatty: an agent harness doing tool calls sends a new request for the same model every few seconds. Without protection, each gap between tool calls looks idle — so the scheduler switches to another queued model, and the next tool call pays the full model-load cost again. This back-and-forth thrash can repeat on *every* tool call.
+
+**Conversation affinity** fixes this by recognizing that consecutive requests belong to the same conversation and keeping their runtime reserved across the gaps:
+
+- Requests are fingerprinted into a **conversation key**: explicitly via the `user` request field or an `X-Session-Id` header (`sid:` prefix), otherwise by hashing the first messages of the request body.
+- After a request completes, its conversation stays **hot** for a configurable dwell window (default 45s). While hot, the runtime hosting it is treated as in-flight: incompatible models queue up instead of evicting it mid-conversation.
+- The queue view shows held requests with a live countdown ("held by conversation · 32s") and a **skip button** to release the hold immediately if you want the runtime freed now.
+- Off by default. Enable it in **Settings → Scheduler → Conversation affinity**, and tune the hold window there.
+
 ### Trade-offs
 
 Model switching isn't free. There are inherent costs to this approach:
@@ -101,6 +112,7 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 - **OpenAI-Compatible Proxy** — Backend exposes `/v1/chat/completions` that routes requests to the correct agent and container, enabling a unified API endpoint for all your models.
 - **Automatic Model Switching** — Scheduler loads and unloads models on demand, letting you serve many models from limited VRAM with a single API endpoint.
 - **Model Groups** — Define exclusive groups (one model at a time) and co-located groups (models that share VRAM) to match your hardware constraints.
+- **Conversation Affinity** — Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls.
 - **Inference Queue** — Bounded request queue with scheduler for managing concurrent inference workloads across the fleet.
 - **Benchmarks** — Run benchmark prompts against models and track performance history (latency, tokens generated).
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
@@ -196,6 +208,7 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 | `POST /v1/chat/completions` | OpenAI-compatible chat completions proxy |
 | `POST /v1/completions` | OpenAI-compatible completions proxy |
 | `GET /api/queue/snapshot` | Get inference queue status |
+| `POST /api/queue/targets/{id}/hold/release` | Release conversation-affinity holds on a target's queue |
 | **Benchmarks & Prompts** | |
 | `GET /api/benchmarks` | List benchmark history |
 | `POST /api/benchmarks` | Run a benchmark |
