@@ -61,6 +61,21 @@ public sealed class SchedulerWorker : ISchedulerDrainer
     private readonly ConcurrentDictionary<string, RegisteredRuntime> _runtimeCache = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// Last recorded scheduler activity (request enqueue, start, or completion) per
+    /// registered runtime id. This is the anchor for idle shutdown: "idle" means no
+    /// activity since this timestamp, not "running for IdleTimeout seconds since
+    /// container creation". Updated by the dispatcher, the scheduler loop, and the
+    /// lane runners; read from elsewhere without locking.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, DateTime> _lastActivityByRuntime = new(StringComparer.Ordinal);
+
+    /// <summary>Records activity for <paramref name="runtimeId"/> (thread-safe).</summary>
+    private void RecordRuntimeActivity(string runtimeId)
+    {
+        _lastActivityByRuntime[runtimeId] = _clock.UtcNow.UtcDateTime;
+    }
+
+    /// <summary>
     /// Shared wake signal for the scheduler loop. Written on every enqueue and every
     /// inference completion; the scheduler drains it and re-scans all lanes.
     /// </summary>
@@ -671,6 +686,8 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         var routed = queueItem with { TargetId = targetId, RuntimeId = runtime.Id };
         _allItems[request.Id] = routed;
 
+        // Enqueue is activity: the runtime's serving unit is now in demand.
+        RecordRuntimeActivity(lane.RuntimeId);
         await lane.Pending.Writer.WriteAsync(routed, ct).ConfigureAwait(false);
         WakeScheduler();
     }
@@ -982,6 +999,9 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             return false;
         }
 
+        // Start is activity: inference on this runtime's serving unit begins now.
+        RecordRuntimeActivity(lane.RuntimeId);
+
         if (consumeSkip)
             Interlocked.Increment(ref lane.SkipsUsed);
 
@@ -1038,6 +1058,9 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         finally
         {
             Interlocked.Decrement(ref lane.ActiveInferences);
+
+            // Completion is activity: the runtime's serving unit just did work.
+            RecordRuntimeActivity(lane.RuntimeId);
 
             // Conversation-affinity tracking: record terminal completion of any
             // request carrying a conversation key on the serving lane's target —
@@ -2104,6 +2127,124 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             await Task.Delay(100, ct).ConfigureAwait(false);
         }
         return !HasActiveInferences(containerId);
+    }
+
+    /// <inheritdoc/>
+    public DateTime? GetLastActivityUtc(string runtimeId) =>
+        _lastActivityByRuntime.TryGetValue(runtimeId, out var utc) ? utc : null;
+
+    /// <inheritdoc/>
+    public bool HasPendingWork(string runtimeId)
+    {
+        foreach (var group in _targets.Values)
+        {
+            if (!group.Lanes.TryGetValue(runtimeId, out var lane))
+                continue;
+
+            // In-flight work on any of the runtime's lanes.
+            if (Volatile.Read(ref lane.ActiveInferences) > 0)
+                return true;
+
+            // Queued work: the completion-decrement → next-start-increment window
+            // and dwell/coexistence-blocked heads both leave Pending non-empty
+            // while ActiveInferences may be zero.
+            if (lane.Pending.Reader.Count > 0)
+                return true;
+        }
+
+        // Hot conversation hold: a conversation served by this runtime within the
+        // dwell window means an agent/tool-call loop may be between steps — both
+        // in-flight and queue can be empty while the session is still live.
+        var dwell = TimeSpan.FromSeconds(Math.Max(1, _settings.ConversationDwellSeconds));
+        var now = DateTime.UtcNow;
+        foreach (var group in _targets.Values)
+        foreach (var activity in group.RecentConversations.Values)
+        {
+            if (string.Equals(activity.RuntimeId, runtimeId, StringComparison.Ordinal)
+                && now - activity.LastSeenUtc <= dwell)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <inheritdoc/>
+    public async Task<IdleStopResult> StopIdleRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct)
+    {
+        // Locate the runtime's lanes and owning target. No lane anywhere → the
+        // scheduler never routed traffic to this runtime; the caller may stop
+        // the observed unit directly (legacy semantics).
+        List<RuntimeLane>? lanes = null;
+        string? targetId = null;
+        foreach (var group in _targets.Values)
+        {
+            if (!group.Lanes.TryGetValue(runtimeId, out var lane))
+                continue;
+            (lanes ??= []).Add(lane);
+            targetId ??= group.TargetId;
+        }
+
+        if (lanes is null || targetId is null)
+            return IdleStopResult.NotManaged;
+
+        // Busy guard — refuse before touching anything, no matter how idle the
+        // activity anchor says the runtime is.
+        if (HasPendingWork(runtimeId))
+            return IdleStopResult.Busy;
+
+        var isScript = containerId is not null
+            && containerId.StartsWith("script:", StringComparison.Ordinal);
+
+        // Drain racing in-flight work that slipped in after the caller's idle
+        // check (same gate as StopIncompatibleContainersAsync; scripts are
+        // guarded by HasPendingWork instead, mirroring the switch path).
+        if (!isScript && !string.IsNullOrEmpty(containerId))
+        {
+            var settings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+            if (!await DrainContainerAsync(containerId!, TimeSpan.FromSeconds(settings.RequestTimeout), ct).ConfigureAwait(false))
+            {
+                _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                    $"Idle stop: drain timeout for {containerId![..Math.Min(12, containerId.Length)]} — stopping anyway");
+            }
+        }
+
+        // Re-check after draining: work may have raced in during the wait.
+        if (HasPendingWork(runtimeId))
+            return IdleStopResult.Busy;
+
+        if (isScript)
+        {
+            await StopScriptRuntimeAsync(targetId, runtimeId, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            var controller = _router.GetController(targetId);
+            await controller.StopContainerAsync(containerId!, ct).ConfigureAwait(false);
+        }
+
+        // Clear stale residency on every lane of this runtime so the next request
+        // re-runs the switch instead of cold-starting against a dead unit (the
+        // raw docker-stop path skipped this and caused eviction cascades).
+        foreach (var lane in lanes)
+        {
+            var residentMatches = isScript
+                ? string.Equals(lane.ResidentContainerId, $"script:{runtimeId}", StringComparison.Ordinal)
+                : string.Equals(lane.ResidentContainerId, containerId, StringComparison.Ordinal);
+            if (residentMatches)
+            {
+                lane.ResidentModel = null;
+                lane.ResidentContainerId = null;
+            }
+        }
+
+        // Drop the target's tracked running entry so coexistence/reconcile state
+        // stays accurate after the stop.
+        if (_targets.TryGetValue(targetId, out var ownerGroup))
+            ownerGroup.RunningContainers.TryRemove(runtimeId, out _);
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Idle stop completed for runtime {runtimeId} on {targetId}");
+        return IdleStopResult.Stopped;
     }
 
     private sealed class HostOnlyTargetResolver : IModelTargetResolver
