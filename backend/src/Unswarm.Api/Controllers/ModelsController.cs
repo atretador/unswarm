@@ -35,12 +35,12 @@ public sealed class ModelsController : ControllerBase
             .Select(m => m.SourceRuntimeId!)
             .Distinct()
             .ToList();
-        var runtimeNameMap = new Dictionary<string, string>();
+        var runtimeInfoMap = new Dictionary<string, (string Name, string Agent)>();
         foreach (var rid in runtimeIds)
         {
             var rt = await _containerRegistry.GetAsync(rid, ct).ConfigureAwait(false);
             if (rt is not null)
-                runtimeNameMap[rid] = string.IsNullOrEmpty(rt.DisplayName) ? rt.Image : rt.DisplayName;
+                runtimeInfoMap[rid] = (string.IsNullOrEmpty(rt.DisplayName) ? rt.Image : rt.DisplayName, rt.Agent);
         }
 
         var responses = new List<ModelResponse>(models.Count);
@@ -48,8 +48,11 @@ public sealed class ModelsController : ControllerBase
         {
             var last = await _benchmarks.GetLatestForModelAsync(model.Id, ct).ConfigureAwait(false);
             var response = ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last));
-            if (!string.IsNullOrEmpty(model.SourceRuntimeId) && runtimeNameMap.TryGetValue(model.SourceRuntimeId, out var rtName))
-                response.SourceRuntimeName = rtName;
+            if (!string.IsNullOrEmpty(model.SourceRuntimeId) && runtimeInfoMap.TryGetValue(model.SourceRuntimeId, out var rtInfo))
+            {
+                response.SourceRuntimeName = rtInfo.Name;
+                response.SourceRuntimeAgent = rtInfo.Agent;
+            }
             responses.Add(response);
         }
 

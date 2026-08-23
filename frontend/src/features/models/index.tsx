@@ -352,6 +352,7 @@ export default function Models() {
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("managed");
   const [providerFilter, setProviderFilter] = useState("");
+  const [agentFilter, setAgentFilter] = useState("");
   const {
     data: models,
     isLoading,
@@ -379,6 +380,12 @@ export default function Models() {
     return names as string[];
   }, [cloudModels]);
 
+  const uniqueAgents = useMemo(() => {
+    if (managedModels.length === 0) return [];
+    const names = [...new Set(managedModels.map((m) => m.sourceRuntimeAgent).filter(Boolean))];
+    return names as string[];
+  }, [managedModels]);
+
   const filteredModels = useMemo(() => {
     let result = activeModels;
     const q = filter.trim().toLowerCase();
@@ -401,8 +408,11 @@ export default function Models() {
     if (activeTab === "cloud" && providerFilter) {
       result = result.filter((m) => m.providerName === providerFilter);
     }
+    if (activeTab === "managed" && agentFilter) {
+      result = result.filter((m) => m.sourceRuntimeAgent === agentFilter);
+    }
     return result;
-  }, [activeModels, filter, activeTab, providerFilter]);
+  }, [activeModels, filter, activeTab, providerFilter, agentFilter]);
 
   if (isLoading) {
     return (
@@ -463,7 +473,7 @@ export default function Models() {
                 id={`models-tab-${tab.key}`}
                 aria-selected={activeTab === tab.key}
                 aria-controls="models-panel"
-                onClick={() => { setActiveTab(tab.key); setFilter(""); setProviderFilter(""); }}
+                onClick={() => { setActiveTab(tab.key); setFilter(""); setProviderFilter(""); setAgentFilter(""); }}
                 className={`
                   flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors
                   border-b-2 -mb-px
@@ -504,8 +514,8 @@ export default function Models() {
         </div>
       )}
 
-      {/* Provider filter (Cloud tab only, when 2+ providers) */}
-      {activeTab === "cloud" && uniqueProviders.length >= 2 && (
+      {/* Provider filter (Cloud tab) */}
+      {activeTab === "cloud" && uniqueProviders.length > 0 && (
         <div className="flex items-center gap-2">
           <label className="text-xs text-[var(--color-text-muted)]">Provider:</label>
           <select
@@ -516,6 +526,23 @@ export default function Models() {
             <option value="">All providers</option>
             {uniqueProviders.map((p) => (
               <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {/* Agent filter (Managed tab) */}
+      {activeTab === "managed" && uniqueAgents.length > 0 && (
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-[var(--color-text-muted)]">Agent:</label>
+          <select
+            value={agentFilter}
+            onChange={(e) => setAgentFilter(e.target.value)}
+            className="h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-focus-ring)]"
+          >
+            <option value="">All agents</option>
+            {uniqueAgents.map((a) => (
+              <option key={a} value={a}>{a}</option>
             ))}
           </select>
         </div>

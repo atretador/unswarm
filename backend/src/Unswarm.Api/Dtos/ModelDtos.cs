@@ -30,6 +30,7 @@ public sealed class ModelResponse
     public string ContainerImage { get; set; } = "";
     public string? SourceRuntimeId { get; set; }
     public string? SourceRuntimeName { get; set; }
+    public string? SourceRuntimeAgent { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string Origin { get; set; } = "fleet";

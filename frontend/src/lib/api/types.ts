@@ -51,6 +51,7 @@ export interface Model {
   containerImage: string;
   sourceRuntimeId: string | null;
   sourceRuntimeName: string | null;
+  sourceRuntimeAgent: string | null;
   createdAt: string;
   updatedAt: string;
   /** Origin of the model: "fleet" for self-hosted, "cloud" for third-party API. */
@@ -419,4 +420,56 @@ export interface CloudProviderUpdateInput {
 
 export interface FetchModelsResult {
   modelIds: string[];
+}
+
+// ─── Metrics ──────────────────────────────────────────────────────
+
+export interface MetricsTimeBucket {
+  bucketStart: string; // ISO DateTimeOffset
+  bucketEnd: string;
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  avgLatencyMs: number;
+}
+
+export interface ModelUsageSummary {
+  provider: string;
+  model: string;
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  avgLatencyMs: number;
+}
+
+export interface ProviderUsageSummary {
+  provider: string;
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+}
+
+export interface UsageTotalsResponse {
+  from: string;
+  to: string;
+  totalRequests: number;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+  totalCachedTokens: number;
+  avgLatencyMs: number;
+}
+
+export interface UsageRecordResponse {
+  id: string;
+  timestamp: string;
+  provider: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  isStreaming: boolean;
+  elapsedMs: number;
 }

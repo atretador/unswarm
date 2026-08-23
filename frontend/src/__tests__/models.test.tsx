@@ -95,6 +95,7 @@ describe("Models", () => {
         containerImage: "test/sparse",
         sourceRuntimeId: null,
         sourceRuntimeName: null,
+        sourceRuntimeAgent: null,
         origin: "fleet",
         providerName: null,
         createdAt: new Date().toISOString(),
@@ -159,6 +160,7 @@ describe("Models", () => {
         containerImage: "test/zero",
         sourceRuntimeId: null,
         sourceRuntimeName: null,
+        sourceRuntimeAgent: null,
         origin: "fleet",
         providerName: null,
         createdAt: new Date().toISOString(),
@@ -381,9 +383,9 @@ describe("Models", () => {
       expect(screen.getByText("gpt-4o")).toBeInTheDocument();
     });
 
-    // Provider badges visible
+    // Provider badges visible (also appears in the filter dropdown)
     expect(screen.getAllByText("openai").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("anthropic")).toBeInTheDocument();
+    expect(screen.getAllByText("anthropic").length).toBeGreaterThanOrEqual(2);
   });
 
   it("search filters within the active tab", async () => {
