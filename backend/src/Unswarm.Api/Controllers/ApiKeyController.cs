@@ -18,8 +18,13 @@ namespace Unswarm.Api.Controllers;
 public sealed class ApiKeyController : ControllerBase
 {
     private readonly IApiKeyStore _keys;
+    private readonly ICloudProviderStore _cloudProviders;
 
-    public ApiKeyController(IApiKeyStore keys) => _keys = keys;
+    public ApiKeyController(IApiKeyStore keys, ICloudProviderStore cloudProviders)
+    {
+        _keys = keys;
+        _cloudProviders = cloudProviders;
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateApiKeyRequest request, CancellationToken ct)
@@ -84,6 +89,45 @@ public sealed class ApiKeyController : ControllerBase
         {
             return NotFound(new { error = "API key not found." });
         }
+    }
+
+    /// <summary>
+    /// Parsed per-key access restrictions. Empty arrays = unrestricted.
+    /// </summary>
+    [HttpGet("{id}/access")]
+    public async Task<IActionResult> GetAccess(string id, CancellationToken ct)
+    {
+        var access = await _keys.GetAccessAsync(id, ct);
+        return access is null
+            ? NotFound(new { error = "API key not found." })
+            : Ok(new KeyAccessDto { Providers = [.. access.Providers], Models = [.. access.Models] });
+    }
+
+    /// <summary>
+    /// Validates and saves per-key access restrictions. Listed cloud providers
+    /// must exist (400 otherwise); models are accepted leniently since both cloud
+    /// model lists and local runtime mappings are dynamic.
+    /// </summary>
+    [HttpPut("{id}/access")]
+    public async Task<IActionResult> SaveAccess(string id, [FromBody] KeyAccessDto request, CancellationToken ct)
+    {
+        var providers = (request.Providers ?? []).Select(p => p.Trim()).Where(p => p.Length > 0).Distinct().ToList();
+        var models = (request.Models ?? []).Select(m => m.Trim()).Where(m => m.Length > 0).Distinct().ToList();
+
+        if (providers.Count > 200 || models.Count > 500)
+            return BadRequest(new { error = "Too many entries (max 200 providers, 500 models)." });
+
+        // Strict validation: every listed provider must be a configured cloud provider.
+        var configuredProviders = (await _cloudProviders.ListAsync(ct)).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unknown = providers.Where(p => !configuredProviders.Contains(p)).ToList();
+        if (unknown.Count > 0)
+            return BadRequest(new { error = $"Unknown provider(s): {string.Join(", ", unknown)}" });
+
+        var saved = await _keys.SaveAccessAsync(id, new KeyAccess { Providers = providers, Models = models }, ct);
+        if (saved is null)
+            return NotFound(new { error = "API key not found." });
+
+        return Ok(new KeyAccessDto { Providers = [.. saved.Providers], Models = [.. saved.Models] });
     }
 
     private static ApiKeyCreateResponse Map(CreateApiKeyResponse r) => new()

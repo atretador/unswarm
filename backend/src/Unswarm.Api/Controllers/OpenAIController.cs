@@ -25,6 +25,7 @@ public sealed class OpenAIController : ControllerBase
     private readonly ICloudForwardingService _cloudForwarding;
     private readonly ICloudProviderStore _cloudProviderStore;
     private readonly IUsageRecorder _usageRecorder;
+    private readonly IApiKeyAccessService _apiKeyAccess;
 
     public OpenAIController(
         IModelRegistry registry,
@@ -33,7 +34,8 @@ public sealed class OpenAIController : ControllerBase
         ILogStore logStore,
         ICloudForwardingService cloudForwarding,
         ICloudProviderStore cloudProviderStore,
-        IUsageRecorder usageRecorder)
+        IUsageRecorder usageRecorder,
+        IApiKeyAccessService apiKeyAccess)
     {
         _registry = registry;
         _scheduler = scheduler;
@@ -42,6 +44,7 @@ public sealed class OpenAIController : ControllerBase
         _cloudForwarding = cloudForwarding;
         _cloudProviderStore = cloudProviderStore;
         _usageRecorder = usageRecorder;
+        _apiKeyAccess = apiKeyAccess;
     }
 
     [HttpGet("models")]
@@ -121,6 +124,25 @@ public sealed class OpenAIController : ControllerBase
         catch
         {
             return BadRequest(new { error = "Invalid JSON: 'model' field required" });
+        }
+
+        // Per-key model access control: enforced here (not in the middleware)
+        // because only this controller parses the requested model id. Key-less
+        // callers (cookie-authenticated admin) are unrestricted.
+        if (apiKeyId is not null && !await _apiKeyAccess.IsModelAllowedAsync(apiKeyId, modelName, ct))
+        {
+            _logStore.Enqueue(LogLevel.Warn, "proxy",
+                $"Access denied: key={apiKeyName ?? apiKeyId} requested model={modelName}");
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                error = new
+                {
+                    message = $"API key does not have access to model '{modelName}'.",
+                    type = "invalid_request_error",
+                    param = "model",
+                    code = "model_access_denied"
+                }
+            });
         }
 
         // Cloud provider models bypass the local queue/scheduler entirely

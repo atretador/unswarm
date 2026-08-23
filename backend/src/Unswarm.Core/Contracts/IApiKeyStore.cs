@@ -54,4 +54,16 @@ public interface IApiKeyStore
     /// first-use races resolve to exactly one winner) and allows that claim.
     /// </summary>
     Task<AgentKeyBindingResult> ResolveAgentBindingAsync(string keyId, string claimedAgentName, CancellationToken ct = default);
+
+    /// <summary>
+    /// Reads the parsed per-key access restrictions for <paramref name="keyId"/>,
+    /// or null when the key does not exist. Missing/default JSON means unrestricted.
+    /// </summary>
+    Task<KeyAccess?> GetAccessAsync(string keyId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Persists the parsed per-key access restrictions for <paramref name="keyId"/>.
+    /// Returns the stored value, or null when the key does not exist.
+    /// </summary>
+    Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default);
 }

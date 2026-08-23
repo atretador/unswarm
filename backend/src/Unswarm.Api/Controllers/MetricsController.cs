@@ -470,6 +470,67 @@ public sealed class MetricsController : ControllerBase
     }
 
     /// <summary>
+    /// Returns aggregated usage for a single API key over a time range:
+    /// overall totals plus a per-(provider, model) breakdown.
+    /// </summary>
+    /// <param name="keyId">The ApiKeyId stamped on usage records.</param>
+    /// <param name="from">Start of time range (ISO 8601). Defaults to 30 days ago.</param>
+    /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
+    /// <param name="ct">Cancellation token.</param>
+    [HttpGet("api-keys/{keyId}/usage")]
+    public async Task<IActionResult> GetApiKeyUsageDetail(
+        string keyId,
+        [FromQuery] DateTimeOffset? from = null,
+        [FromQuery] DateTimeOffset? to = null,
+        CancellationToken ct = default)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var effectiveFrom = from ?? now.AddDays(-30);
+        var effectiveTo = to ?? now;
+
+        var fromTicks = effectiveFrom.UtcTicks;
+        var toTicks = effectiveTo.UtcTicks;
+
+        var records = await _db.UsageRecords
+            .Where(u => u.ApiKeyId == keyId
+                        && u.TimestampTicks >= fromTicks
+                        && u.TimestampTicks <= toTicks)
+            .Select(u => new
+            {
+                u.Provider,
+                u.Model,
+                u.PromptTokens,
+                u.CompletionTokens,
+                u.CachedTokens
+            })
+            .ToListAsync(ct);
+
+        return Ok(new KeyUsageResponse
+        {
+            Totals = new KeyUsageTotals
+            {
+                RequestCount = records.Count,
+                PromptTokens = records.Sum(r => (long)r.PromptTokens),
+                CompletionTokens = records.Sum(r => (long)r.CompletionTokens),
+                CachedTokens = records.Sum(r => (long)r.CachedTokens)
+            },
+            Models = records
+                .GroupBy(r => new { r.Provider, r.Model })
+                .Select(g => new KeyUsageModelRow
+                {
+                    Provider = g.Key.Provider,
+                    Model = g.Key.Model,
+                    RequestCount = g.Count(),
+                    PromptTokens = g.Sum(r => (long)r.PromptTokens),
+                    CompletionTokens = g.Sum(r => (long)r.CompletionTokens),
+                    CachedTokens = g.Sum(r => (long)r.CachedTokens)
+                })
+                .OrderByDescending(m => m.CompletionTokens)
+                .ToList()
+        });
+    }
+
+    /// <summary>
     /// Returns the latency distribution over a time range bucketed into fixed
     /// bands: &lt;500ms, 500ms-1s, 1-2s, 2-5s, 5-10s, &gt;10s.
     /// </summary>

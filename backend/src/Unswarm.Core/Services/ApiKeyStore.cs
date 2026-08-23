@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
@@ -153,6 +154,47 @@ public sealed class ApiKeyStore : IApiKeyStore
         // Active OR retired: a scope is enforced as soon as any key exists, so
         // revoking a key cannot reopen the surface.
         return await db.ApiKeys.AnyAsync(k => k.Scope == scope, ct);
+    }
+
+    public async Task<KeyAccess?> GetAccessAsync(string keyId, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var json = await db.ApiKeys
+            .Where(k => k.Id == keyId)
+            .Select(k => k.AccessJson)
+            .FirstOrDefaultAsync(ct);
+        return json is null ? null : DeserializeAccess(json);
+    }
+
+    public async Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.ApiKeys.FindAsync([keyId], ct);
+        if (entity is null)
+            return null;
+
+        entity.AccessJson = SerializeAccess(access);
+        await db.SaveChangesAsync(ct);
+        return access;
+    }
+
+    /// <summary>camelCase wire shape, matching the frontend contract.</summary>
+    internal static string SerializeAccess(KeyAccess access) => JsonSerializer.Serialize(
+        access,
+        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+    /// <summary>Lenient read: case-insensitive properties; malformed JSON → unrestricted.</summary>
+    internal static KeyAccess DeserializeAccess(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<KeyAccess>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new KeyAccess();
+        }
+        catch (JsonException)
+        {
+            return new KeyAccess();
+        }
     }
 
     private static string GenerateSecret(ApiKeyScope scope)

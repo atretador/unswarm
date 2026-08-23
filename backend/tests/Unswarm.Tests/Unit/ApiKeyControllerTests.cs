@@ -12,7 +12,25 @@ public sealed class ApiKeyControllerTests
     private static IApiKeyStore NewStore() => TestApiKeyStore.Create();
 
     private static ApiKeyController CreateController(IApiKeyStore? store = null)
-        => new(store ?? NewStore());
+        => new(store ?? NewStore(), new StubCloudProviderStore());
+
+    /// <summary>Minimal ICloudProviderStore for controller tests: one configured provider.</summary>
+    private sealed class StubCloudProviderStore : ICloudProviderStore
+    {
+        public Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default) => Task.CompletedTask;
+        public Task UpdateAsync(string id, string baseUrl, string? apiKeyPlaintext, string? apiKeyHint, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<CloudProviderListItem>> ListAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<CloudProviderListItem>>([
+                new CloudProviderListItem { Id = "cp-1", Name = "openai" }
+            ]);
+        public Task<CloudProviderReadItem?> GetAsync(string id, CancellationToken ct = default) => Task.FromResult<CloudProviderReadItem?>(null);
+        public Task<bool> DeleteAsync(string id, CancellationToken ct = default) => Task.FromResult(false);
+        public Task<string?> GetApiKeyAsync(string id, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<CloudProviderReadItem?> GetByNameAsync(string name, CancellationToken ct = default) => Task.FromResult<CloudProviderReadItem?>(null);
+        public Task<bool> NameExistsAsync(string name, CancellationToken ct = default) => Task.FromResult(false);
+        public Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

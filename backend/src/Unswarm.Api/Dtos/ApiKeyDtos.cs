@@ -49,3 +49,29 @@ public sealed class ApiKeyListItem
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
 }
+
+/// <summary>
+/// Per-key model access restrictions. Empty arrays mean unrestricted access.
+/// </summary>
+public sealed class KeyAccessDto
+{
+    /// <summary>Allowed cloud provider names (and local runtime display names).</summary>
+    public List<string> Providers { get; set; } = [];
+
+    /// <summary>Allowed exact model ids ("cloud/&lt;provider&gt;/&lt;model&gt;" or local model names).</summary>
+    public List<string> Models { get; set; } = [];
+}
+
+/// <summary>
+/// One entry of the provider/model catalog used to configure key access.
+/// </summary>
+public sealed class ProviderModelCatalogItem
+{
+    public string Name { get; set; } = string.Empty;
+
+    /// <summary>"cloud" (CloudProviderEntity) or "local" (registered runtime).</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>Model ids this provider/runtime can serve.</summary>
+    public List<string> Models { get; set; } = [];
+}

@@ -103,6 +103,39 @@ public sealed class UsageTotalsResponse
 }
 
 /// <summary>
+/// Per-key aggregated usage totals over a time range.
+/// </summary>
+public sealed class KeyUsageTotals
+{
+    public int RequestCount { get; set; }
+    public long PromptTokens { get; set; }
+    public long CompletionTokens { get; set; }
+    public long CachedTokens { get; set; }
+}
+
+/// <summary>
+/// Per-model row of a single key's aggregated usage.
+/// </summary>
+public sealed class KeyUsageModelRow
+{
+    public string Model { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public int RequestCount { get; set; }
+    public long PromptTokens { get; set; }
+    public long CompletionTokens { get; set; }
+    public long CachedTokens { get; set; }
+}
+
+/// <summary>
+/// Response for GET /api/metrics/api-keys/{keyId}/usage.
+/// </summary>
+public sealed class KeyUsageResponse
+{
+    public KeyUsageTotals Totals { get; set; } = new();
+    public List<KeyUsageModelRow> Models { get; set; } = [];
+}
+
+/// <summary>
 /// A single raw usage record for the detail endpoint.
 /// </summary>
 public sealed class UsageRecordResponse

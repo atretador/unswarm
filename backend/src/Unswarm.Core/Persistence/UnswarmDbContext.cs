@@ -211,6 +211,12 @@ public sealed class ApiKeyEntity
     public string? BoundAgentName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
+
+    /// <summary>
+    /// Per-key model access restrictions as JSON: {"providers":[...],"models":[...]}.
+    /// Both arrays empty (or "{}"-shaped defaults) mean unrestricted access.
+    /// </summary>
+    public string AccessJson { get; set; } = "{}";
 }
 
 /// <summary>
@@ -389,6 +395,8 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.Property(k => k.KeyPrefix).IsRequired();
             e.HasIndex(k => k.Scope);
             e.HasIndex(k => k.IsActive);
+            // DB-level default backfills existing rows when the column is added.
+            e.Property(k => k.AccessJson).IsRequired().HasDefaultValue("{}").HasMaxLength(8192);
         });
 
         modelBuilder.Entity<CloudProviderEntity>(e =>

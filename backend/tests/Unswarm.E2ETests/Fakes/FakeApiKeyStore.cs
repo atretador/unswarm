@@ -110,4 +110,13 @@ public sealed class FakeApiKeyStore : IApiKeyStore
 
     public Task<AgentKeyBindingResult> ResolveAgentBindingAsync(string keyId, string claimedAgentName, CancellationToken ct = default)
         => Task.FromResult(AgentKeyBindingResult.Allowed);
+
+    public Task<KeyAccess?> GetAccessAsync(string keyId, CancellationToken ct = default)
+    {
+        var entity = _bySecret.Values.FirstOrDefault(e => e.Id == keyId);
+        return Task.FromResult(entity is null ? null : new KeyAccess());
+    }
+
+    public Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default)
+        => Task.FromResult(_bySecret.Values.Any(e => e.Id == keyId) ? access : null);
 }

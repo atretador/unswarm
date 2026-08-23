@@ -155,6 +155,8 @@ builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
 builder.Services.AddScoped<IUsageRecorder, UsageRecorder>();
+// Per-key model access control for the /v1 inference surface.
+builder.Services.AddScoped<IApiKeyAccessService, ApiKeyAccessService>();
 // Singleton: usage records are fanned out to /ws/metrics live-tail subscribers
 // from UsageRecorder's throwaway scopes.
 builder.Services.AddSingleton<IUsageLiveTailBroadcaster, UsageLiveTailBroadcaster>();

@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot } from "lucide-react";
+import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot, SlidersHorizontal } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { Card, Skeleton, Button, Badge, EmptyState, Input, ConfirmDialog } from "../../components/ui";
 import type { ApiKeyCreateResponse, ApiKeyItem } from "../../lib/api/types";
+import { ManageKeyModal } from "./manage-key-modal";
 
 // ─── Copy-to-clipboard helper ──────────────────────────────────────────
 
@@ -184,6 +185,7 @@ function KeyRow({
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [revokeError, setRevokeError] = useState<string | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState<ApiKeyItem | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const revokeMutation = useMutation({
     mutationFn: () => client.revokeApiKey(id),
@@ -254,6 +256,15 @@ function KeyRow({
             type="button"
             variant="ghost"
             size="sm"
+            onClick={() => setManageOpen(true)}
+            aria-label={`Manage ${name}`}
+          >
+            <SlidersHorizontal className="size-3.5" /> Manage
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
             onClick={handleRotate}
             loading={rotating}
             aria-label={`Rotate ${name}`}
@@ -315,6 +326,12 @@ function KeyRow({
           if (confirmRevoke) revokeMutation.mutate();
         }}
         onCancel={() => setConfirmRevoke(null)}
+      />
+
+      <ManageKeyModal
+        open={manageOpen}
+        onOpenChange={setManageOpen}
+        apiKey={{ id, name, keyPrefix, scope, isActive, lastUsedAt, createdAt }}
       />
     </div>
   );

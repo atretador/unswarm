@@ -405,6 +405,42 @@ export interface ApiKeyCreateResponse extends ApiKeyItem {
   secret: string;
 }
 
+// ─── API-key access control (provider/model allow-lists) ───────────
+
+/** One entry of GET /api/provider-model-catalog. */
+export interface ProviderModelCatalogEntry {
+  name: string;
+  kind: "cloud" | "local";
+  models: string[];
+}
+
+/**
+ * Per-key access grants, saved via PUT /api/apikeys/{id}/access.
+ * Empty `providers` + empty `models` = unrestricted (full access).
+ */
+export interface ApiKeyAccess {
+  providers: string[];
+  models: string[];
+}
+
+/** Aggregate usage for a single key over a time window. */
+export interface ApiKeyUsageResponse {
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  streamingRequests?: number;
+  /** Per-model breakdown; optional so partial backends degrade gracefully. */
+  models?: Array<{
+    model: string;
+    provider?: string;
+    requestCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  }>;
+}
+
 // ─── Cloud Providers ──────────────────────────────────────────────
 
 export interface CloudProvider {
