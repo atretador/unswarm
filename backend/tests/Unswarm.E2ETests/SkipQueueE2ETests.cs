@@ -117,6 +117,17 @@ public sealed class SkipQueueE2ETests
         });
 
         var postA2 = client.PostChatCompletionAsync("model-a");
+
+        // Observe A2 waiting BEFORE posting B: server-side arrival order of
+        // concurrent POSTs is undefined, and if B were scheduled while lane A
+        // still had no pending head, B would start as plain coexistence (not a
+        // bypass) and the asserted state could never occur.
+        await Eventually.UntilAsync(async () =>
+        {
+            var snap = await control.GetSnapshotAsync();
+            return TestClient.AnyItem(snap, "waiting", i => TestClient.ModelOf(i) == "model-a");
+        });
+
         var postB = client.PostChatCompletionAsync("model-b");
 
         // Without skip, model-b may not bypass the blocked earlier lane — this
