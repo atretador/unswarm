@@ -327,6 +327,10 @@ export interface Settings {
   enableConversationAffinity: boolean;
   /** How long a conversation keeps its hold after its last request (seconds). */
   conversationDwellSeconds: number;
+  /** When true, strip "cloud/" or "managed/" prefixes from model display names. */
+  hideOriginPrefix: boolean;
+  /** Map of agent names to custom display names (e.g. { "host": "My Workstation" }). */
+  agentDisplayNames: Record<string, string>;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────

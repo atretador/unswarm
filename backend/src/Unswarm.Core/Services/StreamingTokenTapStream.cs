@@ -14,7 +14,7 @@ namespace Unswarm.Core.Services;
 /// Byte-boundary-safe: carries a partial-line buffer across reads and caps line
 /// length at ~1 MB (longer lines stop being scanned to avoid OOM).
 /// </summary>
-internal sealed class StreamingTokenTapStream : Stream
+public sealed class StreamingTokenTapStream : Stream
 {
     private const int MaxLineLength = 1_048_576; // 1 MB
 
@@ -25,6 +25,7 @@ internal sealed class StreamingTokenTapStream : Stream
     private int _deltaCount;
     private int _usageTokens;
     private int _cachedTokens;
+    private int _promptTokens;
     private double _serverTps;
     private double _promptTps;
     private bool _disposed;
@@ -164,6 +165,15 @@ internal sealed class StreamingTokenTapStream : Stream
                 _usageTokens = n;
             }
 
+            // 1a. Check for usage.prompt_tokens (total prompt tokens)
+            if (root.TryGetProperty("usage", out var usageForPrompt)
+                && usageForPrompt.TryGetProperty("prompt_tokens", out var pt)
+                && pt.ValueKind == JsonValueKind.Number
+                && pt.TryGetInt32(out var pn))
+            {
+                _promptTokens = pn;
+            }
+
             // 1b. Check for usage.prompt_tokens_details.cached_tokens (vLLM / llama.cpp OpenAI-compat)
             if (root.TryGetProperty("usage", out var usageForCache)
                 && usageForCache.TryGetProperty("prompt_tokens_details", out var details)
@@ -237,5 +247,6 @@ internal sealed class StreamingTokenTapStream : Stream
         _response.ServerTokensPerSec = _serverTps;
         _response.ServerPromptTokensPerSec = _promptTps;
         _response.PromptTokensCached = _cachedTokens;
+        _response.PromptTokens = _promptTokens;
     }
 }

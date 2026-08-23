@@ -57,6 +57,7 @@ import type {
   ContainerRegistrationStatus,
   Model,
   RegisteredRuntime,
+  Settings,
   UpdateRuntimePayload,
 } from "../../lib/api/types";
 
@@ -1838,6 +1839,7 @@ function AgentSection({
   focusContainerId,
   onManage,
   onConcurrency,
+  settings,
 }: {
   agent: Agent;
   registeredContainers: RegisteredRuntime[];
@@ -1846,6 +1848,7 @@ function AgentSection({
   focusContainerId: string | null;
   onManage: (agentName: string) => void;
   onConcurrency: (agentName: string) => void;
+  settings?: Settings;
 }) {
   const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
   // Deep-link focus forces this section open even if it normally starts collapsed.
@@ -1857,6 +1860,15 @@ function AgentSection({
   const connectivity = agentConnectivity(agent);
   const isHost = agent.name === "host";
   const focusedCardRef = useRef<HTMLDivElement | null>(null);
+
+  // Agent display name editing
+  const [editingAgentName, setEditingAgentName] = useState<string | null>(null);
+  const [agentNameDraft, setAgentNameDraft] = useState("");
+  const queryClient = useQueryClient();
+  const settingsMutation = useMutation({
+    mutationFn: (patch: Partial<Settings>) => client.updateSettings(patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+  });
 
   const filteredContainers = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -1904,8 +1916,21 @@ function AgentSection({
           <StatusDot status={connectivity} size="md" />
 
           <span className="truncate text-sm font-semibold text-[var(--color-text-heading)] transition-colors group-hover:text-[var(--color-primary)]">
-            {agent.name}
+            {settings?.agentDisplayNames?.[agent.name] ?? agent.name}
           </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditingAgentName(agent.name);
+              setAgentNameDraft(settings?.agentDisplayNames?.[agent.name] ?? agent.name);
+            }}
+            aria-label={`Rename agent ${agent.name}`}
+            title="Edit display name"
+            className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100"
+          >
+            <Pencil className="size-3" />
+          </button>
           {isHost && <Badge variant="outline">host</Badge>}
 
           <div className="hidden min-w-0 items-center gap-3 text-[10px] text-[var(--color-text-muted)] md:flex">
@@ -2049,6 +2074,62 @@ function AgentSection({
           </motion.div>
         )}
       </AnimatePresence>
+
+      <Dialog
+        open={editingAgentName === agent.name}
+        onOpenChange={(o) => {
+          if (!o) setEditingAgentName(null);
+        }}
+        title={`Rename agent ${agent.name}`}
+      >
+        <div className="space-y-4 p-5">
+          <Input
+            label="Display name"
+            value={agentNameDraft}
+            onChange={(e) => setAgentNameDraft(e.target.value)}
+            placeholder={agent.name}
+            aria-label="Display name"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const val = agentNameDraft.trim();
+                const currentNames = settings?.agentDisplayNames ?? {};
+                if (val && val !== agent.name) {
+                  settingsMutation.mutate({ agentDisplayNames: { ...currentNames, [agent.name]: val } });
+                } else {
+                  const updated = { ...currentNames };
+                  delete updated[agent.name];
+                  settingsMutation.mutate({ agentDisplayNames: updated });
+                }
+                setEditingAgentName(null);
+              }
+            }}
+          />
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="ghost" size="sm" onClick={() => setEditingAgentName(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                const val = agentNameDraft.trim();
+                const currentNames = settings?.agentDisplayNames ?? {};
+                if (val && val !== agent.name) {
+                  settingsMutation.mutate({ agentDisplayNames: { ...currentNames, [agent.name]: val } });
+                } else {
+                  const updated = { ...currentNames };
+                  delete updated[agent.name];
+                  settingsMutation.mutate({ agentDisplayNames: updated });
+                }
+                setEditingAgentName(null);
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </section>
   );
 }
@@ -2077,6 +2158,11 @@ export default function Fleet() {
   const { data: registeredContainers } = useQuery({
     queryKey: ["registered-containers"],
     queryFn: () => client.listRegisteredRuntimes(),
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => client.getSettings(),
   });
 
   if (isLoading) {
@@ -2159,6 +2245,7 @@ export default function Fleet() {
               focusContainerId={focusContainerId}
               onManage={(name) => setManageAgent(name)}
               onConcurrency={(name) => setConcurrencyAgent(name)}
+              settings={settings}
             />
           ))}
         </div>

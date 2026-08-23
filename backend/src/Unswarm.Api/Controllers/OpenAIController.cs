@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.Controllers;
@@ -22,6 +23,7 @@ public sealed class OpenAIController : ControllerBase
     private readonly ILogStore _logStore;
     private readonly ICloudForwardingService _cloudForwarding;
     private readonly ICloudProviderStore _cloudProviderStore;
+    private readonly IUsageRecorder _usageRecorder;
 
     public OpenAIController(
         IModelRegistry registry,
@@ -29,7 +31,8 @@ public sealed class OpenAIController : ControllerBase
         IClock clock,
         ILogStore logStore,
         ICloudForwardingService cloudForwarding,
-        ICloudProviderStore cloudProviderStore)
+        ICloudProviderStore cloudProviderStore,
+        IUsageRecorder usageRecorder)
     {
         _registry = registry;
         _scheduler = scheduler;
@@ -37,6 +40,7 @@ public sealed class OpenAIController : ControllerBase
         _logStore = logStore;
         _cloudForwarding = cloudForwarding;
         _cloudProviderStore = cloudProviderStore;
+        _usageRecorder = usageRecorder;
     }
 
     [HttpGet("models")]
@@ -154,20 +158,39 @@ public sealed class OpenAIController : ControllerBase
 
             if (cloudResponse.Body is not null)
             {
+                var cloudTokenResponse = new InferenceResponse();
+                var tappedStream = new StreamingTokenTapStream(cloudResponse.Body, cloudTokenResponse);
                 try
                 {
                     var buffer = new byte[8192];
                     int bytesRead;
-                    while ((bytesRead = await cloudResponse.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                    while ((bytesRead = await tappedStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
                     {
                         await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
                         await Response.Body.FlushAsync(ct);
                     }
                 }
+                catch (IOException ex)
+                {
+                    // Upstream closed prematurely or client disconnected during
+                    // write. Since HTTP 200 + headers are already sent, the stream
+                    // just ends — log and let finally handle upstream disposal.
+                    _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
+                        $"Cloud stream interrupted: model={modelName}, error={ex.Message}");
+                }
                 finally
                 {
-                    await cloudResponse.Body.DisposeAsync();
+                    await tappedStream.DisposeAsync();
                 }
+
+                _ = _usageRecorder.RecordAsync(
+                    "cloud",
+                    modelName,
+                    cloudTokenResponse.PromptTokens,
+                    cloudTokenResponse.TokensGenerated,
+                    cloudTokenResponse.PromptTokensCached,
+                    isStream,
+                    cloudElapsedMs);
             }
 
             return new EmptyResult();
@@ -239,6 +262,14 @@ public sealed class OpenAIController : ControllerBase
                     await Response.Body.FlushAsync(ct);
                 }
             }
+            catch (IOException ex)
+            {
+                // Upstream closed prematurely or client disconnected during
+                // write. Since HTTP 200 + headers are already sent, the stream
+                // just ends — log and let finally handle upstream disposal.
+                _logStore.Enqueue(LogLevel.Warn, "proxy",
+                    $"Stream interrupted: model={modelName}, error={ex.Message}");
+            }
             finally
             {
                 // Always release the upstream body — including on client
@@ -249,6 +280,15 @@ public sealed class OpenAIController : ControllerBase
                 await inferenceResponse.Body.DisposeAsync();
             }
         }
+
+        _ = _usageRecorder.RecordAsync(
+            "local",
+            modelName,
+            inferenceResponse.PromptTokens,
+            inferenceResponse.TokensGenerated,
+            inferenceResponse.PromptTokensCached,
+            isStream,
+            elapsedMs);
 
         return new EmptyResult();
     }

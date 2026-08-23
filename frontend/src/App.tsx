@@ -7,6 +7,7 @@ import Models from "./features/models";
 import Fleet from "./features/fleet";
 import Providers from "./features/providers";
 import Benchmarks from "./features/benchmarks";
+import Metrics from "./features/metrics";
 import Queue from "./features/queue";
 import Logs from "./features/logs";
 import ApiKeys from "./features/api-keys";
@@ -29,6 +30,7 @@ export default function App() {
                 <Route path="/fleet" element={<Fleet />} />
                 <Route path="/providers" element={<Providers />} />
                 <Route path="/benchmarks" element={<Benchmarks />} />
+                <Route path="/metrics" element={<Metrics />} />
                 <Route path="/queue" element={<Queue />} />
                 <Route path="/logs" element={<Logs />} />
                 <Route path="/api-keys" element={<ApiKeys />} />

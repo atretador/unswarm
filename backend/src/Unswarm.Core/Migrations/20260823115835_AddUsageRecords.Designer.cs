@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Unswarm.Core.Persistence;
 
@@ -10,9 +11,11 @@ using Unswarm.Core.Persistence;
 namespace Unswarm.Core.Migrations
 {
     [DbContext(typeof(UnswarmDbContext))]
-    partial class UnswarmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260823115835_AddUsageRecords")]
+    partial class AddUsageRecords
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -599,10 +602,6 @@ namespace Unswarm.Core.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("AgentDisplayNames")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.Property<bool>("AutoShutdownIdle")
                         .HasColumnType("INTEGER");
 
@@ -619,9 +618,6 @@ namespace Unswarm.Core.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("EnableParallelSlotSkip")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool>("HideOriginPrefix")
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("HealthCheckInterval")
@@ -665,14 +661,12 @@ namespace Unswarm.Core.Migrations
                         new
                         {
                             Id = "default",
-                            AgentDisplayNames = "{}",
                             AutoShutdownIdle = false,
                             BatchDrain = false,
                             ConversationDwellSeconds = 45,
                             EnableBenchmarking = true,
                             EnableConversationAffinity = false,
                             EnableParallelSlotSkip = false,
-                            HideOriginPrefix = false,
                             HealthCheckInterval = 10,
                             IdleTimeout = 300,
                             LazyStop = true,
@@ -724,7 +718,7 @@ namespace Unswarm.Core.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TimestampTicks");
+                    b.HasIndex("Timestamp");
 
                     b.HasIndex("Provider", "Model");
 

@@ -671,10 +671,12 @@ function GeneralTab() {
   });
 
   const [draftRetention, setDraftRetention] = useState<string>("");
+  const [draftHideOriginPrefix, setDraftHideOriginPrefix] = useState(false);
 
   useEffect(() => {
     if (settings) {
       setDraftRetention(String(settings.logRetention));
+      setDraftHideOriginPrefix(settings.hideOriginPrefix);
     }
   }, [settings]);
 
@@ -710,16 +712,34 @@ function GeneralTab() {
       {isLoading || !settings ? (
         <Skeleton className="h-8 w-full" />
       ) : (
-        <Input
-          label="Log retention (hours)"
-          type="number"
-          value={draftRetention}
-          onChange={(e) => setDraftRetention(e.target.value)}
-          onBlur={() => commitRetention(draftRetention)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitRetention(draftRetention);
-          }}
-        />
+        <div className="space-y-4">
+          <Input
+            label="Log retention (hours)"
+            type="number"
+            value={draftRetention}
+            onChange={(e) => setDraftRetention(e.target.value)}
+            onBlur={() => commitRetention(draftRetention)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRetention(draftRetention);
+            }}
+          />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[var(--color-text)]">Hide model origin prefix</p>
+              <p className="text-[10px] text-[var(--color-text-muted)]">
+                Strips "cloud/" or "managed/" from model names (e.g. "cloud/openai/gpt-4o" → "openai/gpt-4o")
+              </p>
+            </div>
+            <Switch
+              checked={draftHideOriginPrefix}
+              onCheckedChange={(v) => {
+                setDraftHideOriginPrefix(v);
+                updateMutation.mutate({ hideOriginPrefix: v });
+              }}
+            />
+          </div>
+        </div>
       )}
     </Card>
   );

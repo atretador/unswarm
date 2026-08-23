@@ -172,7 +172,13 @@ public sealed class CloudForwardingService : ICloudForwardingService
             }
 
             // ── 6. Build upstream request ───────────────────────────────
-            var upstreamUrl = providerBaseUrl.TrimEnd('/') + requestPath;
+            // Base URL is the full API root (e.g. "https://api.openai.com/v1" or
+            // "https://opencode.ai/zen/v1"). requestPath arrives as "/v1/..." from
+            // the ASP.NET router, so strip the /v1 prefix to avoid doubling.
+            var apiPath = requestPath.StartsWith("/v1/", StringComparison.Ordinal)
+                ? requestPath["v1".Length..]
+                : requestPath;
+            var upstreamUrl = providerBaseUrl.TrimEnd('/') + apiPath;
 
             var upstreamRequest = new HttpRequestMessage(HttpMethod.Post, upstreamUrl)
             {

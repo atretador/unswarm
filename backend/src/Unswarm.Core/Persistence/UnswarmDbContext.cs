@@ -90,6 +90,16 @@ public sealed class SettingsEntity
     public int QueueStepsTillReset { get; set; } = 3;
     public bool EnableConversationAffinity { get; set; }
     public int ConversationDwellSeconds { get; set; } = 45;
+
+    /// <summary>
+    /// When true, hides the "cloud/" or "managed/" origin prefix from model display names.
+    /// </summary>
+    public bool HideOriginPrefix { get; set; }
+
+    /// <summary>
+    /// JSON map of agent names to user-chosen display names. E.g. {"host": "My Workstation"}.
+    /// </summary>
+    public string AgentDisplayNames { get; set; } = "{}";
 }
 
 /// <summary>
@@ -214,6 +224,24 @@ public sealed class CloudProviderEntity
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
+public sealed class UsageRecordEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public DateTimeOffset Timestamp { get; set; }
+    /// <summary>
+    /// UtcTicks mirror of <see cref="Timestamp"/> as a plain long so SQLite can
+    /// translate range comparisons (same pattern as <see cref="LogEntity.TimestampTicks"/>).
+    /// </summary>
+    public long TimestampTicks { get; set; }
+    public string Provider { get; set; } = string.Empty;  // "local" or cloud provider name
+    public string Model { get; set; } = string.Empty;
+    public int PromptTokens { get; set; }
+    public int CompletionTokens { get; set; }
+    public int CachedTokens { get; set; }
+    public bool IsStreaming { get; set; }
+    public long ElapsedMs { get; set; }
+}
+
 public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
 {
     public DbSet<ModelEntity> Models => Set<ModelEntity>();
@@ -226,6 +254,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PromptVersionEntity> PromptVersions => Set<PromptVersionEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<CloudProviderEntity> CloudProviders => Set<CloudProviderEntity>();
+    public DbSet<UsageRecordEntity> UsageRecords => Set<UsageRecordEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -281,7 +310,9 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 EnableParallelSlotSkip = false,
                 QueueStepsTillReset = 3,
                 EnableConversationAffinity = false,
-                ConversationDwellSeconds = 45
+                ConversationDwellSeconds = 45,
+                HideOriginPrefix = false,
+                AgentDisplayNames = "{}"
             });
         });
 
@@ -344,6 +375,15 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.Property(cp => cp.ApiKeyHint).IsRequired().HasMaxLength(64);
             e.Property(cp => cp.ModelsJson).IsRequired().HasMaxLength(8192);
             e.HasIndex(cp => cp.Name).IsUnique();
+        });
+
+        modelBuilder.Entity<UsageRecordEntity>(e =>
+        {
+            e.HasKey(u => u.Id);
+            e.HasIndex(u => u.TimestampTicks);
+            e.HasIndex(u => new { u.Provider, u.Model });
+            e.Property(u => u.Provider).IsRequired().HasMaxLength(128);
+            e.Property(u => u.Model).IsRequired().HasMaxLength(256);
         });
     }
 }

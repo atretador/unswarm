@@ -44,7 +44,9 @@ public sealed class SettingsController : ControllerBase
             EnableParallelSlotSkip = request.EnableParallelSlotSkip ?? current.EnableParallelSlotSkip,
             QueueStepsTillReset = Math.Clamp(request.QueueStepsTillReset ?? current.QueueStepsTillReset, 1, 1000),
             EnableConversationAffinity = request.EnableConversationAffinity ?? current.EnableConversationAffinity,
-            ConversationDwellSeconds = Math.Max(1, request.ConversationDwellSeconds ?? current.ConversationDwellSeconds)
+            ConversationDwellSeconds = Math.Max(1, request.ConversationDwellSeconds ?? current.ConversationDwellSeconds),
+            HideOriginPrefix = request.HideOriginPrefix ?? current.HideOriginPrefix,
+            AgentDisplayNames = request.AgentDisplayNames ?? current.AgentDisplayNames
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

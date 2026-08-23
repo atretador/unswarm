@@ -12,10 +12,13 @@ import type {
   Container,
   FetchModelsResult,
   LogEntry,
+  MetricsTimeBucket,
   Model,
+  ModelUsageSummary,
   Prompt,
   PromptInput,
   PromptVersion,
+  ProviderUsageSummary,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -25,6 +28,8 @@ import type {
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   UpdateRuntimePayload,
+  UsageRecordResponse,
+  UsageTotalsResponse,
   User,
 } from "./types";
 
@@ -154,4 +159,37 @@ export interface UnswarmClient {
   deleteCloudProvider(id: string): Promise<void>;
   fetchCloudProviderModels(id: string): Promise<FetchModelsResult>;
   testAndFetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult>;
+
+  // Metrics
+  getMetricsUsage(opts?: {
+    from?: string;
+    to?: string;
+    provider?: string;
+    model?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ items: UsageRecordResponse[]; total: number; page: number; pageSize: number }>;
+  getMetricsSummary(opts?: {
+    from?: string;
+    to?: string;
+    granularity?: "hour" | "day" | "week" | "month";
+    provider?: string;
+    model?: string;
+  }): Promise<MetricsTimeBucket[]>;
+  getMetricsModels(opts?: {
+    from?: string;
+    to?: string;
+    provider?: string;
+    model?: string;
+  }): Promise<ModelUsageSummary[]>;
+  getMetricsProviders(opts?: {
+    from?: string;
+    to?: string;
+  }): Promise<ProviderUsageSummary[]>;
+  getMetricsTotals(opts?: {
+    from?: string;
+    to?: string;
+    provider?: string;
+    model?: string;
+  }): Promise<UsageTotalsResponse>;
 }

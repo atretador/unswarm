@@ -37,3 +37,7 @@ public sealed class CloudProviderModelListDto
 {
     public List<string> ModelIds { get; set; } = [];
 }
+
+public record TestAndFetchRequest(
+    string BaseUrl,
+    string ApiKey);

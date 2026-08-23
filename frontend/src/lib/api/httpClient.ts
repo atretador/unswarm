@@ -12,10 +12,13 @@ import type {
   Container,
   FetchModelsResult,
   LogEntry,
+  MetricsTimeBucket,
   Model,
+  ModelUsageSummary,
   Prompt,
   PromptInput,
   PromptVersion,
+  ProviderUsageSummary,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -25,6 +28,8 @@ import type {
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   UpdateRuntimePayload,
+  UsageRecordResponse,
+  UsageTotalsResponse,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -542,5 +547,57 @@ export const httpClient: UnswarmClient = {
       method: "POST",
       body: JSON.stringify({ baseUrl, apiKey }),
     });
+  },
+
+  // ── Metrics ──────────────────────────────────────────────────
+  getMetricsUsage(opts) {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.provider) params.set("provider", opts.provider);
+    if (opts?.model) params.set("model", opts.model);
+    if (opts?.page !== undefined) params.set("page", String(opts.page));
+    if (opts?.pageSize !== undefined) params.set("pageSize", String(opts.pageSize));
+    const qs = params.toString();
+    return request(`/api/metrics/usage${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsSummary(opts) {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.granularity) params.set("granularity", opts.granularity);
+    if (opts?.provider) params.set("provider", opts.provider);
+    if (opts?.model) params.set("model", opts.model);
+    const qs = params.toString();
+    return request(`/api/metrics/summary${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsModels(opts) {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.provider) params.set("provider", opts.provider);
+    if (opts?.model) params.set("model", opts.model);
+    const qs = params.toString();
+    return request(`/api/metrics/models${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsProviders(opts) {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    const qs = params.toString();
+    return request(`/api/metrics/providers${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsTotals(opts) {
+    const params = new URLSearchParams();
+    if (opts?.from) params.set("from", opts.from);
+    if (opts?.to) params.set("to", opts.to);
+    if (opts?.provider) params.set("provider", opts.provider);
+    if (opts?.model) params.set("model", opts.model);
+    const qs = params.toString();
+    return request(`/api/metrics/totals${qs ? `?${qs}` : ""}`);
   },
 };

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import {
   Box,
@@ -13,7 +13,7 @@ import {
   Server,
   Trash2,
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { client } from "../../lib/query-client";
 import type { ReactNode } from "react";
 import {
@@ -28,7 +28,8 @@ import {
   Dialog,
   Input,
 } from "../../components/ui";
-import type { Model, ModelStatus } from "../../lib/api/types";
+import type { Model, ModelStatus, Settings } from "../../lib/api/types";
+import { formatModelName } from "../../lib/format-model-name";
 
 // ─── Status semantics — identical to the Fleet page palette ───────
 
@@ -96,7 +97,7 @@ function MetricChip({
   );
 }
 
-function ManagedModelRow({ model, index }: { model: Model; index: number }) {
+function ManagedModelRow({ model, index, settings, isSelected }: { model: Model; index: number; settings?: Settings; isSelected?: boolean }) {
   const bench = model.lastBenchmark;
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
@@ -148,14 +149,22 @@ function ManagedModelRow({ model, index }: { model: Model; index: number }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
+      data-model-id={model.id}
     >
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors">
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors"
+        style={isSelected ? {
+          boxShadow: "0 0 0 2px var(--color-primary), 0 0 12px 2px color-mix(in srgb, var(--color-primary) 25%, transparent)",
+          borderLeft: "3px solid var(--color-primary)",
+          backgroundColor: "color-mix(in srgb, var(--color-primary) 5%, transparent)",
+        } : undefined}
+      >
         {/* Name + status */}
         <div className="flex min-w-0 flex-1 basis-52 items-center gap-2.5">
           <StatusDot status={model.status} size="sm" />
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
-              {model.name}
+              {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
             </p>
             <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
               {model.family} · {model.parameterSize} · {model.quantization}
@@ -259,6 +268,11 @@ function ManagedModelRow({ model, index }: { model: Model; index: number }) {
       {/* Edit Model Dialog */}
       <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)} title="Edit Model Name">
         <div className="p-5 space-y-4">
+          {model.sourceRuntimeAgent && (
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">
+              managed/{model.sourceRuntimeAgent}/
+            </p>
+          )}
           <Input
             label="Model Name"
             value={editName}
@@ -299,15 +313,23 @@ function ManagedModelRow({ model, index }: { model: Model; index: number }) {
 
 // ─── Model row (Cloud) ───────────────────────────────────────────
 
-function CloudModelRow({ model, index }: { model: Model; index: number }) {
+function CloudModelRow({ model, index, settings, isSelected }: { model: Model; index: number; settings?: Settings; isSelected?: boolean }) {
   return (
     <motion.div
       layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
+      data-model-id={model.id}
     >
-      <div className="flex items-center gap-x-4 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors">
+      <div
+        className="flex items-center gap-x-4 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors"
+        style={isSelected ? {
+          boxShadow: "0 0 0 2px var(--color-primary), 0 0 12px 2px color-mix(in srgb, var(--color-primary) 25%, transparent)",
+          borderLeft: "3px solid var(--color-primary)",
+          backgroundColor: "color-mix(in srgb, var(--color-primary) 5%, transparent)",
+        } : undefined}
+      >
         {/* Cloud icon + Name + Provider */}
         <div className="flex min-w-0 flex-1 items-center gap-2.5">
           <div className="flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-primary)_10%,transparent)]">
@@ -315,7 +337,7 @@ function CloudModelRow({ model, index }: { model: Model; index: number }) {
           </div>
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
-              {model.name}
+              {formatModelName(model.name, model.providerName ?? "cloud", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
             </p>
             <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
               {model.contextWindow.toLocaleString()} context
@@ -349,6 +371,10 @@ const TABS: { key: Tab; label: string; icon: typeof Server }[] = [
 ];
 
 export default function Models() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedModelId = searchParams.get("selected");
+  const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("managed");
   const [providerFilter, setProviderFilter] = useState("");
@@ -363,6 +389,48 @@ export default function Models() {
     queryKey: ["models"],
     queryFn: () => client.listModels(),
   });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => client.getSettings(),
+  });
+
+  // Auto-switch tab based on selected model ID
+  useEffect(() => {
+    if (!selectedModelId) return;
+    const isCloud = selectedModelId.startsWith("cloud/");
+    setActiveTab(isCloud ? "cloud" : "managed");
+    setFilter("");
+    setProviderFilter("");
+    setAgentFilter("");
+  }, [selectedModelId]);
+
+  // Auto-scroll to selected model and clear URL param after delay
+  useEffect(() => {
+    if (!selectedModelId || !models) return;
+
+    // Wait for the model to appear in the DOM, then scroll
+    const timer = setTimeout(() => {
+      const el = document.querySelector(`[data-model-id="${CSS.escape(selectedModelId)}"]`) as HTMLDivElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }, 100);
+
+    // Clear the ?selected= param after 3 seconds
+    if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    clearTimerRef.current = setTimeout(() => {
+      setSearchParams((prev) => {
+        prev.delete("selected");
+        return prev;
+      }, { replace: true });
+    }, 3000);
+
+    return () => {
+      clearTimeout(timer);
+      if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
+    };
+  }, [selectedModelId, models, setSearchParams]);
 
   const { managedModels, cloudModels } = useMemo(() => {
     const all = models ?? [];
@@ -570,10 +638,10 @@ export default function Models() {
           <Card padding="none">
             {activeTab === "managed"
               ? filteredModels.map((model, i) => (
-                  <ManagedModelRow key={model.id} model={model} index={i} />
+                  <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} />
                 ))
               : filteredModels.map((model, i) => (
-                  <CloudModelRow key={model.id} model={model} index={i} />
+                  <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} />
                 ))}
           </Card>
         )}

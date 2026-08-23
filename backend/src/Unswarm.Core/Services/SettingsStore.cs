@@ -46,6 +46,8 @@ public sealed class SettingsStore : ISettingsStore
         entity.QueueStepsTillReset = settings.QueueStepsTillReset;
         entity.EnableConversationAffinity = settings.EnableConversationAffinity;
         entity.ConversationDwellSeconds = settings.ConversationDwellSeconds;
+        entity.HideOriginPrefix = settings.HideOriginPrefix;
+        entity.AgentDisplayNames = settings.AgentDisplayNames;
 
         if (entity.Id == "default" && db.Entry(entity).State == EntityState.Detached)
         {
@@ -74,6 +76,8 @@ public sealed class SettingsStore : ISettingsStore
         EnableParallelSlotSkip = e.EnableParallelSlotSkip,
         QueueStepsTillReset = e.QueueStepsTillReset,
         EnableConversationAffinity = e.EnableConversationAffinity,
-        ConversationDwellSeconds = e.ConversationDwellSeconds
+        ConversationDwellSeconds = e.ConversationDwellSeconds,
+        HideOriginPrefix = e.HideOriginPrefix,
+        AgentDisplayNames = e.AgentDisplayNames
     };
 }

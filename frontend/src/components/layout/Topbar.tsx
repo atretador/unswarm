@@ -3,6 +3,7 @@ import { Menu, X, LogOut, Settings, User, ChevronDown } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ThemeToggle } from "./ThemeToggle";
 import { StatusDot } from "../ui/StatusDot";
+import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
 import { useAuth } from "../../lib/auth-context";
 
@@ -273,9 +274,12 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
       >
         {/* Header */}
         <div className="flex items-center justify-between h-[var(--topbar-height)] px-4 border-b border-[var(--color-border)]">
-          <span className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">
-            unswarm
-          </span>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Logo size={28} />
+            <span className="font-heading text-sm font-semibold text-[var(--color-text-heading)]">
+              unswarm
+            </span>
+          </div>
           <button
             ref={closeButtonRef}
             onClick={onClose}
@@ -292,7 +296,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
 
         {/* Nav items */}
         <nav className="flex-1 py-2 px-1.5 space-y-0.5 overflow-y-auto">
-          {NAV_ITEMS.map(({ to, label }) => {
+          {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
             const isActive =
               to === "/"
                 ? location.pathname === "/"
@@ -313,6 +317,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
                   }
                 `}
               >
+                <Icon className="size-4 shrink-0" />
                 {label}
               </NavLink>
             );

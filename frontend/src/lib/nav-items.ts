@@ -8,6 +8,7 @@ import {
   ListOrdered,
   ScrollText,
   Settings,
+  BarChart3,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -23,6 +24,7 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/fleet", icon: Container, label: "Fleet" },
   { to: "/providers", icon: Cloud, label: "Providers" },
   { to: "/benchmarks", icon: Gauge, label: "Benchmarks" },
+  { to: "/metrics", icon: BarChart3, label: "Metrics" },
   { to: "/queue", icon: ListOrdered, label: "Queue" },
   { to: "/logs", icon: ScrollText, label: "Logs" },
   { to: "/api-keys", icon: Key, label: "API Keys" },

@@ -36,4 +36,14 @@ public sealed class Settings
 
     /// <summary>How long a conversation keeps its runtime held after its last request (seconds).</summary>
     public int ConversationDwellSeconds { get; init; } = 45;
+
+    /// <summary>
+    /// When true, hides the "cloud/" or "managed/" origin prefix from model display names.
+    /// </summary>
+    public bool HideOriginPrefix { get; init; }
+
+    /// <summary>
+    /// JSON map of agent names to user-chosen display names. E.g. {"host": "My Workstation"}.
+    /// </summary>
+    public string AgentDisplayNames { get; init; } = "{}";
 }

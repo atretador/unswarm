@@ -76,7 +76,7 @@ public sealed class CloudProviderController : ControllerBase
         }
 
         // Return the created item (key masked)
-        var created = await _store.GetAsync(name, ct);
+        var created = await _store.GetByNameAsync(name, ct);
         return CreatedAtAction(nameof(Get), new { id = created!.Id }, MapToReadDto(created));
     }
 
@@ -126,22 +126,62 @@ public sealed class CloudProviderController : ControllerBase
         if (apiKey == null)
             return StatusCode(500, new { error = "Provider key is unavailable." });
 
-        var httpClient = _httpFactory.CreateClient("cloud-provider");
         var baseUrl = NormalizeBaseUrl(existing.BaseUrlFull) ?? existing.BaseUrlFull;
-        var modelsUrl = $"{baseUrl.TrimEnd('/')}/v1/models";
+        var result = await FetchUpstreamModelsAsync(baseUrl, apiKey, ct);
+        if (result.Error is not null)
+            return result.Error;
+
+        // Save models to DB
+        await _store.SaveModelsAsync(id, result.ModelIds!, ct);
+
+        _logger.LogInformation("Fetched {Count} models for provider {Id}", result.ModelIds!.Count, id);
+        return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+    }
+
+    /// <summary>
+    /// Test a connection and fetch models without saving. Used by the Add Provider
+    /// dialog to preview models before committing.
+    /// </summary>
+    [HttpPost("test-and-fetch")]
+    public async Task<IActionResult> TestAndFetch([FromBody] TestAndFetchRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.BaseUrl))
+            return BadRequest(new { error = "Base URL is required." });
+        if (string.IsNullOrWhiteSpace(request.ApiKey))
+            return BadRequest(new { error = "API key is required." });
+
+        var baseUrl = NormalizeBaseUrl(request.BaseUrl);
+        if (baseUrl == null)
+            return BadRequest(new { error = "Base URL is not valid." });
+
+        var result = await FetchUpstreamModelsAsync(baseUrl, request.ApiKey.Trim(), ct);
+        if (result.Error is not null)
+            return result.Error;
+
+        return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────
+
+    private async Task<(List<string>? ModelIds, IActionResult? Error)> FetchUpstreamModelsAsync(
+        string baseUrl, string apiKey, CancellationToken ct)
+    {
+        var httpClient = _httpFactory.CreateClient("cloud-provider");
+        var modelsUrl = $"{baseUrl.TrimEnd('/')}/models";
 
         _logger.LogInformation("Fetching models from {Url}", modelsUrl);
 
         try
         {
-            httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-            var response = await httpClient.GetAsync(modelsUrl, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Get, modelsUrl);
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+            var response = await httpClient.SendAsync(request, ct);
 
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning("Fetch models returned {Status} from {Url}: {Body}", response.StatusCode, modelsUrl, errorBody);
-                return StatusCode((int)response.StatusCode, new { error = $"Upstream returned {response.StatusCode}" });
+                return (null, StatusCode((int)response.StatusCode, new { error = $"Upstream returned {response.StatusCode}" }));
             }
 
             var modelsResponse = await response.Content.ReadFromJsonAsync<OpenAiModelListResponse>(ct)
@@ -153,25 +193,19 @@ public sealed class CloudProviderController : ControllerBase
                 .Distinct()
                 .ToList();
 
-            // Validate and save
-            await _store.SaveModelsAsync(id, modelIds, ct);
-
-            _logger.LogInformation("Fetched {Count} models for provider {Id}", modelIds.Count, id);
-            return Ok(new FetchModelsResultDto { ModelIds = modelIds });
+            return (modelIds, null);
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogError(ex, "Transport error fetching models for provider {Id}", id);
-            return StatusCode(502, new { error = "Failed to connect to provider." });
+            _logger.LogError(ex, "Transport error fetching models from {Url}", modelsUrl);
+            return (null, StatusCode(502, new { error = "Failed to connect to provider." }));
         }
         catch (TaskCanceledException)
         {
-            _logger.LogWarning("Timeout fetching models for provider {Id}", id);
-            return StatusCode(504, new { error = "Upstream request timed out." });
+            _logger.LogWarning("Timeout fetching models from {Url}", modelsUrl);
+            return (null, StatusCode(504, new { error = "Upstream request timed out." }));
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────
 
     private static string? NormalizeBaseUrl(string raw)
     {
@@ -183,10 +217,14 @@ public sealed class CloudProviderController : ControllerBase
             return null;
         if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
             return null;
-        if (!string.IsNullOrWhiteSpace(uri.AbsolutePath))
-            return null; // must be origin only — no path component
 
-        return uri.ToString();
+        var result = uri.ToString().TrimEnd('/');
+
+        // If origin-only (no path), default to /v1 — most OpenAI-compatible APIs
+        if (uri.AbsolutePath is "/" or "")
+            result += "/v1";
+
+        return result;
     }
 
     /// <summary>

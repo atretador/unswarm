@@ -302,6 +302,7 @@ public sealed class InferenceProxy : IInferenceProxy
                     }
 
                     var scriptTokens = TryParseCompletionTokens(rawScriptBody);
+                    var scriptPromptTokens = TryParsePromptTokens(rawScriptBody);
                     var scriptServerTps = TryParseServerTokensPerSec(rawScriptBody);
                     var scriptPromptTps = TryParsePromptTokensPerSec(rawScriptBody);
                     var scriptCachedTokens = TryParseCachedTokens(rawScriptBody);
@@ -311,6 +312,7 @@ public sealed class InferenceProxy : IInferenceProxy
                         ContentType = "application/json",
                         Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawScriptBody)),
                         TokensGenerated = scriptTokens,
+                        PromptTokens = scriptPromptTokens,
                         ServerTokensPerSec = scriptServerTps,
                         ServerPromptTokensPerSec = scriptPromptTps,
                         PromptTokensCached = scriptCachedTokens
@@ -467,6 +469,7 @@ public sealed class InferenceProxy : IInferenceProxy
             }
 
             var tokens = TryParseCompletionTokens(rawBody);
+            var promptTokens = TryParsePromptTokens(rawBody);
             var serverTps = TryParseServerTokensPerSec(rawBody);
             var promptTps = TryParsePromptTokensPerSec(rawBody);
             var cachedTokens = TryParseCachedTokens(rawBody);
@@ -477,6 +480,7 @@ public sealed class InferenceProxy : IInferenceProxy
                 ContentType = "application/json",
                 Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(rawBody)),
                 TokensGenerated = tokens,
+                PromptTokens = promptTokens,
                 ServerTokensPerSec = serverTps,
                 ServerPromptTokensPerSec = promptTps,
                 PromptTokensCached = cachedTokens
@@ -491,6 +495,30 @@ public sealed class InferenceProxy : IInferenceProxy
             using var doc = System.Text.Json.JsonDocument.Parse(body);
             if (doc.RootElement.TryGetProperty("usage", out var usage)
                 && usage.TryGetProperty("completion_tokens", out var tokensProp)
+                && tokensProp.ValueKind == System.Text.Json.JsonValueKind.Number
+                && tokensProp.TryGetInt32(out var n))
+            {
+                return n;
+            }
+        }
+        catch
+        {
+            // best-effort token parsing; 0 is fine
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Best-effort extraction of total prompt tokens from a JSON response body.
+    /// Returns the prompt token count when the server exposes it, otherwise 0.
+    /// </summary>
+    private static int TryParsePromptTokens(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("usage", out var usage)
+                && usage.TryGetProperty("prompt_tokens", out var tokensProp)
                 && tokensProp.ValueKind == System.Text.Json.JsonValueKind.Number
                 && tokensProp.TryGetInt32(out var n))
             {
@@ -862,12 +890,14 @@ public sealed class InferenceProxy : IInferenceProxy
 
         var bodyStr = await response2.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         var tokens = 0;
+        var promptTokens = 0;
         var serverTps = 0.0;
         var promptTps = 0.0;
         var cachedTokens = 0;
         if (statusCode2 >= 200 && statusCode2 < 300)
         {
             tokens = TryParseCompletionTokens(bodyStr);
+            promptTokens = TryParsePromptTokens(bodyStr);
             serverTps = TryParseServerTokensPerSec(bodyStr);
             promptTps = TryParsePromptTokensPerSec(bodyStr);
             cachedTokens = TryParseCachedTokens(bodyStr);
@@ -880,6 +910,7 @@ public sealed class InferenceProxy : IInferenceProxy
             ContentType = contentType2,
             Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(bodyStr)),
             TokensGenerated = tokens,
+            PromptTokens = promptTokens,
             ServerTokensPerSec = serverTps,
             ServerPromptTokensPerSec = promptTps,
             PromptTokensCached = cachedTokens

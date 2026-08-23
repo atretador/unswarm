@@ -12,6 +12,13 @@ public sealed class InferenceResponse
     /// so they are guaranteed to be final.
     /// </summary>
     public int TokensGenerated { get; set; }
+
+    /// <summary>
+    /// Total prompt/input tokens (not just cached). Best-effort — 0 when the
+    /// engine doesn't report it.
+    /// </summary>
+    public int PromptTokens { get; set; }
+
     public double ServerTokensPerSec { get; set; }
     public double ServerPromptTokensPerSec { get; set; }
 

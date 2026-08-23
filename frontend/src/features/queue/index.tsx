@@ -24,6 +24,7 @@ import {
   EmptyState,
 } from "../../components/ui";
 import type { QueueItem } from "../../lib/api/types";
+import { formatModelName } from "../../lib/format-model-name";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -77,12 +78,14 @@ function TargetSection({
   waiting,
   cancelMutation,
   releaseHoldMutation,
+  settings,
 }: {
   targetId: string;
   processing: QueueItem[];
   waiting: QueueItem[];
   cancelMutation: ReturnType<typeof useMutation<void, Error, string>>;
   releaseHoldMutation: ReturnType<typeof useMutation<void, Error, string>>;
+  settings?: { hideOriginPrefix: boolean; agentDisplayNames: Record<string, string> };
 }) {
   const idle = processing.length === 0 && waiting.length === 0;
   const [expanded, setExpanded] = useState(!idle);
@@ -170,7 +173,7 @@ function TargetSection({
                     <div className="flex items-center gap-3 text-xs min-w-0">
                       <StatusDot status="processing" size="sm" />
                       <span className="font-mono text-[var(--color-text-heading)] truncate">
-                        {item.modelAssigned ?? item.modelRequested}
+                        {formatModelName(item.modelAssigned ?? item.modelRequested, "queue", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
                       </span>
                       {item.runtimeId && (
                         <span
@@ -236,7 +239,7 @@ function TargetSection({
                           </span>
                           <StatusDot status="waiting" size="sm" />
                           <span className="font-mono text-[var(--color-text-heading)] truncate">
-                            {item.modelRequested}
+                            {formatModelName(item.modelRequested, "queue", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
                           </span>
                           {!blocked && !held && i === 0 && (
                             <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-primary)]">
@@ -338,6 +341,11 @@ export default function Queue() {
     queryKey: ["agents"],
     queryFn: () => client.listAgents(),
     refetchInterval: 10000,
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => client.getSettings(),
   });
 
   const cancelMutation = useMutation({
@@ -576,6 +584,7 @@ export default function Queue() {
             waiting={group.waiting}
             cancelMutation={cancelMutation}
             releaseHoldMutation={releaseHoldMutation}
+            settings={settings}
           />
         ))}
       </div>
@@ -597,7 +606,7 @@ export default function Queue() {
                 <div className="flex items-center gap-2">
                   <ArrowRight className="size-3 text-[var(--color-status-running)]" />
                   <span className="font-mono text-[var(--color-text-heading)]">
-                    {item.modelAssigned ?? item.modelRequested}
+                    {formatModelName(item.modelAssigned ?? item.modelRequested, "queue", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
                   </span>
                   <Badge variant="success">completed</Badge>
                 </div>
