@@ -262,7 +262,7 @@ builder.Services.AddAuthorization(options =>
 // ── Background services ──────────────────────────────────────────────────
 builder.Services.AddHostedService<SchedulerHostedService>();
 // builder.Services.AddHostedService<HealthCheckService>();   // disabled: proxy handles container lifecycle on-demand
-// builder.Services.AddHostedService<IdleShutdownService>();   // disabled: proxy handles container lifecycle on-demand
+builder.Services.AddHostedService<IdleShutdownService>();
 builder.Services.AddHostedService<LogRetentionService>();
 builder.Services.AddHostedService<ContainerLogProbe>();
 

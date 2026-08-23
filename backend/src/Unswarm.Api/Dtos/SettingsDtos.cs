@@ -6,7 +6,7 @@ public sealed class SettingsResponse
 {
     public int RequestTimeout { get; set; } = 120;
     public int HealthCheckInterval { get; set; } = 10;
-    public bool AutoShutdownIdle { get; set; } = true;
+    public bool AutoShutdownIdle { get; set; } = false;
     public int IdleTimeout { get; set; } = 300;
     public int LogRetention { get; set; } = 168;
     public bool EnableBenchmarking { get; set; } = true;

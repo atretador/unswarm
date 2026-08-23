@@ -763,7 +763,7 @@ const LOGS: LogEntry[] = [
 const SETTINGS: Settings = {
   requestTimeout: 120,
   healthCheckInterval: 10,
-  autoShutdownIdle: true,
+  autoShutdownIdle: false,
   idleTimeout: 300,
   logRetention: 168,
   enableBenchmarking: true,

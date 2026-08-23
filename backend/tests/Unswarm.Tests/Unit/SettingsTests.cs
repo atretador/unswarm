@@ -13,7 +13,7 @@ public sealed class SettingsTests
 
         Assert.Equal(120, settings.RequestTimeout);
         Assert.Equal(10, settings.HealthCheckInterval);
-        Assert.True(settings.AutoShutdownIdle);
+        Assert.False(settings.AutoShutdownIdle);
         Assert.Equal(300, settings.IdleTimeout);
         Assert.Equal(168, settings.LogRetention);
         Assert.True(settings.EnableBenchmarking);
@@ -91,7 +91,7 @@ public sealed class SettingsTests
 
         Assert.Equal(120, s.RequestTimeout);
         Assert.Equal(10, s.HealthCheckInterval);
-        Assert.True(s.AutoShutdownIdle);
+        Assert.False(s.AutoShutdownIdle);
         Assert.Equal(300, s.IdleTimeout);
         Assert.Equal(168, s.LogRetention);
         Assert.True(s.EnableBenchmarking);

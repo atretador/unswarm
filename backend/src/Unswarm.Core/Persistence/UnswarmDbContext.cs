@@ -76,7 +76,7 @@ public sealed class SettingsEntity
     public string Id { get; set; } = "default";
     public int RequestTimeout { get; set; } = 120;
     public int HealthCheckInterval { get; set; } = 10;
-    public bool AutoShutdownIdle { get; set; } = true;
+    public bool AutoShutdownIdle { get; set; } = false;
     public int IdleTimeout { get; set; } = 300;
     public int LogRetention { get; set; } = 168;
     public bool EnableBenchmarking { get; set; } = true;
@@ -247,7 +247,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 Id = "default",
                 RequestTimeout = 120,
                 HealthCheckInterval = 10,
-                AutoShutdownIdle = true,
+                AutoShutdownIdle = false,
                 IdleTimeout = 300,
                 LogRetention = 168,
                 EnableBenchmarking = true,

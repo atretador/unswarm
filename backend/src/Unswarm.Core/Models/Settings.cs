@@ -4,7 +4,7 @@ public sealed class Settings
 {
     public int RequestTimeout { get; init; } = 120;
     public int HealthCheckInterval { get; init; } = 10;
-    public bool AutoShutdownIdle { get; init; } = true;
+    public bool AutoShutdownIdle { get; init; } = false;
     public int IdleTimeout { get; init; } = 300;
     public int LogRetention { get; init; } = 168;
     public bool EnableBenchmarking { get; init; } = true;
