@@ -34,5 +34,8 @@ export type { SpinnerProps } from "./Spinner";
 export { ConfirmDialog } from "./ConfirmDialog";
 export type { ConfirmDialogProps } from "./ConfirmDialog";
 
+export { Dialog } from "./Dialog";
+export type { DialogProps } from "./Dialog";
+
 export { Modal } from "./Modal";
 export type { ModalProps } from "./Modal";
