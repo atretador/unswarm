@@ -491,3 +491,6 @@ sealed class SecurityHeadersMiddleware(RequestDelegate next)
         await next(context);
     }
 }
+
+// Marker for WebApplicationFactory<Program> (E2E tests).
+public partial class Program { }
