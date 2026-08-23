@@ -246,6 +246,23 @@ public sealed class ContainersController : ControllerBase
     }
 
     [Authorize(Roles = "Admin")]
+    [HttpPut("registered/{id}")]
+    public async Task<IActionResult> UpdateRegistered(string id, [FromBody] UpdateRuntimeRequestDto dto, CancellationToken ct)
+    {
+        var existing = await _containerRegistry.GetAsync(id, ct).ConfigureAwait(false);
+        if (existing is null)
+            return NotFound(new { error = "Registered runtime not found" });
+
+        if (!string.IsNullOrWhiteSpace(dto.DisplayName))
+        {
+            existing = existing with { DisplayName = dto.DisplayName.Trim() };
+        }
+
+        var updated = await _containerRegistry.UpdateAsync(id, existing, ct).ConfigureAwait(false);
+        return Ok(await BuildRegisteredResponseAsync(updated, ct).ConfigureAwait(false));
+    }
+
+    [Authorize(Roles = "Admin")]
     [HttpPut("registered/{id}/concurrency")]
     public async Task<IActionResult> UpdateConcurrency(string id, [FromBody] UpdateRuntimeConcurrencyRequestDto dto, CancellationToken ct)
     {

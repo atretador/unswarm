@@ -69,6 +69,14 @@ public sealed class RegisterRuntimeRequestDto
 }
 
 /// <summary>
+/// DTO for updating a registered runtime's display name.
+/// </summary>
+public sealed class UpdateRuntimeRequestDto
+{
+    public string? DisplayName { get; set; }
+}
+
+/// <summary>
 /// DTO for updating a registered runtime's concurrency allow-list.
 /// </summary>
 public sealed class UpdateRuntimeConcurrencyRequestDto

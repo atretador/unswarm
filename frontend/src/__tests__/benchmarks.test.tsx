@@ -917,4 +917,90 @@ describe("Benchmarks", () => {
     expect(outputToggle).toHaveAttribute("aria-expanded", "false");
     expect(within(dialog).queryByText(/Visible output text/)).not.toBeInTheDocument();
   });
+
+  // ─── Cloud model tests ──────────────────────────────────────────
+
+  it("cloud models appear in the dropdown with [Cloud] prefix", async () => {
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+
+    const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+    const optionTexts = Array.from(combo.options).map((o) => o.text);
+    expect(optionTexts.some((t) => t.includes("[Cloud]") && t.includes("gpt-4o"))).toBe(true);
+    expect(optionTexts.some((t) => t.includes("[Cloud]") && t.includes("openai"))).toBe(true);
+    expect(optionTexts.some((t) => t.includes("[Cloud]") && t.includes("claude-sonnet-4-20250514"))).toBe(true);
+    expect(optionTexts.some((t) => t.includes("[Cloud]") && t.includes("anthropic"))).toBe(true);
+  });
+
+  it("can run a benchmark with a cloud model", async () => {
+    const user = userEvent.setup();
+    const runSpy = vi.spyOn(mockClient, "runBenchmark");
+
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+
+    // Select gpt-4o (cloud model id "c1")
+    await user.selectOptions(screen.getByRole("combobox", { name: "Target model" }), "c1");
+
+    // Cloud models are always ready — run button should be enabled
+    const runBtn = screen.getByRole("button", { name: /run benchmark/i });
+    expect(runBtn).not.toBeDisabled();
+
+    await user.click(runBtn);
+
+    await waitFor(() => {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(runSpy.mock.calls[0][0]).toBe("c1");
+  });
+
+  it("fleet models show name without [Cloud] prefix in dropdown", async () => {
+    render(
+      <TestWrapper>
+        <Benchmarks />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Benchmarks")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+      expect(combo.options.length).toBeGreaterThan(1);
+    });
+
+    const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
+    const optionTexts = Array.from(combo.options).map((o) => o.text);
+    // Fleet ready models show just the name
+    expect(optionTexts).toContain("llama-3.1-70b");
+    expect(optionTexts).toContain("mistral-large-2");
+    // Fleet non-ready models show status suffix
+    expect(optionTexts.some((t) => t.includes("codestral-22b") && t.includes("validating"))).toBe(true);
+    expect(optionTexts.some((t) => t.includes("phi-3.5-mini") && t.includes("deprecated"))).toBe(true);
+  });
 });

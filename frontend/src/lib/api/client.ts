@@ -24,6 +24,7 @@ import type {
   ToggleConcurrencyPayload,
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
+  UpdateRuntimePayload,
   User,
 } from "./types";
 
@@ -49,6 +50,9 @@ export interface UnswarmClient {
   /** Stop a registered runtime (script or container) by registration id. */
   stopRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
   deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
+
+  /** Update a registered runtime's display name. */
+  updateRuntime(id: string, payload: UpdateRuntimePayload): Promise<RegisteredRuntime>;
 
   /** Update the concurrency list for a registered runtime (full replacement). */
   updateRuntimeConcurrency(id: string, payload: UpdateRuntimeConcurrencyPayload): Promise<RegisteredRuntime>;
@@ -149,4 +153,5 @@ export interface UnswarmClient {
   updateCloudProvider(id: string, data: CloudProviderUpdateInput): Promise<CloudProviderRead>;
   deleteCloudProvider(id: string): Promise<void>;
   fetchCloudProviderModels(id: string): Promise<FetchModelsResult>;
+  testAndFetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult>;
 }

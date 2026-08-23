@@ -57,6 +57,7 @@ import type {
   ContainerRegistrationStatus,
   Model,
   RegisteredRuntime,
+  UpdateRuntimePayload,
 } from "../../lib/api/types";
 
 // ─── Status semantics ─────────────────────────────────────────────
@@ -472,6 +473,90 @@ function ConcurrencyModal({
 const PAGE_SIZE = 9;
 
 type ManageTab = "containers" | "scripts";
+
+// ─── Edit runtime dialog ────────────────────────────────────────
+
+function EditRuntimeDialog({
+  runtime,
+  open,
+  onClose,
+}: {
+  runtime: RegisteredRuntime | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [displayName, setDisplayName] = useState(runtime?.displayName ?? "");
+
+  // Sync displayName when dialog opens or runtime changes
+  const prevOpenRef = useRef(false);
+  useEffect(() => {
+    if (open && !prevOpenRef.current) {
+      setDisplayName(runtime?.displayName ?? "");
+    }
+    prevOpenRef.current = open;
+  }, [open, runtime]);
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: UpdateRuntimePayload) =>
+      client.updateRuntime(runtime!.id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
+      onClose();
+    },
+  });
+
+  // Reset mutation state when dialog opens
+  useEffect(() => {
+    if (open) updateMutation.reset();
+  }, [open]);
+
+  const handleSave = () => {
+    if (!runtime || !displayName.trim()) return;
+    updateMutation.mutate({ displayName: displayName.trim() });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title="Edit runtime">
+      <div className="space-y-4 p-5">
+        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
+          Update the display name for{" "}
+          <span className="font-mono text-[var(--color-text-heading)]">{runtime?.displayName}</span>.
+        </p>
+
+        <Input
+          label="Display name"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="my-runtime"
+          aria-label="Display name"
+          autoFocus
+        />
+
+        {updateMutation.isError && (
+          <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
+            <AlertTriangle className="size-3 shrink-0" />
+            <span className="truncate">{updateMutation.error.message}</span>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            loading={updateMutation.isPending}
+            disabled={!displayName.trim() || displayName.trim() === runtime?.displayName}
+            onClick={handleSave}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
 
 function ManageRuntimesModal({
   agentName,
@@ -1284,6 +1369,7 @@ function RegisteredContainerCard({
   const [rediscoverError, setRediscoverError] = useState<string | null>(null);
   const [editingSlots, setEditingSlots] = useState(false);
   const [slotsValue, setSlotsValue] = useState(container.maxConcurrentInferences);
+  const [editingName, setEditingName] = useState(false);
 
   // Clear the highlight ring after a short window so it doesn't linger.
   useEffect(() => {
@@ -1665,6 +1751,16 @@ function RegisteredContainerCard({
               variant="ghost"
               size="sm"
               disabled={busy}
+              onClick={() => setEditingName(true)}
+              title="Edit runtime settings"
+            >
+              <Pencil className="size-3" />
+              Edit
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
               loading={rediscoverMutation.isPending}
               onClick={() => rediscoverMutation.mutate(container.id)}
               title="Rediscover models"
@@ -1715,6 +1811,12 @@ function RegisteredContainerCard({
           </div>
         </div>
       </Card>
+
+      <EditRuntimeDialog
+        runtime={container}
+        open={editingName}
+        onClose={() => setEditingName(false)}
+      />
     </motion.div>
   );
 }

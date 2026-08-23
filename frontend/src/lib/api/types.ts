@@ -53,6 +53,10 @@ export interface Model {
   sourceRuntimeName: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Origin of the model: "fleet" for self-hosted, "cloud" for third-party API. */
+  origin?: string;
+  /** Provider name for cloud models (e.g. "openai"). Null for fleet models. */
+  providerName?: string | null;
 }
 
 // ─── Container Registration ───────────────────────────────────────
@@ -80,6 +84,11 @@ export interface RegisterRuntimePayload {
 export interface UpdateRuntimeConcurrencyPayload {
   canRunAlongWith: string[];
   maxConcurrentInferences?: number;
+}
+
+/** Payload for updating a registered runtime's display name. */
+export interface UpdateRuntimePayload {
+  displayName?: string;
 }
 
 /** Atomically toggle concurrency between two runtimes. */

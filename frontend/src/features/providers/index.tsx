@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Cloud, Plus, Pencil, Trash2, Loader2, Check, AlertCircle } from "lucide-react";
+import { Cloud, Plus, Pencil, Trash2, Loader2, Check, AlertCircle, List } from "lucide-react";
 import { client } from "../../lib/query-client";
 import {
   Card,
@@ -117,7 +117,7 @@ function ProviderDialog({
   const [error, setError] = useState<string | null>(null);
 
   // Fetch models state
-  const [fetchedCount, setFetchedCount] = useState<number | null>(null);
+  const [fetchedModels, setFetchedModels] = useState<string[] | null>(null);
   const [fetchModelsPending, setFetchModelsPending] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
 
@@ -134,15 +134,22 @@ function ProviderDialog({
         setApiKey("");
       }
       setError(null);
-      setFetchedCount(null);
+      setFetchedModels(null);
       setFetchModelsError(null);
     }
   }, [open, editProvider]);
 
   const createMutation = useMutation({
     mutationFn: (data: CloudProviderInput) => client.createCloudProvider(data),
-    onSuccess: () => {
+    onSuccess: async (result: any) => {
+      // Auto-fetch models after creation so they appear on the Models page
+      try {
+        await client.fetchCloudProviderModels(result.id);
+      } catch {
+        // Non-critical — models can be fetched later via Edit
+      }
       queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
       onClose();
     },
     onError: (err: Error) => setError(err.message),
@@ -153,21 +160,25 @@ function ProviderDialog({
       client.updateCloudProvider(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
       onClose();
     },
     onError: (err: Error) => setError(err.message),
   });
 
   const handleFetchModels = async () => {
-    if (!editProvider) return;
     setFetchModelsPending(true);
     setFetchModelsError(null);
-    setFetchedCount(null);
+    setFetchedModels(null);
     try {
-      const result = await client.fetchCloudProviderModels(editProvider.id);
-      setFetchedCount(result.modelIds.length);
-      // Refresh the list so model count updates in the table
-      queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
+      let result: { modelIds: string[] };
+      if (isEdit && editProvider) {
+        result = await client.fetchCloudProviderModels(editProvider.id);
+        queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
+      } else {
+        result = await client.testAndFetchModels(baseUrl.trim(), apiKey);
+      }
+      setFetchedModels(result.modelIds);
     } catch (err) {
       setFetchModelsError(err instanceof Error ? err.message : "Failed to fetch models");
     } finally {
@@ -218,7 +229,7 @@ function ProviderDialog({
           value={name}
           onChange={(e) => setName(e.target.value)}
           disabled={isEdit}
-          placeholder="e.g. OpenAI, Anthropic"
+          placeholder="e.g. OpenAI"
           autoFocus={!isEdit}
         />
         <Input
@@ -236,15 +247,15 @@ function ProviderDialog({
           autoComplete="off"
         />
 
-        {/* Fetch Models — only available in edit mode */}
-        {isEdit && (
-          <div className="flex items-center gap-3 pt-1">
+        {/* Fetch Models — available in both add and edit mode */}
+        <div className="space-y-2 pt-1">
+          <div className="flex items-center gap-3">
             <Button
               type="button"
               variant="secondary"
               size="sm"
               onClick={handleFetchModels}
-              disabled={fetchModelsPending || !baseUrl.trim()}
+              disabled={fetchModelsPending || !baseUrl.trim() || (!isEdit && !apiKey)}
             >
               {fetchModelsPending ? (
                 <Loader2 className="size-3.5 animate-spin" />
@@ -253,10 +264,10 @@ function ProviderDialog({
               )}
               Fetch Models
             </Button>
-            {fetchedCount !== null && (
+            {fetchedModels !== null && (
               <span className="flex items-center gap-1.5 text-xs text-[var(--color-status-success)]">
                 <Check className="size-3.5" />
-                {fetchedCount} {fetchedCount === 1 ? "model" : "models"} found
+                {fetchedModels.length} {fetchedModels.length === 1 ? "model" : "models"} found
               </span>
             )}
             {fetchModelsError && (
@@ -266,7 +277,19 @@ function ProviderDialog({
               </span>
             )}
           </div>
-        )}
+          {fetchedModels !== null && fetchedModels.length > 0 && (
+            <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30">
+              <div className="p-2 space-y-0.5">
+                {fetchedModels.map((modelId) => (
+                  <div key={modelId} className="flex items-center gap-2 px-2 py-1 text-xs text-[var(--color-text)]">
+                    <List className="size-3 text-[var(--color-text-muted)] shrink-0" />
+                    <span className="font-mono truncate">{modelId}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {error && (
           <p className="text-sm text-[var(--color-status-error)]">{error}</p>

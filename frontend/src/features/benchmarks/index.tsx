@@ -992,7 +992,11 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
   const readyModels = (models ?? []).filter((m) => m.status === "ready");
   const modelOptions = (models ?? []).map((m) => ({
     value: m.id,
-    label: m.status === "ready" ? m.name : `${m.name} (${m.status})`,
+    label: m.origin === "cloud"
+      ? `[Cloud] ${m.name} (${m.providerName})`
+      : m.status === "ready"
+        ? m.name
+        : `${m.name} (${m.status})`,
   }));
 
   const promptOptions = (prompts ?? []).map((p) => ({

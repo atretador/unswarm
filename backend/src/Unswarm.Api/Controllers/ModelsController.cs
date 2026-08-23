@@ -14,12 +14,14 @@ public sealed class ModelsController : ControllerBase
     private readonly IModelRegistry _registry;
     private readonly IBenchmarkHistory _benchmarks;
     private readonly IContainerRegistry _containerRegistry;
+    private readonly ICloudProviderStore _cloudProviderStore;
 
-    public ModelsController(IModelRegistry registry, IBenchmarkHistory benchmarks, IContainerRegistry containerRegistry)
+    public ModelsController(IModelRegistry registry, IBenchmarkHistory benchmarks, IContainerRegistry containerRegistry, ICloudProviderStore cloudProviderStore)
     {
         _registry = registry;
         _benchmarks = benchmarks;
         _containerRegistry = containerRegistry;
+        _cloudProviderStore = cloudProviderStore;
     }
 
     [HttpGet]
@@ -50,6 +52,27 @@ public sealed class ModelsController : ControllerBase
                 response.SourceRuntimeName = rtName;
             responses.Add(response);
         }
+
+        // Append cloud models from registered providers
+        var providers = await _cloudProviderStore.ListAsync(ct);
+        foreach (var provider in providers)
+        {
+            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
+            foreach (var modelId in modelIds)
+            {
+                responses.Add(new ModelResponse
+                {
+                    Id = $"cloud/{provider.Name}/{modelId}",
+                    Name = modelId,
+                    Origin = "cloud",
+                    ProviderName = provider.Name,
+                    Status = ModelStatus.Ready,
+                    CreatedAt = provider.CreatedAt,
+                    UpdatedAt = provider.UpdatedAt
+                });
+            }
+        }
+
         return Ok(responses);
     }
 

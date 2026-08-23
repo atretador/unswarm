@@ -32,6 +32,8 @@ public sealed class ModelResponse
     public string? SourceRuntimeName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    public string Origin { get; set; } = "fleet";
+    public string? ProviderName { get; set; }
 
     public static ModelResponse FromDefinition(ModelDefinition d) => FromDefinition(d, null);
 
@@ -48,7 +50,8 @@ public sealed class ModelResponse
         ContainerImage = d.ContainerImage,
         SourceRuntimeId = d.SourceRuntimeId,
         CreatedAt = d.CreatedAt,
-        UpdatedAt = d.UpdatedAt
+        UpdatedAt = d.UpdatedAt,
+        Origin = "fleet"
     };
 }
 

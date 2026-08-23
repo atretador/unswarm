@@ -24,6 +24,7 @@ import type {
   ToggleConcurrencyPayload,
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
+  UpdateRuntimePayload,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -209,6 +210,13 @@ export const httpClient: UnswarmClient = {
     return request<void>(
       `/api/containers/registered/${encodeURIComponent(id)}${qs}`,
       { method: "DELETE" },
+    );
+  },
+
+  updateRuntime(id: string, payload: UpdateRuntimePayload) {
+    return request<RegisteredRuntime>(
+      `/api/containers/registered/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify(payload) },
     );
   },
 
@@ -527,5 +535,12 @@ export const httpClient: UnswarmClient = {
       `/api/cloudproviders/${encodeURIComponent(id)}/fetch-models`,
       { method: "POST" },
     );
+  },
+
+  testAndFetchModels(baseUrl: string, apiKey: string) {
+    return request<FetchModelsResult>("/api/cloudproviders/test-and-fetch", {
+      method: "POST",
+      body: JSON.stringify({ baseUrl, apiKey }),
+    });
   },
 };

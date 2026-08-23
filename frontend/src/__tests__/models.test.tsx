@@ -22,10 +22,15 @@ describe("Models", () => {
       expect(screen.getByText("Models")).toBeInTheDocument();
     });
 
+    // Managed tab is default — fleet models visible
     expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
     expect(screen.getByText("mistral-large-2")).toBeInTheDocument();
     expect(screen.getByText("codestral-22b")).toBeInTheDocument();
     expect(screen.getByText("gemma-2-27b")).toBeInTheDocument();
+
+    // Cloud models should NOT be visible on the Managed tab
+    expect(screen.queryByText("gpt-4o")).not.toBeInTheDocument();
+    expect(screen.queryByText("claude-sonnet-4-20250514")).not.toBeInTheDocument();
   });
 
   it("shows status chips with fleet palette semantics", async () => {
@@ -90,6 +95,8 @@ describe("Models", () => {
         containerImage: "test/sparse",
         sourceRuntimeId: null,
         sourceRuntimeName: null,
+        origin: "fleet",
+        providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -152,6 +159,8 @@ describe("Models", () => {
         containerImage: "test/zero",
         sourceRuntimeId: null,
         sourceRuntimeName: null,
+        origin: "fleet",
+        providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -268,5 +277,160 @@ describe("Models", () => {
     await waitFor(() => {
       expect(screen.getByText("No models discovered yet")).toBeInTheDocument();
     });
+  });
+
+  // ─── Tab tests ──────────────────────────────────────────────────
+
+  it("renders two tabs: Managed and Cloud", async () => {
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Models")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("tab", { name: /Managed/i })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Cloud/i })).toBeInTheDocument();
+  });
+
+  it("Managed tab is active by default", async () => {
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Managed/i })).toBeInTheDocument();
+    });
+
+    const managedTab = screen.getByRole("tab", { name: /Managed/i });
+    expect(managedTab).toHaveAttribute("aria-selected", "true");
+
+    const cloudTab = screen.getByRole("tab", { name: /Cloud/i });
+    expect(cloudTab).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("tab counts match model origins", async () => {
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Models")).toBeInTheDocument();
+    });
+
+    // 5 fleet models, 3 cloud models
+    const managedTab = screen.getByRole("tab", { name: /Managed/i });
+    expect(managedTab.textContent).toContain("5");
+
+    const cloudTab = screen.getByRole("tab", { name: /Cloud/i });
+    expect(cloudTab.textContent).toContain("3");
+  });
+
+  it("switching to Cloud tab shows cloud models", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Cloud/i })).toBeInTheDocument();
+    });
+
+    // Cloud models not visible initially
+    expect(screen.queryByText("gpt-4o")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /Cloud/i }));
+
+    // Cloud tab is now selected
+    const cloudTab = screen.getByRole("tab", { name: /Cloud/i });
+    expect(cloudTab).toHaveAttribute("aria-selected", "true");
+
+    // Cloud models visible
+    expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+    expect(screen.getByText("gpt-4o-mini")).toBeInTheDocument();
+    expect(screen.getByText("claude-sonnet-4-20250514")).toBeInTheDocument();
+
+    // Managed models NOT visible
+    expect(screen.queryByText("llama-3.1-70b")).not.toBeInTheDocument();
+  });
+
+  it("cloud model rows show provider badges", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: /Cloud/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("tab", { name: /Cloud/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+    });
+
+    // Provider badges visible
+    expect(screen.getAllByText("openai").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText("anthropic")).toBeInTheDocument();
+  });
+
+  it("search filters within the active tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    // Search on managed tab
+    const search = screen.getByRole("searchbox", { name: /search models/i });
+    await user.type(search, "llama");
+
+    expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+    expect(screen.queryByText("gemma-2-27b")).not.toBeInTheDocument();
+
+    // Switch to cloud tab — search should clear
+    await user.click(screen.getByRole("tab", { name: /Cloud/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("gpt-4o")).toBeInTheDocument();
+    });
+
+    // Search bar is cleared
+    expect(search).toHaveValue("");
+  });
+
+  it("shows empty search state within tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Models />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    const search = screen.getByRole("searchbox", { name: /search models/i });
+    await user.type(search, "nonexistent");
+
+    expect(screen.getByText("No models match your search")).toBeInTheDocument();
   });
 });
