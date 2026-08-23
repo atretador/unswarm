@@ -44,6 +44,10 @@ public sealed class ModelRegistry : IModelRegistry
 
     public async Task<ModelDefinition> CreateAsync(ModelDefinition definition, CancellationToken ct = default)
     {
+        if (definition.Name.StartsWith("cloud/", StringComparison.Ordinal) || 
+            definition.Id.StartsWith("cloud/", StringComparison.Ordinal))
+            throw new InvalidOperationException("Model names and IDs starting with 'cloud/' are reserved for cloud providers.");
+
         await using var db = _dbFactory();
         var now = _clock.UtcNow;
         var entity = new ModelEntity
@@ -71,6 +75,10 @@ public sealed class ModelRegistry : IModelRegistry
         await using var db = _dbFactory();
         var entity = await db.Models.FindAsync([id], ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Model {id} not found");
+
+        if (definition.Name.StartsWith("cloud/", StringComparison.Ordinal) || 
+            definition.Id.StartsWith("cloud/", StringComparison.Ordinal))
+            throw new InvalidOperationException("Model names and IDs starting with 'cloud/' are reserved for cloud providers.");
 
         entity.Name = definition.Name;
         entity.Family = definition.Family;

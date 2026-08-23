@@ -20,20 +20,30 @@ public sealed class OpenAIController : ControllerBase
     private readonly ISchedulerQueue _scheduler;
     private readonly IClock _clock;
     private readonly ILogStore _logStore;
+    private readonly ICloudForwardingService _cloudForwarding;
+    private readonly ICloudProviderStore _cloudProviderStore;
 
-    public OpenAIController(IModelRegistry registry, ISchedulerQueue scheduler, IClock clock, ILogStore logStore)
+    public OpenAIController(
+        IModelRegistry registry,
+        ISchedulerQueue scheduler,
+        IClock clock,
+        ILogStore logStore,
+        ICloudForwardingService cloudForwarding,
+        ICloudProviderStore cloudProviderStore)
     {
         _registry = registry;
         _scheduler = scheduler;
         _clock = clock;
         _logStore = logStore;
+        _cloudForwarding = cloudForwarding;
+        _cloudProviderStore = cloudProviderStore;
     }
 
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken ct)
     {
+        // Fleet models
         var models = await _registry.ListAllAsync(ct);
-
         var data = models.Select(m => new OpenAiModelData
         {
             Id = m.Name,
@@ -48,6 +58,23 @@ public sealed class OpenAIController : ControllerBase
                 Status = m.Status.ToString().ToLowerInvariant()
             }
         }).ToList();
+
+        // Cloud provider models
+        var providers = await _cloudProviderStore.ListAsync(ct);
+        foreach (var provider in providers)
+        {
+            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
+            foreach (var modelId in modelIds)
+            {
+                data.Add(new OpenAiModelData
+                {
+                    Id = $"cloud/{provider.Name}/{modelId}",
+                    Created = provider.CreatedAt.ToUnixTimeSeconds(),
+                    OwnedBy = provider.Name,
+                    Unswarm = new OpenAiModelUnswarmInfo() // empty defaults for cloud models
+                });
+            }
+        }
 
         return Ok(new OpenAiModelListResponse { Data = data });
     }
@@ -84,6 +111,66 @@ public sealed class OpenAIController : ControllerBase
         catch
         {
             return BadRequest(new { error = "Invalid JSON: 'model' field required" });
+        }
+
+        // Cloud provider models bypass the local queue/scheduler entirely
+        if (modelName.StartsWith("cloud/", StringComparison.Ordinal))
+        {
+            _logStore.Enqueue(LogLevel.Info, "cloud-proxy",
+                $"Cloud request start: model={modelName}, stream={isStream}");
+
+            var cloudStartTime = _clock.UtcNow;
+            CloudForwardResponse cloudResponse;
+            try
+            {
+                cloudResponse = await _cloudForwarding.ForwardAsync(
+                    modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
+                    $"Cloud request cancelled: model={modelName}");
+                return StatusCode(499);
+            }
+            catch (Exception ex)
+            {
+                _logStore.Enqueue(LogLevel.Error, "cloud-proxy",
+                    $"Cloud request failed: model={modelName}, error={ex.Message}");
+                return StatusCode(502, new { error = "Cloud inference request failed" });
+            }
+
+            var cloudElapsedMs = (long)(_clock.UtcNow - cloudStartTime).TotalMilliseconds;
+            _logStore.Enqueue(LogLevel.Info, "cloud-proxy",
+                $"Cloud request complete: model={modelName}, status={cloudResponse.StatusCode}, duration={cloudElapsedMs}ms");
+
+            Response.StatusCode = cloudResponse.StatusCode;
+            Response.ContentType = cloudResponse.ContentType;
+
+            if (isStream)
+            {
+                Response.Headers["Cache-Control"] = "no-cache";
+                Response.Headers["X-Accel-Buffering"] = "no";
+            }
+
+            if (cloudResponse.Body is not null)
+            {
+                try
+                {
+                    var buffer = new byte[8192];
+                    int bytesRead;
+                    while ((bytesRead = await cloudResponse.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                    {
+                        await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
+                        await Response.Body.FlushAsync(ct);
+                    }
+                }
+                finally
+                {
+                    await cloudResponse.Body.DisposeAsync();
+                }
+            }
+
+            return new EmptyResult();
         }
 
         _logStore.Enqueue(LogLevel.Info, "proxy",

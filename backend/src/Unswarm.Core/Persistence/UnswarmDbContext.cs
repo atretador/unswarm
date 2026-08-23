@@ -194,6 +194,26 @@ public sealed class ApiKeyEntity
     public DateTimeOffset? LastUsedAt { get; set; }
 }
 
+/// <summary>
+/// Cloud LLM provider registration. The API key is stored encrypted at rest
+/// via ASP.NET DataProtection; the plaintext never leaves the forwarding
+/// service's memory. <see cref="ApiKeyHint"/> is a masked preview captured
+/// at create/update time (e.g. "sk-…3f9a") and is never derived from the
+/// ciphertext — it is stored separately as a plain string column.
+/// </summary>
+public sealed class CloudProviderEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string BaseUrl { get; set; } = string.Empty;
+    public string ApiKeyCiphertext { get; set; } = string.Empty;
+    public string ApiKeyHint { get; set; } = string.Empty;
+    /// <summary>JSON array of model id strings (same pattern as ExtraLabelsJson).</summary>
+    public string ModelsJson { get; set; } = "[]";
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
 {
     public DbSet<ModelEntity> Models => Set<ModelEntity>();
@@ -205,6 +225,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PromptEntity> Prompts => Set<PromptEntity>();
     public DbSet<PromptVersionEntity> PromptVersions => Set<PromptVersionEntity>();
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
+    public DbSet<CloudProviderEntity> CloudProviders => Set<CloudProviderEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -312,6 +333,17 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.Property(k => k.KeyPrefix).IsRequired();
             e.HasIndex(k => k.Scope);
             e.HasIndex(k => k.IsActive);
+        });
+
+        modelBuilder.Entity<CloudProviderEntity>(e =>
+        {
+            e.HasKey(cp => cp.Id);
+            e.Property(cp => cp.Name).IsRequired().HasMaxLength(128);
+            e.Property(cp => cp.BaseUrl).IsRequired().HasMaxLength(512);
+            e.Property(cp => cp.ApiKeyCiphertext).IsRequired();
+            e.Property(cp => cp.ApiKeyHint).IsRequired().HasMaxLength(64);
+            e.Property(cp => cp.ModelsJson).IsRequired().HasMaxLength(8192);
+            e.HasIndex(cp => cp.Name).IsUnique();
         });
     }
 }

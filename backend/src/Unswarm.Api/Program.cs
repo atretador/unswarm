@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Unswarm.Api.Configuration;
 using Unswarm.Api.Middleware;
 using Unswarm.Api.BackgroundServices;
+using Unswarm.Api.Services;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Persistence;
@@ -66,6 +67,7 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
 });
 
 builder.Services.AddDataProtection();
+
 builder.Services.AddHttpContextAccessor();
 
 // ── Identity + Auth ────────────────────────────────────────────────────────
@@ -152,6 +154,24 @@ builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationS
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
+
+// Cloud providers: scoped store (Func<UnswarmDbContext> holder, like other scoped stores)
+builder.Services.AddSingleton<IApiKeyEncryptor, DataProtectionEncryptor>();
+builder.Services.AddScoped<ICloudProviderStore, CloudProviderStore>();
+
+// Cloud forwarding: singleton (global SemaphoreSlim concurrency cap) with
+// IServiceScopeFactory to resolve scoped ICloudProviderStore per request.
+builder.Services.AddSingleton<ICloudForwardingService, CloudForwardingService>();
+
+// ── HTTP Client for cloud providers ──────────────────────────────────────
+// Dedicated named client with infinite timeout for long-running upstream streams.
+// Cancellation is driven by the request's CancellationToken so client disconnect
+// cancels the upstream call (stops token spend).
+builder.Services.AddHttpClient("cloud-provider")
+    .ConfigureHttpClient(c =>
+    {
+        c.Timeout = Timeout.InfiniteTimeSpan;
+    });
 
 // ── Scheduler ─────────────────────────────────────────────────────────────
 // Global bounded channel: depth loaded from settings at first resolution.
