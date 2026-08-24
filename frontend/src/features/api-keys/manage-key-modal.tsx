@@ -252,10 +252,10 @@ function UsageSection({ keyId }: { keyId: string }) {
           {/* Headline numbers */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { label: "Requests", value: data.requestCount.toLocaleString() },
-              { label: "Tokens in", value: formatTokens(data.promptTokens) },
-              { label: "Tokens out", value: formatTokens(data.completionTokens) },
-              { label: "Cached", value: formatTokens(data.cachedTokens) },
+              { label: "Requests", value: data.totals.requestCount.toLocaleString() },
+              { label: "Tokens in", value: formatTokens(data.totals.promptTokens) },
+              { label: "Tokens out", value: formatTokens(data.totals.completionTokens) },
+              { label: "Cached", value: formatTokens(data.totals.cachedTokens) },
             ].map((stat) => (
               <div
                 key={stat.label}

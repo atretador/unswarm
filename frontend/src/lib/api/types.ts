@@ -425,11 +425,12 @@ export interface ApiKeyAccess {
 
 /** Aggregate usage for a single key over a time window. */
 export interface ApiKeyUsageResponse {
-  requestCount: number;
-  promptTokens: number;
-  completionTokens: number;
-  cachedTokens: number;
-  streamingRequests?: number;
+  totals: {
+    requestCount: number;
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  };
   /** Per-model breakdown; optional so partial backends degrade gracefully. */
   models?: Array<{
     model: string;
