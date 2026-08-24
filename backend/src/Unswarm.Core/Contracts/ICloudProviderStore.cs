@@ -33,7 +33,7 @@ public interface ICloudProviderStore
 
     /// <summary>
     /// Validate and save a provider's model list. Entries are validated:
-    /// non-empty strings, must not start with "cloud/", count ≤ 500, total ≤ 8 KiB.
+    /// non-empty strings, must not start with "cloud/", count ≤ 500, total ≤ 64 KiB.
     /// </summary>
     Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default);
 

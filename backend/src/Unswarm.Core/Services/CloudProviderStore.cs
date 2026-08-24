@@ -194,8 +194,8 @@ public sealed class CloudProviderStore : ICloudProviderStore
                 throw new ArgumentException($"Model id '{id}' at index {i} must not start with 'cloud/'.");
             totalBytes += id.Length;
         }
-        if (totalBytes > 8192)
-            throw new ArgumentException($"Total model id size exceeds 8 KiB ({totalBytes} bytes).");
+        if (totalBytes > 65536)
+            throw new ArgumentException($"Total model id size exceeds 64 KiB ({totalBytes} bytes).");
     }
 
     private static CloudProviderListItem MapToList(CloudProviderEntity e) => new()

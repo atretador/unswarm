@@ -89,7 +89,7 @@ public sealed class MetricsController : ControllerBase
         var total = await query.CountAsync(ct);
 
         var items = await query
-            .OrderByDescending(u => u.Timestamp)
+            .OrderByDescending(u => u.TimestampTicks)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .Select(u => new UsageRecordResponse

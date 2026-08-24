@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Unswarm.Core.Persistence;
 
@@ -10,9 +11,11 @@ using Unswarm.Core.Persistence;
 namespace Unswarm.Core.Migrations
 {
     [DbContext(typeof(UnswarmDbContext))]
-    partial class UnswarmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824012213_WidenCloudProviderModelsJson")]
+    partial class WidenCloudProviderModelsJson
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -410,7 +413,7 @@ namespace Unswarm.Core.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Timestamp");
+                    b.HasIndex("TimestampTicks");
 
                     b.ToTable("Logs");
                 });

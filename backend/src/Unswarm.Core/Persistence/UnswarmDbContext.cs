@@ -406,7 +406,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.Property(cp => cp.BaseUrl).IsRequired().HasMaxLength(512);
             e.Property(cp => cp.ApiKeyCiphertext).IsRequired();
             e.Property(cp => cp.ApiKeyHint).IsRequired().HasMaxLength(64);
-            e.Property(cp => cp.ModelsJson).IsRequired().HasMaxLength(8192);
+            e.Property(cp => cp.ModelsJson).IsRequired().HasMaxLength(65536);
             e.HasIndex(cp => cp.Name).IsUnique();
         });
 
