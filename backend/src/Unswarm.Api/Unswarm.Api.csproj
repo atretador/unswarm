@@ -5,6 +5,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <!-- Generate XML documentation file for Swashbuckle OpenAPI schema. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- XML-doc generation flags every undocumented public member (CS1591);
+         doc comments are optional here, so silence the noise. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +27,8 @@
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
     <!-- Prometheus exporter is still pre-release (no stable 1.x published). -->
     <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.18.0-beta.1" />
+    <!-- OpenAPI / Swagger UI for API documentation. -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

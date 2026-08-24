@@ -6,6 +6,13 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Application settings — read and update scheduler, shutdown, and system configuration.
+/// </summary>
+/// <remarks>
+/// GET /api/settings — Get current settings
+/// PUT /api/settings — Update settings (Admin only)
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

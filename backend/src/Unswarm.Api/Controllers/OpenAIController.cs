@@ -10,6 +10,11 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// OpenAI-compatible inference proxy. Routes requests to locally managed containers
+/// or to cloud provider APIs (OpenAI, Anthropic, etc.) through a unified /v1 surface.
+/// Requires an inference-scoped API key.
+/// </summary>
 [ApiController]
 // Inference surface: an OpenAI-compatible proxy. ONLY managed inference API
 // keys authenticate here — the InferenceKey policy rejects cookie principals
@@ -50,6 +55,9 @@ public sealed class OpenAIController : ControllerBase
         _apiKeyAccess = apiKeyAccess;
     }
 
+    /// <summary>
+    /// Lists all available models (fleet containers + cloud providers) in OpenAI format.
+    /// </summary>
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken ct)
     {
@@ -104,12 +112,20 @@ public sealed class OpenAIController : ControllerBase
         return Ok(new OpenAiModelListResponse { Data = data });
     }
 
+    /// <summary>
+    /// Create a chat completion. Routes to the scheduler queue for managed models
+    /// or forwards directly to the configured cloud provider API.
+    /// </summary>
     [HttpPost("chat/completions")]
     public async Task<IActionResult> ChatCompletions(CancellationToken ct)
     {
         return await HandleInferenceAsync(ct);
     }
 
+    /// <summary>
+    /// Create a completions (legacy text-generation) endpoint. Routes to the scheduler
+    /// queue for managed models or forwards to the configured cloud provider API.
+    /// </summary>
     [HttpPost("completions")]
     public async Task<IActionResult> Completions(CancellationToken ct)
     {

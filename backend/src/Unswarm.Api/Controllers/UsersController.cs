@@ -5,6 +5,15 @@ using Unswarm.Core.Persistence;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// User management for dashboard accounts. Admin-only.
+/// </summary>
+/// <remarks>
+/// GET /api/users — List all users
+/// POST /api/users — Create a new user
+/// POST /api/users/{id}/reset-password — Reset a user's password
+/// DELETE /api/users/{id} — Delete a user
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 [Authorize(Roles = "Admin")]

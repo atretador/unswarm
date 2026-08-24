@@ -12,6 +12,9 @@ namespace Unswarm.Api.Controllers;
 /// local entries from registered runtimes with their ContainerModelMapping model
 /// lists — the same mapping resolution the scheduler uses for routing.
 /// </summary>
+/// <remarks>
+/// GET /api/provider-model-catalog — List all providers with their models
+/// </remarks>
 [ApiController]
 [Route("api/provider-model-catalog")]
 [Authorize(Roles = "Admin")]

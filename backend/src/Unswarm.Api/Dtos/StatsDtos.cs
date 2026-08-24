@@ -2,6 +2,10 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Dtos;
 
+/// <summary>
+/// Dashboard statistics summary: request counts, token processing, latency,
+/// queue depth, model/container counts, and time-series metrics.
+/// </summary>
 public sealed class StatsSummaryResponse
 {
     public long TotalRequests { get; set; }

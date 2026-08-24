@@ -10,6 +10,15 @@ using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Benchmark history and model performance evaluation. Run benchmark prompts
+/// against models (fleet or cloud) to measure tokens/sec, latency, and response quality.
+/// </summary>
+/// <remarks>
+/// POST /api/benchmarks?modelId= — Run a benchmark (Admin only)
+/// GET /api/benchmarks — List benchmark history
+/// GET /api/benchmarks?modelId= — Filter benchmarks by model
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

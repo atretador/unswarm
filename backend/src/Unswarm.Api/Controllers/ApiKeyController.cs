@@ -10,6 +10,16 @@ namespace Unswarm.Api.Controllers;
 /// Management of managed inference API keys. Admin-only. The raw secret is
 /// returned only at create/rotation time and is never persisted in full.
 /// </summary>
+/// <remarks>
+/// POST /api/api-keys — Create an inference API key
+/// POST /api/api-keys/agent — Create an agent API key
+/// GET /api/api-keys — List API keys
+/// GET /api/api-keys/{id} — Get an API key detail
+/// DELETE /api/api-keys/{id} — Revoke an API key
+/// POST /api/api-keys/{id}/rotate — Rotate an API key
+/// GET /api/api-keys/{id}/access — Get key access grants
+/// PUT /api/api-keys/{id}/access — Update key access grants
+/// </remarks>
 [ApiController]
 // Explicit route — ASP.NET lowercases the [controller] token to "apikeys",
 // which would not match the frontend wire contract at "/api/api-keys".

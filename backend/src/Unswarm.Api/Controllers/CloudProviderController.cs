@@ -11,6 +11,15 @@ namespace Unswarm.Api.Controllers;
 /// Route: /api/cloudproviders — sits outside ApiKeyAuthMiddleware's protected
 /// prefixes so cookie auth + Admin role is the full story.
 /// </summary>
+/// <remarks>
+/// GET /api/cloudproviders — List cloud providers
+/// POST /api/cloudproviders — Register a new provider
+/// GET /api/cloudproviders/{id} — Get a provider detail
+/// PUT /api/cloudproviders/{id} — Update a provider
+/// DELETE /api/cloudproviders/{id} — Delete a provider
+/// POST /api/cloudproviders/{id}/fetch-models — Fetch models from an upstream provider
+/// POST /api/cloudproviders/test-and-fetch — Test connection and preview models
+/// </remarks>
 [ApiController]
 [Route("api/cloudproviders")]
 [Authorize(Roles = "Admin")]

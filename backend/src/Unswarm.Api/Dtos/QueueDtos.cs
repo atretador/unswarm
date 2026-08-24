@@ -2,6 +2,10 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Dtos;
 
+/// <summary>
+/// Snapshot of the inference scheduler queue state: processing items,
+/// waiting items, recent completions, and active model transitions.
+/// </summary>
 public sealed class QueueSnapshotResponse
 {
     /// <summary>Oldest processing item — backward-compatible view of <see cref="Processing"/>.</summary>
@@ -34,9 +38,13 @@ public sealed class QueueSnapshotResponse
 
 public sealed class QueueItemResponse
 {
+    /// <summary>Unique queue item identifier.</summary>
     public string Id { get; set; } = "";
+    /// <summary>Model name requested by the client.</summary>
     public string ModelRequested { get; set; } = "";
+    /// <summary>Model name assigned by the scheduler (null until routed).</summary>
     public string? ModelAssigned { get; set; }
+    /// <summary>Execution target id (e.g. "host" or "agent:name").</summary>
     public string? TargetId { get; set; }
 
     /// <summary>Registered runtime id of the lane serving this item (null until routed).</summary>

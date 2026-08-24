@@ -6,6 +6,18 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Model registry — the catalog of discovered models and cloud provider models.
+/// Models are auto-discovered from running inference containers; new models can
+/// also be registered manually. Each model is linked to its source container/runtime.
+/// </summary>
+/// <remarks>
+/// GET /api/models — List all models
+/// POST /api/models — Register a new model
+/// GET /api/models/{id} — Get a model detail
+/// PUT /api/models/{id} — Update a model
+/// DELETE /api/models/{id} — Delete a model
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

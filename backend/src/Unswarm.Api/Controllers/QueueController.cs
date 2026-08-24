@@ -5,6 +5,15 @@ using Unswarm.Core.Contracts;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Inference request queue monitoring and management. View the scheduler queue state,
+/// cancel pending requests, and release conversation-affinity holds.
+/// </summary>
+/// <remarks>
+/// GET /api/queue/snapshot — Get inference queue status
+/// DELETE /api/queue/{itemId} — Cancel a queued request (Admin only)
+/// POST /api/queue/targets/{targetId}/hold/release — Release conversation holds (Admin only)
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

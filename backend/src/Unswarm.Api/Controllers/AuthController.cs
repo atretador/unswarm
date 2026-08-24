@@ -5,6 +5,16 @@ using Unswarm.Core.Persistence;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Authentication and user session management for the dashboard SPA.
+/// Cookie-based authentication with Identity framework.
+/// </summary>
+/// <remarks>
+/// POST /api/auth/login — Authenticate and create session
+/// POST /api/auth/logout — End session
+/// GET /api/auth/me — Get current user info
+/// POST /api/auth/change-password — Change current user's password
+/// </remarks>
 [ApiController]
 [Route("api/[controller]")]
 public class AuthController : ControllerBase

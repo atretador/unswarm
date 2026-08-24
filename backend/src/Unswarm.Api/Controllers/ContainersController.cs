@@ -6,6 +6,27 @@ using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Container and runtime lifecycle management. Register pre-provisioned model servers,
+/// start/stop/restart containers, update concurrency (coexistence) settings,
+/// and manage registered runtime definitions.
+/// </summary>
+/// <remarks>
+/// GET /api/containers — List running containers
+/// POST /api/containers/start — Start a container for a model
+/// POST /api/containers/{id}/stop — Stop a container
+/// POST /api/containers/{id}/restart — Restart a container
+/// POST /api/containers/register — Register a new container/runtime
+/// GET /api/containers/registered — List registered runtimes
+/// GET /api/containers/registered/{id} — Get a registered runtime
+/// DELETE /api/containers/registered/{id} — Delete a registered runtime
+/// POST /api/containers/registered/{id}/start — Start a registered runtime
+/// POST /api/containers/registered/{id}/stop — Stop a registered runtime
+/// POST /api/containers/registered/{id}/restart — Restart a registered runtime
+/// POST /api/containers/registered/{id}/rediscover — Rediscover models from a runtime
+/// PUT /api/containers/registered/{id}/concurrency — Update co-location settings
+/// POST /api/containers/registered/concurrency — Toggle coexistence between two runtimes
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

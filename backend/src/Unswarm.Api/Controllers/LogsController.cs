@@ -9,8 +9,15 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Application log viewer. Admin-only. Queries historical log entries and
+/// provides an SSE (Server-Sent Events) stream for live log tailing.
+/// </summary>
+/// <remarks>
+/// GET /api/logs — Query historical logs
+/// GET /api/logs/stream — Live log stream (SSE)
+/// </remarks>
 [ApiController]
-// Logs can contain API key names, model ids, and error details — admin-only.
 [Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 public sealed class LogsController : ControllerBase

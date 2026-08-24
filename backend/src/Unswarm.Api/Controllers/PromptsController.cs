@@ -6,6 +6,21 @@ using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Saved prompt library for benchmarking. Prompts can be created, versioned,
+/// and rolled back. Used as the default prompt for auto-benchmarks.
+/// </summary>
+/// <remarks>
+/// GET /api/prompts — List all prompts
+/// POST /api/prompts — Create a prompt (Admin only)
+/// GET /api/prompts/{id} — Get a prompt detail
+/// PUT /api/prompts/{id} — Update a prompt (Admin only)
+/// DELETE /api/prompts/{id} — Delete a prompt (Admin only)
+/// POST /api/prompts/{id}/default — Set as default benchmark prompt (Admin only)
+/// GET /api/prompts/{id}/versions — List prompt versions
+/// GET /api/prompts/{id}/versions/{version} — Get a specific version
+/// POST /api/prompts/{id}/rollback — Rollback to a version (Admin only)
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]

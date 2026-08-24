@@ -14,6 +14,12 @@ namespace Unswarm.Api.Controllers;
 /// telemetry so callers can see where models can run. Containers are filtered to
 /// the registered set so unmanaged containers never surface.
 /// </summary>
+/// <remarks>
+/// GET /api/agents — List all agents
+/// GET /api/agents/{name}/containers — List containers on a specific agent (Admin only)
+/// GET /api/agents/{name}/scripts — List scripts on a specific agent
+/// GET /api/agents/{name}/scripts/available — List available scripts on a specific agent
+/// </remarks>
 [ApiController]
 // Execution-target listing. The admin cookie (dashboard) OR an agent API key
 // may call it; an inference key is rejected by the scope policy.
