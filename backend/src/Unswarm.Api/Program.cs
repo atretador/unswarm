@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -198,10 +199,52 @@ builder.Services.AddSingleton<ICloudForwardingService, CloudForwardingService>()
 // Dedicated named client with infinite timeout for long-running upstream streams.
 // Cancellation is driven by the request's CancellationToken so client disconnect
 // cancels the upstream call (stops token spend).
+//
+// ConnectCallback: prefer IPv4 when a host publishes both A and AAAA records.
+// Some networks blackhole IPv6 (SYN sent, never answered); the default handler
+// then hangs on the first AAAA forever because the overall client timeout is
+// infinite — every cloud-proxied request stalls with no error surfaced. Trying
+// addresses in IPv4-first order with a short per-address connect window falls
+// through to a working family instead.
 builder.Services.AddHttpClient("cloud-provider")
     .ConfigureHttpClient(c =>
     {
         c.Timeout = Timeout.InfiniteTimeSpan;
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        ConnectTimeout = TimeSpan.FromSeconds(20),
+        ConnectCallback = async (ctx, ct) =>
+        {
+            var addrs = await Dns.GetHostAddressesAsync(ctx.DnsEndPoint.Host, ct).ConfigureAwait(false);
+            // Stable sort: IPv4 first when both families are present.
+            var ordered = addrs
+                .Select((a, i) => (Addr: a, Index: i))
+                .OrderByDescending(x => x.Addr.AddressFamily == AddressFamily.InterNetwork)
+                .ThenBy(x => x.Index)
+                .Select(x => x.Addr)
+                .ToArray();
+
+            Exception? lastError = null;
+            foreach (var addr in ordered)
+            {
+                try
+                {
+                    var socket = new Socket(addr.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+                    using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    attemptCts.CancelAfter(TimeSpan.FromSeconds(5));
+                    await socket.ConnectAsync(addr, ctx.DnsEndPoint.Port, attemptCts.Token).ConfigureAwait(false);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    lastError = ex;
+                }
+            }
+
+            throw new HttpRequestException(
+                $"Failed to connect to {ctx.DnsEndPoint.Host}:{ctx.DnsEndPoint.Port}", lastError);
+        },
     });
 
 // ── Scheduler ─────────────────────────────────────────────────────────────
