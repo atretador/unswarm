@@ -42,6 +42,25 @@ public sealed class LogStoreTests : IDisposable
         string? source = null, LogLevel? level = null, int limit = 100)
         => await _store.GetHistoricalAsync(source, level, limit);
 
+    /// <summary>
+    /// Polls a historical query until <paramref name="match"/> holds. GetHistoricalAsync
+    /// is best-effort (transient SQLite errors yield an empty list) and visibility lags
+    /// Enqueue by up to one batch cycle, so a single immediate read can flake under
+    /// parallel test load; retry within the Eventually window instead.
+    /// </summary>
+    private async Task<IReadOnlyList<LogEntry>> HistoricalEventuallyAsync(
+        Func<IReadOnlyList<LogEntry>, bool> match,
+        string? source = null, LogLevel? level = null, int limit = 100)
+    {
+        IReadOnlyList<LogEntry> result = [];
+        await Eventually.UntilAsync(() =>
+        {
+            result = _store.GetHistoricalAsync(source, level, limit).GetAwaiter().GetResult();
+            return match(result);
+        });
+        return result;
+    }
+
     private int PersistedCount()
     {
         using var db = _dbFactory();
@@ -78,15 +97,18 @@ public sealed class LogStoreTests : IDisposable
 
         await Eventually.UntilAsync(() => PersistedCount() == 3);
 
-        var alphaOnly = await HistoricalAsync(source: "alpha");
+        var alphaOnly = await HistoricalEventuallyAsync(
+            r => r.Count == 2 && r.All(e => e.Source == "alpha"), source: "alpha");
         Assert.Equal(2, alphaOnly.Count);
         Assert.All(alphaOnly, e => Assert.Equal("alpha", e.Source));
 
-        var warns = await HistoricalAsync(level: LogLevel.Warn);
+        var warns = await HistoricalEventuallyAsync(
+            r => r.Count == 1, level: LogLevel.Warn);
         var warn = Assert.Single(warns);
         Assert.Equal("a2", warn.Message);
 
-        var limited = await HistoricalAsync(limit: 1);
+        var limited = await HistoricalEventuallyAsync(
+            r => r.Count == 1, limit: 1);
         Assert.Single(limited);
         // Most recent first.
         Assert.Equal("b1", limited[0].Message);
@@ -104,7 +126,8 @@ public sealed class LogStoreTests : IDisposable
 
         await Eventually.UntilAsync(() => PersistedCount() == 3);
 
-        var entries = await HistoricalAsync();
+        var entries = await HistoricalEventuallyAsync(
+            r => r.Count == 3 && r[0].Message == "third");
         Assert.Equal(["third", "second", "first"], entries.Select(e => e.Message).ToList());
     }
 
