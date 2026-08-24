@@ -32,6 +32,13 @@ public class UsersController : ControllerBase
         if (!result.Succeeded)
             return BadRequest(new { error = string.Join(", ", result.Errors.Select(e => e.Description)) });
 
+        // Every dashboard user created here gets the default "User" role
+        // (seeded at startup). Admin rights are granted explicitly afterwards.
+        var roleResult = await _userManager.AddToRoleAsync(user, "User");
+        if (!roleResult.Succeeded)
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { error = "User created but role assignment failed: " + string.Join(", ", roleResult.Errors.Select(e => e.Description)) });
+
         return Ok(new { id = user.Id, username = user.UserName, isTempPassword = user.IsTempPassword });
     }
 

@@ -5,6 +5,10 @@ services:
     build: ./backend
     restart: unless-stopped
     volumes:
+      # Persistent app data: SQLite DB + DataProtection key ring
+      # ($HOME=/data → /data/.config/unswarm/unswarm.db and .../keys).
+      # Keeping the key ring here means API-key ciphertexts stay decryptable
+      # across container recreation.
       - unswarm-data:/data
     environment:
       # API key for agent authentication (empty = auth disabled)

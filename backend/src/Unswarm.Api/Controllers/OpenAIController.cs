@@ -11,10 +11,13 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
-// Inference surface: an OpenAI-compatible proxy. A managed inference API key
-// authenticates here; the admin cookie is also accepted for local testing.
+// Inference surface: an OpenAI-compatible proxy. ONLY managed inference API
+// keys authenticate here — the InferenceKey policy rejects cookie principals
+// (the ApiKeyAuthMiddleware fail-closed rule for /v1 admits either a valid
+// inference key or an already-cookie-authenticated principal, but the policy
+// below still requires the inference-scope claim, so cookie-only callers get
+// 403). Use a generated key even for local testing.
 [Authorize(Policy = "InferenceKey")]
-// [Authorize(Policy = "Cookie")]
 [Route("v1")]
 public sealed class OpenAIController : ControllerBase
 {
@@ -82,6 +85,20 @@ public sealed class OpenAIController : ControllerBase
                     Unswarm = new OpenAiModelUnswarmInfo() // empty defaults for cloud models
                 });
             }
+        }
+
+        // Per-key model access control on the listing itself: a key with a
+        // restricted KeyAccess must not discover model ids it cannot call.
+        // Uses the same matching rules as IsModelAllowedAsync (via
+        // FilterModelsAsync). Key-less callers (cookie-authenticated admin —
+        // possible only if the policy is ever relaxed) see everything.
+        string? apiKeyId = User.FindFirst("unswarm:key-id")?.Value;
+        if (apiKeyId is not null)
+        {
+            var allowedIds = await _apiKeyAccess.FilterModelsAsync(
+                apiKeyId, data.Select(d => d.Id), ct);
+            var allowedSet = new HashSet<string>(allowedIds, StringComparer.OrdinalIgnoreCase);
+            data = data.Where(d => allowedSet.Contains(d.Id)).ToList();
         }
 
         return Ok(new OpenAiModelListResponse { Data = data });

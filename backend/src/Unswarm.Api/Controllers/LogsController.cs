@@ -10,7 +10,8 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Api.Controllers;
 
 [ApiController]
-[Authorize]
+// Logs can contain API key names, model ids, and error details — admin-only.
+[Authorize(Roles = "Admin")]
 [Route("api/[controller]")]
 public sealed class LogsController : ControllerBase
 {

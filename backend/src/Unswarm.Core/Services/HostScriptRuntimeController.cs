@@ -80,7 +80,6 @@ public sealed class HostScriptRuntimeController
             var psi = new ProcessStartInfo
             {
                 FileName = "/bin/bash",
-                Arguments = launcherPath,
                 WorkingDirectory = workingDir,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -92,6 +91,10 @@ public sealed class HostScriptRuntimeController
                     ["UNSWARM_REG_ID"] = regId
                 }
             };
+            // ArgumentList: the launcher path is passed as a single argv element
+            // — no space/quoting re-splitting, so paths with spaces or shell
+            // metacharacters cannot change how bash interprets the invocation.
+            psi.ArgumentList.Add(launcherPath);
 
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
             process.OutputDataReceived += (_, e) =>

@@ -1,5 +1,8 @@
+using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Api.Configuration;
@@ -50,6 +53,10 @@ var dbPath = Path.Combine(
 Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
 var connectionString = $"Data Source={dbPath}";
 
+// Shared app data directory (~/.config/unswarm; /data/.config/unswarm in the
+// container, where HOME is pointed at the mounted volume). The DataProtection
+// key ring lives here too so persisted API-key ciphertexts survive restarts.
+var appDataDir = Path.GetDirectoryName(dbPath)!;
 builder.Services.AddDbContext<UnswarmDbContext>(options =>
     options.UseSqlite(connectionString)
            .AddInterceptors(SqliteTuningInterceptor.Instance));
@@ -66,19 +73,28 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
     };
 });
 
-builder.Services.AddDataProtection();
+// ── Data Protection ───────────────────────────────────────────────────────
+// Persist the key ring under the app data dir (<datadir>/keys). Without this,
+// keys are regenerated on every restart and previously encrypted API-key
+// ciphertexts (CloudProviderStore, ApiKeyStore) become undecryptable. In the
+// container HOME=/data and the unswarm-data volume keeps <datadir>/keys across
+// container recreation.
+var dataProtectionKeyDir = Path.Combine(appDataDir, "keys");
+Directory.CreateDirectory(dataProtectionKeyDir);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDir));
 
 builder.Services.AddHttpContextAccessor();
 
 // ── Identity + Auth ────────────────────────────────────────────────────────
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
-        // Password settings (relaxed for self-hosted)
+        // Password settings (relaxed for self-hosted, but with a sane minimum)
         options.Password.RequireDigit = false;
         options.Password.RequireLowercase = false;
         options.Password.RequireUppercase = false;
         options.Password.RequireNonAlphanumeric = false;
-        options.Password.RequiredLength = 6;
+        options.Password.RequiredLength = 10;
         options.Password.RequiredUniqueChars = 1;
 
         // Lockout settings
@@ -348,6 +364,12 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+// ── HSTS (non-development only) ──────────────────────────────────────────
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 // ── Initialize database ──────────────────────────────────────────────────
 // EF Core migrations: applies pending migrations (creating __EFMigrationsHistory
 // and the full schema on a fresh DB). Replaces the old EnsureCreated + PRAGMA
@@ -390,15 +412,59 @@ app.UseWebSockets(new WebSocketOptions
     AllowedOrigins = { "http://localhost:3000", "http://localhost:5173" }
 });
 app.UseMiddleware<SecurityHeadersMiddleware>();
+
+// ── Prometheus /metrics scrape protection ─────────────────────────────────
+// The endpoint itself stays AllowAnonymous (scrapers can't do the cookie
+// dance); this guard decides who may read it:
+//   - Prometheus:ScrapeToken set (env PROMETHEUS_SCRAPE_TOKEN): require
+//     "Authorization: Bearer <token>", 401 otherwise.
+//   - Unset: loopback-only (127.0.0.1 / ::1), 403 for everyone else.
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.Value?.Equals("/metrics", StringComparison.OrdinalIgnoreCase) == true)
+    {
+        var scrapeToken = Environment.GetEnvironmentVariable("PROMETHEUS_SCRAPE_TOKEN");
+        if (string.IsNullOrWhiteSpace(scrapeToken))
+            scrapeToken = context.RequestServices.GetRequiredService<IConfiguration>()["Prometheus:ScrapeToken"];
+
+        if (!string.IsNullOrWhiteSpace(scrapeToken))
+        {
+            var presented = context.Request.Headers.Authorization.ToString();
+            var presentedToken = presented.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? presented["Bearer ".Length..].Trim()
+                : string.Empty;
+            if (!CryptographicOperations.FixedTimeEquals(
+                    System.Text.Encoding.UTF8.GetBytes(presentedToken),
+                    System.Text.Encoding.UTF8.GetBytes(scrapeToken)))
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return;
+            }
+        }
+        else
+        {
+            var remote = context.Connection.RemoteIpAddress;
+            var isLoopback = remote is not null && IPAddress.IsLoopback(remote); // covers 127.0.0.1 and ::1
+            if (!isLoopback)
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+        }
+    }
+
+    await next(context);
+});
 app.MapControllers();
 
 // Anonymous liveness probe — deliberately outside any auth surface
 // ("/health" is not a protected prefix in ApiKeyAuthMiddleware).
 app.MapHealthChecks("/health");
 
-// Anonymous Prometheus scrape endpoint — same treatment as /health ("/metrics"
-// is not a protected prefix in ApiKeyAuthMiddleware). Serves whatever the
-// OpenTelemetry metric provider has collected, including the "Unswarm" meter.
+// Prometheus scrape endpoint — access is gated by the scrape-protection
+// middleware above ("/metrics" is not a protected prefix in
+// ApiKeyAuthMiddleware). Serves whatever the OpenTelemetry metric provider has
+// collected, including the "Unswarm" meter.
 app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
 
 app.Run();

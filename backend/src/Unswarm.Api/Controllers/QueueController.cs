@@ -22,6 +22,7 @@ public sealed class QueueController : ControllerBase
     }
 
     [HttpDelete("{itemId}")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> CancelItem(string itemId, CancellationToken ct)
     {
         var result = await _queue.CancelItemAsync(itemId, ct);
@@ -35,6 +36,7 @@ public sealed class QueueController : ControllerBase
     /// dwell window.
     /// </summary>
     [HttpPost("targets/{targetId}/hold/release")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ReleaseHold(string targetId, CancellationToken ct)
     {
         var result = await _queue.ReleaseConversationHoldsAsync(targetId, ct);

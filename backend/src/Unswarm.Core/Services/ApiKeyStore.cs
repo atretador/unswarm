@@ -183,17 +183,22 @@ public sealed class ApiKeyStore : IApiKeyStore
         access,
         new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
-    /// <summary>Lenient read: case-insensitive properties; malformed JSON → unrestricted.</summary>
+    /// <summary>
+    /// Fail-closed read: case-insensitive properties. Malformed JSON or a null
+    /// deserialize result yields the <see cref="KeyAccess.Denied"/> sentinel,
+    /// which ApiKeyAccessService treats as deny-everything. A legitimate "{}"
+    /// (the default written by PUT /access) still deserializes to unrestricted.
+    /// </summary>
     internal static KeyAccess DeserializeAccess(string json)
     {
         try
         {
             return JsonSerializer.Deserialize<KeyAccess>(json,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new KeyAccess();
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? KeyAccess.Denied;
         }
         catch (JsonException)
         {
-            return new KeyAccess();
+            return KeyAccess.Denied;
         }
     }
 

@@ -137,12 +137,14 @@ public sealed class ApiKeyAccessServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task MalformedAccessJson_IsTreatedAsUnrestricted()
+    public async Task MalformedAccessJson_FailsClosed()
     {
         var keyId = await SeedKeyAsync("not-json-at-all");
         var svc = CreateService();
 
-        Assert.True(await svc.IsModelAllowedAsync(keyId, "cloud/openai/gpt-4o"));
+        // Malformed AccessJson must never fall through to "empty lists =
+        // unrestricted" — the KeyAccess.Denied sentinel denies every model.
+        Assert.False(await svc.IsModelAllowedAsync(keyId, "cloud/openai/gpt-4o"));
     }
 
     [Fact]

@@ -108,7 +108,11 @@ public sealed class AgentsController : ControllerBase
         }
     }
 
+    // Admin-only: unlike the aggregated fleet listing above, this returns the
+    // agent's UNFILTERED container list (raw "docker ps") which can include
+    // unrelated containers on the host.
     [HttpGet("{name}/containers")]
+    [Authorize(Roles = "Admin")]
     public async Task<IActionResult> ListAgentContainers(string name, CancellationToken ct)
     {
         var target = string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase)
