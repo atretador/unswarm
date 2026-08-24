@@ -155,9 +155,13 @@ public sealed class CloudForwardingService : ICloudForwardingService
             };
         }
 
+        // Ownership note: HttpResponseMessage.Dispose() also disposes its
+        // content stream. For streaming we must NOT dispose the message here —
+        // the caller is still going to read the body — so ownership of the
+        // message transfers to the returned stream (see ResponseOwningStream).
+        HttpResponseMessage? upstreamResponse = null;
         try
         {
-            // ── 5. Rewrite model field in request body ──────────────────
             string rewrittenBody;
             try
             {
@@ -176,7 +180,7 @@ public sealed class CloudForwardingService : ICloudForwardingService
             // "https://opencode.ai/zen/v1"). requestPath arrives as "/v1/..." from
             // the ASP.NET router, so strip the /v1 prefix to avoid doubling.
             var apiPath = requestPath.StartsWith("/v1/", StringComparison.Ordinal)
-                ? requestPath["v1".Length..]
+                ? requestPath["/v1".Length..]
                 : requestPath;
             var upstreamUrl = providerBaseUrl.TrimEnd('/') + apiPath;
 
@@ -188,7 +192,7 @@ public sealed class CloudForwardingService : ICloudForwardingService
 
             // ── 7. Send and relay response ──────────────────────────────
             var client = _httpClientFactory.CreateClient("cloud-provider");
-            using var upstreamResponse = await client.SendAsync(
+            upstreamResponse = await client.SendAsync(
                 upstreamRequest,
                 HttpCompletionOption.ResponseHeadersRead,
                 ct).ConfigureAwait(false);
@@ -204,35 +208,45 @@ public sealed class CloudForwardingService : ICloudForwardingService
 
             if (isStreaming)
             {
-                // For streaming: return the raw response stream. The caller
-                // (controller) is responsible for piping and disposing.
+                // For streaming: return the raw response stream wrapped with its
+                // owning HttpResponseMessage. The caller (controller) pipes and
+                // disposes; disposing the wrapper releases both the connection
+                // and the message. Disposing the message here instead would free
+                // the pooled connection while the caller still reads it.
                 var stream = await upstreamResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                 return new CloudForwardResponse
                 {
                     StatusCode = statusCode,
                     ContentType = contentType,
-                    Body = stream
+                    Body = new ResponseOwningStream(stream, upstreamResponse)
                 };
             }
 
             // Non-streaming: buffer the full response into a MemoryStream
             // so we can dispose the HttpResponseMessage properly.
-            var bodyStream = await upstreamResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
-            var buffered = new MemoryStream();
-            await bodyStream.CopyToAsync(buffered, ct).ConfigureAwait(false);
-            buffered.Position = 0;
-            await bodyStream.DisposeAsync().ConfigureAwait(false);
-
-            return new CloudForwardResponse
+            try
             {
-                StatusCode = statusCode,
-                ContentType = contentType,
-                Body = buffered
-            };
+                var bodyStream = await upstreamResponse.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                var buffered = new MemoryStream();
+                await bodyStream.CopyToAsync(buffered, ct).ConfigureAwait(false);
+                buffered.Position = 0;
+
+                return new CloudForwardResponse
+                {
+                    StatusCode = statusCode,
+                    ContentType = contentType,
+                    Body = buffered
+                };
+            }
+            finally
+            {
+                upstreamResponse.Dispose();
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // Client disconnected — no error body needed.
+            upstreamResponse?.Dispose();
             _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
                 $"Cloud request cancelled: provider={providerName}, model={upstreamModel}");
             return new CloudForwardResponse { StatusCode = 499, ContentType = "application/json" };
@@ -240,6 +254,7 @@ public sealed class CloudForwardingService : ICloudForwardingService
         catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
         {
             // Upstream timeout (HttpClient timeout or cancellation not from caller).
+            upstreamResponse?.Dispose();
             _logger.LogWarning(ex, "Cloud provider request timed out: {Provider}/{Model}",
                 providerName, upstreamModel);
             _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
@@ -331,5 +346,51 @@ public sealed class CloudForwardingService : ICloudForwardingService
         var stream = new MemoryStream(Encoding.UTF8.GetBytes(errorJson));
         stream.Position = 0;
         return stream;
+    }
+}
+
+/// <summary>
+/// Stream decorator that owns both the upstream content stream and the
+/// HttpResponseMessage that produced it. Disposing the wrapper releases both.
+/// Required because HttpResponseMessage.Dispose() disposes its content stream —
+/// so for streamed responses the message's ownership must transfer to whoever
+/// consumes the body, otherwise the pooled HTTP connection is released while
+/// the body is still being read (concurrent readers on one connection).
+/// </summary>
+file sealed class ResponseOwningStream(Stream inner, HttpResponseMessage response) : Stream
+{
+    public override bool CanRead => inner.CanRead;
+    public override bool CanSeek => false;
+    public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException();
+    public override long Position
+    {
+        get => throw new NotSupportedException();
+        set => throw new NotSupportedException();
+    }
+
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+    public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+        => inner.ReadAsync(buffer, offset, count, ct);
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        => inner.ReadAsync(buffer, ct);
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            inner.Dispose();
+            response.Dispose();
+        }
+    }
+
+    public override async ValueTask DisposeAsync()
+    {
+        await inner.DisposeAsync().ConfigureAwait(false);
+        response.Dispose();
     }
 }
