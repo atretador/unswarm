@@ -1918,19 +1918,6 @@ function AgentSection({
           <span className="truncate text-sm font-semibold text-[var(--color-text-heading)] transition-colors group-hover:text-[var(--color-primary)]">
             {settings?.agentDisplayNames?.[agent.name] ?? agent.name}
           </span>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setEditingAgentName(agent.name);
-              setAgentNameDraft(settings?.agentDisplayNames?.[agent.name] ?? agent.name);
-            }}
-            aria-label={`Rename agent ${agent.name}`}
-            title="Edit display name"
-            className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100"
-          >
-            <Pencil className="size-3" />
-          </button>
           {isHost && <Badge variant="outline">host</Badge>}
 
           <div className="hidden min-w-0 items-center gap-3 text-[10px] text-[var(--color-text-muted)] md:flex">
@@ -1965,6 +1952,20 @@ function AgentSection({
               </span>
             )}
           </div>
+        </button>
+
+        {/* Rename agent display name — sibling to the toggle button to avoid nesting */}
+        <button
+          type="button"
+          onClick={() => {
+            setEditingAgentName(agent.name);
+            setAgentNameDraft(settings?.agentDisplayNames?.[agent.name] ?? agent.name);
+          }}
+          aria-label={`Rename agent ${agent.name}`}
+          title="Edit display name"
+          className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100"
+        >
+          <Pencil className="size-3" />
         </button>
 
         <Badge variant={AGENT_STATUS_VARIANT[connectivity]} className="shrink-0">

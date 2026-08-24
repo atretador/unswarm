@@ -523,7 +523,9 @@ app.MapHealthChecks("/health");
 app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
 
 // Swagger UI — interactive API docs. Anonymous so unauthenticated users can explore.
-app.MapSwagger().AllowAnonymous();
+app.UseSwaggerUI(options => {
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Unswarm API v1");
+});
 
 app.Run();
 

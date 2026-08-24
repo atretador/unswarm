@@ -43,8 +43,12 @@ function rand(min: number, max: number): number {
 }
 
 let nextId = 100;
+let nextBenchId = 10;
 function id(): string {
   return String(++nextId);
+}
+function benchId(): string {
+  return `b${nextBenchId++}`;
 }
 
 /**
@@ -66,7 +70,7 @@ const NOW = new Date().toISOString();
 
 function bench(modelId: string, modelName: string, tokensPerSec: number, latencyMs: number, tokensGenerated = 512): BenchmarkResult {
   return {
-    id: `b-${modelId}`,
+    id: benchId(),
     modelId,
     modelName,
     prompt: "Default benchmark prompt — explain the proxy architecture in three sentences.",
