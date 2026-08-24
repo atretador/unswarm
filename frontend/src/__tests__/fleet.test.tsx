@@ -1301,6 +1301,7 @@ describe("Fleet", () => {
           containerImage: "unswarm/llama3.1:70b-q4km",
           sourceRuntimeId: "rc1",
           sourceRuntimeName: "llama3.1-70b",
+          sourceRuntimeAgent: null,
           origin: "fleet",
           providerName: null,
           createdAt: new Date().toISOString(),

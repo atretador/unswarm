@@ -11,7 +11,6 @@ import { Check, History, Trash2 } from "lucide-react";
 import { ApiError } from "../../lib/api/httpClient";
 import { client } from "../../lib/query-client";
 import { Button, ConfirmDialog } from "../../components/ui";
-import { purgeMetricsUsage } from "./metrics-api";
 
 export interface RetentionControlProps {
   /** Called after a successful purge so metrics can be refetched. */
@@ -84,7 +83,7 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
     const days = Math.max(0, Math.round(Number(daysInput)));
     setPurging(true);
     try {
-      const result = await purgeMetricsUsage(Number.isNaN(days) ? retentionDays : days);
+      const result = await client.purgeMetricsUsage(Number.isNaN(days) ? retentionDays : days);
       setPurgeResult(`Deleted ${result.deleted.toLocaleString()} record${result.deleted === 1 ? "" : "s"}`);
       setTimeout(() => setPurgeResult(null), 4000);
       onPurged();

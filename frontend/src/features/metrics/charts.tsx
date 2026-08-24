@@ -17,13 +17,14 @@ import {
   Bar,
   Legend,
   Cell,
+  LineChart,
+  Line,
 } from "recharts";
-import type { MetricsTimeBucket, ProviderUsageSummary } from "../../lib/api/types";
+import type { MetricsLatencyBand, MetricsTimeBucket, ProviderUsageSummary } from "../../lib/api/types";
 import {
   bucketCost,
   type BlendedRates,
 } from "./cost";
-import type { LatencyBand } from "./metrics-api";
 
 /** Which series the time chart renders. */
 export type TimeSeriesMetric =
@@ -274,7 +275,8 @@ function TokenUsageChartImpl({
 
 interface ProviderBreakdownChartProps {
   providers: ProviderUsageSummary[];
-  filterProvider: string;
+  /** Providers highlighted by the current filter selection (others dim). */
+  selectedProviders: string[];
   onProviderSelect: (provider: string) => void;
 }
 
@@ -282,13 +284,16 @@ export const ProviderBreakdownChart = memo(ProviderBreakdownChartImpl);
 
 function ProviderBreakdownChartImpl({
   providers,
-  filterProvider,
+  selectedProviders,
   onProviderSelect,
 }: ProviderBreakdownChartProps) {
   const handleBarClick = (data: unknown) => {
     const provider = (data as { provider?: string } | null)?.provider;
     if (provider) onProviderSelect(provider);
   };
+  const hasSelection = selectedProviders.length > 0;
+  const isDimmed = (provider: string) =>
+    hasSelection && !selectedProviders.includes(provider);
 
   return (
     <ResponsiveContainer width="100%" height={Math.max(120, providers.length * 36)}>
@@ -348,20 +353,138 @@ function ProviderBreakdownChartImpl({
               <Cell
                 key={`${dataKey}-${entry.provider}`}
                 fill={
-                  filterProvider && filterProvider !== entry.provider
+                  isDimmed(entry.provider)
                     ? "var(--color-text-muted)"
                     : PROVIDER_COLORS[
                         (index + colorOffset) % PROVIDER_COLORS.length
                       ]
                 }
-                fillOpacity={
-                  filterProvider && filterProvider !== entry.provider ? 0.3 : 1
-                }
+                fillOpacity={isDimmed(entry.provider) ? 0.3 : 1}
               />
             ))}
           </Bar>
         ))}
       </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── Comparison (multi-series) Time Chart ────────────────────────
+
+/** Distinguishable series colors for comparison lines. */
+export const SERIES_COLORS = [
+  "var(--color-primary)",
+  "var(--color-status-running)",
+  "var(--color-status-warning)",
+  "var(--color-status-error)",
+  "var(--color-status-starting)",
+  "var(--color-status-stopped)",
+  "var(--color-primary-hover)",
+  "var(--color-text-muted)",
+];
+
+export interface CompareSeries {
+  /** Group value — matches the numeric column name on each data row. */
+  key: string;
+  label: string;
+}
+
+export interface CompareDataPoint {
+  bucketStart: string;
+  bucketEnd: string;
+  time: string;
+  [seriesKey: string]: string | number;
+}
+
+interface MultiSeriesChartProps {
+  data: CompareDataPoint[];
+  series: CompareSeries[];
+  metric: TimeSeriesMetric;
+  onPointClick?: (window: DrillDownWindow) => void;
+}
+
+function formatMetricValue(metric: TimeSeriesMetric, value: number): string {
+  switch (metric) {
+    case "requests":
+      return value.toLocaleString();
+    case "latency":
+      return `${Math.round(value)} ms`;
+    case "cost":
+      return `$${value.toFixed(4)}`;
+    default:
+      return formatTokens(value);
+  }
+}
+
+/**
+ * One line per compared entity (provider or model), built from grouped
+ * summary buckets that the page pivots into per-series columns.
+ */
+export const MultiSeriesChart = memo(MultiSeriesChartImpl);
+
+function MultiSeriesChartImpl({
+  data,
+  series,
+  metric,
+  onPointClick,
+}: MultiSeriesChartProps) {
+  const handleClick = (payload: unknown) => {
+    if (!onPointClick) return;
+    const datum = (
+      Array.isArray(payload)
+        ? (payload[0] as { payload?: Record<string, unknown> } | undefined)?.payload
+        : (payload as { payload?: Record<string, unknown> } | null)?.payload ??
+          (payload as Record<string, unknown> | null)
+    ) as
+      | { bucketStart?: string; bucketEnd?: string }
+      | null
+      | undefined;
+    if (datum?.bucketStart && datum.bucketEnd) {
+      onPointClick({ from: datum.bucketStart, to: datum.bucketEnd });
+    }
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={260}>
+      <LineChart data={data} onClick={handleClick}>
+        <XAxis
+          dataKey="time"
+          tick={{ fontSize: 10, fill: "var(--color-text-muted)" }}
+          tickLine={false}
+          axisLine={false}
+        />
+        <YAxis
+          tick={{ fontSize: 10, fill: "var(--color-text-muted)" }}
+          tickLine={false}
+          axisLine={false}
+          width={48}
+          tickFormatter={(v: number) =>
+            metric === "latency" ? `${Math.round(v)}ms` : formatTokens(v)
+          }
+        />
+        <Tooltip
+          contentStyle={tooltipContentStyle}
+          formatter={(value, name) => [
+            formatMetricValue(metric, Number(value)),
+            String(name),
+          ]}
+        />
+        <Legend iconType="circle" wrapperStyle={{ fontSize: "11px" }} />
+        {series.map((s, i) => (
+          <Line
+            key={s.key}
+            type="monotone"
+            dataKey={s.key}
+            name={s.label}
+            stroke={SERIES_COLORS[i % SERIES_COLORS.length]}
+            strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 3 }}
+            isAnimationActive={false}
+            style={{ cursor: onPointClick ? "pointer" : undefined }}
+          />
+        ))}
+      </LineChart>
     </ResponsiveContainer>
   );
 }
@@ -372,7 +495,7 @@ function ProviderBreakdownChartImpl({
  * Vertical bar chart of the latency-band histogram (<500ms … >10s).
  * Band color ramps from primary (fast) through warning to error (slow).
  */
-export function LatencyBandsChart({ bands }: { bands: LatencyBand[] }) {
+export function LatencyBandsChart({ bands }: { bands: MetricsLatencyBand[] }) {
   const last = Math.max(1, bands.length - 1);
 
   const bandColor = (index: number): string => {

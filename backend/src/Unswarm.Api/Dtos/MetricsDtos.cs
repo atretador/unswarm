@@ -7,6 +7,11 @@ public sealed class MetricsTimeBucket
 {
     public DateTimeOffset BucketStart { get; set; }
     public DateTimeOffset BucketEnd { get; set; }
+    /// <summary>
+    /// Group identity when the request used <c>groupBy=provider|model</c>;
+    /// null for ungrouped responses.
+    /// </summary>
+    public string? Group { get; set; }
     public int RequestCount { get; set; }
     public int StreamingRequests { get; set; }
     public long PromptTokens { get; set; }

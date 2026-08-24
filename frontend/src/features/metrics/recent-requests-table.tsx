@@ -7,7 +7,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, RadioTower, X } from "lucide-react";
-import type { UsageRecordResponse } from "../../lib/api/types";
+import type { MetricsAnalyticsParams, UsageRecordResponse } from "../../lib/api/types";
 import { client } from "../../lib/query-client";
 import { Badge, Button, Tooltip } from "../../components/ui";
 import { useLiveTail, type LiveTailStatus } from "./use-live-tail";
@@ -20,13 +20,8 @@ const FRESH_MS = 1600;
 const BATCH_FLUSH_MS = 100;
 
 export interface RecentRequestsTableProps {
-  /** Base filter params (from/to/provider/model) shared by all metrics queries. */
-  filterParams: {
-    from?: string;
-    to?: string;
-    provider?: string;
-    model?: string;
-  };
+  /** Base filter params (from/to/providers/models) shared by all metrics queries. */
+  filterParams: MetricsAnalyticsParams;
   /** Optional custom window from time-chart drill-down; overrides from/to. */
   customWindow: { from: string; to: string } | null;
   /** Polling interval in ms; 0 disables. */

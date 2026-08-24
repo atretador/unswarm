@@ -5,6 +5,7 @@ import type {
   ApiKeyItem,
   AgentScriptStatus,
   BenchmarkResult,
+  ChatMessage,
   CloudProvider,
   CloudProviderInput,
   CloudProviderRead,
@@ -12,24 +13,23 @@ import type {
   Container,
   FetchModelsResult,
   LogEntry,
-  MetricsTimeBucket,
+  MetricsAnalyticsParams,
   Model,
-  ModelUsageSummary,
   Prompt,
   PromptInput,
   PromptVersion,
-  ProviderUsageSummary,
+  ProviderCatalogEntry,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  SendTestChatOptions,
   Settings,
   StatsSummary,
+  TestChatTurnResult,
   ToggleConcurrencyPayload,
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   UpdateRuntimePayload,
-  UsageRecordResponse,
-  UsageTotalsResponse,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -95,11 +95,29 @@ function handleUnauthorized(path: string) {
   window.location.assign("/login");
 }
 
+/**
+ * Serializes the shared metrics analytics params into query-string pairs.
+ * Multi-select filters are sent as repeated keys (`providers=a&providers=b`),
+ * which the backend binds to string[] parameters directly. Endpoint-specific
+ * params (granularity, groupBy, paging) are appended by the callers.
+ */
+function metricsParams(opts?: MetricsAnalyticsParams): URLSearchParams {
+  const params = new URLSearchParams();
+  if (opts?.from) params.set("from", opts.from);
+  if (opts?.to) params.set("to", opts.to);
+  for (const provider of opts?.providers ?? []) {
+    if (provider) params.append("providers", provider);
+  }
+  for (const model of opts?.models ?? []) {
+    if (model) params.append("models", model);
+  }
+  return params;
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit,
-): Promise<T> {
-  const url = `${BASE_URL}${path}`;
+): Promise<T> {  const url = `${BASE_URL}${path}`;
   const res = await fetch(url, {
     ...init,
     credentials: "include",
@@ -139,6 +157,139 @@ async function request<T>(
   return JSON.parse(text) as T;
 }
 
+// ─── Test-chat streaming helpers ─────────────────────────────────
+
+/** Pull a human-readable message out of an error response body. */
+async function extractTestChatError(res: Response): Promise<string> {
+  let message = `HTTP ${res.status}`;
+  try {
+    const body = await res.json();
+    if (typeof body?.error === "string") {
+      message = body.error;
+    } else if (typeof body?.error?.message === "string") {
+      // OpenAI-style error envelope from upstream engines
+      message = body.error.message;
+    } else if (typeof body?.message === "string") {
+      message = body.message;
+    }
+  } catch {
+    // body wasn't JSON — fall back to the status text below
+    message = res.statusText || message;
+  }
+  return message;
+}
+
+async function parseJsonSafe(res: Response): Promise<any> {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function readString(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+/** Extract token usage from an OpenAI-style completion payload. */
+function readUsage(json: any): {
+  promptTokens: number | null;
+  completionTokens: number | null;
+} {
+  const usage = json?.usage;
+  const num = (v: unknown) => (Number.isFinite(v) ? (v as number) : null);
+  return {
+    promptTokens: num(usage?.prompt_tokens),
+    completionTokens: num(usage?.completion_tokens),
+  };
+}
+
+/**
+ * Consume an OpenAI-compatible SSE stream, forwarding content/reasoning deltas
+ * to `onDelta` and accumulating usage. Falls back to counting deltas as a
+ * token estimate when the engine doesn't report usage. Resolves with the
+ * final turn stats. AbortError propagates to the caller.
+ */
+async function consumeTestChatStream(
+  res: Response,
+  started: number,
+  onDelta?: SendTestChatOptions["onDelta"],
+): Promise<TestChatTurnResult> {
+  let content = "";
+  let reasoning = "";
+  let deltaCount = 0;
+  let promptTokens: number | null = null;
+  let completionTokens: number | null = null;
+
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return {
+      content,
+      reasoning: null,
+      latencyMs: elapsedSince(started),
+      promptTokens,
+      completionTokens,
+    };
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  const handleFrame = (data: string) => {
+    if (!data || data === "[DONE]") return;
+    try {
+      const chunk = JSON.parse(data);
+      const delta = chunk?.choices?.[0]?.delta;
+      if (delta) {
+        const c = readString(delta.content);
+        const r = readString(delta.reasoning_content ?? delta.reasoning);
+        if (c || r) {
+          content += c;
+          reasoning += r;
+          deltaCount += 1;
+          onDelta?.({
+            content: c || undefined,
+            reasoning: r || undefined,
+          });
+        }
+      }
+      const usage = readUsage(chunk);
+      if (usage.promptTokens !== null) promptTokens = usage.promptTokens;
+      if (usage.completionTokens !== null) completionTokens = usage.completionTokens;
+    } catch {
+      // ignore malformed frames — engines occasionally pad with keepalives
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx: number;
+    while ((newlineIdx = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, newlineIdx).trim();
+      buffer = buffer.slice(newlineIdx + 1);
+      if (line.startsWith("data:")) handleFrame(line.slice(5).trim());
+    }
+  }
+  // Flush any trailing frame not terminated by a newline.
+  const tail = buffer.trim();
+  if (tail.startsWith("data:")) handleFrame(tail.slice(5).trim());
+
+  return {
+    content,
+    reasoning: reasoning || null,
+    latencyMs: elapsedSince(started),
+    promptTokens,
+    completionTokens: completionTokens ?? (deltaCount > 0 ? deltaCount : null),
+  };
+}
+
+function elapsedSince(started: number): number {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  return Math.max(0, Math.round(now - started));
+}
+
 // ─── HTTP Client ─────────────────────────────────────────────────
 
 export const httpClient: UnswarmClient = {
@@ -169,6 +320,70 @@ export const httpClient: UnswarmClient = {
     return request<void>(`/api/models/${encodePathId(id)}`, {
       method: "DELETE",
     });
+  },
+
+  async sendTestChat(
+    modelId: string,
+    messages: ChatMessage[],
+    opts?: SendTestChatOptions,
+  ): Promise<TestChatTurnResult> {
+    const stream = opts?.stream !== false;
+    const started =
+      typeof performance !== "undefined" ? performance.now() : Date.now();
+
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}/api/models/test-chat`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: stream
+            ? "text/event-stream, application/json"
+            : "application/json",
+        },
+        body: JSON.stringify({
+          model: modelId,
+          messages,
+          stream,
+          ...(opts?.system ? { system: opts.system } : {}),
+          ...(opts?.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+          ...(opts?.temperature !== undefined
+            ? { temperature: opts.temperature }
+            : {}),
+        }),
+        signal: opts?.signal,
+      });
+    } catch (err) {
+      // AbortError must keep its identity so the drawer can render "stopped".
+      if ((err as Error)?.name === "AbortError") throw err;
+      throw new ApiError(0, (err as Error)?.message || "Network error");
+    }
+
+    if (!res.ok) {
+      if (res.status === 401) handleUnauthorized("/api/models/test-chat");
+      throw new ApiError(res.status, await extractTestChatError(res));
+    }
+
+    const contentType = res.headers.get("content-type") ?? "";
+    if (stream && contentType.includes("text/event-stream")) {
+      return consumeTestChatStream(res, started, opts?.onDelta);
+    }
+
+    // Non-streaming JSON completion.
+    const latencyMs =
+      (typeof performance !== "undefined" ? performance.now() : Date.now()) -
+      started;
+    const json = await parseJsonSafe(res);
+    const message = json?.choices?.[0]?.message;
+    const usage = readUsage(json);
+    return {
+      content: readString(message?.content),
+      reasoning: readString(message?.reasoning_content ?? message?.reasoning),
+      latencyMs,
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+    };
   },
 
   // ── Container Registration ───────────────────────────────────
@@ -551,11 +766,7 @@ export const httpClient: UnswarmClient = {
 
   // ── Metrics ──────────────────────────────────────────────────
   getMetricsUsage(opts) {
-    const params = new URLSearchParams();
-    if (opts?.from) params.set("from", opts.from);
-    if (opts?.to) params.set("to", opts.to);
-    if (opts?.provider) params.set("provider", opts.provider);
-    if (opts?.model) params.set("model", opts.model);
+    const params = metricsParams(opts);
     if (opts?.page !== undefined) params.set("page", String(opts.page));
     if (opts?.pageSize !== undefined) params.set("pageSize", String(opts.pageSize));
     const qs = params.toString();
@@ -563,41 +774,51 @@ export const httpClient: UnswarmClient = {
   },
 
   getMetricsSummary(opts) {
-    const params = new URLSearchParams();
-    if (opts?.from) params.set("from", opts.from);
-    if (opts?.to) params.set("to", opts.to);
+    const params = metricsParams(opts);
     if (opts?.granularity) params.set("granularity", opts.granularity);
-    if (opts?.provider) params.set("provider", opts.provider);
-    if (opts?.model) params.set("model", opts.model);
+    if (opts?.groupBy) params.set("groupBy", opts.groupBy);
     const qs = params.toString();
     return request(`/api/metrics/summary${qs ? `?${qs}` : ""}`);
   },
 
   getMetricsModels(opts) {
-    const params = new URLSearchParams();
-    if (opts?.from) params.set("from", opts.from);
-    if (opts?.to) params.set("to", opts.to);
-    if (opts?.provider) params.set("provider", opts.provider);
-    if (opts?.model) params.set("model", opts.model);
+    const params = metricsParams(opts);
     const qs = params.toString();
     return request(`/api/metrics/models${qs ? `?${qs}` : ""}`);
   },
 
   getMetricsProviders(opts) {
-    const params = new URLSearchParams();
-    if (opts?.from) params.set("from", opts.from);
-    if (opts?.to) params.set("to", opts.to);
+    const params = metricsParams(opts);
     const qs = params.toString();
     return request(`/api/metrics/providers${qs ? `?${qs}` : ""}`);
   },
 
   getMetricsTotals(opts) {
-    const params = new URLSearchParams();
-    if (opts?.from) params.set("from", opts.from);
-    if (opts?.to) params.set("to", opts.to);
-    if (opts?.provider) params.set("provider", opts.provider);
-    if (opts?.model) params.set("model", opts.model);
+    const params = metricsParams(opts);
     const qs = params.toString();
     return request(`/api/metrics/totals${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsLatencyBands(opts) {
+    const params = metricsParams(opts);
+    const qs = params.toString();
+    return request(`/api/metrics/latency-bands${qs ? `?${qs}` : ""}`);
+  },
+
+  getMetricsApiKeys(opts) {
+    const params = metricsParams(opts);
+    const qs = params.toString();
+    return request(`/api/metrics/api-keys${qs ? `?${qs}` : ""}`);
+  },
+
+  async getMetricsProviderCatalog() {
+    return request<ProviderCatalogEntry[]>("/api/metrics/provider-catalog");
+  },
+
+  purgeMetricsUsage(olderThanDays: number) {
+    const params = new URLSearchParams({ olderThanDays: String(olderThanDays) });
+    return request<{ deleted: number }>(`/api/metrics/usage/purge?${params}`, {
+      method: "DELETE",
+    });
   },
 };

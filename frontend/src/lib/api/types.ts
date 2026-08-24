@@ -475,10 +475,49 @@ export interface FetchModelsResult {
 
 // ─── Metrics ──────────────────────────────────────────────────────
 
+/** Time-window bounds shared by every analytics endpoint. */
+export interface MetricsWindow {
+  from?: string;
+  to?: string;
+}
+
+/**
+ * Shared provider/model multi-select filters accepted by the analytics
+ * endpoints. Values within a dimension are ANY-of (exact match); the two
+ * dimensions combine with AND. Empty/undefined = unfiltered.
+ */
+export interface MetricsFilters {
+  providers?: string[];
+  models?: string[];
+}
+
+export type MetricsAnalyticsParams = MetricsWindow & MetricsFilters;
+
+export interface MetricsUsageParams extends MetricsAnalyticsParams {
+  page?: number;
+  pageSize?: number;
+}
+
+export interface MetricsSummaryParams extends MetricsAnalyticsParams {
+  granularity?: "hour" | "day" | "week" | "month";
+  /** Split each bucket per provider or model (comparison series). */
+  groupBy?: "provider" | "model";
+}
+
+export interface UsagePageResponse {
+  items: UsageRecordResponse[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 export interface MetricsTimeBucket {
   bucketStart: string; // ISO DateTimeOffset
   bucketEnd: string;
+  /** Group identity when the request used groupBy=provider|model; null otherwise. */
+  group?: string | null;
   requestCount: number;
+  streamingRequests?: number;
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
@@ -489,15 +528,21 @@ export interface ModelUsageSummary {
   provider: string;
   model: string;
   requestCount: number;
+  streamingRequests?: number;
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
   avgLatencyMs: number;
+  p50LatencyMs?: number;
+  p95LatencyMs?: number;
+  p99LatencyMs?: number;
+  maxLatencyMs?: number;
 }
 
 export interface ProviderUsageSummary {
   provider: string;
   requestCount: number;
+  streamingRequests?: number;
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
@@ -507,10 +552,41 @@ export interface UsageTotalsResponse {
   from: string;
   to: string;
   totalRequests: number;
+  totalStreamingRequests?: number;
   totalPromptTokens: number;
   totalCompletionTokens: number;
   totalCachedTokens: number;
   avgLatencyMs: number;
+  p50LatencyMs?: number;
+  p95LatencyMs?: number;
+  p99LatencyMs?: number;
+  maxLatencyMs?: number;
+}
+
+/** One bucket of the latency-distribution histogram. */
+export interface MetricsLatencyBand {
+  label: string;
+  minMs: number;
+  /** Exclusive upper bound in ms; null = unbounded (">10s"). */
+  maxMs: number | null;
+  count: number;
+}
+
+/** Per-API-key usage attribution row. */
+export interface ApiKeyUsageRow {
+  apiKeyId: string;
+  keyName: string;
+  requestCount: number;
+  streamingRequests: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+}
+
+/** One entry of the provider catalog (usage + configured + registered). */
+export interface ProviderCatalogEntry {
+  name: string;
+  kind: "cloud" | "local";
 }
 
 export interface UsageRecordResponse {
@@ -525,4 +601,40 @@ export interface UsageRecordResponse {
   elapsedMs: number;
   /** Name of the API key that authenticated the request, when known. */
   apiKeyName?: string | null;
+}
+
+// ─── Test Chat (direct model testing through the proxy) ───────────
+
+export type ChatRole = "system" | "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+/** Options for one sendTestChat turn. */
+export interface SendTestChatOptions {
+  /** Optional system prompt, prepended server-side as the first message. */
+  system?: string;
+  maxTokens?: number;
+  temperature?: number;
+  /** Disable streaming and wait for the full completion (default: stream). */
+  stream?: boolean;
+  /** Abort signal wired to the drawer's Stop button. */
+  signal?: AbortSignal;
+  /**
+   * Streamed deltas: `content` is answer text, `reasoning` is thinking text.
+   * Called zero or more times before the promise resolves; never after.
+   */
+  onDelta?: (delta: { content?: string; reasoning?: string }) => void;
+}
+
+/** Result of one test-chat turn (assistant reply + observed stats). */
+export interface TestChatTurnResult {
+  content: string;
+  /** Thinking/reasoning text when the model emitted any. */
+  reasoning: string | null;
+  latencyMs: number;
+  promptTokens: number | null;
+  completionTokens: number | null;
 }

@@ -13,7 +13,6 @@ import {
 } from "../../components/ui";
 import type {
   CloudProvider,
-  CloudProviderRead,
   CloudProviderInput,
   CloudProviderUpdateInput,
 } from "../../lib/api/types";

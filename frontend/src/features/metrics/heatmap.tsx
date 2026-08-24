@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../lib/query-client";
+import type { MetricsFilters, MetricsWindow } from "../../lib/api/types";
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 /** JS getDay(): 0=Sun … 6=Sat, rendered Mon-first. */
@@ -13,8 +14,9 @@ const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 export interface HourlyHeatmapProps {
   /** Whether the selected range is within 24h (uses a tighter window). */
   rangeIs24h: boolean;
-  provider?: string;
-  model?: string;
+  /** Multi-select provider/model filters (ANY-of per dimension). */
+  providers?: string[];
+  models?: string[];
   autoRefreshMs: number;
 }
 
@@ -26,8 +28,8 @@ function startOfHour(date: Date): Date {
 
 export function HourlyHeatmap({
   rangeIs24h,
-  provider,
-  model,
+  providers,
+  models,
   autoRefreshMs,
 }: HourlyHeatmapProps) {
   const hours = rangeIs24h ? 24 : 24 * 7;
@@ -59,15 +61,32 @@ export function HourlyHeatmap({
     return () => observer.disconnect();
   }, []);
 
+  const selection: MetricsFilters & MetricsWindow = useMemo(
+    () => ({
+      from: startOfHour(from).toISOString(),
+      to: new Date().toISOString(),
+      ...(providers && providers.length > 0 ? { providers } : {}),
+      ...(models && models.length > 0 ? { models } : {}),
+    }),
+    [from, providers, models],
+  );
+
   const { data: buckets, isLoading } = useQuery({
-    queryKey: ["metrics", "summary", "heatmap", from.toISOString(), provider, model],
+    queryKey: [
+      "metrics",
+      "summary",
+      "heatmap",
+      selection.from,
+      providers ?? null,
+      models ?? null,
+    ],
     queryFn: () =>
       client.getMetricsSummary({
-        from: startOfHour(from).toISOString(),
-        to: new Date().toISOString(),
+        from: selection.from,
+        to: selection.to,
         granularity: "hour",
-        ...(provider ? { provider } : {}),
-        ...(model ? { model } : {}),
+        providers: selection.providers,
+        models: selection.models,
       }),
     enabled: visible,
     refetchInterval: visible ? autoRefreshMs || false : false,

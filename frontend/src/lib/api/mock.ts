@@ -4,22 +4,25 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyItem,
   BenchmarkResult,
+  ChatMessage,
   CloudProvider,
-  CloudProviderRead,
-  CloudProviderUpdateInput,
   Container,
-  FetchModelsResult,
   LastBenchmarkResult,
   LogEntry,
+  MetricsLatencyBand,
   Model,
   Prompt,
   PromptVersion,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  SendTestChatOptions,
   Settings,
   StatsSummary,
+  TestChatTurnResult,
   ToggleConcurrencyPayload,
+  UpdateRuntimePayload,
+  UsageRecordResponse,
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
@@ -858,6 +861,8 @@ const SETTINGS: Settings = {
   queueStepsTillReset: 3,
   enableConversationAffinity: true,
   conversationDwellSeconds: 45,
+  hideOriginPrefix: false,
+  agentDisplayNames: {},
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────
@@ -971,6 +976,8 @@ let registeredRuntimes: RegisteredRuntime[] = [
   },
 ];
 let settings = { ...SETTINGS };
+// usageRecords seeding happens below, after USAGE_PROVIDERS is declared
+// (buildUsageSeed reads it — calling earlier would hit the TDZ).
 
 // ─── Users Seed ─────────────────────────────────────────────────
 
@@ -978,6 +985,130 @@ const MOCK_USERS: User[] = [
   { id: "u1", username: "admin", isTempPassword: false },
   { id: "u2", username: "alice", isTempPassword: true },
 ];
+
+// ─── Usage Records Seed (metrics) ────────────────────────────────
+//
+// Deterministic synthetic request history across three providers so every
+// analytics endpoint has realistic aggregates to work with in dev/test.
+// Timestamps are generated relative to module load, mirroring how the real
+// proxy continuously appends records.
+
+/** Deterministic pseudo-random in [0,1) from an index — stable across runs. */
+function seeded(i: number): number {
+  const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+const USAGE_PROVIDERS: Array<{
+  provider: string;
+  kind: "cloud" | "local";
+  models: string[];
+}> = [
+  { provider: "openai", kind: "cloud", models: ["gpt-4o", "gpt-4o-mini"] },
+  { provider: "anthropic", kind: "cloud", models: ["claude-3-5-sonnet"] },
+  { provider: "local-agent", kind: "local", models: ["llama-3"] },
+];
+
+const API_KEY_NAMES = ["Key Alpha", "Key Beta"];
+
+// Seeded AFTER its data dependencies (USAGE_PROVIDERS, API_KEY_NAMES) —
+// buildUsageSeed reads both, and hoisting the call would hit the TDZ.
+let usageRecords: UsageRecordResponse[] = buildUsageSeed();
+
+function buildUsageSeed(): UsageRecordResponse[] {
+  const records: UsageRecordResponse[] = [];
+  const nowMs = Date.now();
+  const HOUR = 3_600_000;
+  // ~5 days of history, 2-4 requests per hour bucket, deterministic values.
+  let seq = 0;
+  for (let hoursAgo = 1; hoursAgo <= 120; hoursAgo++) {
+    const perBucket = 2 + Math.floor(seeded(seq) * 3);
+    for (let j = 0; j < perBucket; j++) {
+      seq += 1;
+      const pick = USAGE_PROVIDERS[Math.floor(seeded(seq) * USAGE_PROVIDERS.length)];
+      const model = pick.models[Math.floor(seeded(seq + 0.5) * pick.models.length)];
+      const promptTokens = 200 + Math.floor(seeded(seq + 1) * 1800);
+      const completionTokens = 50 + Math.floor(seeded(seq + 2) * 900);
+      const cached = seeded(seq + 3) > 0.6 ? Math.floor(promptTokens * 0.4) : 0;
+      const elapsedMs =
+        pick.kind === "local"
+          ? 300 + Math.floor(seeded(seq + 4) * 2200)
+          : 400 + Math.floor(seeded(seq + 4) * 4200);
+      const withKey = seeded(seq + 5) > 0.5;
+      const keyIdx = Math.floor(seeded(seq + 6) * API_KEY_NAMES.length);
+      records.push({
+        id: `u-${seq}`,
+        timestamp: new Date(nowMs - hoursAgo * HOUR - j * 7 * 60_000).toISOString(),
+        provider: pick.provider,
+        model,
+        promptTokens,
+        completionTokens,
+        cachedTokens: cached,
+        isStreaming: seeded(seq + 7) > 0.5,
+        elapsedMs,
+        apiKeyName: withKey ? API_KEY_NAMES[keyIdx] : null,
+      });
+    }
+  }
+  return records;
+}
+
+// ─── Metrics Aggregation Helpers ─────────────────────────────────
+//
+// Mirror the backend's SQL-side semantics: inclusive window bounds,
+// ANY-of exact matching within a dimension, AND across dimensions,
+// nearest-rank percentiles, fixed latency bands.
+
+interface MetricsWindowFilter {
+  from?: string;
+  to?: string;
+}
+
+interface MetricsSelectionFilter {
+  providers?: string[];
+  models?: string[];
+}
+
+function filterUsageRecords(
+  records: UsageRecordResponse[],
+  window?: MetricsWindowFilter,
+  selection?: MetricsSelectionFilter,
+): UsageRecordResponse[] {
+  const fromMs = window?.from ? new Date(window.from).getTime() : Number.NEGATIVE_INFINITY;
+  const toMs = window?.to ? new Date(window.to).getTime() : Number.POSITIVE_INFINITY;
+  const providers = selection?.providers?.length ? new Set(selection.providers) : null;
+  const models = selection?.models?.length ? new Set(selection.models) : null;
+  return records.filter((r) => {
+    const t = new Date(r.timestamp).getTime();
+    if (t < fromMs || t > toMs) return false;
+    if (providers && !providers.has(r.provider)) return false;
+    if (models && !models.has(r.model)) return false;
+    return true;
+  });
+}
+
+/** Nearest-rank percentile over ascending-sorted latencies; empty → 0. */
+function percentile(sortedAsc: number[], p: number): number {
+  if (sortedAsc.length === 0) return 0;
+  const index = Math.max(0, Math.ceil((p / 100) * sortedAsc.length) - 1);
+  return sortedAsc[index];
+}
+
+const LATENCY_BAND_BOUNDS_MS = [500, 1000, 2000, 5000, 10_000];
+const LATENCY_BAND_LABELS = ["<500ms", "500ms-1s", "1-2s", "2-5s", "5-10s", ">10s"];
+
+function latencyBands(records: UsageRecordResponse[]): MetricsLatencyBand[] {
+  return LATENCY_BAND_LABELS.map((label, i) => ({
+    label,
+    minMs: i === 0 ? 0 : LATENCY_BAND_BOUNDS_MS[i - 1],
+    maxMs: i < LATENCY_BAND_BOUNDS_MS.length ? LATENCY_BAND_BOUNDS_MS[i]! : null,
+    count: records.filter(
+      (r) =>
+        r.elapsedMs <= (LATENCY_BAND_BOUNDS_MS[i] ?? Number.POSITIVE_INFINITY) &&
+        r.elapsedMs > (i === 0 ? -1 : LATENCY_BAND_BOUNDS_MS[i - 1]!),
+    ).length,
+  }));
+}
 // ─── Mock Client ──────────────────────────────────────────────────
 
 export const mockClient: UnswarmClient = {
@@ -1017,6 +1148,41 @@ export const mockClient: UnswarmClient = {
     models = models.filter((x) => x.id !== modelId);
   },
 
+  async sendTestChat(
+    modelId: string,
+    messages: ChatMessage[],
+    opts?: SendTestChatOptions,
+  ): Promise<TestChatTurnResult> {
+    void messages;
+    const started = Date.now();
+    const model = models.find((m) => m.id === modelId);
+
+    // Stream a canned reply word-by-word so the drawer's streaming path is
+    // exercised in dev/tests. Honors abort + onDelta like the real client.
+    const reply = model
+      ? `Hello! This is ${model.name} responding through the unswarm proxy. ` +
+        `The connection works — family ${model.family}, ${model.parameterSize}, quant ${model.quantization}.`
+      : `Hello! Test chat reply for ${modelId}.`;
+    const words = reply.split(" ");
+
+    let content = "";
+    for (let i = 0; i < words.length; i++) {
+      if (opts?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      await delay(rand(10, 30));
+      const piece = (i > 0 ? " " : "") + words[i];
+      content += piece;
+      opts?.onDelta?.({ content: piece });
+    }
+
+    return {
+      content,
+      reasoning: null,
+      latencyMs: Math.max(1, Date.now() - started),
+      promptTokens: 12 + Math.floor(content.length / 4),
+      completionTokens: words.length,
+    };
+  },
+
   // ── Container Registration ──────────────────────────────────
   async registerRuntime(data: RegisterRuntimePayload) {
     await delay(rand(100, 300));
@@ -1044,6 +1210,19 @@ export const mockClient: UnswarmClient = {
     };
     registeredRuntimes.push(rc);
     return { ...rc, discoveredModels: [] };
+  },
+
+  async updateRuntime(runtimeId: string, payload: UpdateRuntimePayload) {
+    await delay(rand(80, 200));
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
+    if (payload.displayName !== undefined) {
+      rc.displayName = payload.displayName;
+    }
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
   },
 
   async listRegisteredRuntimes() {
@@ -1662,6 +1841,248 @@ export const mockClient: UnswarmClient = {
     p.modelCount = modelIds.length;
     p.updatedAt = new Date().toISOString();
     return { modelIds };
+  },
+
+  async testAndFetchModels(baseUrl: string, apiKey: string) {
+    await delay(rand(300, 800));
+    void apiKey;
+    // Mock: derive a canned model list from the base URL's host when possible.
+    const host = baseUrl.replace(/^https?:\/\//, "").split("/")[0] ?? "";
+    const modelMap: Record<string, string[]> = {
+      "api.openai.com": ["gpt-4o", "gpt-4o-mini"],
+      "api.anthropic.com": ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022"],
+    };
+    const modelIds =
+      modelMap[host.replace(/^www\./, "")] ??
+      (host ? [`hosted-${host.split(".")[0]}-model`] : ["model-1"]);
+    return { modelIds };
+  },
+
+  // ── Metrics ──────────────────────────────────────────────────
+  async getMetricsUsage(opts) {
+    await delay(rand(40, 120));
+    const filtered = filterUsageRecords(
+      usageRecords,
+      opts,
+      opts,
+    ).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    const page = Math.max(1, opts?.page ?? 1);
+    const pageSize = Math.min(200, Math.max(1, opts?.pageSize ?? 50));
+    const items = filtered
+      .slice((page - 1) * pageSize, (page - 1) * pageSize + pageSize)
+      .map((r) => ({ ...r }));
+    return { items, total: filtered.length, page, pageSize };
+  },
+
+  async getMetricsSummary(opts) {
+    await delay(rand(40, 120));
+    const records = filterUsageRecords(usageRecords, opts, opts);
+    const msPerBucket: Record<string, number> = {
+      hour: 3_600_000,
+      day: 86_400_000,
+      week: 7 * 86_400_000,
+      month: 30 * 86_400_000,
+    };
+    const size = msPerBucket[opts?.granularity ?? "day"] ?? msPerBucket.day!;
+
+    interface Row {
+      key: string;
+      group: string | null;
+      bucketStartMs: number;
+      requestCount: number;
+      streamingRequests: number;
+      promptTokens: number;
+      completionTokens: number;
+      cachedTokens: number;
+      latencySum: number;
+    }
+    const rows = new Map<string, Row>();
+    for (const r of records) {
+      const t = new Date(r.timestamp).getTime();
+      const bucketStartMs = Math.floor(t / size) * size;
+      const group =
+        opts?.groupBy === "provider"
+          ? r.provider
+          : opts?.groupBy === "model"
+            ? r.model
+            : null;
+      const key = `${bucketStartMs}|${group ?? ""}`;
+      let row = rows.get(key);
+      if (!row) {
+        row = {
+          key,
+          group,
+          bucketStartMs,
+          requestCount: 0,
+          streamingRequests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cachedTokens: 0,
+          latencySum: 0,
+        };
+        rows.set(key, row);
+      }
+      row.requestCount += 1;
+      row.streamingRequests += r.isStreaming ? 1 : 0;
+      row.promptTokens += r.promptTokens;
+      row.completionTokens += r.completionTokens;
+      row.cachedTokens += r.cachedTokens;
+      row.latencySum += r.elapsedMs;
+    }
+
+    return [...rows.values()]
+      .sort(
+        (a, b) =>
+          a.bucketStartMs - b.bucketStartMs ||
+          (a.group ?? "").localeCompare(b.group ?? ""),
+      )
+      .map((row) => ({
+        bucketStart: new Date(row.bucketStartMs).toISOString(),
+        bucketEnd: new Date(row.bucketStartMs + size).toISOString(),
+        group: row.group,
+        requestCount: row.requestCount,
+        streamingRequests: row.streamingRequests,
+        promptTokens: row.promptTokens,
+        completionTokens: row.completionTokens,
+        cachedTokens: row.cachedTokens,
+        avgLatencyMs:
+          row.requestCount > 0 ? row.latencySum / row.requestCount : 0,
+      }));
+  },
+
+  async getMetricsModels(opts) {
+    await delay(rand(40, 120));
+    const records = filterUsageRecords(usageRecords, opts, opts);
+    const groups = new Map<string, UsageRecordResponse[]>();
+    for (const r of records) {
+      const key = `${r.provider}|${r.model}`;
+      const list = groups.get(key);
+      if (list) list.push(r);
+      else groups.set(key, [r]);
+    }
+    return [...groups.entries()]
+      .map(([key, list]) => {
+        const [provider, model] = key.split("|");
+        const latencies = list.map((r) => r.elapsedMs).sort((a, b) => a - b);
+        return {
+          provider: provider!,
+          model: model!,
+          requestCount: list.length,
+          streamingRequests: list.filter((r) => r.isStreaming).length,
+          promptTokens: list.reduce((s, r) => s + r.promptTokens, 0),
+          completionTokens: list.reduce((s, r) => s + r.completionTokens, 0),
+          cachedTokens: list.reduce((s, r) => s + r.cachedTokens, 0),
+          avgLatencyMs:
+            latencies.reduce((s, v) => s + v, 0) / Math.max(1, latencies.length),
+          p50LatencyMs: percentile(latencies, 50),
+          p95LatencyMs: percentile(latencies, 95),
+          p99LatencyMs: percentile(latencies, 99),
+          maxLatencyMs: latencies.length > 0 ? latencies[latencies.length - 1]! : 0,
+        };
+      })
+      .sort((a, b) => b.completionTokens - a.completionTokens);
+  },
+
+  async getMetricsProviders(opts) {
+    await delay(rand(40, 120));
+    const records = filterUsageRecords(usageRecords, opts);
+    const groups = new Map<string, UsageRecordResponse[]>();
+    for (const r of records) {
+      const list = groups.get(r.provider);
+      if (list) list.push(r);
+      else groups.set(r.provider, [r]);
+    }
+    return [...groups.entries()]
+      .map(([provider, list]) => ({
+        provider,
+        requestCount: list.length,
+        streamingRequests: list.filter((r) => r.isStreaming).length,
+        promptTokens: list.reduce((s, r) => s + r.promptTokens, 0),
+        completionTokens: list.reduce((s, r) => s + r.completionTokens, 0),
+        cachedTokens: list.reduce((s, r) => s + r.cachedTokens, 0),
+      }))
+      .sort((a, b) => b.completionTokens - a.completionTokens);
+  },
+
+  async getMetricsTotals(opts) {
+    await delay(rand(40, 120));
+    const records = filterUsageRecords(usageRecords, opts, opts);
+    const latencies = records.map((r) => r.elapsedMs).sort((a, b) => a - b);
+    return {
+      from: opts?.from ?? new Date(Date.now() - 30 * 86_400_000).toISOString(),
+      to: opts?.to ?? new Date().toISOString(),
+      totalRequests: records.length,
+      totalStreamingRequests: records.filter((r) => r.isStreaming).length,
+      totalPromptTokens: records.reduce((s, r) => s + r.promptTokens, 0),
+      totalCompletionTokens: records.reduce((s, r) => s + r.completionTokens, 0),
+      totalCachedTokens: records.reduce((s, r) => s + r.cachedTokens, 0),
+      avgLatencyMs:
+        latencies.reduce((s, v) => s + v, 0) / Math.max(1, latencies.length),
+      p50LatencyMs: percentile(latencies, 50),
+      p95LatencyMs: percentile(latencies, 95),
+      p99LatencyMs: percentile(latencies, 99),
+      maxLatencyMs: latencies.length > 0 ? latencies[latencies.length - 1]! : 0,
+    };
+  },
+
+  async getMetricsLatencyBands(opts) {
+    await delay(rand(40, 120));
+    return latencyBands(filterUsageRecords(usageRecords, opts, opts));
+  },
+
+  async getMetricsApiKeys(opts) {
+    await delay(rand(40, 120));
+    const records = filterUsageRecords(usageRecords, opts);
+    const groups = new Map<string, UsageRecordResponse[]>();
+    for (const r of records) {
+      if (!r.apiKeyName) continue; // unattributed requests are excluded
+      const list = groups.get(r.apiKeyName);
+      if (list) list.push(r);
+      else groups.set(r.apiKeyName, [r]);
+    }
+    return [...groups.entries()]
+      .map(([keyName, list]) => ({
+        apiKeyId: `mock-key-${keyName}`,
+        keyName,
+        requestCount: list.length,
+        streamingRequests: list.filter((r) => r.isStreaming).length,
+        promptTokens: list.reduce((s, r) => s + r.promptTokens, 0),
+        completionTokens: list.reduce((s, r) => s + r.completionTokens, 0),
+        cachedTokens: list.reduce((s, r) => s + r.cachedTokens, 0),
+      }))
+      .sort((a, b) => b.completionTokens - a.completionTokens);
+  },
+
+  async getMetricsProviderCatalog() {
+    await delay(rand(40, 120));
+    const catalog = new Map<string, { name: string; kind: "cloud" | "local" }>();
+    // Record-seen entries first — they win over catalog-only ones.
+    for (const r of usageRecords) {
+      if (!catalog.has(r.provider)) {
+        const known = USAGE_PROVIDERS.find((p) => p.provider === r.provider);
+        catalog.set(r.provider, { name: r.provider, kind: known?.kind ?? "cloud" });
+      }
+    }
+    for (const cp of CLOUD_PROVIDERS) {
+      if (!catalog.has(cp.name)) catalog.set(cp.name, { name: cp.name, kind: "cloud" });
+    }
+    for (const rt of registeredRuntimes) {
+      if (!catalog.has(rt.displayName)) {
+        catalog.set(rt.displayName, { name: rt.displayName, kind: "local" });
+      }
+    }
+    return [...catalog.values()];
+  },
+
+  async purgeMetricsUsage(olderThanDays: number) {
+    await delay(rand(60, 200));
+    const cutoff = Date.now() - Math.max(0, olderThanDays) * 86_400_000;
+    const kept = usageRecords.filter(
+      (r) => new Date(r.timestamp).getTime() >= cutoff,
+    );
+    const deleted = usageRecords.length - kept.length;
+    usageRecords = kept;
+    return { deleted };
   },
 
 };

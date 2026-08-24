@@ -244,7 +244,7 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 | `GET /api/provider-model-catalog` | List providers (cloud + self-hosted) with their servable models |
 | **Usage & Metrics** | |
 | `GET /api/metrics/usage` | Paginated raw usage records (filterable, `?since=` cursor) |
-| `GET /api/metrics/summary` | Time-bucketed usage aggregates |
+| `GET /api/metrics/summary` | Time-bucketed usage aggregates; `?groupBy=provider\|model` splits each bucket per entity |
 | `GET /api/metrics/models` | Per-model usage summaries with latency percentiles |
 | `GET /api/metrics/providers` | Per-provider usage summaries |
 | `GET /api/metrics/totals` | Usage totals for a window |
@@ -253,6 +253,8 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 | `GET /api/metrics/api-keys/{keyId}/usage` | Detailed usage for one API key |
 | `GET /api/metrics/provider-catalog` | Distinct providers seen in usage + configured ones |
 | `DELETE /api/metrics/usage/purge` | Purge usage records older than retention (admin) |
+
+Analytics endpoints (`usage`, `summary`, `models`, `totals`, `latency-bands`) accept multi-value filters: repeated query keys (`?providers=a&providers=b`) and/or comma-separated values (`?providers=a,b`). Values are exact-matched (ANY-of within a dimension, AND across dimensions); the legacy singular `provider`/`model` parameters remain supported (singular `model` keeps substring semantics).
 | **System** | |
 | `GET /api/logs` | Query logs |
 | `GET /api/settings` | Get settings |

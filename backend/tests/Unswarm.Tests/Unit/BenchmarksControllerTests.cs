@@ -29,7 +29,8 @@ public sealed class BenchmarksControllerTests
         return model;
     }
 
-    private BenchmarksController CreateController() => new(_modelRegistry, _scheduler, _clock, _history, _prompts);
+    private BenchmarksController CreateController() =>
+        new(_modelRegistry, _scheduler, _clock, _history, _prompts, new FakeCloudForwardingService());
 
     [Fact]
     public async Task Run_PersistsAndReturnsFullCompletedItem()

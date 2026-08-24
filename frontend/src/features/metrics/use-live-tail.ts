@@ -9,8 +9,19 @@
 //   disables the toggle rather than spinning forever
 
 import { useEffect, useRef, useState } from "react";
-import { metricsWsUrl } from "./metrics-api";
 import type { UsageRecordResponse } from "../../lib/api/types";
+import { BASE_URL } from "../../lib/api/httpClient";
+
+/**
+ * WebSocket URL for `/ws/metrics`, derived from the same base-URL logic as
+ * HTTP calls: VITE_API_URL when set (http→ws rewrite), otherwise same-origin.
+ */
+function metricsWsUrl(): string {
+  const base = BASE_URL || window.location.origin;
+  const url = new URL(`${base}/ws/metrics`, window.location.origin);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url.toString();
+}
 
 export type LiveTailStatus =
   | "off"

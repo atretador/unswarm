@@ -1,19 +1,35 @@
 // Presentational cards for Phase-2 metrics depth: latency distribution
 // histogram and per-API-key usage attribution. Queries live in index.tsx so
 // they participate in auto-refresh and the keyboard-refresh shortcut.
+//
+// The latency chart comes from ./charts (which statically imports recharts)
+// via a lazy boundary so the metrics entry chunk stays recharts-free — same
+// strategy as index.tsx's chart lazy-loads.
 
+import { Suspense, lazy } from "react";
 import { Activity, KeyRound } from "lucide-react";
-import { Card } from "../../components/ui";
-import type { ApiKeyUsageRow, LatencyBand } from "./metrics-api";
-import { LatencyBandsChart } from "./charts";
+import { Card, Spinner } from "../../components/ui";
+import type { ApiKeyUsageRow, MetricsLatencyBand } from "../../lib/api/types";
 import { formatTokens } from "./format";
+
+const LazyLatencyBandsChart = lazy(() =>
+  import("./charts").then((m) => ({ default: m.LatencyBandsChart })),
+);
+
+function ChartFallback() {
+  return (
+    <div className="flex h-[200px] items-center justify-center">
+      <Spinner size="sm" />
+    </div>
+  );
+}
 
 export function LatencyBandsCard({
   bands,
   loading,
   error,
 }: {
-  bands: LatencyBand[] | undefined;
+  bands: MetricsLatencyBand[] | undefined;
   loading: boolean;
   error?: boolean;
 }) {
@@ -47,7 +63,9 @@ export function LatencyBandsCard({
         </p>
       )}
       {!error && !loading && total > 0 && (
-        <LatencyBandsChart bands={bands ?? []} />
+        <Suspense fallback={<ChartFallback />}>
+          <LazyLatencyBandsChart bands={bands ?? []} />
+        </Suspense>
       )}
     </Card>
   );

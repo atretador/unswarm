@@ -3,8 +3,10 @@ import type {
   AgentAvailableScript,
   ApiKeyCreateResponse,
   ApiKeyItem,
+  ApiKeyUsageRow,
   AgentScriptStatus,
   BenchmarkResult,
+  ChatMessage,
   CloudProvider,
   CloudProviderInput,
   CloudProviderRead,
@@ -12,23 +14,31 @@ import type {
   Container,
   FetchModelsResult,
   LogEntry,
+  MetricsAnalyticsParams,
+  MetricsLatencyBand,
+  MetricsSummaryParams,
   MetricsTimeBucket,
+  MetricsUsageParams,
+  MetricsWindow,
   Model,
   ModelUsageSummary,
   Prompt,
   PromptInput,
   PromptVersion,
+  ProviderCatalogEntry,
   ProviderUsageSummary,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  SendTestChatOptions,
   Settings,
   StatsSummary,
+  TestChatTurnResult,
   ToggleConcurrencyPayload,
   ToggleConcurrencyResponse,
   UpdateRuntimeConcurrencyPayload,
   UpdateRuntimePayload,
-  UsageRecordResponse,
+  UsagePageResponse,
   UsageTotalsResponse,
   User,
 } from "./types";
@@ -44,6 +54,17 @@ export interface UnswarmClient {
   createModel(data: Omit<Model, "id" | "createdAt" | "updatedAt">): Promise<Model>;
   updateModel(id: string, data: Partial<Model>): Promise<Model>;
   deleteModel(id: string): Promise<void>;
+
+  /**
+   * Send one interactive test-chat turn to a model through the proxy
+   * (POST /api/models/test-chat). Streams deltas via opts.onDelta when the
+   * backend streams; resolves with the full reply + observed stats.
+   */
+  sendTestChat(
+    modelId: string,
+    messages: ChatMessage[],
+    opts?: SendTestChatOptions,
+  ): Promise<TestChatTurnResult>;
 
   // Container Registration
   registerRuntime(data: RegisterRuntimePayload): Promise<RegisteredRuntime>;
@@ -161,35 +182,18 @@ export interface UnswarmClient {
   testAndFetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult>;
 
   // Metrics
-  getMetricsUsage(opts?: {
-    from?: string;
-    to?: string;
-    provider?: string;
-    model?: string;
-    page?: number;
-    pageSize?: number;
-  }): Promise<{ items: UsageRecordResponse[]; total: number; page: number; pageSize: number }>;
-  getMetricsSummary(opts?: {
-    from?: string;
-    to?: string;
-    granularity?: "hour" | "day" | "week" | "month";
-    provider?: string;
-    model?: string;
-  }): Promise<MetricsTimeBucket[]>;
-  getMetricsModels(opts?: {
-    from?: string;
-    to?: string;
-    provider?: string;
-    model?: string;
-  }): Promise<ModelUsageSummary[]>;
-  getMetricsProviders(opts?: {
-    from?: string;
-    to?: string;
-  }): Promise<ProviderUsageSummary[]>;
-  getMetricsTotals(opts?: {
-    from?: string;
-    to?: string;
-    provider?: string;
-    model?: string;
-  }): Promise<UsageTotalsResponse>;
+  getMetricsUsage(opts?: MetricsUsageParams): Promise<UsagePageResponse>;
+  getMetricsSummary(opts?: MetricsSummaryParams): Promise<MetricsTimeBucket[]>;
+  getMetricsModels(opts?: MetricsAnalyticsParams): Promise<ModelUsageSummary[]>;
+  getMetricsProviders(opts?: MetricsWindow): Promise<ProviderUsageSummary[]>;
+  getMetricsTotals(opts?: MetricsAnalyticsParams): Promise<UsageTotalsResponse>;
+  getMetricsLatencyBands(opts?: MetricsAnalyticsParams): Promise<MetricsLatencyBand[]>;
+  getMetricsApiKeys(opts?: MetricsWindow): Promise<ApiKeyUsageRow[]>;
+  /**
+   * Union of provider identities usable as filters: distinct providers seen in
+   * usage, configured cloud providers, and registered runtimes/agents.
+   */
+  getMetricsProviderCatalog(): Promise<ProviderCatalogEntry[]>;
+  /** Admin: delete usage records older than the given day count (0 = all). */
+  purgeMetricsUsage(olderThanDays: number): Promise<{ deleted: number }>;
 }

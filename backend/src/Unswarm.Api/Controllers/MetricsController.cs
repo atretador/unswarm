@@ -17,7 +17,7 @@ namespace Unswarm.Api.Controllers;
 /// </summary>
 /// <remarks>
 /// GET /api/metrics/usage — Paginated raw usage records
-/// GET /api/metrics/summary — Time-bucketed usage aggregates
+/// GET /api/metrics/summary — Time-bucketed usage aggregates (optional groupBy=provider|model)
 /// GET /api/metrics/models — Per-model usage with latency percentiles
 /// GET /api/metrics/providers — Per-provider usage summaries
 /// GET /api/metrics/totals — Usage totals for a window
@@ -27,6 +27,12 @@ namespace Unswarm.Api.Controllers;
 /// GET /api/metrics/provider-catalog — Distinct providers in usage + configured
 /// DELETE /api/metrics/usage/purge — Purge old usage records (Admin)
 /// GET /ws/metrics — Live tail WebSocket
+///
+/// Multi-value filtering: the analytics endpoints accept repeated query keys
+/// (<c>?providers=a&amp;providers=b</c>) and comma-separated values
+/// (<c>?providers=a,b</c>), combinable in any order. Values are exact-matched;
+/// the legacy singular <c>provider</c>/<c>model</c> parameters remain supported
+/// (model keeps its substring semantics).
 /// </remarks>
 [ApiController]
 [Authorize]
@@ -57,8 +63,10 @@ public sealed class MetricsController : ControllerBase
     /// <param name="from">Start of time range (ISO 8601). Defaults to 24 hours ago.</param>
     /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
     /// <param name="since">Cursor filter: only records strictly newer than this timestamp (ISO 8601). Lossless fallback for the /ws/metrics live tail.</param>
-    /// <param name="provider">Filter by provider name (exact match).</param>
-    /// <param name="model">Filter by model name (partial match via Contains).</param>
+    /// <param name="provider">Filter by a single provider name (exact match). Legacy singular form.</param>
+    /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
+    /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
     /// <param name="page">Page number (1-based). Defaults to 1.</param>
     /// <param name="pageSize">Page size (1–200). Defaults to 50.</param>
     /// <param name="ct">Cancellation token.</param>
@@ -69,7 +77,9 @@ public sealed class MetricsController : ControllerBase
         [FromQuery] DateTimeOffset? to = null,
         [FromQuery] DateTimeOffset? since = null,
         [FromQuery] string? provider = null,
+        [FromQuery] string[]? providers = null,
         [FromQuery] string? model = null,
+        [FromQuery] string[]? models = null,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 50,
         CancellationToken ct = default)
@@ -80,11 +90,7 @@ public sealed class MetricsController : ControllerBase
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 200);
 
-        var fromTicks = effectiveFrom.UtcTicks;
-        var toTicks = effectiveTo.UtcTicks;
-
-        IQueryable<UsageRecordEntity> query = _db.UsageRecords
-            .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
+        var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
         // Live-tail cursor: records strictly newer than `since` win over the
         // default window so a poller can replay everything it missed.
@@ -92,16 +98,6 @@ public sealed class MetricsController : ControllerBase
         {
             var sinceTicks = since.Value.UtcTicks;
             query = query.Where(u => u.TimestampTicks > sinceTicks);
-        }
-
-        if (!string.IsNullOrEmpty(provider))
-        {
-            query = query.Where(u => u.Provider == provider);
-        }
-
-        if (!string.IsNullOrEmpty(model))
-        {
-            query = query.Where(u => u.Model.Contains(model));
         }
 
         var total = await query.CountAsync(ct);
@@ -203,8 +199,11 @@ public sealed class MetricsController : ControllerBase
     /// <param name="from">Start of time range (ISO 8601). Defaults to 30 days ago.</param>
     /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
     /// <param name="granularity">Bucket granularity: "hour", "day", "week", "month". Defaults to "day".</param>
-    /// <param name="provider">Filter by provider name (exact match).</param>
-    /// <param name="model">Filter by model name (partial match via Contains).</param>
+    /// <param name="provider">Filter by a single provider name (exact match). Legacy singular form.</param>
+    /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
+    /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="groupBy">Optional comparison dimension: "provider" or "model". Buckets are additionally split per group value, exposed on <see cref="MetricsTimeBucket.Group"/>. Any other value aggregates across everything.</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpGet("summary")]
     [ProducesResponseType(typeof(MetricsTimeBucket[]), 200)]
@@ -212,7 +211,10 @@ public sealed class MetricsController : ControllerBase
         [FromQuery] DateTimeOffset? from = null,
         [FromQuery] DateTimeOffset? to = null,
         [FromQuery] string? provider = null,
+        [FromQuery] string[]? providers = null,
         [FromQuery] string? model = null,
+        [FromQuery] string[]? models = null,
+        [FromQuery] string? groupBy = null,
         [FromQuery] string granularity = "day",
         CancellationToken ct = default)
     {
@@ -220,8 +222,7 @@ public sealed class MetricsController : ControllerBase
         var effectiveFrom = from ?? now.AddDays(-30);
         var effectiveTo = to ?? now;
 
-        var fromTicks = effectiveFrom.UtcTicks;
-        var toTicks = effectiveTo.UtcTicks;
+        var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
         // Ticks per bucket based on granularity
         var ticksPerBucket = granularity.ToLowerInvariant() switch
@@ -233,23 +234,69 @@ public sealed class MetricsController : ControllerBase
             _ => 86400L * 10_000_000 // default to day
         };
 
-        IQueryable<UsageRecordEntity> query = _db.UsageRecords
-            .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
+        var normalizedGroupBy = groupBy?.Trim().ToLowerInvariant();
 
-        if (!string.IsNullOrEmpty(provider))
+        if (normalizedGroupBy is "provider" or "model")
         {
-            query = query.Where(u => u.Provider == provider);
-        }
+            // SQL-side bucketing + grouping: GROUP BY on integer division of
+            // TimestampTicks plus the group column translates to SQLite's `/`
+            // operator, so counts/sums/averages stay in the database instead of
+            // materializing the whole window. Two explicit branches — EF Core
+            // can't parameterize the group-key selector expression itself.
+            List<GroupedBucketRow> rows;
+            if (normalizedGroupBy == "provider")
+            {
+                rows = await query
+                    .GroupBy(u => new { BucketKey = u.TimestampTicks / ticksPerBucket, Group = u.Provider })
+                    .Select(g => new GroupedBucketRow(
+                        g.Key.BucketKey, g.Key.Group,
+                        g.Count(),
+                        g.Sum(u => u.IsStreaming ? 1 : 0),
+                        g.Sum(u => (long)u.PromptTokens),
+                        g.Sum(u => (long)u.CompletionTokens),
+                        g.Sum(u => (long)u.CachedTokens),
+                        g.Sum(u => u.ElapsedMs)))
+                    .ToListAsync(ct);
+            }
+            else
+            {
+                rows = await query
+                    .GroupBy(u => new { BucketKey = u.TimestampTicks / ticksPerBucket, Group = u.Model })
+                    .Select(g => new GroupedBucketRow(
+                        g.Key.BucketKey, g.Key.Group,
+                        g.Count(),
+                        g.Sum(u => u.IsStreaming ? 1 : 0),
+                        g.Sum(u => (long)u.PromptTokens),
+                        g.Sum(u => (long)u.CompletionTokens),
+                        g.Sum(u => (long)u.CachedTokens),
+                        g.Sum(u => u.ElapsedMs)))
+                    .ToListAsync(ct);
+            }
 
-        if (!string.IsNullOrEmpty(model))
-        {
-            query = query.Where(u => u.Model.Contains(model));
+            var groupedBuckets = rows
+                .Select(b => new MetricsTimeBucket
+                {
+                    BucketStart = new DateTimeOffset(b.BucketKey * ticksPerBucket, TimeSpan.Zero),
+                    BucketEnd = new DateTimeOffset((b.BucketKey + 1) * ticksPerBucket, TimeSpan.Zero),
+                    Group = b.Group,
+                    RequestCount = b.RequestCount,
+                    StreamingRequests = b.StreamingRequests,
+                    PromptTokens = b.PromptTokens,
+                    CompletionTokens = b.CompletionTokens,
+                    CachedTokens = b.CachedTokens,
+                    AvgLatencyMs = b.RequestCount > 0 ? (double)b.TotalLatencyMs / b.RequestCount : 0
+                })
+                .OrderBy(b => b.BucketStart)
+                .ThenBy(b => b.Group, StringComparer.Ordinal)
+                .ToArray();
+
+            return Ok(groupedBuckets);
         }
 
         // SQL-side bucketing: GROUP BY on integer division of TimestampTicks
         // translates to SQLite's `/` operator, so counts/sums/averages are
         // computed in the database instead of materializing the whole window.
-        var rows = await query
+        var ungroupedRows = await query
             .GroupBy(u => u.TimestampTicks / ticksPerBucket)
             .Select(g => new
             {
@@ -264,7 +311,7 @@ public sealed class MetricsController : ControllerBase
             .OrderBy(b => b.BucketKey)
             .ToListAsync(ct);
 
-        var buckets = rows
+        var buckets = ungroupedRows
             .Select(b => new MetricsTimeBucket
             {
                 BucketStart = new DateTimeOffset(b.BucketKey * ticksPerBucket, TimeSpan.Zero),
@@ -287,8 +334,10 @@ public sealed class MetricsController : ControllerBase
     /// </summary>
     /// <param name="from">Start of time range (ISO 8601). Defaults to 30 days ago.</param>
     /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
-    /// <param name="provider">Filter by provider name (exact match).</param>
-    /// <param name="model">Filter by model name (partial match via Contains).</param>
+    /// <param name="provider">Filter by a single provider name (exact match). Legacy singular form.</param>
+    /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
+    /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpGet("models")]
     [ProducesResponseType(typeof(ModelUsageSummary[]), 200)]
@@ -296,28 +345,16 @@ public sealed class MetricsController : ControllerBase
         [FromQuery] DateTimeOffset? from = null,
         [FromQuery] DateTimeOffset? to = null,
         [FromQuery] string? provider = null,
+        [FromQuery] string[]? providers = null,
         [FromQuery] string? model = null,
+        [FromQuery] string[]? models = null,
         CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
         var effectiveFrom = from ?? now.AddDays(-30);
         var effectiveTo = to ?? now;
 
-        var fromTicks = effectiveFrom.UtcTicks;
-        var toTicks = effectiveTo.UtcTicks;
-
-        IQueryable<UsageRecordEntity> query = _db.UsageRecords
-            .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
-
-        if (!string.IsNullOrEmpty(provider))
-        {
-            query = query.Where(u => u.Provider == provider);
-        }
-
-        if (!string.IsNullOrEmpty(model))
-        {
-            query = query.Where(u => u.Model.Contains(model));
-        }
+        var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
         // Counts/sums are aggregated SQL-side (GROUP BY provider+model); only the
         // single ElapsedMs column per row is materialized for the in-memory
@@ -344,7 +381,7 @@ public sealed class MetricsController : ControllerBase
             .GroupBy(r => (r.Provider, r.Model))
             .ToDictionary(g => g.Key, g => g.Select(r => r.ElapsedMs).OrderBy(x => x).ToList());
 
-        var models = aggregates
+        var summaries = aggregates
             .Select(a =>
             {
                 var key = (a.Provider, a.Model);
@@ -368,7 +405,7 @@ public sealed class MetricsController : ControllerBase
             .OrderByDescending(m => m.CompletionTokens)
             .ToList();
 
-        return Ok(models);
+        return Ok(summaries);
     }
 
     /// <summary>
@@ -577,8 +614,10 @@ public sealed class MetricsController : ControllerBase
     /// </summary>
     /// <param name="from">Start of time range (ISO 8601). Defaults to 30 days ago.</param>
     /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
-    /// <param name="provider">Filter by provider name (exact match).</param>
-    /// <param name="model">Filter by model name (partial match via Contains).</param>
+    /// <param name="provider">Filter by a single provider name (exact match). Legacy singular form.</param>
+    /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
+    /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpGet("latency-bands")]
     [ProducesResponseType(typeof(LatencyBandResponse[]), 200)]
@@ -586,28 +625,16 @@ public sealed class MetricsController : ControllerBase
         [FromQuery] DateTimeOffset? from = null,
         [FromQuery] DateTimeOffset? to = null,
         [FromQuery] string? provider = null,
+        [FromQuery] string[]? providers = null,
         [FromQuery] string? model = null,
+        [FromQuery] string[]? models = null,
         CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
         var effectiveFrom = from ?? now.AddDays(-30);
         var effectiveTo = to ?? now;
 
-        var fromTicks = effectiveFrom.UtcTicks;
-        var toTicks = effectiveTo.UtcTicks;
-
-        IQueryable<UsageRecordEntity> query = _db.UsageRecords
-            .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
-
-        if (!string.IsNullOrEmpty(provider))
-        {
-            query = query.Where(u => u.Provider == provider);
-        }
-
-        if (!string.IsNullOrEmpty(model))
-        {
-            query = query.Where(u => u.Model.Contains(model));
-        }
+        var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
         // Pure counts → SQL-side GROUP BY on a computed band index. The nested
         // conditionals translate to a SQLite CASE expression, so no latency
@@ -647,8 +674,10 @@ public sealed class MetricsController : ControllerBase
     /// </summary>
     /// <param name="from">Start of time range (ISO 8601). Defaults to 30 days ago.</param>
     /// <param name="to">End of time range (ISO 8601). Defaults to now.</param>
-    /// <param name="provider">Filter by provider name (exact match).</param>
-    /// <param name="model">Filter by model name (partial match via Contains).</param>
+    /// <param name="provider">Filter by a single provider name (exact match). Legacy singular form.</param>
+    /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
+    /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
+    /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpGet("totals")]
     [ProducesResponseType(typeof(UsageTotalsResponse), 200)]
@@ -656,28 +685,16 @@ public sealed class MetricsController : ControllerBase
         [FromQuery] DateTimeOffset? from = null,
         [FromQuery] DateTimeOffset? to = null,
         [FromQuery] string? provider = null,
+        [FromQuery] string[]? providers = null,
         [FromQuery] string? model = null,
+        [FromQuery] string[]? models = null,
         CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
         var effectiveFrom = from ?? now.AddDays(-30);
         var effectiveTo = to ?? now;
 
-        var fromTicks = effectiveFrom.UtcTicks;
-        var toTicks = effectiveTo.UtcTicks;
-
-        IQueryable<UsageRecordEntity> query = _db.UsageRecords
-            .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
-
-        if (!string.IsNullOrEmpty(provider))
-        {
-            query = query.Where(u => u.Provider == provider);
-        }
-
-        if (!string.IsNullOrEmpty(model))
-        {
-            query = query.Where(u => u.Model.Contains(model));
-        }
+        var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
         // Counts/sums aggregated SQL-side; only the single ElapsedMs column is
         // materialized for the in-memory percentiles (SQLite has no percentile
@@ -753,4 +770,85 @@ public sealed class MetricsController : ControllerBase
             index = 0;
         return sortedAsc[index];
     }
+
+    // ─── Shared analytics filtering ──────────────────────────────────
+
+    /// <summary>
+    /// Flattens a bound multi-value query parameter into a distinct,
+    /// order-preserving list. Accepts repeated keys (<c>?providers=a&amp;providers=b</c>),
+    /// comma-separated values (<c>?providers=a,b</c>), any mix of both, and
+    /// tolerates surrounding whitespace. Empty entries are dropped.
+    /// </summary>
+    private static List<string> NormalizeFilterValues(string[]? values)
+    {
+        if (values is not { Length: > 0 })
+            return [];
+
+        return values
+            .SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            .Where(v => v.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Applies the shared analytics filters to a usage-records query:
+    /// the time window plus provider/model restrictions.
+    ///
+    /// Provider filtering: singular <paramref name="provider"/> is an exact
+    /// match; plural <paramref name="providers"/> matches any listed value
+    /// (SQL IN). Model filtering: singular <paramref name="model"/> keeps its
+    /// legacy substring semantics; plural <paramref name="models"/> exact-matches
+    /// any listed value. Both singular + plural may be combined (AND).
+    /// </summary>
+    private static IQueryable<UsageRecordEntity> FilterUsage(
+        IQueryable<UsageRecordEntity> source,
+        long fromTicks,
+        long toTicks,
+        string? provider,
+        string[]? providers,
+        string? model,
+        string[]? models)
+    {
+        var query = source.Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks);
+
+        if (!string.IsNullOrEmpty(provider))
+        {
+            query = query.Where(u => u.Provider == provider);
+        }
+
+        var providerNames = NormalizeFilterValues(providers);
+        if (providerNames.Count > 0)
+        {
+            query = query.Where(u => providerNames.Contains(u.Provider));
+        }
+
+        if (!string.IsNullOrEmpty(model))
+        {
+            query = query.Where(u => u.Model.Contains(model));
+        }
+
+        var modelNames = NormalizeFilterValues(models);
+        if (modelNames.Count > 0)
+        {
+            query = query.Where(u => modelNames.Contains(u.Model));
+        }
+
+        return query;
+    }
+
+    /// <summary>
+    /// One grouped time bucket of a groupBy=provider|model summary projection.
+    /// Materializes EF's anonymous grouped aggregate into a named shape so both
+    /// grouping branches share the bucket-mapping code below them.
+    /// </summary>
+    private sealed record GroupedBucketRow(
+        long BucketKey,
+        string Group,
+        int RequestCount,
+        int StreamingRequests,
+        long PromptTokens,
+        long CompletionTokens,
+        long CachedTokens,
+        long TotalLatencyMs);
 }

@@ -2,14 +2,14 @@
  * Format a model name for display based on user settings.
  *
  * @param modelId - The full model ID (e.g. "cloud/openai/gpt-4o" or "llama-3.1-8b")
- * @param provider - The provider badge text (e.g. "openai", "local", "host")
+ * @param _provider - Unused today; kept for call-site compatibility (badge text is rendered separately)
  * @param hideOriginPrefix - Whether to strip "cloud/" or "managed/" prefix
  * @param agentDisplayNames - Map of agent names to display names
  * @returns Formatted display name
  */
 export function formatModelName(
   modelId: string,
-  provider: string,
+  _provider: string,
   hideOriginPrefix: boolean,
   agentDisplayNames: Record<string, string>,
 ): string {

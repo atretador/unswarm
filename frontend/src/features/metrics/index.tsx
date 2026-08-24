@@ -25,6 +25,7 @@ import {
   Bookmark,
   PiggyBank,
   Radio,
+  SlidersHorizontal,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
 import {
@@ -40,18 +41,22 @@ import {
 } from "../../components/ui";
 import { formatModelName } from "../../lib/format-model-name";
 import type {
+  MetricsAnalyticsParams,
+  ProviderCatalogEntry,
   ProviderUsageSummary,
   UsageTotalsResponse,
 } from "../../lib/api/types";
 import type {
   TimeSeriesMetric,
   DrillDownWindow,
+  CompareDataPoint,
 } from "./charts";
 import {
   loadCostRates,
   saveCostRates,
   modelCost,
   computeBlendedRates,
+  bucketCost,
   cacheSavings,
   hasAnyRates,
   isFlatRateProvider,
@@ -72,16 +77,7 @@ import { HourlyHeatmap } from "./heatmap";
 import { BudgetsPanel } from "./budgets";
 import { RetentionControl } from "./retention-control";
 import { ApiKeysCard, LatencyBandsCard } from "./breakdown-cards";
-import {
-  getMetricsApiKeys,
-  getMetricsLatencyBands,
-  getMetricsModels,
-  getMetricsProviderCatalog,
-  getMetricsProviders,
-  getMetricsSummary,
-  getMetricsTotals,
-  type MetricsFilterParams,
-} from "./metrics-api";
+import { FiltersModal } from "./filter-modal";
 
 // Lazy-load the charts module (which imports recharts statically) to keep the
 // main bundle lean. Do NOT lazy-load individual recharts components behind
@@ -93,6 +89,9 @@ const LazyTokenUsageChart = lazy(() =>
 );
 const LazyProviderBreakdownChart = lazy(() =>
   import("./charts").then((m) => ({ default: m.ProviderBreakdownChart })),
+);
+const LazyMultiSeriesChart = lazy(() =>
+  import("./charts").then((m) => ({ default: m.MultiSeriesChart })),
 );
 
 function ChartSkeleton() {
@@ -207,12 +206,15 @@ export default function Metrics() {
   const [timeRange, setTimeRangeRaw] = useState<TimeRange>("7d");
   const [sortField, setSortField] = useState<SortField>("requestCount");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
-  const [filterProvider, setFilterProvider] = useState<string>("");
-  const [filterModel, setFilterModel] = useState<string>("");
+  // Multi-select filters: ANY-of within a dimension, AND across dimensions.
+  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [costDialogOpen, setCostDialogOpen] = useState(false);
 
   // Series toggle + auto-refresh + drill-down window
   const [seriesMetric, setSeriesMetric] = useState<TimeSeriesMetric>("tokens");
+  const [compareDim, setCompareDim] = useState<"none" | "provider" | "model">("none");
   const [autoRefreshMs, setAutoRefreshMs] = useState<AutoRefreshInterval>(0);
   const [customWindow, setCustomWindow] = useState<DrillDownWindow | null>(null);
   const recentSectionRef = useRef<HTMLDivElement>(null);
@@ -240,11 +242,11 @@ export default function Metrics() {
   const filterParams = useMemo(
     () => ({
       ...rangeParams,
-      ...(filterProvider ? { provider: filterProvider } : {}),
-      ...(filterModel ? { model: filterModel } : {}),
+      ...(selectedProviders.length > 0 ? { providers: selectedProviders } : {}),
+      ...(selectedModels.length > 0 ? { models: selectedModels } : {}),
     }),
-    [rangeParams, filterProvider, filterModel],
-  );
+    [rangeParams, selectedProviders, selectedModels],
+  ) satisfies MetricsAnalyticsParams;
 
   // Same duration, immediately before the selected window (period comparison).
   const prevFilterParams = useMemo(() => {
@@ -252,10 +254,10 @@ export default function Metrics() {
     if (!prev.from || !prev.to) return null;
     return {
       ...prev,
-      ...(filterProvider ? { provider: filterProvider } : {}),
-      ...(filterModel ? { model: filterModel } : {}),
+      ...(selectedProviders.length > 0 ? { providers: selectedProviders } : {}),
+      ...(selectedModels.length > 0 ? { models: selectedModels } : {}),
     };
-  }, [timeRange, filterProvider, filterModel]);
+  }, [timeRange, selectedProviders, selectedModels]);
 
   // Current calendar month, for budget progress bars.
   const monthParams = useMemo(() => {
@@ -277,7 +279,7 @@ export default function Metrics() {
     refetch: refetchTotals,
   } = useQuery({
     queryKey: ["metrics", "totals", filterParams],
-    queryFn: () => getMetricsTotals(filterParams),
+    queryFn: () => client.getMetricsTotals(filterParams),
     refetchInterval,
   });
 
@@ -289,10 +291,25 @@ export default function Metrics() {
   } = useQuery({
     queryKey: ["metrics", "summary", filterParams],
     queryFn: () =>
-      getMetricsSummary({
+      client.getMetricsSummary({
         ...filterParams,
         granularity: timeRange === "24h" ? "hour" : "day",
       }),
+    refetchInterval,
+  });
+
+  // Comparison series: one bucket set per provider or model. Only fetched
+  // while a split dimension is active.
+  const granularity = timeRange === "24h" ? "hour" : "day";
+  const { data: groupedSummary, isFetching: groupedSummaryLoading } = useQuery({
+    queryKey: ["metrics", "summary", "compare", filterParams, granularity, compareDim],
+    queryFn: () =>
+      client.getMetricsSummary({
+        ...filterParams,
+        granularity,
+        groupBy: compareDim === "none" ? undefined : compareDim,
+      }),
+    enabled: compareDim !== "none",
     refetchInterval,
   });
 
@@ -303,7 +320,7 @@ export default function Metrics() {
     refetch: refetchModels,
   } = useQuery({
     queryKey: ["metrics", "models", filterParams],
-    queryFn: () => getMetricsModels(filterParams),
+    queryFn: () => client.getMetricsModels(filterParams),
     refetchInterval,
   });
 
@@ -314,20 +331,19 @@ export default function Metrics() {
     refetch: refetchProviders,
   } = useQuery({
     queryKey: ["metrics", "providers", rangeParams],
-    queryFn: () => getMetricsProviders(rangeParams),
+    queryFn: () => client.getMetricsProviders(rangeParams),
     refetchInterval,
   });
 
   // Latency distribution + API-key attribution for the current window.
-  const latencyFilterParams: MetricsFilterParams = filterParams;
   const {
     data: latencyBands,
     isLoading: latencyBandsLoading,
     isError: latencyBandsError,
     refetch: refetchLatencyBands,
   } = useQuery({
-    queryKey: ["metrics", "latency-bands", latencyFilterParams],
-    queryFn: () => getMetricsLatencyBands(latencyFilterParams),
+    queryKey: ["metrics", "latency-bands", filterParams],
+    queryFn: () => client.getMetricsLatencyBands(filterParams),
     refetchInterval,
   });
 
@@ -339,14 +355,14 @@ export default function Metrics() {
   } = useQuery({
     // Endpoint is time-window scoped (no provider/model split server-side).
     queryKey: ["metrics", "api-keys", rangeParams],
-    queryFn: () => getMetricsApiKeys(rangeParams),
+    queryFn: () => client.getMetricsApiKeys(rangeParams),
     refetchInterval,
   });
 
   // Previous equivalent window, for % deltas on the summary cards.
   const { data: prevTotals } = useQuery({
     queryKey: ["metrics", "totals", "previous", prevFilterParams],
-    queryFn: () => getMetricsTotals(prevFilterParams!),
+    queryFn: () => client.getMetricsTotals(prevFilterParams!),
     enabled: prevFilterParams !== null,
     refetchInterval,
   });
@@ -354,11 +370,11 @@ export default function Metrics() {
   // Month-to-date usage per provider, for budget progress bars.
   const { data: monthProviders, isLoading: monthProvidersLoading } = useQuery({
     queryKey: ["metrics", "providers", "month", monthParams],
-    queryFn: () => getMetricsProviders(monthParams),
+    queryFn: () => client.getMetricsProviders(monthParams),
     refetchInterval,
   });
 
-  // Fetch the full unfiltered models list once to populate filter dropdowns.
+  // Fetch the full unfiltered models list once to populate the filter modal.
   // Static reference data: never auto-refreshed (manual refresh / remount
   // suffices); staleTime keeps react-query from refetching on every focus.
   const { data: allModels } = useQuery({
@@ -368,11 +384,10 @@ export default function Metrics() {
     refetchInterval: false,
   });
 
-  // Provider catalog for the cost calculator's provider picker. Falls back to
-  // distinct usage providers (kind inferred) when the endpoint isn't live yet.
+  // Provider catalog for the filter modal + cost calculator's provider picker.
   const { data: providerCatalog } = useQuery({
     queryKey: ["metrics", "provider-catalog"],
-    queryFn: () => getMetricsProviderCatalog(),
+    queryFn: () => client.getMetricsProviderCatalog(),
     staleTime: 5 * 60 * 1000,
     refetchInterval: false,
   });
@@ -385,37 +400,60 @@ export default function Metrics() {
     refetchInterval: false,
   });
 
-  // ── Derived: filter dropdown options ────────────────────────
+  // ── Derived: filter-modal option lists ──────────────────────
 
-  const providerOptions = useMemo(() => {
+  const providerOptions = useMemo<ProviderCatalogEntry[]>(() => {
+    if (providerCatalog) return providerCatalog;
+    // Catalog not loaded yet — fall back to providers seen in usage.
     if (!allModels) return [];
-    const distinct = [...new Set(allModels.map((m) => m.provider))].sort();
-    return distinct.map((p) => ({ value: p, label: p }));
-  }, [allModels]);
+    return [...new Set(allModels.map((m) => m.provider))]
+      .sort()
+      .map((name) => ({ name, kind: "cloud" as const }));
+  }, [providerCatalog, allModels]);
 
   const modelOptions = useMemo(() => {
     if (!allModels) return [];
-    // Apply provider filter to the model list if one is set
-    const source = filterProvider
-      ? allModels.filter((m) => m.provider === filterProvider)
-      : allModels;
-    const distinct = [...new Set(source.map((m) => m.model))].sort();
-    return distinct.map((m) => ({
-      value: m,
-      label: formatModelName(
-        m,
-        filterProvider || "",
+    const byModel = new Map<string, Set<string>>();
+    for (const m of allModels) {
+      const set = byModel.get(m.model);
+      if (set) set.add(m.provider);
+      else byModel.set(m.model, new Set([m.provider]));
+    }
+    return [...byModel.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([model, providerSet]) => ({
+        model,
+        providers: [...providerSet].sort(),
+      }));
+  }, [allModels]);
+
+  const modelLabel = useCallback(
+    (model: string) =>
+      formatModelName(
+        model,
+        allModels?.find((m) => m.model === model)?.provider ?? "",
         settings?.hideOriginPrefix ?? false,
         settings?.agentDisplayNames ?? {},
       ),
-    }));
-  }, [allModels, filterProvider, settings]);
+    [allModels, settings],
+  );
 
-  const hasActiveFilters = filterProvider !== "" || filterModel !== "";
+  const hasActiveFilters =
+    selectedProviders.length > 0 || selectedModels.length > 0;
+  const activeFilterCount = selectedProviders.length + selectedModels.length;
 
   const clearFilters = useCallback(() => {
-    setFilterProvider("");
-    setFilterModel("");
+    setSelectedProviders([]);
+    setSelectedModels([]);
+  }, []);
+
+  /** Toggle one provider in the selection (chart bar / chip clicks). */
+  const toggleProvider = useCallback((provider: string) => {
+    setSelectedProviders((prev) =>
+      prev.includes(provider)
+        ? prev.filter((p) => p !== provider)
+        : [...prev, provider],
+    );
   }, []);
 
   // ── Cost estimates ───────────────────────────────────────────
@@ -505,20 +543,164 @@ export default function Metrics() {
   }, []);
 
   // Stable so the memoized ProviderBreakdownChart skips re-renders.
-  const handleProviderSelect = useCallback((provider: string) => {
-    setFilterProvider((prev) => (prev === provider ? "" : provider));
-    setFilterModel("");
-  }, []);
+  const handleProviderSelect = useCallback(
+    (provider: string) => {
+      toggleProvider(provider);
+    },
+    [toggleProvider],
+  );
+
+  // ── Comparison series pivot ─────────────────────────────────
+
+  /** Cap comparison lines so the chart stays legible; ranked by requests. */
+  const MAX_COMPARE_SERIES = 8;
+
+  const compare = useMemo(() => {
+    if (compareDim === "none" || !groupedSummary) return null;
+
+    // Rank groups by total request count in the window; keep the top N.
+    const totalsByGroup = new Map<string, number>();
+    for (const b of groupedSummary) {
+      if (!b.group) continue;
+      totalsByGroup.set(b.group, (totalsByGroup.get(b.group) ?? 0) + b.requestCount);
+    }
+    const topGroups = [...totalsByGroup.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, MAX_COMPARE_SERIES)
+      .map(([g]) => g);
+    if (topGroups.length === 0) return null;
+    const topSet = new Set(topGroups);
+
+    // Token-weighted rates per group so the cost metric splits correctly
+    // (each line uses its own provider's pricing, not a global blend).
+    const ratesByGroup = new Map<string, ReturnType<typeof computeBlendedRates>>();
+    for (const group of topGroups) {
+      const rows =
+        compareDim === "provider"
+          ? (models ?? []).filter((m) => m.provider === group)
+          : (models ?? []).filter((m) => m.model === group);
+      ratesByGroup.set(group, rows.length > 0 ? computeBlendedRates(rows, costRates) : null);
+    }
+
+    // Pivot grouped buckets into per-bucket rows with one column per series.
+    const byBucket = new Map<string, CompareDataPoint>();
+    const order: string[] = [];
+    for (const b of [...groupedSummary].sort((a, b2) =>
+      a.bucketStart.localeCompare(b2.bucketStart),
+    )) {
+      if (!b.group || !topSet.has(b.group)) continue;
+      let row = byBucket.get(b.bucketStart);
+      if (!row) {
+        row = {
+          bucketStart: b.bucketStart,
+          bucketEnd: b.bucketEnd,
+          time: new Date(b.bucketStart).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: granularity === "hour" ? "2-digit" : undefined,
+          }),
+        };
+        byBucket.set(b.bucketStart, row);
+        order.push(b.bucketStart);
+      }
+      row[b.group] =
+        seriesMetric === "tokens"
+          ? b.promptTokens + b.completionTokens
+          : seriesMetric === "requests"
+            ? b.requestCount
+            : seriesMetric === "latency"
+              ? Math.round(b.avgLatencyMs)
+              : seriesMetric === "cached"
+                ? b.cachedTokens
+                : (() => {
+                    // Cost uses the group's own token-weighted rates; groups
+                    // with no rated tokens render as a flat zero line.
+                    const rates = ratesByGroup.get(b.group);
+                    return rates ? bucketCost(b, rates) : 0;
+                  })();
+    }
+
+    return {
+      data: order.map((k) => byBucket.get(k)!),
+      series: topGroups.map((g) => ({
+        key: g,
+        label:
+          compareDim === "model" && allModels
+            ? modelLabel(g)
+            : g,
+      })),
+    };
+  }, [compareDim, groupedSummary, models, costRates, seriesMetric, granularity, allModels, modelLabel]);
+
+  // ── Comparison table (aggregated per entity from model rows) ──
+
+  const compareRows = useMemo(() => {
+    if (compareDim === "none" || !models || models.length === 0) return [];
+    const groups = new Map<
+      string,
+      {
+        name: string;
+        providers: Set<string>;
+        requestCount: number;
+        promptTokens: number;
+        completionTokens: number;
+        cachedTokens: number;
+        latencyWeightedSum: number;
+        estCost: number;
+        hasMissingRate: boolean;
+      }
+    >();
+    for (const m of models) {
+      const key = compareDim === "provider" ? m.provider : m.model;
+      let row = groups.get(key);
+      if (!row) {
+        row = {
+          name: key,
+          providers: new Set(),
+          requestCount: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cachedTokens: 0,
+          latencyWeightedSum: 0,
+          estCost: 0,
+          hasMissingRate: false,
+        };
+        groups.set(key, row);
+      }
+      row.providers.add(m.provider);
+      row.requestCount += m.requestCount;
+      row.promptTokens += m.promptTokens;
+      row.completionTokens += m.completionTokens;
+      row.cachedTokens += m.cachedTokens;
+      row.latencyWeightedSum += m.avgLatencyMs * m.requestCount;
+      if (isFlatRateProvider(costRates, m.provider)) {
+        // Flat-rate usage isn't attributable per token — flagged, not summed.
+        row.hasMissingRate = true;
+      } else {
+        const c = modelCost(m, costRates);
+        if (c === null) row.hasMissingRate = true;
+        else row.estCost += c;
+      }
+    }
+    return [...groups.values()]
+      .map((row) => ({
+        ...row,
+        providers: [...row.providers],
+        avgLatencyMs:
+          row.requestCount > 0 ? row.latencyWeightedSum / row.requestCount : 0,
+      }))
+      .sort((a, b) => b.requestCount - a.requestCount);
+  }, [compareDim, models, costRates]);
 
   // ── Presets ──────────────────────────────────────────────────
 
   const applyPreset = useCallback(
-    (preset: { provider: string; model: string; range: string }) => {
+    (preset: { providers: string[]; models: string[]; range: string }) => {
       const validRange = TIME_RANGE_OPTIONS.some((o) => o.value === preset.range)
         ? (preset.range as TimeRange)
         : "7d";
-      setFilterProvider(preset.provider);
-      setFilterModel(preset.model);
+      setSelectedProviders(preset.providers);
+      setSelectedModels(preset.models);
       setTimeRange(validRange);
     },
     [setTimeRange],
@@ -527,10 +709,19 @@ export default function Metrics() {
   const handleSavePreset = useCallback(() => {
     const name =
       presetName.trim() ||
-      [filterProvider || "all providers", filterModel || "all models", timeRange].join(" · ");
-    savePreset({ name, provider: filterProvider, model: filterModel, range: timeRange });
+      [
+        selectedProviders.length > 0 ? selectedProviders.join("+") : "all providers",
+        selectedModels.length > 0 ? selectedModels.join("+") : "all models",
+        timeRange,
+      ].join(" · ");
+    savePreset({
+      name,
+      providers: selectedProviders,
+      models: selectedModels,
+      range: timeRange,
+    });
     setPresetName("");
-  }, [presetName, filterProvider, filterModel, timeRange, savePreset]);
+  }, [presetName, selectedProviders, selectedModels, timeRange, savePreset]);
 
   // ── Hooks (must all be called before any early returns) ────
 
@@ -849,34 +1040,58 @@ export default function Metrics() {
         transition={{ delay: 0.05 }}
       >
         <div className="flex flex-col sm:flex-row sm:items-end gap-3 p-3 rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/50">
-          <Select
-            label="Provider"
-            options={[{ value: "", label: "All providers" }, ...providerOptions]}
-            value={filterProvider}
-            onChange={(e) => {
-              setFilterProvider(e.target.value);
-              // Clear model filter when provider changes, since model list will shift
-              setFilterModel("");
-            }}
-            className="min-w-[160px]"
-          />
-          <Select
-            label="Model"
-            options={[{ value: "", label: "All models" }, ...modelOptions]}
-            value={filterModel}
-            onChange={(e) => setFilterModel(e.target.value)}
-            className="min-w-[200px]"
-          />
-          {hasActiveFilters && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearFilters}
-              className="gap-1 text-[var(--color-text-muted)] shrink-0"
-            >
-              <X className="size-3" />
-              Clear filters
-            </Button>
+          <Button
+            variant={hasActiveFilters ? "primary" : "secondary"}
+            size="sm"
+            onClick={() => setFilterModalOpen(true)}
+            className="gap-1.5 shrink-0"
+            title="Choose providers and models to include"
+          >
+            <SlidersHorizontal className="size-3.5" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="inline-flex min-w-4 justify-center">
+                <Badge variant={hasActiveFilters ? "outline" : "info"} size="sm">
+                  {activeFilterCount}
+                </Badge>
+              </span>
+            )}
+          </Button>
+          {/* Active-filter summary chips — each removable in place */}
+          {hasActiveFilters ? (
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+              {selectedProviders.map((provider) => (
+                <FilterChip
+                  key={`p-${provider}`}
+                  dimension="Provider"
+                  label={provider}
+                  onRemove={() => toggleProvider(provider)}
+                />
+              ))}
+              {selectedModels.map((model) => (
+                <FilterChip
+                  key={`m-${model}`}
+                  dimension="Model"
+                  label={modelLabel(model)}
+                  onRemove={() =>
+                    setSelectedModels((prev) => prev.filter((m) => m !== model))
+                  }
+                />
+              ))}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                className="gap-1 text-[var(--color-text-muted)] shrink-0"
+              >
+                <X className="size-3" />
+                Clear all
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-[var(--color-text-muted)] self-center min-w-0 truncate">
+              All providers · All models
+            </p>
           )}
           <div className="flex-1" />
           {/* Save current filter combo as a preset */}
@@ -932,7 +1147,7 @@ export default function Metrics() {
                 <button
                   type="button"
                   onClick={() => applyPreset(p)}
-                  title={`${p.provider || "all providers"} · ${p.model || "all models"} · ${p.range}`}
+                  title={`${p.providers.length > 0 ? p.providers.join("+") : "all providers"} · ${p.models.length > 0 ? p.models.map(modelLabel).join("+") : "all models"} · ${p.range}`}
                   className="pl-2.5 pr-1.5 py-1 text-xs text-[var(--color-text)] cursor-pointer max-w-[220px] truncate"
                 >
                   {p.name}
@@ -1066,7 +1281,7 @@ export default function Metrics() {
             ))}
           </div>
 
-          {/* Time-Series Chart with metric toggle */}
+          {/* Time-Series Chart with metric + comparison toggles */}
           <motion.div
             variants={fadeUp}
             initial="initial"
@@ -1076,12 +1291,45 @@ export default function Metrics() {
             <Card padding="lg">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                 <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-                  {METRIC_TITLES[seriesMetric]}
+                  {compareDim === "none"
+                    ? METRIC_TITLES[seriesMetric]
+                    : `${METRIC_TITLES[seriesMetric]} — by ${compareDim}`}
                 </p>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <span className="text-[10px] text-[var(--color-text-muted)] hidden lg:inline">
                     Click a point to inspect those requests
                   </span>
+                  {/* Comparison dimension */}
+                  <div
+                    className="flex gap-1 bg-[var(--color-bg-muted)] rounded-[var(--radius-lg)] p-0.5"
+                    role="group"
+                    aria-label="Comparison mode"
+                  >
+                    {(
+                      [
+                        ["none", "Combined"],
+                        ["provider", "By provider"],
+                        ["model", "By model"],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setCompareDim(value)}
+                        className={`
+                          px-2.5 py-1 text-xs font-medium rounded-[var(--radius-md)]
+                          transition-all duration-[var(--duration-fast)]
+                          ${
+                            compareDim === value
+                              ? "bg-[var(--color-bg-surface)] text-[var(--color-text-heading)] shadow-sm cursor-pointer"
+                              : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
+                          }
+                        `}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   <div className="flex gap-1 bg-[var(--color-bg-muted)] rounded-[var(--radius-lg)] p-0.5">
                     {METRIC_OPTIONS.map((opt) => {
                       const disabled = opt.value === "cost" && !blendedRates;
@@ -1115,7 +1363,24 @@ export default function Metrics() {
                   </div>
                 </div>
               </div>
-              {summary && summary.length > 0 ? (
+              {compareDim !== "none" ? (
+                compare && compare.series.length > 0 ? (
+                  <Suspense fallback={<ChartSkeleton />}>
+                    <LazyMultiSeriesChart
+                      data={compare.data}
+                      series={compare.series}
+                      metric={seriesMetric}
+                      onPointClick={handlePointClick}
+                    />
+                  </Suspense>
+                ) : (
+                  <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
+                    {groupedSummaryLoading
+                      ? "Loading comparison…"
+                      : "No usage data for this time range."}
+                  </p>
+                )
+              ) : summary && summary.length > 0 ? (
                 <Suspense fallback={<ChartSkeleton />}>
                   <LazyTokenUsageChart
                     summary={summary}
@@ -1148,6 +1413,112 @@ export default function Metrics() {
                 )}
             </Card>
           </motion.div>
+
+          {/* Entity Comparison Table (visible while a split is active) */}
+          {compareDim !== "none" && compareRows.length > 0 && (
+            <motion.div
+              variants={fadeUp}
+              initial="initial"
+              animate="animate"
+              transition={{ delay: 0.22 }}
+            >
+              <Card padding="lg">
+                <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
+                  {compareDim === "provider" ? "Provider" : "Model"} comparison
+                </p>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[var(--color-border)]">
+                        <th className="text-left py-2 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
+                          {compareDim === "provider" ? "Provider" : "Model"}
+                        </th>
+                        <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
+                          Requests
+                        </th>
+                        <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
+                          Prompt Tokens
+                        </th>
+                        <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
+                          Completion Tokens
+                        </th>
+                        <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
+                          Cache Hit %
+                        </th>
+                        <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
+                          Avg Latency
+                        </th>
+                        {anyRates && (
+                          <th className="text-right py-2 pl-4 text-xs font-medium text-[var(--color-text-muted)]">
+                            Est. Cost
+                          </th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {compareRows.map((row) => {
+                        const hitPct =
+                          row.promptTokens > 0
+                            ? (row.cachedTokens / row.promptTokens) * 100
+                            : null;
+                        return (
+                          <tr
+                            key={row.name}
+                            className="border-b border-[var(--color-border)] last:border-0"
+                          >
+                            <td className="py-2.5 pr-4">
+                              <span className="font-medium text-[var(--color-text-heading)]">
+                                {compareDim === "model" ? modelLabel(row.name) : row.name}
+                              </span>
+                              {row.providers.length > 1 && (
+                                <Badge variant="outline" size="sm" className="ml-2">
+                                  {row.providers.length} providers
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-[var(--color-text)]">
+                              {row.requestCount.toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
+                              {formatTokens(row.promptTokens)}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
+                              {formatTokens(row.completionTokens)}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-[var(--color-text)]">
+                              {hitPct !== null ? `${hitPct.toFixed(1)}%` : "\u2014"}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-[var(--color-text)] hidden md:table-cell">
+                              {formatMs(row.avgLatencyMs)}
+                            </td>
+                            {anyRates && (
+                              <td className="py-2.5 pl-4 text-right font-mono text-[var(--color-text)]">
+                                {row.estCost > 0 ? formatCurrency(row.estCost) : "\u2014"}
+                                {row.hasMissingRate && (
+                                  <span
+                                    className="ml-1 text-[10px] text-[var(--color-text-muted)]"
+                                    title="Some usage has no rate configured (or is subscription/self-hosted) — not included."
+                                  >
+                                    *
+                                  </span>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {compareRows.some((r) => r.hasMissingRate) && anyRates && (
+                  <p className="text-xs text-[var(--color-text-muted)] mt-3">
+                    * Excludes usage without per-token rates (subscriptions,
+                    self-hosted, unrated models).
+                  </p>
+                )}
+              </Card>
+            </motion.div>
+          )}
 
           {/* Per-Model Breakdown Table */}
           <motion.div
@@ -1368,8 +1739,8 @@ export default function Metrics() {
               </p>
               <HourlyHeatmap
                 rangeIs24h={timeRange === "24h"}
-                provider={filterProvider || undefined}
-                model={filterModel || undefined}
+                providers={selectedProviders.length > 0 ? selectedProviders : undefined}
+                models={selectedModels.length > 0 ? selectedModels : undefined}
                 autoRefreshMs={autoRefreshMs}
               />
             </Card>
@@ -1419,7 +1790,7 @@ export default function Metrics() {
                   <Suspense fallback={<ChartSkeleton />}>
                     <LazyProviderBreakdownChart
                       providers={providers}
-                      filterProvider={filterProvider}
+                      selectedProviders={selectedProviders}
                       onProviderSelect={handleProviderSelect}
                     />
                   </Suspense>
@@ -1481,11 +1852,55 @@ export default function Metrics() {
         catalog={providerCatalog}
         monthProviders={monthProviders}
       />
+
+      {/* Filter Options Modal */}
+      <FiltersModal
+        open={filterModalOpen}
+        onOpenChange={setFilterModalOpen}
+        providerOptions={providerOptions}
+        modelOptions={modelOptions}
+        selectedProviders={selectedProviders}
+        selectedModels={selectedModels}
+        hideOriginPrefix={settings?.hideOriginPrefix ?? false}
+        agentDisplayNames={settings?.agentDisplayNames ?? {}}
+        onApply={(nextProviders, nextModels) => {
+          setSelectedProviders(nextProviders);
+          setSelectedModels(nextModels);
+        }}
+      />
     </div>
   );
 }
 
 // ─── Small shared pieces ─────────────────────────────────────────
+
+/** Removable chip representing one active filter selection. */
+function FilterChip({
+  dimension,
+  label,
+  onRemove,
+}: {
+  dimension: "Provider" | "Model";
+  label: string;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex max-w-[240px] items-center overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] text-xs">
+      <span className="py-1 pl-2.5 pr-1 text-[var(--color-text-muted)]">{dimension}</span>
+      <span className="max-w-[160px] truncate py-1 pr-1 font-medium text-[var(--color-text)]">
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${dimension.toLowerCase()} filter ${label}`}
+        className="cursor-pointer py-1 pr-2 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-status-error)]"
+      >
+        <X className="size-3" />
+      </button>
+    </span>
+  );
+}
 
 /** Colored % delta arrow comparing the current window to the previous one. */
 function TrendDelta({
@@ -1579,7 +1994,7 @@ interface CostCalculatorDialogProps {
   providers: ProviderUsageSummary[] | undefined;
   totals: UsageTotalsResponse | undefined;
   /** Provider catalog for the picker; undefined = fall back to free text. */
-  catalog: import("./metrics-api").ProviderCatalogEntry[] | undefined;
+  catalog: ProviderCatalogEntry[] | undefined;
   /** Calendar-month usage, for derived self-hosted $/1M rates. */
   monthProviders: ProviderUsageSummary[] | undefined;
 }
