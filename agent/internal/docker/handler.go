@@ -198,10 +198,25 @@ func (h *Handler) GetContainerLogs(ctx context.Context, name string, tailLines i
 
 // ListContainerStatuses returns lightweight status info for telemetry.
 // Best-effort: per-container stats failures are skipped, not fatal.
+//
+// Telemetry is restricted to unswarm-labeled containers when any exist —
+// each container costs a ContainerInspect + ContainerStatsOneShot round
+// trip per tick, so unrelated host containers must not be polled. Hosts
+// with no labeled containers fall back to listing everything (mirrors
+// ListContainers) so unlabeled single-tenant setups keep telemetry.
 func (h *Handler) ListContainerStatuses(ctx context.Context) []protocol.ContainerTelemetry {
-	containers, err := h.client.ContainerList(ctx, container.ListOptions{All: true})
+	containers, err := h.client.ContainerList(ctx, container.ListOptions{
+		All:     true,
+		Filters: filters.NewArgs(filters.Arg("label", unswarmLabel)),
+	})
 	if err != nil {
 		return nil
+	}
+	if len(containers) == 0 {
+		containers, err = h.client.ContainerList(ctx, container.ListOptions{All: true})
+		if err != nil {
+			return nil
+		}
 	}
 	result := make([]protocol.ContainerTelemetry, 0, len(containers))
 	for _, c := range containers {

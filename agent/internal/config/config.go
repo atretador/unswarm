@@ -44,6 +44,12 @@ type Config struct {
 	// are rejected before any connection attempt.
 	AllowedLoopbackPorts []int `yaml:"allowed_loopback_ports"`
 
+	// TelemetryIntervalMs is how often telemetry (host + per-container status,
+	// including Docker inspect/stats calls) is collected and sent, in
+	// milliseconds. Default 30000 (30s); values below 5000 are rejected so a
+	// typo cannot turn telemetry into a hot loop against the Docker daemon.
+	TelemetryIntervalMs int `yaml:"telemetry_interval_ms"`
+
 	// APIKeyFromYAML reports whether api_key was set in the YAML config file
 	// itself (as opposed to the UNSWARM_AGENT_API_KEY environment fallback).
 	// Used to decide whether a plaintext-key-on-disk permission warning applies.
@@ -71,6 +77,8 @@ func DefaultConfig() Config {
 		// Registered-runtime enforcement is ON by default; an explicit
 		// enforce_registered_runtime: false in agent.yaml opts out.
 		EnforceRegisteredRuntime: true,
+		// Telemetry every 30s by default.
+		TelemetryIntervalMs: 30000,
 	}
 }
 
@@ -132,6 +140,11 @@ func (c Config) MaxBackoff() time.Duration {
 	return time.Duration(c.Reconnect.MaxBackoffMs) * time.Millisecond
 }
 
+// minTelemetryIntervalMs is the lower bound for telemetry_interval_ms:
+// telemetry fans out to per-container Docker inspect/stats calls, so a
+// smaller interval would hammer the Docker daemon.
+const minTelemetryIntervalMs = 5000
+
 // Validate checks the config for security issues and missing required fields,
 // returning an error if any are found. Called automatically by Load.
 func (c Config) Validate() error {
@@ -152,6 +165,14 @@ func (c Config) Validate() error {
 	}
 	if _, err := NormalizeFingerprint(c.ExpectedServerFingerprint); err != nil {
 		return err
+	}
+	// DefaultConfig seeds 30000, so an unset field passes; only explicit
+	// misconfigurations (0 or a hot-loop value) land here.
+	if c.TelemetryIntervalMs < minTelemetryIntervalMs {
+		return fmt.Errorf(
+			"telemetry_interval_ms (%d) must be >= %d — telemetry fans out to per-container Docker inspect/stats calls and must not become a hot loop",
+			c.TelemetryIntervalMs, minTelemetryIntervalMs,
+		)
 	}
 	return nil
 }

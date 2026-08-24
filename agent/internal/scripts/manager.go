@@ -367,6 +367,11 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 }
 
 // Shutdown stops all running scripts. Called on agent exit.
+//
+// Scripts are stopped concurrently: each stop can busy-wait up to 5s for a
+// graceful exit, so a sequential shutdown would block agent exit for up to
+// 5s × number of hung scripts. stopAndClean serializes its map mutation
+// under m.mu, so parallel calls are safe.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	procs := make(map[string]*scriptProcess, len(m.processes))
@@ -375,9 +380,15 @@ func (m *Manager) Shutdown() {
 	}
 	m.mu.Unlock()
 
+	var wg sync.WaitGroup
 	for path, proc := range procs {
-		_ = m.stopAndClean(path, proc)
+		wg.Add(1)
+		go func(path string, proc *scriptProcess) {
+			defer wg.Done()
+			_ = m.stopAndClean(path, proc)
+		}(path, proc)
 	}
+	wg.Wait()
 }
 
 // stopAndClean kills a process group, waits, and cleans up resources.

@@ -45,9 +45,9 @@ type sessionConfig struct {
 	heartbeatInterval time.Duration
 }
 
-func defaultSessionConfig() sessionConfig {
+func defaultSessionConfig(cfg config.Config) sessionConfig {
 	return sessionConfig{
-		telemetryInterval: 10 * time.Second,
+		telemetryInterval: time.Duration(cfg.TelemetryIntervalMs) * time.Millisecond,
 		heartbeatInterval: 15 * time.Second,
 	}
 }
@@ -128,7 +128,7 @@ func main() {
 		default:
 		}
 
-		if err := runSession(ctx, wsClient, bo, cfg, disp, msgRouter, telemCollector, dockerHandler, scriptMgr, defaultSessionConfig(), logger); err != nil {
+		if err := runSession(ctx, wsClient, bo, cfg, disp, msgRouter, telemCollector, dockerHandler, scriptMgr, defaultSessionConfig(cfg), logger); err != nil {
 			logger.Error("session ended", "error", err)
 			// Fail closed on a certificate fingerprint mismatch: retrying
 			// would keep sending the API key to an unverified server.
@@ -249,12 +249,32 @@ func runSession(
 		}
 	}, &wg)
 
+	// Bounded command worker pool: at most maxConcurrentCommands handlers
+	// execute Docker/script/HTTP work concurrently; further commands queue in
+	// a bounded buffer instead of spawning unbounded goroutines. Overflow is
+	// rejected (dropped with a warning) rather than queued unboundedly.
+	const (
+		maxConcurrentCommands = 8
+		commandQueueSize      = 64
+	)
+	cmdQueue := make(chan protocol.Envelope, commandQueueSize)
+	for i := 0; i < maxConcurrentCommands; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for env := range cmdQueue {
+				handleCommand(sessionCtx, env, disp, wsClient, cfg, logger)
+			}
+		}()
+	}
+
 	// Message loop
 	var lastHeartbeatID string
 	for {
 		select {
 		case <-ctx.Done():
 			sessionCancel()
+			close(cmdQueue)
 			wg.Wait()
 			<-telemetryDone
 			<-heartbeatDone
@@ -268,6 +288,7 @@ func runSession(
 			// goroutine before returning so the deferred Close() runs only
 			// after all sends from this session have completed.
 			sessionCancel()
+			close(cmdQueue)
 			wg.Wait()
 			<-telemetryDone
 			<-heartbeatDone
@@ -276,11 +297,11 @@ func runSession(
 
 		switch env.Type {
 		case protocol.TypeCommand:
-			wg.Add(1)
-			go func(env protocol.Envelope) {
-				defer wg.Done()
-				handleCommand(sessionCtx, env, disp, wsClient, cfg, logger)
-			}(env)
+			select {
+			case cmdQueue <- env:
+			default:
+				logger.Warn("command queue full; dropping command", "id", derefStr(env.ID))
+			}
 
 		case protocol.TypeHeartbeat:
 			// Respond to server heartbeats with an ack carrying the same id.
