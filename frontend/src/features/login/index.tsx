@@ -89,7 +89,7 @@ function StreamPulse({
       fill="var(--color-primary)"
       cx={cx[0]}
       cy={cy[0]}
-      initial={{ opacity: 0 }}
+      initial={{ cx: cx[0], cy: cy[0], opacity: 0 }}
       animate={{ cx, cy, opacity: [0, 0, 1, 0] }}
       transition={{
         duration: s.period,
@@ -139,6 +139,7 @@ function Link({ s, animate }: { s: Satellite; animate: boolean }) {
         strokeOpacity="0.28"
         strokeWidth="1.2"
         strokeLinecap="round"
+        initial={{ x2: CORE.x, y2: CORE.y, opacity: 0 }}
         animate={{
           x2: [CORE.x, s.x, s.x, CORE.x, CORE.x],
           y2: [CORE.y, s.y, s.y, CORE.y, CORE.y],

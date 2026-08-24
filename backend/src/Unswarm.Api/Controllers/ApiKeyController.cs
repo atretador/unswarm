@@ -107,6 +107,12 @@ public sealed class ApiKeyController : ControllerBase
     [HttpGet("{id}/access")]
     public async Task<IActionResult> GetAccess(string id, CancellationToken ct)
     {
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null)
+            return NotFound(new { error = "API key not found." });
+        if (item.Scope == ApiKeyScope.Agent)
+            return BadRequest(new { error = "Access restrictions are not supported for agent API keys." });
+
         var access = await _keys.GetAccessAsync(id, ct);
         return access is null
             ? NotFound(new { error = "API key not found." })
@@ -121,6 +127,14 @@ public sealed class ApiKeyController : ControllerBase
     [HttpPut("{id}/access")]
     public async Task<IActionResult> SaveAccess(string id, [FromBody] KeyAccessDto request, CancellationToken ct)
     {
+        // Access grants are only enforced for inference-scope keys on /v1;
+        // agent-scope keys must not carry them.
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null)
+            return NotFound(new { error = "API key not found." });
+        if (item.Scope == ApiKeyScope.Agent)
+            return BadRequest(new { error = "Access restrictions are not supported for agent API keys." });
+
         var providers = (request.Providers ?? []).Select(p => p.Trim()).Where(p => p.Length > 0).Distinct().ToList();
         var models = (request.Models ?? []).Select(m => m.Trim()).Where(m => m.Length > 0).Distinct().ToList();
 

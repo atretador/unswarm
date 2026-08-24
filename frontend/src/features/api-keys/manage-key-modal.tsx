@@ -352,17 +352,21 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const [savedTick, setSavedTick] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
 
+  // AccessJson grants are only enforced on /v1 inference; agent-scope keys
+  // can't call /v1, so the access editor is hidden for them entirely.
+  const isAgentKey = apiKey.scope === "agent";
+
   const catalogQuery = useQuery({
     queryKey: ["provider-model-catalog"],
     queryFn: () => getProviderModelCatalog(),
-    enabled: open,
+    enabled: open && !isAgentKey,
     staleTime: 5 * 60 * 1000,
   });
 
   const accessQuery = useQuery({
     queryKey: ["api-key-access", apiKey.id],
     queryFn: () => getApiKeyAccess(apiKey.id),
-    enabled: open,
+    enabled: open && !isAgentKey,
   });
 
   const catalog = catalogQuery.data;
@@ -450,6 +454,9 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
       >
         <div className="px-5 py-4 space-y-6">
           {/* ── Access control ───────────────────────────────── */}
+          {/* Hidden for agent-scope keys: AccessJson is only enforced on
+              /v1 inference, which agent keys cannot call. */}
+          {!isAgentKey && (
           <section className="space-y-4">
             <SectionHeader icon={ShieldCheck} title="Access control" />
 
@@ -658,6 +665,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
               </>
             )}
           </section>
+          )}
 
           {/* ── Usage ────────────────────────────────────────── */}
           <section className="pt-5 border-t border-[var(--color-border-subtle)]">
