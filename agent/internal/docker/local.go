@@ -14,12 +14,33 @@ import (
 	"unswarm/agent/internal/protocol"
 )
 
+// PortAllowlist restricts which 127.0.0.1 ports the agent will dial for
+// health_check / discover_models / chat_completion commands. An empty or nil
+// allowlist is unrestricted (any loopback port), preserving legacy behavior.
+type PortAllowlist []int
+
+// Check rejects ports not on the allowlist before any connection attempt.
+func (a PortAllowlist) Check(port int) error {
+	if len(a) == 0 {
+		return nil
+	}
+	for _, p := range a {
+		if p == port {
+			return nil
+		}
+	}
+	return fmt.Errorf("port %d is not in allowed_loopback_ports; refusing to dial 127.0.0.1", port)
+}
+
 // HealthCheck performs a TCP/HTTP check on a local port.
 // The command succeeds (ok=true) when the check runs; the result data
 // carries the health verdict.
-func HealthCheck(ctx context.Context, port int) protocol.CommandResultPayload {
+func HealthCheck(ctx context.Context, allow PortAllowlist, port int) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
+	}
+	if err := allow.Check(port); err != nil {
+		return errorResult(err.Error())
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
@@ -49,9 +70,12 @@ func HealthCheck(ctx context.Context, port int) protocol.CommandResultPayload {
 }
 
 // DiscoverModels queries a local OpenAI-compatible endpoint for available models.
-func DiscoverModels(ctx context.Context, port int) protocol.CommandResultPayload {
+func DiscoverModels(ctx context.Context, allow PortAllowlist, port int) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
+	}
+	if err := allow.Check(port); err != nil {
+		return errorResult(err.Error())
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/v1/models", port)
 	httpClient := &http.Client{Timeout: 10 * time.Second}
@@ -73,9 +97,12 @@ func DiscoverModels(ctx context.Context, port int) protocol.CommandResultPayload
 // timeout is generous (120s) because benchmark/validation prompts can take a while.
 // The context is honored: if the backend disconnects/cancels, the HTTP call is
 // aborted so the agent's slot frees up promptly.
-func ChatCompletion(ctx context.Context, port int, body json.RawMessage) protocol.CommandResultPayload {
+func ChatCompletion(ctx context.Context, allow PortAllowlist, port int, body json.RawMessage) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
+	}
+	if err := allow.Check(port); err != nil {
+		return errorResult(err.Error())
 	}
 	if len(body) == 0 {
 		return errorResult("empty chat completion body")
@@ -119,9 +146,12 @@ func ChatCompletion(ctx context.Context, port int, body json.RawMessage) protoco
 // arbitrary binary bodies both work). The context is honored: if the backend
 // disconnects/cancels, the HTTP call is aborted. A non-2xx status is an error
 // carrying the status code and response body.
-func ChatCompletionStream(ctx context.Context, port int, jsonBody string, emit func(chunk []byte) error) error {
+func ChatCompletionStream(ctx context.Context, allow PortAllowlist, port int, jsonBody string, emit func(chunk []byte) error) error {
 	if port <= 0 {
 		return fmt.Errorf("invalid port")
+	}
+	if err := allow.Check(port); err != nil {
+		return err
 	}
 	if jsonBody == "" {
 		return fmt.Errorf("empty chat completion body")

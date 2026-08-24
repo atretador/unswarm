@@ -5,11 +5,16 @@ package scripts
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,10 +30,17 @@ type Manager struct {
 }
 
 type scriptProcess struct {
-	Path      string
-	PID       int
-	Port      int
+	Path string
+	PID  int
+	Port int
+	// StartTime is the wall-clock time the agent registered the process
+	// (reported via telemetry).
 	StartTime time.Time
+	// ProcStart is the OS process start time from /proc/<pid>/stat field 22
+	// (clock ticks since boot), captured at registration. It is re-checked
+	// before every signal so a recycled PID belonging to an unrelated process
+	// is never signalled (PID-reuse guard).
+	ProcStart uint64
 	Cmd       *exec.Cmd
 	LogFile   *os.File
 }
@@ -86,41 +98,65 @@ func (m *Manager) ListScripts() []ScriptInfo {
 	return out
 }
 
+// resolveWithinScriptsDir resolves path to an absolute, symlink-resolved
+// location and enforces the scripts_dir whitelist (security boundary). Used by
+// both StartScript and GetScriptLogs so log reads cannot escape scripts_dir.
+func (m *Manager) resolveWithinScriptsDir(path string) (string, error) {
+	resolved, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	// Resolve symlinks to prevent symlink escapes.
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return "", fmt.Errorf("eval symlinks for %q: %w", path, err)
+	}
+
+	scriptsDir, err := filepath.Abs(filepath.Clean(m.scriptsDir))
+	if err != nil {
+		return "", fmt.Errorf("resolve scripts_dir: %w", err)
+	}
+	scriptsDir, err = filepath.EvalSymlinks(scriptsDir)
+	if err != nil {
+		return "", fmt.Errorf("eval symlinks for scripts_dir: %w", err)
+	}
+	if !strings.HasPrefix(resolved, scriptsDir+string(filepath.Separator)) && resolved != scriptsDir {
+		return "", fmt.Errorf("path %q is outside scripts_dir %q", resolved, scriptsDir)
+	}
+	return resolved, nil
+}
+
 // StartScript spawns a bash script in a new process group. The script must
 // reside inside the configured scriptsDir (whitelist check). If the script is
 // already running (alive process), returns the existing PID without error
 // (idempotent). Returns the PID of the spawned process.
+//
+// TOCTOU narrowing: after whitelist/EvalSymlinks validation the script file is
+// opened and validated through the resulting fd (regular-file check), and the
+// fd's /proc/self/fd target is re-resolved immediately before exec. If the
+// path was swapped after validation, the fd target no longer matches the
+// validated path and execution is refused. (bash re-opens the script by path,
+// so a full fd-based exec is not possible here; the re-validation shrinks the
+// swap window to the minimum this codebase allows.)
 func (m *Manager) StartScript(path string, port int) (int, error) {
-	resolved, err := filepath.Abs(filepath.Clean(path))
+	resolved, err := m.resolveWithinScriptsDir(path)
 	if err != nil {
-		return 0, fmt.Errorf("resolve path: %w", err)
-	}
-	// Resolve symlinks to prevent symlink escapes (security boundary).
-	resolved, err = filepath.EvalSymlinks(resolved)
-	if err != nil {
-		return 0, fmt.Errorf("eval symlinks for %q: %w", path, err)
+		return 0, err
 	}
 
-	// Whitelist: resolved path must be within scriptsDir.
-	scriptsDir, err := filepath.Abs(filepath.Clean(m.scriptsDir))
+	// Open the validated path and verify it through the fd: this pins the
+	// inode we inspected even if the directory entry is swapped afterwards.
+	f, err := os.Open(resolved)
 	if err != nil {
-		return 0, fmt.Errorf("resolve scripts_dir: %w", err)
+		return 0, fmt.Errorf("open %q: %w", resolved, err)
 	}
-	scriptsDir, err = filepath.EvalSymlinks(scriptsDir)
-	if err != nil {
-		return 0, fmt.Errorf("eval symlinks for scripts_dir: %w", err)
-	}
-	if !strings.HasPrefix(resolved, scriptsDir+string(filepath.Separator)) && resolved != scriptsDir {
-		return 0, fmt.Errorf("path %q is outside scripts_dir %q", resolved, scriptsDir)
-	}
-
-	// File must exist and be regular.
-	info, err := os.Stat(resolved)
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat %q: %w", resolved, err)
 	}
-	if info.IsDir() {
-		return 0, fmt.Errorf("path %q is a directory", resolved)
+	if !info.Mode().IsRegular() {
+		return 0, fmt.Errorf("path %q is not a regular file", resolved)
 	}
 
 	m.mu.Lock()
@@ -128,12 +164,22 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 
 	// Duplicate guard: return existing PID if process is alive (idempotent).
 	if proc, ok := m.processes[resolved]; ok {
-		if isProcessAlive(proc.PID) {
+		if proc.isOurs() {
 			return proc.PID, nil
 		}
 		// Stale entry — clean up.
 		m.cleanupProcess(proc)
 		delete(m.processes, resolved)
+	}
+
+	// Re-validate immediately before exec via the opened fd: if the file at
+	// resolved was replaced after validation, the fd now points elsewhere.
+	fdTarget, err := filepath.EvalSymlinks(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
+	if err != nil {
+		return 0, fmt.Errorf("re-resolve opened script %q: %w", resolved, err)
+	}
+	if fdTarget != resolved {
+		return 0, fmt.Errorf("script %q changed under validation (fd now resolves to %q); refusing to execute", resolved, fdTarget)
 	}
 
 	// Spawn the script.
@@ -156,11 +202,20 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	pid := cmd.Process.Pid
 	startTime := time.Now()
 
+	// Capture the OS process start time for the PID-reuse guard. On failure,
+	// ProcStart stays 0 and liveness checks degrade to signal-0 only.
+	procStart, err := procStatStartTime(pid)
+	if err != nil {
+		slog.Warn("could not read process start time; PID-reuse guard degraded", "pid", pid, "error", err)
+		procStart = 0
+	}
+
 	m.processes[resolved] = &scriptProcess{
 		Path:      resolved,
 		PID:       pid,
 		Port:      port,
 		StartTime: startTime,
+		ProcStart: procStart,
 		Cmd:       cmd,
 		LogFile:   logFile,
 	}
@@ -225,12 +280,13 @@ const (
 )
 
 // GetScriptLogs returns the last tailLines lines from the script's log file.
-// At most the last 1MB of the file is read, and lines longer than 64KB are
-// skipped rather than causing an error.
+// The requested path must resolve inside scripts_dir (same whitelist as
+// StartScript). At most the last 1MB of the file is read, and lines longer
+// than 64KB are skipped rather than causing an error.
 func (m *Manager) GetScriptLogs(path string, tailLines int) ([]string, error) {
-	resolved, err := filepath.Abs(filepath.Clean(path))
+	resolved, err := m.resolveWithinScriptsDir(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve path: %w", err)
+		return nil, err
 	}
 	logPath := m.logPath(resolved)
 	f, err := os.Open(logPath)
@@ -291,7 +347,7 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 
 	var out []ScriptStatus
 	for path, proc := range m.processes {
-		alive := isProcessAlive(proc.PID)
+		alive := proc.isOurs()
 		status := "running"
 		if !alive {
 			status = "stopped"
@@ -326,27 +382,18 @@ func (m *Manager) Shutdown() {
 
 // stopAndClean kills a process group, waits, and cleans up resources.
 func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
-	// Kill process group with SIGTERM.
-	err := syscall.Kill(-proc.PID, syscall.SIGTERM)
-	if err != nil && !isAlreadyDead(err) {
-		// Process might already be gone.
-	}
-
-	// Wait up to 5s, then SIGKILL.
-	done := make(chan struct{})
-	go func() {
-		for i := 0; i < 50; i++ {
-			if !isProcessAlive(proc.PID) {
-				break
-			}
+	// Kill process group with SIGTERM. signalGroup refuses to signal when the
+	// PID's recorded start time no longer matches (PID reuse): an unrelated
+	// recycled process must never receive our signals.
+	err := signalGroup(proc, syscall.SIGTERM)
+	if err == nil {
+		// Wait up to 5s, then SIGKILL.
+		for i := 0; i < 50 && proc.isOurs(); i++ {
 			time.Sleep(100 * time.Millisecond)
 		}
-		close(done)
-	}()
-	<-done
-
-	if isProcessAlive(proc.PID) {
-		_ = syscall.Kill(-proc.PID, syscall.SIGKILL)
+		if proc.isOurs() {
+			_ = signalGroup(proc, syscall.SIGKILL)
+		}
 	}
 
 	m.mu.Lock()
@@ -365,25 +412,76 @@ func (m *Manager) cleanupProcess(proc *scriptProcess) {
 	_ = os.Remove(m.pidPath(proc.Path))
 }
 
-// logPath returns the log file path for a given script path.
+// logPath returns the log file path for a given script path. The filename is
+// derived from a SHA-256 digest of the resolved absolute path, so distinct
+// paths can never collide (unlike separator-mangling).
 func (m *Manager) logPath(scriptPath string) string {
-	return filepath.Join(m.logDir, sanitizeFilename(scriptPath)+".log")
+	return filepath.Join(m.logDir, hashFilename(scriptPath)+".log")
 }
 
 // pidPath returns the PID file path for a given script path.
 func (m *Manager) pidPath(scriptPath string) string {
-	return filepath.Join(m.logDir, sanitizeFilename(scriptPath)+".pid")
+	return filepath.Join(m.logDir, hashFilename(scriptPath)+".pid")
 }
 
-func sanitizeFilename(path string) string {
-	return strings.ReplaceAll(path, string(filepath.Separator), "_")
+// hashFilename derives a collision-free filename component from a resolved
+// absolute script path: hex-encoded SHA-256, truncated to 32 chars.
+func hashFilename(path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return hex.EncodeToString(sum[:])[:32]
+}
+
+// procStatStartTime reads the OS process start time from /proc/<pid>/stat
+// field 22 (starttime, in clock ticks since boot). The comm field (field 2)
+// may contain spaces and parentheses, so parsing starts after the last ')'.
+func procStatStartTime(pid int) (uint64, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	idx := bytes.LastIndexByte(data, ')')
+	if idx < 0 || idx+2 >= len(data) {
+		return 0, fmt.Errorf("malformed /proc/%d/stat", pid)
+	}
+	fields := strings.Fields(string(data[idx+2:]))
+	// fields[0] is state (field 3); starttime (field 22) is therefore index 19.
+	if len(fields) < 20 {
+		return 0, fmt.Errorf("short /proc/%d/stat", pid)
+	}
+	return strconv.ParseUint(fields[19], 10, 64)
+}
+
+// isOurs reports whether proc.PID still refers to the process we spawned:
+// it must be alive AND its current /proc start time must match the value
+// recorded at registration. Guards every signal path against PID reuse.
+// If no start time was captured (ProcStart == 0), falls back to signal-0
+// liveness only.
+func (p *scriptProcess) isOurs() bool {
+	if !isProcessAlive(p.PID) {
+		return false
+	}
+	if p.ProcStart == 0 {
+		return true
+	}
+	cur, err := procStatStartTime(p.PID)
+	if err != nil {
+		return false
+	}
+	return cur == p.ProcStart
+}
+
+// signalGroup sends sig to the process's group, but refuses if the PID has
+// been recycled by an unrelated process (start-time mismatch).
+func signalGroup(proc *scriptProcess, sig syscall.Signal) error {
+	if !proc.isOurs() {
+		slog.Warn("possible PID reuse: recorded process start time no longer matches; refusing to signal process group",
+			"pid", proc.PID, "path", proc.Path)
+		return fmt.Errorf("pid %d no longer matches registered process (possible PID reuse)", proc.PID)
+	}
+	return syscall.Kill(-proc.PID, sig)
 }
 
 func isProcessAlive(pid int) bool {
 	err := syscall.Kill(pid, 0)
 	return err == nil
-}
-
-func isAlreadyDead(err error) bool {
-	return err == syscall.ESRCH
 }

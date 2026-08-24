@@ -2,12 +2,14 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,6 +30,24 @@ type Config struct {
 	ScriptsDir      string          `yaml:"scripts_dir"`
 	AllowInsecureWs bool            `yaml:"allow_insecure_ws"`
 	Reconnect       ReconnectConfig `yaml:"reconnect"`
+
+	// ExpectedServerFingerprint is an optional SHA-256 hex fingerprint of the
+	// backend's TLS certificate. When set and the backend URL uses wss://, the
+	// agent verifies the peer certificate during the TLS handshake (before any
+	// API key material is sent) and refuses to connect on mismatch.
+	// Parsing is case/space-insensitive; colons are accepted and stripped.
+	ExpectedServerFingerprint string `yaml:"expected_server_fingerprint"`
+
+	// AllowedLoopbackPorts restricts which 127.0.0.1 ports the agent will dial
+	// for health_check / discover_models / chat_completion commands. Empty or
+	// nil = unrestricted (any loopback port). When set, ports not on the list
+	// are rejected before any connection attempt.
+	AllowedLoopbackPorts []int `yaml:"allowed_loopback_ports"`
+
+	// APIKeyFromYAML reports whether api_key was set in the YAML config file
+	// itself (as opposed to the UNSWARM_AGENT_API_KEY environment fallback).
+	// Used to decide whether a plaintext-key-on-disk permission warning applies.
+	APIKeyFromYAML bool `yaml:"-"`
 
 	// EnforceRegisteredRuntime gates container lifecycle commands against the
 	// registered runtime set synced from the backend (sync_registrations).
@@ -71,6 +91,10 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
+
+	// Record whether the API key came from the YAML file before environment
+	// overrides can fill it in from UNSWARM_AGENT_API_KEY.
+	cfg.APIKeyFromYAML = strings.TrimSpace(cfg.APIKey) != ""
 
 	cfg.ApplyEnvOverrides()
 
@@ -126,7 +150,36 @@ func (c Config) Validate() error {
 	if err := validateInsecureWs(c.BackendURL, c.AllowInsecureWs); err != nil {
 		return err
 	}
+	if _, err := NormalizeFingerprint(c.ExpectedServerFingerprint); err != nil {
+		return err
+	}
 	return nil
+}
+
+// NormalizeFingerprint parses a SHA-256 certificate fingerprint. Parsing is
+// case/space-insensitive: whitespace and colons are stripped and the result is
+// lowercased hex. Empty input yields an empty string (feature disabled).
+func NormalizeFingerprint(s string) (string, error) {
+	stripped := strings.Map(func(r rune) rune {
+		switch r {
+		case ':', ' ', '\t', '\n', '\r':
+			return -1
+		}
+		return unicode.ToLower(r)
+	}, s)
+	if stripped == "" {
+		return "", nil
+	}
+	if len(stripped) != 64 {
+		return "", fmt.Errorf(
+			"expected_server_fingerprint must be a SHA-256 hex digest (64 hex chars, colons/spaces allowed), got %d chars",
+			len(stripped),
+		)
+	}
+	if _, err := hex.DecodeString(stripped); err != nil {
+		return "", fmt.Errorf("expected_server_fingerprint is not valid hex: %w", err)
+	}
+	return stripped, nil
 }
 
 // validateInsecureWs rejects ws:// connections to non-loopback hosts unless
@@ -141,7 +194,7 @@ func validateInsecureWs(backendURL string, allowInsecureWs bool) error {
 		return nil // wss:// and other schemes are fine
 	}
 	host := u.Hostname()
-	if host == "" || isLoopback(host) {
+	if host == "" || IsLoopback(host) {
 		return nil // loopback ws:// is allowed for local dev
 	}
 	if !allowInsecureWs {
@@ -152,9 +205,9 @@ func validateInsecureWs(backendURL string, allowInsecureWs bool) error {
 	return nil
 }
 
-// isLoopback reports whether host is a loopback address (localhost, 127.x.x.x,
+// IsLoopback reports whether host is a loopback address (localhost, 127.x.x.x,
 // or ::1).
-func isLoopback(host string) bool {
+func IsLoopback(host string) bool {
 	if strings.EqualFold(host, "localhost") {
 		return true
 	}

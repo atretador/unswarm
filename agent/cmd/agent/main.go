@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -61,7 +62,7 @@ func main() {
 	}))
 
 	// Load config
-	cfg, err := loadConfig(*configPath)
+	cfg, cfgPath, err := loadConfig(*configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -71,6 +72,7 @@ func main() {
 		"agent_name", cfg.AgentName,
 		"docker_socket", cfg.DockerSocket,
 	)
+	warnConfigPermissions(cfgPath, cfg, logger)
 
 	// Set up Docker handler
 	dockerHandler, err := docker.New(cfg.DockerSocket)
@@ -96,7 +98,7 @@ func main() {
 	}
 
 	// Set up command dispatcher
-	disp := setupDispatcher(dockerHandler, scriptMgr, gate, logger)
+	disp := setupDispatcher(dockerHandler, scriptMgr, gate, cfg.AllowedLoopbackPorts, logger)
 
 	// Set up the message router (extension point for future inference
 	// message types proxied over the WebSocket). sync_registrations is
@@ -128,6 +130,12 @@ func main() {
 
 		if err := runSession(ctx, wsClient, bo, cfg, disp, msgRouter, telemCollector, dockerHandler, scriptMgr, defaultSessionConfig(), logger); err != nil {
 			logger.Error("session ended", "error", err)
+			// Fail closed on a certificate fingerprint mismatch: retrying
+			// would keep sending the API key to an unverified server.
+			if errors.Is(err, client.ErrFingerprintMismatch) {
+				logger.Error("server certificate fingerprint mismatch: aborting reconnect loop (verify expected_server_fingerprint or re-pin the backend certificate)")
+				return
+			}
 		}
 
 		// Wait before reconnecting
@@ -428,7 +436,9 @@ func errorResult(msg string) protocol.CommandResultPayload {
 // setupDispatcher registers all command handlers. Container lifecycle
 // commands pass through the registered-runtime gate first: an unregistered
 // target is rejected without any Docker API call when enforcement is on.
-func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runtimegate.Gate, logger *slog.Logger) *dispatch.Dispatcher {
+// Loopback-port commands (health_check, discover_models, chat_completion*)
+// are restricted to allow (allowed_loopback_ports; empty = unrestricted).
+func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runtimegate.Gate, allow docker.PortAllowlist, logger *slog.Logger) *dispatch.Dispatcher {
 	d := dispatch.New()
 
 	// gated wraps a lifecycle handler with the registered-runtime check.
@@ -510,7 +520,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("health check", "port", p.Port)
 		ctx, cancel := commandContext()
 		defer cancel()
-		return docker.HealthCheck(ctx, p.Port)
+		return docker.HealthCheck(ctx, allow, p.Port)
 	})
 
 	// discover_models
@@ -518,7 +528,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("discovering models", "port", p.Port)
 		ctx, cancel := commandContext()
 		defer cancel()
-		return docker.DiscoverModels(ctx, p.Port)
+		return docker.DiscoverModels(ctx, allow, p.Port)
 	})
 
 	// chat_completion — forwards a raw OpenAI chat-completions body to the local
@@ -526,7 +536,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	// cancellation (backend disconnect) aborts the HTTP call via ctx.
 	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("chat completion", "port", p.Port, "jsonBytes", len(p.JsonBody))
-		return docker.ChatCompletion(ctx, p.Port, p.JsonBody)
+		return docker.ChatCompletion(ctx, allow, p.Port, p.JsonBody)
 	})
 
 	// chat_completion_stream — same endpoint as chat_completion, but the raw
@@ -534,7 +544,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	// (base64-encoded), followed by exactly one final command_result.
 	d.RegisterStream(protocol.CmdChatCompletionStream, func(ctx context.Context, p protocol.CommandPayload, emit func([]byte) error) error {
 		logger.Info("chat completion stream", "port", p.Port, "jsonBytes", len(p.JsonBody))
-		return docker.ChatCompletionStream(ctx, p.Port, string(p.JsonBody), emit)
+		return docker.ChatCompletionStream(ctx, allow, p.Port, string(p.JsonBody), emit)
 	})
 
 	// list_scripts
@@ -586,19 +596,21 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 // loadConfig tries the given path, then ./agent.yaml, then /etc/unswarm/agent.yaml.
 // Only a missing file falls through to the next candidate; a file that exists
 // but fails to parse is a hard error so a typo cannot silently connect with
-// default settings.
-func loadConfig(path string) (config.Config, error) {
+// default settings. Returns the config and the path it was loaded from
+// (empty when no config file was found).
+func loadConfig(path string) (config.Config, string, error) {
 	if path != "" {
-		return config.Load(path)
+		cfg, err := config.Load(path)
+		return cfg, path, err
 	}
 	// Try defaults
 	for _, p := range []string{"./agent.yaml", "/etc/unswarm/agent.yaml"} {
 		cfg, err := config.Load(p)
 		if err == nil {
-			return cfg, nil
+			return cfg, p, nil
 		}
 		if !os.IsNotExist(err) {
-			return config.Config{}, fmt.Errorf("config %s: %w", p, err)
+			return config.Config{}, "", fmt.Errorf("config %s: %w", p, err)
 		}
 	}
 	// No config file present anywhere: use defaults and apply env overrides
@@ -607,9 +619,30 @@ func loadConfig(path string) (config.Config, error) {
 	cfg := config.DefaultConfig()
 	cfg.ApplyEnvOverrides()
 	if err := cfg.Validate(); err != nil {
-		return config.Config{}, fmt.Errorf("validate default config: %w", err)
+		return config.Config{}, "", fmt.Errorf("validate default config: %w", err)
 	}
-	return cfg, nil
+	return cfg, "", nil
+}
+
+// warnConfigPermissions warns when an api_key stored in the YAML config file
+// sits in a group- or other-readable file: any local user could read the key.
+func warnConfigPermissions(path string, cfg config.Config, logger *slog.Logger) {
+	if path == "" || cfg.APIKey == "" || !cfg.APIKeyFromYAML {
+		return
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		logger.Warn(
+			"config file is group/other-readable while api_key is stored in plaintext inside it; "+
+				"restrict it so only the agent user can read it",
+			"path", path,
+			"perms", perm.String(),
+			"fix", fmt.Sprintf("chmod 600 %s", path),
+		)
+	}
 }
 
 // reachedMaxRetries reports whether the reconnect loop should give up.

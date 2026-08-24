@@ -28,7 +28,7 @@ func discardLogger() *slog.Logger {
 // TestDispatcherRegistersChatCompletion verifies the chat_completion command is
 // registered on the dispatcher so benchmark/validation inference can be proxied.
 func TestDispatcherRegistersChatCompletion(t *testing.T) {
-	disp := setupDispatcher(nil, nil, runtimegate.NewGate(nil, false), discardLogger())
+	disp := setupDispatcher(nil, nil, runtimegate.NewGate(nil, false), nil, discardLogger())
 	if !disp.HasCommand(protocol.CmdChatCompletion) {
 		t.Fatalf("dispatcher does not have %q registered", protocol.CmdChatCompletion)
 	}

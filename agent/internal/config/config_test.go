@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestLoadEmptyPath(t *testing.T) {
 		t.Fatalf("Load empty path: %v", err)
 	}
 	def := DefaultConfig()
-	if cfg != def {
+	if !reflect.DeepEqual(cfg, def) {
 		t.Errorf("Empty path should return defaults, got %+v", cfg)
 	}
 }

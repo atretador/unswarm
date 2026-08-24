@@ -2,8 +2,14 @@
 package client
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -31,6 +37,13 @@ const writeTimeout = 30 * time.Second
 // one oversized frame.
 const maxMessageSize = 4 << 20 // 4MB
 
+// ErrFingerprintMismatch is returned by Connect when the backend's TLS
+// certificate does not match the configured expected_server_fingerprint.
+// Callers must treat this as fatal (fail closed): retrying cannot succeed
+// against an impostor, so the reconnect loop should abort instead of leaking
+// the API key to an unverified server on every attempt.
+var ErrFingerprintMismatch = errors.New("server certificate fingerprint mismatch")
+
 // WSClient manages a WebSocket connection to the backend.
 type WSClient struct {
 	cfg    config.Config
@@ -57,6 +70,13 @@ func New(cfg config.Config, logger *slog.Logger) *WSClient {
 
 // Connect establishes a WebSocket connection to the backend.
 // It sets the API key header if configured and handles URL scheme conversion.
+//
+// Server identity: over wss:// with expected_server_fingerprint configured,
+// the peer certificate is verified inside the TLS handshake (via
+// VerifyPeerCertificate) — i.e. before the HTTP upgrade request carrying the
+// API key is ever written to the wire. A mismatch aborts with
+// ErrFingerprintMismatch. Over plaintext ws:// to a non-loopback host a
+// prominent warning is logged on every attempt.
 func (c *WSClient) Connect(ctx context.Context) error {
 	wsURL, err := c.buildURL()
 	if err != nil {
@@ -77,6 +97,35 @@ func (c *WSClient) Connect(ctx context.Context) error {
 		HandshakeTimeout: 10 * time.Second,
 	}
 
+	u, err := url.Parse(wsURL)
+	if err != nil {
+		return fmt.Errorf("parse ws URL: %w", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "wss":
+		tlsCfg, err := c.tlsConfig()
+		if err != nil {
+			return err
+		}
+		if tlsCfg != nil {
+			dialer.TLSClientConfig = tlsCfg
+		} else {
+			c.logger.Info(
+				"connected over wss:// without expected_server_fingerprint: server identity is not pinned; " +
+					"set expected_server_fingerprint (SHA-256 hex of the backend TLS certificate) so a MITM with a " +
+					"valid-for-another-host certificate cannot intercept the API key",
+			)
+		}
+	case "ws":
+		if !config.IsLoopback(u.Hostname()) {
+			c.logger.Warn(
+				"INSECURE CONNECTION: API key travels UNENCRYPTED over plaintext ws:// to a non-loopback host "+
+					"and can be intercepted by anyone on the path; use wss:// instead",
+				"host", LoggableURL(wsURL),
+			)
+		}
+	}
+
 	conn, _, err := dialer.DialContext(ctx, wsURL, header)
 	if err != nil {
 		return fmt.Errorf("websocket dial %s: %w", LoggableURL(wsURL), err)
@@ -88,6 +137,37 @@ func (c *WSClient) Connect(ctx context.Context) error {
 	c.configureConn(conn)
 	c.logger.Info("connected to backend")
 	return nil
+}
+
+// tlsConfig builds the TLS configuration enforcing certificate pinning when
+// expected_server_fingerprint is configured. It returns (nil, nil) when no
+// fingerprint is set (default system verification applies). The check lives in
+// VerifyPeerCertificate, which crypto/tls runs during the handshake — before
+// any application data (and therefore before the API key header) is sent.
+func (c *WSClient) tlsConfig() (*tls.Config, error) {
+	fp, err := config.NormalizeFingerprint(c.cfg.ExpectedServerFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if fp == "" {
+		return nil, nil
+	}
+	expected, err := hex.DecodeString(fp)
+	if err != nil {
+		return nil, fmt.Errorf("decode expected_server_fingerprint: %w", err)
+	}
+	return &tls.Config{
+		VerifyPeerCertificate: func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
+			if len(rawCerts) == 0 {
+				return fmt.Errorf("%w: server presented no certificate", ErrFingerprintMismatch)
+			}
+			sum := sha256.Sum256(rawCerts[0])
+			if !bytes.Equal(sum[:], expected) {
+				return fmt.Errorf("%w: got %s, want %s", ErrFingerprintMismatch, hex.EncodeToString(sum[:]), fp)
+			}
+			return nil
+		},
+	}, nil
 }
 
 // configureConn sets up keep-alive handling: respond to protocol pings and

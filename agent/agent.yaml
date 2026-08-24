@@ -26,6 +26,32 @@ docker_socket: "unix:///var/run/docker.sock"
 # the risk (e.g. a dedicated, isolated network with no MITM threat).
 allow_insecure_ws: false
 
+# Optional: SHA-256 fingerprint (hex) of the backend's TLS certificate.
+# When set and backend_url uses wss://, the agent verifies the server
+# certificate during the TLS handshake — BEFORE the API key is sent — and
+# refuses to connect (and stops reconnecting) on mismatch. This pins server
+# identity even against a MITM with a certificate valid for another host.
+# Parsing is case/space-insensitive; colon-separated forms are accepted, e.g.
+#   expected_server_fingerprint: "AA:BB:...:9F"
+# Get it from the backend's cert:
+#   openssl s_client -connect unswarm.example.com:443 </dev/null 2>/dev/null \
+#     | openssl x509 -noout -fingerprint -sha256
+# expected_server_fingerprint: ""
+
+# Optional: restrict which local (127.0.0.1) ports the agent will dial for
+# health_check / discover_models / chat_completion commands. Empty or unset =
+# unrestricted (any loopback port). When set, any other port is rejected
+# before dialing — recommended so a compromised backend cannot use the agent
+# as an SSRF pivot into arbitrary local services.
+# allowed_loopback_ports: [8080, 8081]
+
+# Directory containing launcher scripts (*.sh) the backend may start.
+# SECURITY: scripts_dir MUST be owned by root and NOT writable by the agent
+# user (or anyone who can influence the backend). Anything placed in this
+# directory is executed as bash by the agent — a writable scripts_dir is
+# remote code execution by design.
+# scripts_dir: "/opt/unswarm/scripts"
+
 # Reconnection settings
 reconnect:
   initial_backoff_ms: 1000    # 1 second
