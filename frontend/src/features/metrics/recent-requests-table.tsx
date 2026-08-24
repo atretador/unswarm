@@ -108,7 +108,7 @@ export function RecentRequestsTable({
     setPage(0);
   }, [paramKey]);
 
-  const { data, isLoading, isPlaceholderData } = useQuery({
+  const { data, isLoading, isError, isPlaceholderData } = useQuery({
     queryKey: ["metrics", "usage", queryParams, page],
     queryFn: () =>
       client.getMetricsUsage({ ...queryParams, page, pageSize: PAGE_SIZE }),
@@ -284,7 +284,17 @@ export function RecentRequestsTable({
                     </td>
                   </tr>
                 )}
-                {!isLoading && (data?.items.length ?? 0) === 0 && (
+                {isError && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="py-8 text-center text-[var(--color-status-error)]"
+                    >
+                      Couldn't load recent requests.
+                    </td>
+                  </tr>
+                )}
+                {!isError && !isLoading && (data?.items.length ?? 0) === 0 && (
                   <tr>
                     <td
                       colSpan={8}

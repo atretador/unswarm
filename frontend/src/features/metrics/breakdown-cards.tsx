@@ -11,9 +11,11 @@ import { formatTokens } from "./format";
 export function LatencyBandsCard({
   bands,
   loading,
+  error,
 }: {
   bands: LatencyBand[] | undefined;
   loading: boolean;
+  error?: boolean;
 }) {
   const total = (bands ?? []).reduce((sum, b) => sum + b.count, 0);
   return (
@@ -29,17 +31,24 @@ export function LatencyBandsCard({
           </span>
         )}
       </div>
-      {loading && (
+      {error && (
+        <p className="text-sm text-[var(--color-status-error)] py-8 text-center">
+          Couldn't load latency distribution.
+        </p>
+      )}
+      {!error && loading && (
         <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
           Loading…
         </p>
       )}
-      {!loading && total === 0 && (
+      {!error && !loading && total === 0 && (
         <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
           No requests in this window.
         </p>
       )}
-      {!loading && total > 0 && <LatencyBandsChart bands={bands ?? []} />}
+      {!error && !loading && total > 0 && (
+        <LatencyBandsChart bands={bands ?? []} />
+      )}
     </Card>
   );
 }
@@ -47,9 +56,11 @@ export function LatencyBandsCard({
 export function ApiKeysCard({
   rows,
   loading,
+  error,
 }: {
   rows: ApiKeyUsageRow[] | undefined;
   loading: boolean;
+  error?: boolean;
 }) {
   return (
     <Card padding="lg">
@@ -60,19 +71,25 @@ export function ApiKeysCard({
         <KeyRound className="size-3.5 text-[var(--color-text-muted)]" />
       </div>
 
-      {loading && (
+      {error && (
+        <p className="text-sm text-[var(--color-status-error)] py-6 text-center">
+          Couldn't load API-key usage.
+        </p>
+      )}
+
+      {!error && loading && (
         <p className="text-sm text-[var(--color-text-muted)] py-6 text-center">
           Loading…
         </p>
       )}
 
-      {!loading && (rows?.length ?? 0) === 0 && (
+      {!error && !loading && (rows?.length ?? 0) === 0 && (
         <p className="text-sm text-[var(--color-text-muted)] py-6 text-center">
           No API-key usage in this window.
         </p>
       )}
 
-      {(rows?.length ?? 0) > 0 && (
+      {!error && (rows?.length ?? 0) > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

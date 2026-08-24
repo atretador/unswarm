@@ -323,6 +323,7 @@ export default function Metrics() {
   const {
     data: latencyBands,
     isLoading: latencyBandsLoading,
+    isError: latencyBandsError,
     refetch: refetchLatencyBands,
   } = useQuery({
     queryKey: ["metrics", "latency-bands", latencyFilterParams],
@@ -333,6 +334,7 @@ export default function Metrics() {
   const {
     data: apiKeyUsage,
     isLoading: apiKeyUsageLoading,
+    isError: apiKeyUsageError,
     refetch: refetchApiKeys,
   } = useQuery({
     // Endpoint is time-window scoped (no provider/model split server-side).
@@ -1370,6 +1372,7 @@ export default function Metrics() {
               <LatencyBandsCard
                 bands={latencyBands}
                 loading={latencyBandsLoading}
+                error={latencyBandsError}
               />
             </motion.div>
             <motion.div
@@ -1378,7 +1381,11 @@ export default function Metrics() {
               animate="animate"
               transition={{ delay: 0.3 }}
             >
-              <ApiKeysCard rows={apiKeyUsage} loading={apiKeyUsageLoading} />
+              <ApiKeysCard
+                rows={apiKeyUsage}
+                loading={apiKeyUsageLoading}
+                error={apiKeyUsageError}
+              />
             </motion.div>
           </div>
 

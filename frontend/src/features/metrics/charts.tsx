@@ -322,6 +322,9 @@ export function ProviderBreakdownChart({
             key={dataKey}
             dataKey={dataKey}
             name={dataKey}
+            // Series-level fill feeds the <Legend> icon color (per-provider
+            // <Cell> fills below still win for the actual bar rendering).
+            fill={PROVIDER_COLORS[colorOffset]}
             radius={[0, 4, 4, 0]}
             barSize={16}
             onClick={handleBarClick}

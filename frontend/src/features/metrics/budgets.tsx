@@ -241,7 +241,8 @@ export function BudgetsPanel({
         </div>
       )}
 
-      <div className="space-y-4">
+      {/* Rows echo the Cost Calculator's bordered-row table language. */}
+      <div className="space-y-2">
         {rows.map((row) => {
           const budget: ProviderBudget = budgets[row.provider] ?? {};
           const tokens = barState(row.tokensUsed, budget.tokens);
@@ -257,22 +258,25 @@ export function BudgetsPanel({
               : (costRates[row.provider]?.monthlyCost ?? 0);
           const cost = barState(row.costUsed, budget.cost);
           return (
-            <div key={row.provider}>
-              <div className="flex items-baseline justify-between gap-2 mb-1.5">
-                <span className="text-sm font-medium text-[var(--color-text-heading)] truncate">
-                  {row.provider}
+            <div
+              key={row.provider}
+              className="p-2.5 rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="flex items-center gap-2 min-w-0 text-sm font-medium text-[var(--color-text-heading)]">
+                  <span className="truncate">{row.provider}</span>
                   {flatKind === "subscription" && (
-                    <Badge variant="outline" size="sm" className="ml-2">
-                      subscription
+                    <Badge variant="outline" size="sm">
+                      monthly
                     </Badge>
                   )}
                   {flatKind === "self-hosted" && (
-                    <Badge variant="outline" size="sm" className="ml-2">
+                    <Badge variant="outline" size="sm">
                       self-hosted
                     </Badge>
                   )}
                 </span>
-                <span className="text-xs font-mono text-[var(--color-text-muted)] shrink-0">
+                <span className="text-xs font-mono text-[var(--color-text-muted)] shrink-0 tabular-nums">
                   {formatTokens(row.tokensUsed)} tok
                   {!isFlat && budget.cost !== undefined && budget.cost > 0
                     ? ` · ${formatCurrency(row.costUsed)}`
@@ -280,37 +284,39 @@ export function BudgetsPanel({
                 </span>
               </div>
 
-              {tokens.pct !== null && (
-                <ProgressBar
-                  label={`${Math.round(tokens.pct)}% of ${formatTokens(budget.tokens!)} token budget`}
-                  state={tokens}
-                />
-              )}
-              {isFlat ? (
-                <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-                  Flat {formatCurrency(flatCost)}/mo{" "}
-                  {flatKind === "self-hosted"
-                    ? "hardware/power"
-                    : "— no usage-based cost"}
-                </p>
-              ) : (
-                cost.pct !== null && (
-                  <div className={tokens.pct !== null ? "mt-1.5" : ""}>
+              {(tokens.pct !== null || isFlat || cost.pct !== null) && (
+                <div className="mt-2 space-y-1.5">
+                  {tokens.pct !== null && (
                     <ProgressBar
-                      label={`${Math.round(cost.pct)}% of ${formatCurrency(budget.cost!)} cost budget`}
-                      state={cost}
+                      label={`${Math.round(tokens.pct)}% of ${formatTokens(budget.tokens!)} token budget`}
+                      state={tokens}
                     />
-                  </div>
-                )
-              )}
-              {tokens.pct === null && (isFlat || cost.pct === null) && (
-                <p className="text-xs text-[var(--color-text-muted)] italic">
-                  No budget set
-                </p>
+                  )}
+                  {isFlat ? (
+                    <p className="text-[10px] text-[var(--color-text-muted)]">
+                      Flat {formatCurrency(flatCost)}/mo{" "}
+                      {flatKind === "self-hosted"
+                        ? "hardware/power"
+                        : "— no usage-based cost"}
+                    </p>
+                  ) : (
+                    cost.pct !== null && (
+                      <ProgressBar
+                        label={`${Math.round(cost.pct)}% of ${formatCurrency(budget.cost!)} cost budget`}
+                        state={cost}
+                      />
+                    )
+                  )}
+                  {tokens.pct === null && (isFlat || cost.pct === null) && (
+                    <p className="text-xs text-[var(--color-text-muted)] italic">
+                      No budget set
+                    </p>
+                  )}
+                </div>
               )}
 
               {editing && (
-                <div className="flex flex-wrap gap-2 mt-2">
+                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--color-border-subtle)]">
                   <BudgetInput
                     label="Token budget"
                     value={budget.tokens?.toString() ?? ""}
@@ -337,6 +343,18 @@ export function BudgetsPanel({
             </div>
           );
         })}
+
+        {rows.length > 0 && (
+          <div className="flex items-baseline justify-between pt-2 border-t border-[var(--color-border-strong)]">
+            <span className="text-xs font-semibold text-[var(--color-text-heading)]">
+              Month to date
+            </span>
+            <span className="text-xs font-mono font-semibold text-[var(--color-text-heading)] tabular-nums">
+              {formatTokens(rows.reduce((sum, r) => sum + r.tokensUsed, 0))} tok ·{" "}
+              {formatCurrency(rows.reduce((sum, r) => sum + r.costUsed, 0))}
+            </span>
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -382,7 +400,7 @@ function BudgetInput({
 }) {
   return (
     <label className="flex flex-col gap-0.5 min-w-[130px] flex-1">
-      <span className="text-[10px] font-medium text-[var(--color-text-muted)]">
+      <span className="text-xs font-medium text-[var(--color-text-muted)]">
         {label}
       </span>
       <input
@@ -393,7 +411,7 @@ function BudgetInput({
         value={value}
         placeholder="—"
         onChange={(e) => onChange(e.target.value)}
-        className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs font-mono text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full"
+        className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm font-mono text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full"
       />
     </label>
   );
