@@ -277,3 +277,106 @@ describe("Spinner", () => {
     expect(svg.getAttribute("class")).toContain("size-8");
   });
 });
+
+// ─── Drawer ───────────────────────────────────────────────────────
+
+import { useState } from "react";
+import { Drawer } from "../components/ui/Drawer";
+
+function DrawerHarness({
+  onOpenChange,
+  footer = false,
+}: {
+  onOpenChange?: (open: boolean) => void;
+  footer?: boolean;
+}) {
+  const [open, setOpen] = useState(true);
+  const handleChange = (o: boolean) => {
+    setOpen(o);
+    onOpenChange?.(o);
+  };
+  return (
+    <Drawer
+      open={open}
+      onOpenChange={handleChange}
+      title="Test drawer"
+      subtitle="subtitle line"
+      footer={footer ? <div>composer</div> : undefined}
+    >
+      <p>drawer body content</p>
+    </Drawer>
+  );
+}
+
+describe("Drawer", () => {
+  it("renders title, subtitle, body and footer when open", () => {
+    const onOpenChange = vi.fn();
+    render(<DrawerHarness onOpenChange={onOpenChange} footer />);
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Test drawer")).toBeInTheDocument();
+    expect(screen.getByText("subtitle line")).toBeInTheDocument();
+    expect(screen.getByText("drawer body content")).toBeInTheDocument();
+    expect(screen.getByText("composer")).toBeInTheDocument();
+  });
+
+  it("Escape triggers onOpenChange(false)", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(<DrawerHarness onOpenChange={onOpenChange} />);
+
+    await user.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("backdrop click triggers onOpenChange(false)", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(
+      <div>
+        <DrawerHarness onOpenChange={onOpenChange} />
+      </div>,
+    );
+
+    // The backdrop is the aria-hidden overlay inside the dialog container.
+    const backdrop = screen
+      .getByRole("dialog")
+      .querySelector("[aria-hidden='true']") as HTMLElement;
+    await user.click(backdrop);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("close button triggers onOpenChange(false)", async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(<DrawerHarness onOpenChange={onOpenChange} />);
+
+    await user.click(screen.getByRole("button", { name: "Close drawer" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("renders nothing when closed and never opened", () => {
+    render(
+      <Drawer open={false} onOpenChange={() => {}} title="Hidden">
+        <p>nope</p>
+      </Drawer>,
+    );
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText("nope")).not.toBeInTheDocument();
+  });
+
+  it("does not steal focus from an auto-focused child (composer input)", async () => {
+    function FocusChild() {
+      return (
+        <Drawer open onOpenChange={() => {}}>
+          <input aria-label="composer-input" autoFocus />
+        </Drawer>
+      );
+    }
+    render(<FocusChild />);
+    const input = screen.getByLabelText("composer-input");
+    // The Drawer's rAF-driven focus runs a frame after mount.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(document.activeElement).toBe(input);
+  });
+});

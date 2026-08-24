@@ -76,3 +76,37 @@ public sealed class ModelUpdateRequest
     public int? ContextWindow { get; set; }
     public string? ContainerImage { get; set; }
 }
+
+/// <summary>
+/// One message of an interactive test-chat conversation (OpenAI chat format subset).
+/// </summary>
+public sealed class TestChatMessage
+{
+    public string Role { get; set; } = "user";
+    public string Content { get; set; } = "";
+}
+
+/// <summary>
+/// Request body for POST /api/models/test-chat — a single admin-driven chat turn
+/// routed through the same inference pipeline as /v1/chat/completions.
+/// </summary>
+public sealed class TestChatRequest
+{
+    /// <summary>Model id: a fleet registry id or a "cloud/&lt;provider&gt;/&lt;model&gt;" id.</summary>
+    public string Model { get; set; } = "";
+
+    /// <summary>Conversation so far, oldest first. Must contain at least one message.</summary>
+    public List<TestChatMessage> Messages { get; set; } = new();
+
+    /// <summary>Optional system prompt prepended as the first message.</summary>
+    public string? System { get; set; }
+
+    /// <summary>When true (default), stream SSE deltas straight through.</summary>
+    public bool Stream { get; set; } = true;
+
+    /// <summary>Optional generation cap (clamped to 1..32768).</summary>
+    public int? MaxTokens { get; set; }
+
+    /// <summary>Optional sampling temperature (clamped to 0..2).</summary>
+    public double? Temperature { get; set; }
+}

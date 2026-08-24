@@ -8,6 +8,7 @@ import {
   ExternalLink,
   Gauge,
   Hash,
+  MessageSquare,
   Pencil,
   Search,
   Server,
@@ -30,6 +31,7 @@ import {
 } from "../../components/ui";
 import type { Model, ModelStatus, Settings } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
+import { TestChatDrawer } from "./test-chat-drawer";
 
 // ─── Status semantics — identical to the Fleet page palette ───────
 
@@ -70,6 +72,27 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
 
+// ─── Test-chat trigger — shared by Managed and Cloud rows ─────────
+
+function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model) => void }) {
+  const invalid = model.status === "invalid";
+  return (
+    <Tooltip
+      content={invalid ? "Model invalid — fix registration first" : `Test chat with ${model.name}`}
+    >
+      <button
+        type="button"
+        onClick={() => !invalid && onChat(model)}
+        disabled={invalid}
+        aria-label={`Test chat with ${model.name}`}
+        className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:pointer-events-none disabled:opacity-40"
+      >
+        <MessageSquare className="size-3.5" />
+      </button>
+    </Tooltip>
+  );
+}
+
 // ─── Model row (Managed / Fleet) ─────────────────────────────────
 
 function MetricChip({
@@ -97,7 +120,7 @@ function MetricChip({
   );
 }
 
-function ManagedModelRow({ model, index, settings, isSelected }: { model: Model; index: number; settings?: Settings; isSelected?: boolean }) {
+function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model: Model; index: number; settings?: Settings; isSelected?: boolean; onChat: (model: Model) => void }) {
   const bench = model.lastBenchmark;
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
@@ -218,6 +241,7 @@ function ManagedModelRow({ model, index, settings, isSelected }: { model: Model;
 
         {/* Actions */}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TestChatButton model={model} onChat={onChat} />
           {model.sourceRuntimeId ? (
             <Link
               to={`/fleet?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
@@ -313,7 +337,7 @@ function ManagedModelRow({ model, index, settings, isSelected }: { model: Model;
 
 // ─── Model row (Cloud) ───────────────────────────────────────────
 
-function CloudModelRow({ model, index, settings, isSelected }: { model: Model; index: number; settings?: Settings; isSelected?: boolean }) {
+function CloudModelRow({ model, index, settings, isSelected, onChat }: { model: Model; index: number; settings?: Settings; isSelected?: boolean; onChat: (model: Model) => void }) {
   return (
     <motion.div
       layout
@@ -356,6 +380,11 @@ function CloudModelRow({ model, index, settings, isSelected }: { model: Model; i
             {MODEL_STATUS_LABEL[model.status]}
           </Badge>
         </div>
+
+        {/* Actions */}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TestChatButton model={model} onChat={onChat} />
+        </div>
       </div>
     </motion.div>
   );
@@ -379,6 +408,9 @@ export default function Models() {
   const [activeTab, setActiveTab] = useState<Tab>("managed");
   const [providerFilter, setProviderFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
+  // Test-chat drawer: track the selected model ID so the row object stays fresh
+  // (status may flip to invalid while the drawer is open).
+  const [chatModelId, setChatModelId] = useState<string | null>(null);
   const {
     data: models,
     isLoading,
@@ -439,6 +471,8 @@ export default function Models() {
       cloudModels: all.filter((m) => m.origin === "cloud"),
     };
   }, [models]);
+
+  const chatModel = chatModelId ? (models ?? []).find((m) => m.id === chatModelId) ?? null : null;
 
   const activeModels = activeTab === "managed" ? managedModels : cloudModels;
 
@@ -638,14 +672,22 @@ export default function Models() {
           <Card padding="none">
             {activeTab === "managed"
               ? filteredModels.map((model, i) => (
-                  <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} />
+                  <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
                 ))
               : filteredModels.map((model, i) => (
-                  <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} />
+                  <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
                 ))}
           </Card>
         )}
       </div>
+
+      {/* Test chat drawer */}
+      <TestChatDrawer
+        model={chatModel}
+        open={chatModel !== null}
+        settings={settings}
+        onClose={() => setChatModelId(null)}
+      />
     </div>
   );
 }
