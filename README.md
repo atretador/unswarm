@@ -118,9 +118,16 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 - **OpenAI-Compatible Proxy** — Backend exposes `/v1/chat/completions` that routes requests to the correct agent and container, enabling a unified API endpoint for all your models.
 - **Automatic Model Switching** — Scheduler loads and unloads models on demand, letting you serve many models from limited VRAM with a single API endpoint.
 - **Model Groups** — Define exclusive groups (one model at a time) and co-located groups (models that share VRAM) to match your hardware constraints.
+<img width="751" height="616" alt="image" src="https://github.com/user-attachments/assets/5c19f9bb-7e3e-413e-9cd9-07d00305b120" />
+
 - **Conversation Affinity** — Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls.
 - **Inference Queue** — Bounded request queue with scheduler for managing concurrent inference workloads across the fleet.
 - **Benchmarks** — Run benchmark prompts against models and track performance history (latency, tokens generated).
+  
+<img width="1008" height="260" alt="image" src="https://github.com/user-attachments/assets/e32001d6-062e-4ce8-87a9-4da1258c8b14" />
+
+<img width="983" height="614" alt="image" src="https://github.com/user-attachments/assets/b6394fa3-0f07-42c7-badf-41d1cb86f087" />
+
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
 - **Cloud Providers** — Register external cloud inference providers (any OpenAI-compatible endpoint, e.g. OpenAI or OpenRouter) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
@@ -133,6 +140,11 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 
  
 - **API Key Access Control** — Scope each API key to specific providers (cloud or self-hosted agents) and models via a manage modal; restricted keys get OpenAI-style 403 rejections outside their grants. Per-key usage is tracked automatically (requests, tokens, per-model breakdown).
+  
+<img width="745" height="551" alt="image" src="https://github.com/user-attachments/assets/14755411-33fd-4d36-bf33-3e71e887d7a6" />
+
+<img width="703" height="430" alt="image" src="https://github.com/user-attachments/assets/c5cb0614-d7ba-43ef-a8fe-54c0c90935ac" />
+
 - **Settings** — Configurable idle shutdown, health check intervals, log retention, usage retention, and auth. Idle shutdown is anchored to last scheduler activity (not container lifetime) and never stops a runtime with in-flight or queued work.
 
 ## Quick Start
