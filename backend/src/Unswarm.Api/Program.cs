@@ -82,6 +82,10 @@ builder.Services.AddSingleton<Func<UnswarmDbContext>>(sp =>
 var dataProtectionKeyDir = Path.Combine(appDataDir, "keys");
 Directory.CreateDirectory(dataProtectionKeyDir);
 builder.Services.AddDataProtection()
+    // Stable application discriminator: without this it derives from the
+    // content-root path, so host runs and container runs would each reject
+    // the other's ciphertexts even when sharing the same key directory.
+    .SetApplicationName("unswarm")
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDir));
 
 builder.Services.AddHttpContextAccessor();
