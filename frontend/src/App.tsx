@@ -1,47 +1,62 @@
+import { Suspense, lazy } from "react";
 import { Routes, Route } from "react-router-dom";
 import { AppShell } from "./components/layout/AppShell";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
-import LoginPage from "./features/login";
-import Dashboard from "./features/dashboard";
-import Models from "./features/models";
-import Fleet from "./features/fleet";
-import Providers from "./features/providers";
-import Benchmarks from "./features/benchmarks";
-import Metrics from "./features/metrics";
-import Queue from "./features/queue";
-import Logs from "./features/logs";
-import ApiKeys from "./features/api-keys";
-import Settings from "./features/settings";
-import Profile from "./features/profile";
-import NotFound from "./features/not-found";
+
+// Route-level code splitting: each feature page is its own chunk, loaded on
+// first navigation. One Suspense boundary at the shell level covers every
+// lazy page — do not add nested per-page boundaries.
+const LoginPage = lazy(() => import("./features/login"));
+const Dashboard = lazy(() => import("./features/dashboard"));
+const Models = lazy(() => import("./features/models"));
+const Fleet = lazy(() => import("./features/fleet"));
+const Providers = lazy(() => import("./features/providers"));
+const Benchmarks = lazy(() => import("./features/benchmarks"));
+const Metrics = lazy(() => import("./features/metrics"));
+const Queue = lazy(() => import("./features/queue"));
+const Logs = lazy(() => import("./features/logs"));
+const ApiKeys = lazy(() => import("./features/api-keys"));
+const Settings = lazy(() => import("./features/settings"));
+const Profile = lazy(() => import("./features/profile"));
+const NotFound = lazy(() => import("./features/not-found"));
+
+function PageFallback() {
+  return (
+    <div className="p-6 max-w-6xl" aria-busy="true" aria-live="polite">
+      <div className="h-6 w-32 rounded animate-pulse bg-[var(--color-bg-muted)]" />
+    </div>
+  );
+}
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="*"
-        element={
-          <ProtectedRoute>
-            <AppShell>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/models" element={<Models />} />
-                <Route path="/fleet" element={<Fleet />} />
-                <Route path="/providers" element={<Providers />} />
-                <Route path="/benchmarks" element={<Benchmarks />} />
-                <Route path="/metrics" element={<Metrics />} />
-                <Route path="/queue" element={<Queue />} />
-                <Route path="/logs" element={<Logs />} />
-                <Route path="/api-keys" element={<ApiKeys />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/profile" element={<Profile />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </AppShell>
-          </ProtectedRoute>
-        }
-      />
-    </Routes>
+    <Suspense fallback={<PageFallback />}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="*"
+          element={
+            <ProtectedRoute>
+              <AppShell>
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/models" element={<Models />} />
+                  <Route path="/fleet" element={<Fleet />} />
+                  <Route path="/providers" element={<Providers />} />
+                  <Route path="/benchmarks" element={<Benchmarks />} />
+                  <Route path="/metrics" element={<Metrics />} />
+                  <Route path="/queue" element={<Queue />} />
+                  <Route path="/logs" element={<Logs />} />
+                  <Route path="/api-keys" element={<ApiKeys />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="/profile" element={<Profile />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </AppShell>
+            </ProtectedRoute>
+          }
+        />
+      </Routes>
+    </Suspense>
   );
 }

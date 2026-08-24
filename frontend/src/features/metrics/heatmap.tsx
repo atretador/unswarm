@@ -2,7 +2,7 @@
 // /api/metrics/summary with hourly granularity. The window is capped at the
 // last 7 days (a 24-column grid over longer ranges would just repeat cells).
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../lib/query-client";
 
@@ -36,6 +36,29 @@ export function HourlyHeatmap({
     [hours],
   );
 
+  // The heatmap sits far down the page — defer its query until the grid
+  // actually scrolls into view (IntersectionObserver → enabled flag).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const { data: buckets, isLoading } = useQuery({
     queryKey: ["metrics", "summary", "heatmap", from.toISOString(), provider, model],
     queryFn: () =>
@@ -46,7 +69,8 @@ export function HourlyHeatmap({
         ...(provider ? { provider } : {}),
         ...(model ? { model } : {}),
       }),
-    refetchInterval: autoRefreshMs || false,
+    enabled: visible,
+    refetchInterval: visible ? autoRefreshMs || false : false,
   });
 
   const { grid, maxCount, totalRequests } = useMemo(() => {
@@ -68,7 +92,7 @@ export function HourlyHeatmap({
   }, [buckets]);
 
   return (
-    <div>
+    <div ref={containerRef}>
       <div className="overflow-x-auto">
         <div
           className="grid gap-[3px] min-w-[560px]"

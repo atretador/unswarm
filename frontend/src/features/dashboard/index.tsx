@@ -6,24 +6,16 @@ import { client } from "../../lib/query-client";
 import { BASE_URL } from "../../lib/api/httpClient";
 import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../components/ui";
 
-// Lazy-load recharts to keep the main bundle lean
-const LazyAreaChart = lazy(() =>
-  import("recharts").then((m) => ({ default: m.AreaChart })),
+// Lazy-load the charts module (which imports recharts statically) to keep the
+// main bundle lean. Single lazy module + single Suspense boundary per chart —
+// do NOT lazy-load individual recharts components behind nested <Suspense>:
+// recharts 3.x + React 19 hits an infinite setState loop in RechartsWrapper's
+// ref callback when the chart subtree suspends/reappears (recharts#7463).
+const LazyRequestsPerMinuteChart = lazy(() =>
+  import("./charts").then((m) => ({ default: m.RequestsPerMinuteChart })),
 );
-const LazyArea = lazy(() =>
-  import("recharts").then((m) => ({ default: m.Area })),
-);
-const LazyXAxis = lazy(() =>
-  import("recharts").then((m) => ({ default: m.XAxis })),
-);
-const LazyYAxis = lazy(() =>
-  import("recharts").then((m) => ({ default: m.YAxis })),
-);
-const LazyTooltip = lazy(() =>
-  import("recharts").then((m) => ({ default: m.Tooltip })),
-);
-const LazyResponsiveContainer = lazy(() =>
-  import("recharts").then((m) => ({ default: m.ResponsiveContainer })),
+const LazyTokensPerSecondChart = lazy(() =>
+  import("./charts").then((m) => ({ default: m.TokensPerSecondChart })),
 );
 
 function ChartSkeleton() {
@@ -109,7 +101,7 @@ function DashboardContent() {
   } = useQuery({
     queryKey: ["stats"],
     queryFn: () => client.getStats(),
-    refetchInterval: 2000,
+    refetchInterval: 5000,
   });
 
   if (isLoading) {
@@ -206,9 +198,6 @@ function DashboardContent() {
     },
   ];
 
-  const minuteLabels = stats.requestsPerMinute.map((_, i) => `${i}m`);
-  const secondLabels = stats.tokensPerSecond.map((_, i) => `${i}s`);
-
   // BASE_URL is '' for same-origin deployments — show the current origin instead.
   const displayBaseUrl = BASE_URL || window.location.origin;
 
@@ -284,33 +273,7 @@ function DashboardContent() {
             Requests per minute
           </p>
           <Suspense fallback={<ChartSkeleton />}>
-            <LazyResponsiveContainer width="100%" height={200}>
-              <LazyAreaChart data={stats.requestsPerMinute.map((v, i) => ({ time: minuteLabels[i], value: v }))}>
-                <defs>
-                  <linearGradient id="rpmGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--color-primary)" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="var(--color-primary)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <LazyXAxis dataKey="time" tick={{ fontSize: 10, fill: "var(--color-text-muted)" }} tickLine={false} axisLine={false} />
-                <LazyYAxis tick={{ fontSize: 10, fill: "var(--color-text-muted)" }} tickLine={false} axisLine={false} width={30} />
-                <LazyTooltip
-                  contentStyle={{
-                    background: "var(--color-bg-elevated)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-lg)",
-                    fontSize: "12px",
-                  }}
-                />
-                <LazyArea
-                  type="monotone"
-                  dataKey="value"
-                  stroke="var(--color-primary)"
-                  fill="url(#rpmGrad)"
-                  strokeWidth={2}
-                />
-              </LazyAreaChart>
-            </LazyResponsiveContainer>
+            <LazyRequestsPerMinuteChart values={stats.requestsPerMinute} />
           </Suspense>
         </Card>
       </motion.div>
@@ -322,33 +285,7 @@ function DashboardContent() {
             Tokens per second
           </p>
           <Suspense fallback={<ChartSkeleton />}>
-            <LazyResponsiveContainer width="100%" height={200}>
-              <LazyAreaChart data={stats.tokensPerSecond.map((v, i) => ({ time: secondLabels[i], value: v }))}>
-                <defs>
-                  <linearGradient id="tpsGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--color-status-running)" stopOpacity={0.3} />
-                    <stop offset="100%" stopColor="var(--color-status-running)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <LazyXAxis dataKey="time" tick={{ fontSize: 10, fill: "var(--color-text-muted)" }} tickLine={false} axisLine={false} />
-                <LazyYAxis tick={{ fontSize: 10, fill: "var(--color-text-muted)" }} tickLine={false} axisLine={false} width={30} />
-                <LazyTooltip
-                  contentStyle={{
-                    background: "var(--color-bg-elevated)",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "var(--radius-lg)",
-                    fontSize: "12px",
-                  }}
-                />
-                <LazyArea
-                  type="monotone"
-                  dataKey="value"
-                  stroke="var(--color-status-running)"
-                  fill="url(#tpsGrad)"
-                  strokeWidth={2}
-                />
-              </LazyAreaChart>
-            </LazyResponsiveContainer>
+            <LazyTokensPerSecondChart values={stats.tokensPerSecond} />
           </Suspense>
         </Card>
       </motion.div>

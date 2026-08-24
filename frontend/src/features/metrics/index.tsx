@@ -358,10 +358,14 @@ export default function Metrics() {
     refetchInterval,
   });
 
-  // Fetch the full unfiltered models list once to populate filter dropdowns
+  // Fetch the full unfiltered models list once to populate filter dropdowns.
+  // Static reference data: never auto-refreshed (manual refresh / remount
+  // suffices); staleTime keeps react-query from refetching on every focus.
   const { data: allModels } = useQuery({
     queryKey: ["metrics", "models", "all"],
     queryFn: () => client.getMetricsModels(),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
   });
 
   // Provider catalog for the cost calculator's provider picker. Falls back to
@@ -370,11 +374,15 @@ export default function Metrics() {
     queryKey: ["metrics", "provider-catalog"],
     queryFn: () => getMetricsProviderCatalog(),
     staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
   });
 
+  // Static UI preferences — same exclusion from auto-refresh.
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => client.getSettings(),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
   });
 
   // ── Derived: filter dropdown options ────────────────────────
@@ -494,6 +502,12 @@ export default function Metrics() {
     requestAnimationFrame(() => {
       recentSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+  }, []);
+
+  // Stable so the memoized ProviderBreakdownChart skips re-renders.
+  const handleProviderSelect = useCallback((provider: string) => {
+    setFilterProvider((prev) => (prev === provider ? "" : provider));
+    setFilterModel("");
   }, []);
 
   // ── Presets ──────────────────────────────────────────────────
@@ -1406,12 +1420,7 @@ export default function Metrics() {
                     <LazyProviderBreakdownChart
                       providers={providers}
                       filterProvider={filterProvider}
-                      onProviderSelect={(provider) => {
-                        setFilterProvider((prev) =>
-                          prev === provider ? "" : provider,
-                        );
-                        setFilterModel("");
-                      }}
+                      onProviderSelect={handleProviderSelect}
                     />
                   </Suspense>
                 ) : (

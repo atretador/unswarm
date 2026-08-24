@@ -4,7 +4,7 @@
 // Respects the page's provider/model/time filters and can additionally be
 // narrowed to a custom window via drill-down (see index.tsx).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, RadioTower, X } from "lucide-react";
 import type { UsageRecordResponse } from "../../lib/api/types";
@@ -16,6 +16,8 @@ import { formatMs, formatTimestamp, formatTokens } from "./format";
 const PAGE_SIZE = 15;
 const LIVE_BUFFER_CAP = 200;
 const FRESH_MS = 1600;
+/** Coalesce bursts of WS events into one render pass. */
+const BATCH_FLUSH_MS = 100;
 
 export interface RecentRequestsTableProps {
   /** Base filter params (from/to/provider/model) shared by all metrics queries. */
@@ -53,6 +55,12 @@ export function RecentRequestsTable({
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
   const freshTimers = useRef<Map<string, number>>(new Map());
 
+  // Seen-id set mirrors liveEvents so dedupe is O(1) instead of a linear
+  // scan; ids dropped by the cap trim are removed here too.
+  const seenIds = useRef<Set<string>>(new Set());
+  const pendingRef = useRef<UsageRecordResponse[]>([]);
+  const flushTimer = useRef<number | undefined>(undefined);
+
   const markFresh = useCallback((id: string) => {
     setFreshIds((prev) => new Set(prev).add(id));
     const timer = window.setTimeout(() => {
@@ -69,15 +77,45 @@ export function RecentRequestsTable({
     freshTimers.current.set(id, timer);
   }, []);
 
+  const flushPending = useCallback(() => {
+    flushTimer.current = undefined;
+    const batch = pendingRef.current;
+    if (batch.length === 0) return;
+    pendingRef.current = [];
+
+    setLiveEvents((prev) => {
+      const fresh = batch.filter((e) => !seenIds.current.has(e.id));
+      if (fresh.length === 0) return prev;
+      for (const e of fresh) seenIds.current.add(e.id);
+      const next = [...fresh.reverse(), ...prev].slice(0, LIVE_BUFFER_CAP);
+      if (next.length === LIVE_BUFFER_CAP && prev.length === LIVE_BUFFER_CAP) {
+        // Rows evicted by the trim leave the seen set so a re-delivered id
+        // (after Clear → new stream) isn't wrongly ignored.
+        const kept = new Set(next.map((e) => e.id));
+        for (const id of seenIds.current) {
+          if (!kept.has(id)) seenIds.current.delete(id);
+        }
+      }
+      return next;
+    });
+    for (const e of batch) markFresh(e.id);
+  }, [markFresh]);
+
   const handleEvent = useCallback(
     (event: UsageRecordResponse) => {
-      setLiveEvents((prev) => {
-        if (prev.some((e) => e.id === event.id)) return prev;
-        return [event, ...prev].slice(0, LIVE_BUFFER_CAP);
-      });
-      markFresh(event.id);
+      pendingRef.current.push(event);
+      if (flushTimer.current === undefined) {
+        flushTimer.current = window.setTimeout(flushPending, BATCH_FLUSH_MS);
+      }
     },
-    [markFresh],
+    [flushPending],
+  );
+
+  useEffect(
+    () => () => {
+      if (flushTimer.current !== undefined) window.clearTimeout(flushTimer.current);
+    },
+    [],
   );
 
   const liveStatus = useLiveTail(live, handleEvent);
@@ -93,6 +131,8 @@ export function RecentRequestsTable({
 
   // Tear down transient live state when switching modes.
   function toggleLive() {
+    pendingRef.current = [];
+    seenIds.current = new Set();
     setLiveEvents([]);
     setFreshIds(new Set());
     setLive((v) => !v);
@@ -344,13 +384,15 @@ export function RecentRequestsTable({
   );
 }
 
-function RequestRow({
-  record: r,
-  fresh,
-}: {
+interface RequestRowProps {
   record: UsageRecordResponse;
   fresh: boolean;
-}) {
+}
+
+const RequestRow = memo(function RequestRow({
+  record: r,
+  fresh,
+}: RequestRowProps) {
   return (
     <tr
       className={`border-b border-[var(--color-border)] last:border-0 transition-colors duration-700 ${
@@ -393,4 +435,4 @@ function RequestRow({
       </td>
     </tr>
   );
-}
+});

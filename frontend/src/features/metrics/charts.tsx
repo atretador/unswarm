@@ -5,6 +5,7 @@
 // nested <Suspense> boundaries: recharts 3.x sets state inside a ref callback
 // (RechartsWrapper portal refs), which loops infinitely under React 19 when
 // the chart subtree suspends/reappears (recharts#7463).
+import { memo, useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -74,31 +75,42 @@ interface TokenUsageChartProps {
   onPointClick?: (window: DrillDownWindow) => void;
 }
 
-export function TokenUsageChart({
+export const TokenUsageChart = memo(TokenUsageChartImpl);
+
+function TokenUsageChartImpl({
   summary,
   metric = "tokens",
   blendedRates = null,
   onPointClick,
 }: TokenUsageChartProps) {
-  const data = summary.map((b) => ({
-    // bucket bounds ride along on every datum so point clicks can open a
-    // drill-down window regardless of which metric is displayed.
-    bucketStart: b.bucketStart,
-    bucketEnd: b.bucketEnd,
-    time: new Date(b.bucketStart).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      ...(metric === "requests" || metric === "latency" || metric === "cached" || metric === "cost"
-        ? { hour: "2-digit" as const }
-        : {}),
-    }),
-    prompt: b.promptTokens,
-    completion: b.completionTokens,
-    requests: b.requestCount,
-    latency: Math.round(b.avgLatencyMs),
-    cached: b.cachedTokens,
-    cost: blendedRates ? bucketCost(b, blendedRates) : 0,
-  }));
+  // Memoized so parent re-renders (e.g. WS-driven table updates) don't
+  // rebuild the datum array and re-render every Area.
+  const data = useMemo(
+    () =>
+      summary.map((b) => ({
+        // bucket bounds ride along on every datum so point clicks can open a
+        // drill-down window regardless of which metric is displayed.
+        bucketStart: b.bucketStart,
+        bucketEnd: b.bucketEnd,
+        time: new Date(b.bucketStart).toLocaleDateString(undefined, {
+          month: "short",
+          day: "numeric",
+          ...(metric === "requests" ||
+          metric === "latency" ||
+          metric === "cached" ||
+          metric === "cost"
+            ? { hour: "2-digit" as const }
+            : {}),
+        }),
+        prompt: b.promptTokens,
+        completion: b.completionTokens,
+        requests: b.requestCount,
+        latency: Math.round(b.avgLatencyMs),
+        cached: b.cachedTokens,
+        cost: blendedRates ? bucketCost(b, blendedRates) : 0,
+      })),
+    [summary, metric, blendedRates],
+  );
 
   const handleClick = (payload: unknown) => {
     if (!onPointClick) return;
@@ -266,7 +278,9 @@ interface ProviderBreakdownChartProps {
   onProviderSelect: (provider: string) => void;
 }
 
-export function ProviderBreakdownChart({
+export const ProviderBreakdownChart = memo(ProviderBreakdownChartImpl);
+
+function ProviderBreakdownChartImpl({
   providers,
   filterProvider,
   onProviderSelect,
