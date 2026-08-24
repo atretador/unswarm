@@ -108,7 +108,13 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 ## Features
 
 - **Fleet Management** — Register and manage Docker containers and script runtimes across multiple agent machines. Start, stop, restart, and inspect containers remotely.
+
+<img width="998" height="703" alt="image" src="https://github.com/user-attachments/assets/a59d0770-a48f-4ecd-9c3f-38763572e49a" />
+
+
 - **Model Registry** — Auto-discover models from running inference servers. Track model status, associate models with containers, and manage model-to-runtime mappings.
+<img width="1003" height="402" alt="image" src="https://github.com/user-attachments/assets/fe74721a-b64d-4400-b40c-91c541775e9f" />
+
 - **OpenAI-Compatible Proxy** — Backend exposes `/v1/chat/completions` that routes requests to the correct agent and container, enabling a unified API endpoint for all your models.
 - **Automatic Model Switching** — Scheduler loads and unloads models on demand, letting you serve many models from limited VRAM with a single API endpoint.
 - **Model Groups** — Define exclusive groups (one model at a time) and co-located groups (models that share VRAM) to match your hardware constraints.
@@ -118,8 +124,14 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
 - **Cloud Providers** — Register external cloud inference providers (any OpenAI-compatible endpoint, e.g. OpenAI or OpenRouter) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
+<img width="995" height="430" alt="image" src="https://github.com/user-attachments/assets/dfbb85c9-9c1b-4b5c-b8c3-1984b88a8594" />
+
 - **Usage Analytics** — Metrics dashboard tracking every request: tokens (prompt/completion/cached), streaming split, latency percentiles (p50/p95/p99/max) with distribution bands, hourly heatmap, period-over-period comparison, live request tail over WebSocket, per-provider/per-model/per-API-key breakdowns, drill-down from any chart point to the raw request feed, CSV export, saved filter presets, and configurable data retention with admin purge.
 - **Cost Tracking & Budgets** — Three pricing modes per provider: per-1M-token API rates, fixed monthly subscriptions, and self-hosted flat monthly cost (power/hardware) with a derived $/1M figure so you can compare against cloud pricing. Estimated-cost cards, cost columns, cost chart series, cache-savings estimates, and per-provider monthly token/cost budgets with progress bars.
+
+<img width="1126" height="943" alt="image" src="https://github.com/user-attachments/assets/385699c1-3739-4a79-97f5-a47267690a05" />
+
+ 
 - **API Key Access Control** — Scope each API key to specific providers (cloud or self-hosted agents) and models via a manage modal; restricted keys get OpenAI-style 403 rejections outside their grants. Per-key usage is tracked automatically (requests, tokens, per-model breakdown).
 - **Settings** — Configurable idle shutdown, health check intervals, log retention, usage retention, and auth. Idle shutdown is anchored to last scheduler activity (not container lifetime) and never stops a runtime with in-flight or queued work.
 
