@@ -50,4 +50,6 @@ public sealed class FakeSchedulerDrainer : ISchedulerDrainer
         StopCalls.Add((runtimeId, containerId));
         return Task.FromResult(OnStopIdle?.Invoke(runtimeId, containerId) ?? IdleStopResult.Stopped);
     }
+
+    public void ForgetRuntime(string runtimeId) => _lastActivity.Remove(runtimeId);
 }

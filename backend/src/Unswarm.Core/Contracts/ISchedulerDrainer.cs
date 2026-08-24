@@ -58,4 +58,11 @@ public interface ISchedulerDrainer
     /// stop the observed unit directly.
     /// </returns>
     Task<IdleStopResult> StopIdleRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct);
+
+    /// <summary>
+    /// Drops all scheduler-side per-runtime bookkeeping for a DELETED runtime
+    /// (activity anchors, cached runtime entities). Prevents unbounded growth of
+    /// internal caches when runtimes are repeatedly registered and removed.
+    /// </summary>
+    void ForgetRuntime(string runtimeId);
 }

@@ -175,6 +175,9 @@ public sealed class ApiKeyAuthMiddlewareTests
         Assert.Equal(200, context.Response.StatusCode);
 
         Assert.True(HasScopeClaim(context, ApiKeyScope.Agent));
+        // LastUsedAt is written fire-and-forget (throttled off the request path),
+        // so poll briefly instead of asserting synchronously.
+        await Eventually.UntilAsync(() => store.GetAsync(created.Id).GetAwaiter().GetResult()?.LastUsedAt is not null);
         var key = await store.GetAsync(created.Id);
         Assert.NotNull(key?.LastUsedAt);
     }

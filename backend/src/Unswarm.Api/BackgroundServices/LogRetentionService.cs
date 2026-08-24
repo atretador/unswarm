@@ -39,21 +39,14 @@ public sealed class LogRetentionService : BackgroundService
                 var dbFactory = scope.ServiceProvider.GetRequiredService<Func<UnswarmDbContext>>();
                 await using var db = dbFactory();
 
-                // Filter on the long ticks mirror — SQLite cannot translate
-                // DateTimeOffset comparisons in WHERE clauses at all.
+                // Set-based delete: the cutoff predicate runs entirely in SQL
+                // (ExecuteDelete) on the TimestampTicks mirror — SQLite cannot
+                // translate DateTimeOffset comparisons in WHERE clauses at all.
+                // No ids are materialized.
                 var cutoffTicks = cutoff.UtcTicks;
-                var idsToDelete = await db.Logs
+                var deletedCount = await db.Logs
                     .Where(l => l.TimestampTicks < cutoffTicks)
-                    .Select(l => l.Id)
-                    .ToListAsync(stoppingToken);
-
-                var deletedCount = 0;
-                if (idsToDelete.Count > 0)
-                {
-                    deletedCount = await db.Logs
-                        .Where(l => idsToDelete.Contains(l.Id))
-                        .ExecuteDeleteAsync(stoppingToken);
-                }
+                    .ExecuteDeleteAsync(stoppingToken);
 
                 if (deletedCount > 0)
                 {

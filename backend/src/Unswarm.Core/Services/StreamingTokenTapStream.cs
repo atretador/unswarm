@@ -151,6 +151,18 @@ public sealed class StreamingTokenTapStream : Stream
 
     private void ScanJsonChunk(string json)
     {
+        // Cheap substring gate: delta chunks (the vast majority of SSE traffic)
+        // carry none of the fields we extract, so skip JsonDocument.Parse unless
+        // at least one marker is present. Markers cover every property scanned
+        // below: usage.*, tokens_cached, choices[].delta.content, timings.*.
+        if (!json.Contains("\"usage\"", StringComparison.Ordinal)
+            && !json.Contains("\"tokens_cached\"", StringComparison.Ordinal)
+            && !json.Contains("\"choices\"", StringComparison.Ordinal)
+            && !json.Contains("\"timings\"", StringComparison.Ordinal))
+        {
+            return;
+        }
+
         try
         {
             using var doc = JsonDocument.Parse(json);

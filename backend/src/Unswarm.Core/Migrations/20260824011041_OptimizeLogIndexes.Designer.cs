@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Unswarm.Core.Persistence;
 
@@ -10,9 +11,11 @@ using Unswarm.Core.Persistence;
 namespace Unswarm.Core.Migrations
 {
     [DbContext(typeof(UnswarmDbContext))]
-    partial class UnswarmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824011041_OptimizeLogIndexes")]
+    partial class OptimizeLogIndexes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -337,7 +340,7 @@ namespace Unswarm.Core.Migrations
 
                     b.Property<string>("ModelsJson")
                         .IsRequired()
-                        .HasMaxLength(65536)
+                        .HasMaxLength(8192)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")

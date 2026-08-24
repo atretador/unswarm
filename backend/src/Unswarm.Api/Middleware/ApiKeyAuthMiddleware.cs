@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Security.Claims;
 using System.Text;
@@ -45,6 +46,17 @@ public sealed class ApiKeyAuthMiddleware
         ["/ws/agent"] = ApiKeyScope.Agent,
         ["/v1"] = ApiKeyScope.Inference,
     };
+
+    /// <summary>
+    /// Minimum interval between <c>LastUsedAt</c> writes for a given key. The write
+    /// is a per-request UPDATE on the hot inference path; throttling to one write
+    /// per key per interval removes that write amplification while keeping the
+    /// dashboard's "last used" accurate to within the window.
+    /// </summary>
+    private static readonly TimeSpan LastUsedWriteInterval = TimeSpan.FromSeconds(60);
+
+    /// <summary>Last time a LastUsedAt write was issued per key id (write throttle).</summary>
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _lastUsedWriteAt = new(StringComparer.Ordinal);
 
     private readonly RequestDelegate _next;
     private readonly IApiKeyStore _store;
@@ -102,7 +114,26 @@ public sealed class ApiKeyAuthMiddleware
             return;
         }
 
-        await _store.UpdateLastUsedAsync(entity.Id, context.RequestAborted);
+        // Throttled, fire-and-forget LastUsedAt write: at most one UPDATE per key
+        // per <see cref="LastUsedWriteInterval"/>. Never awaited on the request path.
+        var nowUtc = DateTimeOffset.UtcNow;
+        if (!_lastUsedWriteAt.TryGetValue(entity.Id, out var lastWrite)
+            || nowUtc - lastWrite >= LastUsedWriteInterval)
+        {
+            _lastUsedWriteAt[entity.Id] = nowUtc;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _store.UpdateLastUsedAsync(entity.Id).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to update LastUsedAt for key {KeyId}", entity.Id);
+                }
+            });
+        }
+
         context.User = WithKeyIdentity(context.User, entity);
 
         await _next(context);

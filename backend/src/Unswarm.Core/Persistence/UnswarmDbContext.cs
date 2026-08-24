@@ -314,7 +314,11 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<LogEntity>(e =>
         {
             e.HasKey(l => l.Id);
-            e.HasIndex(l => l.Timestamp);
+            // All log queries (retention cutoff, newest-first history) filter and
+            // order on the TimestampTicks mirror — the SQLite provider cannot
+            // translate DateTimeOffset comparisons, so the plain Timestamp index
+            // was queried by nothing and was dropped in its favor.
+            e.HasIndex(l => l.TimestampTicks);
         });
 
         modelBuilder.Entity<SettingsEntity>(e =>

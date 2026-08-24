@@ -10,6 +10,14 @@ using Unswarm.Core.Services.Remote;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Remote-agent WebSocket channel. Agents dial in over WebSocket and communicate
+/// via a JSON envelope protocol (hello, telemetry, heartbeats, commands).
+/// Only an agent-scoped API key may connect.
+/// </summary>
+/// <remarks>
+/// GET /ws/agent — Agent WebSocket endpoint
+/// </remarks>
 // Remote-agent WebSocket channel. Only an agent-scoped API key may connect
 // (the dashboard's cookie carries no scope, so it is rejected here).
 [Authorize(Policy = "AgentKey")]
@@ -68,7 +76,7 @@ public sealed class AgentController : ControllerBase
         try
         {
             // B1 + M2: Use shared camelCase options + reassembly loop for hello
-            var helloJson = await ReceiveFullMessageAsync(socket, ct);
+            var helloJson = await ReceiveFullMessageAsync(socket, new ReceiveState(), ct);
             if (helloJson is null)
                 return;
 
@@ -208,10 +216,23 @@ public sealed class AgentController : ControllerBase
     // M2: Reassembly loop — accumulate bytes until EndOfMessage
     private const int MaxMessageSize = 1024 * 1024; // 1 MB
 
-    private static async Task<string?> ReceiveFullMessageAsync(WebSocket socket, CancellationToken ct)
+    /// <summary>
+    /// Per-connection receive state: the read buffer and reassembly stream are
+    /// reused across frames instead of being reallocated per message.
+    /// </summary>
+    private sealed class ReceiveState
     {
-        var buffer = new byte[4096];
-        using var ms = new MemoryStream();
+        public readonly byte[] Buffer = new byte[4096];
+        public readonly MemoryStream Stream = new();
+
+        public void Reset() => Stream.SetLength(0);
+    }
+
+    private static async Task<string?> ReceiveFullMessageAsync(WebSocket socket, ReceiveState state, CancellationToken ct)
+    {
+        var buffer = state.Buffer;
+        var ms = state.Stream;
+        ms.SetLength(0);
 
         while (!ct.IsCancellationRequested)
         {
@@ -235,13 +256,17 @@ public sealed class AgentController : ControllerBase
 
     private async Task ReadLoop(WebSocket socket, string agentName, CancellationToken ct)
     {
+        // One receive state per connection: buffer + reassembly stream are reused
+        // across frames instead of being reallocated per message.
+        var receiveState = new ReceiveState();
+
         while (!ct.IsCancellationRequested)
         {
             AgentMessage? msg;
             try
             {
                 // M2: Reassembly loop for read loop messages
-                var json = await ReceiveFullMessageAsync(socket, ct);
+                var json = await ReceiveFullMessageAsync(socket, receiveState, ct);
                 if (json is null)
                     break;
 

@@ -444,6 +444,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         await _registry.DeleteAsync(id, ct).ConfigureAwait(false);
         _logger.LogInformation("Deleted registered container {Id}", id);
 
+        // Drop scheduler-side bookkeeping (activity anchors, cached runtime
+        // entities) for the deleted runtime so internal caches don't grow forever.
+        _schedulerDrainer?.ForgetRuntime(id);
+
         // Snapshot no longer contains the deleted runtime — refresh the agent's gate.
         await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
     }

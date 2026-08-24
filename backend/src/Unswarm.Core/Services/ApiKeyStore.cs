@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,6 +12,14 @@ namespace Unswarm.Core.Services;
 public sealed class ApiKeyStore : IApiKeyStore
 {
     private readonly Func<UnswarmDbContext> _dbFactory;
+
+    /// <summary>
+    /// Parsed per-key access cache for the /v1 hot path: keyed by key id, holding
+    /// the parsed <see cref="KeyAccess"/> and load time. Invalidated by
+    /// <see cref="SaveAccessAsync"/>; the TTL converges out-of-band DB edits.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (KeyAccess Access, DateTimeOffset LoadedAt)> _accessCache = new(StringComparer.Ordinal);
+    private static readonly TimeSpan AccessCacheTtl = TimeSpan.FromMinutes(5);
 
     public ApiKeyStore(Func<UnswarmDbContext> dbFactory)
     {
@@ -166,6 +175,24 @@ public sealed class ApiKeyStore : IApiKeyStore
         return json is null ? null : DeserializeAccess(json);
     }
 
+    /// <inheritdoc/>
+    public async Task<KeyAccess?> GetAccessCachedAsync(string keyId, CancellationToken ct = default)
+    {
+        if (_accessCache.TryGetValue(keyId, out var cached)
+            && DateTimeOffset.UtcNow - cached.LoadedAt < AccessCacheTtl)
+        {
+            return cached.Access;
+        }
+
+        var access = await GetAccessAsync(keyId, ct).ConfigureAwait(false);
+        if (access is not null)
+            _accessCache[keyId] = (access, DateTimeOffset.UtcNow);
+        else
+            _accessCache.TryRemove(keyId, out _);
+
+        return access;
+    }
+
     public async Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
@@ -175,6 +202,9 @@ public sealed class ApiKeyStore : IApiKeyStore
 
         entity.AccessJson = SerializeAccess(access);
         await db.SaveChangesAsync(ct);
+
+        // Keep the hot-path cache coherent with the only write path.
+        _accessCache[keyId] = (access, DateTimeOffset.UtcNow);
         return access;
     }
 

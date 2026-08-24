@@ -175,8 +175,13 @@ builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();
 builder.Services.AddScoped<IUsageRecorder, UsageRecorder>();
-// Per-key model access control for the /v1 inference surface.
-builder.Services.AddScoped<IApiKeyAccessService, ApiKeyAccessService>();
+// Per-key model access control for the /v1 inference surface. Shares the API key
+// store so access rules are served from its hot-path cache (invalidated on save).
+builder.Services.AddScoped<IApiKeyAccessService>(sp => new ApiKeyAccessService(
+    sp.GetRequiredService<Func<UnswarmDbContext>>(),
+    sp.GetRequiredService<IContainerRegistry>(),
+    sp.GetRequiredService<ILogger<ApiKeyAccessService>>(),
+    sp.GetRequiredService<IApiKeyStore>()));
 // Singleton: usage records are fanned out to /ws/metrics live-tail subscribers
 // from UsageRecorder's throwaway scopes.
 builder.Services.AddSingleton<IUsageLiveTailBroadcaster, UsageLiveTailBroadcaster>();
@@ -366,6 +371,48 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 
+// ── Swagger / OpenAPI ──────────────────────────────────────────────────────
+// Auto-generated OpenAPI 3.0 spec + Swagger UI from controllers and DTOs.
+// Available at /swagger (UI) and /swagger/v1/swagger.json (spec).
+// Exposed in all environments so self-hosted deployments get docs out of the box.
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+    {
+        Title = "Unswarm API",
+        Version = "1.0",
+        Description = "Self-hosted control plane for managing LLM inference infrastructure. " +
+            "The /v1 surface is an OpenAI-compatible proxy; /api/* is the management REST API."
+    });
+
+    // Include the XML documentation file so method/parameter descriptions appear in Swagger.
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+        options.IncludeXmlComments(xmlPath);
+
+    // API key security scheme (Bearer token used by /v1 and /api/*).
+    options.AddSecurityDefinition("ApiKey", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Name = "Authorization",
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
+        Description = "API key authentication. Prefix with 'Bearer ': Authorization: Bearer <key>"
+    });
+
+    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        {
+            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                { Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme, Id = "ApiKey" }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
 var app = builder.Build();
 
 // ── HSTS (non-development only) ──────────────────────────────────────────
@@ -416,6 +463,10 @@ app.UseWebSockets(new WebSocketOptions
     AllowedOrigins = { "http://localhost:3000", "http://localhost:5173" }
 });
 app.UseMiddleware<SecurityHeadersMiddleware>();
+
+// ── Swagger ────────────────────────────────────────────────────────────────
+// Serves the auto-generated OpenAPI spec JSON.
+app.UseSwagger();
 
 // ── Prometheus /metrics scrape protection ─────────────────────────────────
 // The endpoint itself stays AllowAnonymous (scrapers can't do the cookie
@@ -470,6 +521,9 @@ app.MapHealthChecks("/health");
 // ApiKeyAuthMiddleware). Serves whatever the OpenTelemetry metric provider has
 // collected, including the "Unswarm" meter.
 app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
+
+// Swagger UI — interactive API docs. Anonymous so unauthenticated users can explore.
+app.MapSwagger().AllowAnonymous();
 
 app.Run();
 

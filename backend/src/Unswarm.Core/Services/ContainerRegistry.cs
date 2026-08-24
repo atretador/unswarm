@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -12,6 +13,16 @@ public sealed class ContainerRegistry : IContainerRegistry
     private readonly Func<UnswarmDbContext> _dbFactory;
     private readonly IClock _clock;
     private readonly ILogger<ContainerRegistry> _logger;
+
+    /// <summary>
+    /// Thread-safe model-name → registered-runtime-id cache for the dispatch hot
+    /// path. Invalidated on every mapping write (<see cref="AddModelMappingAsync"/>,
+    /// <see cref="RemoveModelMappingAsync"/>, <see cref="DeleteAsync"/>); the short
+    /// TTL converges writes that bypass this service (e.g. ModelEntity.SourceRuntimeId
+    /// updates via the model registry).
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (string? RuntimeId, DateTimeOffset LoadedAt)> _modelToRuntimeCache = new(StringComparer.Ordinal);
+    private static readonly TimeSpan MappingCacheTtl = TimeSpan.FromSeconds(30);
 
     public ContainerRegistry(
         Func<UnswarmDbContext> dbFactory,
@@ -109,6 +120,8 @@ public sealed class ContainerRegistry : IContainerRegistry
         if (entity is not null)
         {
             db.RegisteredRuntimes.Remove(entity);
+            // Cascade removes this runtime's model mappings — drop cached entries.
+            InvalidateModelMappingCacheForRuntime(id);
             await db.SaveChangesAsync(ct).ConfigureAwait(false);
             _logger.LogInformation("Deleted registered container {Id}", id);
         }
@@ -132,6 +145,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         };
         db.ContainerModelMappings.Add(mapping);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
+        InvalidateModelMappingCache(modelId);
         _logger.LogInformation("Added model mapping: container {ContainerId} -> model {ModelId}", registeredContainerId, modelId);
     }
 
@@ -145,6 +159,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         {
             db.ContainerModelMappings.Remove(mapping);
             await db.SaveChangesAsync(ct).ConfigureAwait(false);
+            InvalidateModelMappingCache(modelId);
             _logger.LogInformation("Removed model mapping: container {ContainerId} -> model {ModelId}", registeredContainerId, modelId);
         }
     }
@@ -160,20 +175,51 @@ public sealed class ContainerRegistry : IContainerRegistry
 
     public async Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default)
     {
+        if (_modelToRuntimeCache.TryGetValue(modelName, out var cached)
+            && DateTimeOffset.UtcNow - cached.LoadedAt < MappingCacheTtl)
+        {
+            return cached.RuntimeId;
+        }
+
         await using var db = _dbFactory();
         // First try via the mapping table (model id lookup)
         var mapping = await db.ContainerModelMappings
             .Include(cm => cm.Model)
             .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.Model.Name == modelName, ct)
             .ConfigureAwait(false);
+        string? runtimeId;
         if (mapping is not null)
-            return mapping.RegisteredRuntimeId;
+        {
+            runtimeId = mapping.RegisteredRuntimeId;
+        }
+        else
+        {
+            // Fallback: check ModelEntity.SourceRuntimeId directly
+            var model = await db.Models
+                .FirstOrDefaultAsync(m => m.Name == modelName || m.Id == modelName, ct)
+                .ConfigureAwait(false);
+            runtimeId = model?.SourceRuntimeId;
+        }
 
-        // Fallback: check ModelEntity.SourceRuntimeId directly
-        var model = await db.Models
-            .FirstOrDefaultAsync(m => m.Name == modelName || m.Id == modelName, ct)
-            .ConfigureAwait(false);
-        return model?.SourceRuntimeId;
+        _modelToRuntimeCache[modelName] = (runtimeId, DateTimeOffset.UtcNow);
+        return runtimeId;
+    }
+
+    /// <summary>Drops the cached mapping for <paramref name="modelId"/> (write invalidation).</summary>
+    private void InvalidateModelMappingCache(string modelId) =>
+        _modelToRuntimeCache.TryRemove(modelId, out _);
+
+    /// <summary>
+    /// Drops every cached mapping pointing at <paramref name="runtimeId"/> — used on
+    /// runtime delete, where the cascade removes all of its mappings at once.
+    /// </summary>
+    private void InvalidateModelMappingCacheForRuntime(string runtimeId)
+    {
+        foreach (var kv in _modelToRuntimeCache)
+        {
+            if (string.Equals(kv.Value.RuntimeId, runtimeId, StringComparison.Ordinal))
+                _modelToRuntimeCache.TryRemove(kv.Key, out _);
+        }
     }
 
     public async Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(

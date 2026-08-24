@@ -6,9 +6,25 @@ using Unswarm.Core.Models;
 
 public sealed class StatsTracker : IStatsTracker
 {
+    /// <summary>Max retained latency samples (ring buffer capacity).</summary>
+    private const int LatencyCapacity = 10000;
+
+    /// <summary>
+    /// Sliding-window granularity: one slot per second over a 1-hour horizon.
+    /// Per-minute/per-second series are aggregated from these O(1)-update slots
+    /// instead of scanning an unbounded completion list (was O(60·n)).
+    /// </summary>
+    private const int SecondSlots = 3600;
+
     private readonly IClock _clock;
     private readonly ConcurrentDictionary<string, RequestRecord> _activeRequests = new();
-    private readonly List<double> _latencies = new();
+
+    // Latency ring buffer: fixed array + head/count; the oldest sample is
+    // overwritten in place once the cap is reached (no O(n) RemoveAt(0)).
+    private readonly double[] _latencyRing = new double[LatencyCapacity];
+    private int _latencyHead;
+    private int _latencyCount;
+
     private long _totalRequests;
     private long _totalTokens;
     private long _totalPromptTokensCached;
@@ -16,10 +32,16 @@ public sealed class StatsTracker : IStatsTracker
     private int _switchCount;
     private double _lastSwitchMs;
     private double _avgSwitchMs;
-    private readonly ConcurrentQueue<(DateTimeOffset Time, long Tokens)> _recentCompletions = new();
     private readonly ConcurrentQueue<DateTimeOffset> _recentErrors = new();
     private Func<long>? _queueDepthProvider;
     private readonly object _lock = new();
+
+    // Per-second completion counters keyed by absolute Unix second. Slot index is
+    // second % SecondSlots; a stale stamp means the slot belongs to a previous
+    // hour and is reset on first touch.
+    private readonly long[] _secondStamps = new long[SecondSlots];
+    private readonly long[] _secondCounts = new long[SecondSlots];
+    private readonly long[] _secondTokens = new long[SecondSlots];
 
     public StatsTracker(IClock clock)
     {
@@ -44,14 +66,8 @@ public sealed class StatsTracker : IStatsTracker
 
     public void RecordCompletion(InferenceRequest request)
     {
-        var elapsed = (long)(_clock.UtcNow - request.EnqueuedAt).TotalMilliseconds;
-        lock (_lock)
-        {
-            _latencies.Add(elapsed);
-            if (_latencies.Count > 10000) _latencies.RemoveAt(0);
-        }
-
-        Interlocked.Increment(ref _totalRequests);
+        var now = _clock.UtcNow;
+        var elapsed = (long)(now - request.EnqueuedAt).TotalMilliseconds;
 
         int tokens = 0;
         int cachedTokens = 0;
@@ -60,11 +76,30 @@ public sealed class StatsTracker : IStatsTracker
             tokens = request.Tcs.Task.Result.TokensGenerated;
             cachedTokens = request.Tcs.Task.Result.PromptTokensCached;
         }
+
+        long second = now.UtcTicks / TimeSpan.TicksPerSecond;
+        lock (_lock)
+        {
+            // Ring buffer insert: overwrite the oldest sample once full.
+            _latencyRing[_latencyHead] = elapsed;
+            _latencyHead = (_latencyHead + 1) % LatencyCapacity;
+            if (_latencyCount < LatencyCapacity)
+                _latencyCount++;
+
+            var slot = (int)(second % SecondSlots);
+            if (_secondStamps[slot] != second)
+            {
+                _secondStamps[slot] = second;
+                _secondCounts[slot] = 0;
+                _secondTokens[slot] = 0;
+            }
+            _secondCounts[slot]++;
+            _secondTokens[slot] += tokens;
+        }
+
+        Interlocked.Increment(ref _totalRequests);
         Interlocked.Add(ref _totalTokens, tokens);
         Interlocked.Add(ref _totalPromptTokensCached, cachedTokens);
-
-        _recentCompletions.Enqueue((_clock.UtcNow, tokens));
-        PruneRecentCompletions();
     }
 
     public void RecordError(InferenceRequest request)
@@ -90,10 +125,12 @@ public sealed class StatsTracker : IStatsTracker
         var uptime = (long)(_clock.UtcNow.Ticks - _startTimeTicks) / TimeSpan.TicksPerSecond;
         var now = _clock.UtcNow;
 
+        double avgLatency;
         double[] rpm;
         double[] tps;
         lock (_lock)
         {
+            avgLatency = ComputeAverageLatency();
             rpm = ComputePerMinute(now);
             tps = ComputeTokensPerSecond(now);
         }
@@ -105,7 +142,7 @@ public sealed class StatsTracker : IStatsTracker
         {
             TotalRequests = Volatile.Read(ref _totalRequests),
             ActiveRequests = _activeRequests.Count,
-            AvgLatencyMs = _latencies.Count > 0 ? _latencies.Average() : 0,
+            AvgLatencyMs = avgLatency,
             TotalTokensProcessed = Volatile.Read(ref _totalTokens),
             TotalPromptTokensCached = Volatile.Read(ref _totalPromptTokensCached),
             UptimeSeconds = uptime,
@@ -121,15 +158,6 @@ public sealed class StatsTracker : IStatsTracker
         return Task.FromResult(summary);
     }
 
-    private void PruneRecentCompletions()
-    {
-        var cutoff = _clock.UtcNow.AddHours(-1);
-        while (_recentCompletions.TryPeek(out var item) && item.Time < cutoff)
-        {
-            _recentCompletions.TryDequeue(out _);
-        }
-    }
-
     private void PruneRecentErrors()
     {
         var cutoff = _clock.UtcNow.AddHours(-24);
@@ -139,29 +167,54 @@ public sealed class StatsTracker : IStatsTracker
         }
     }
 
+    private double ComputeAverageLatency()
+    {
+        if (_latencyCount == 0)
+            return 0;
+        double sum = 0;
+        for (var i = 0; i < _latencyCount; i++)
+            sum += _latencyRing[i];
+        return sum / _latencyCount;
+    }
+
+    /// <summary>
+    /// Requests per minute for the last 60 wall-clock minutes, oldest first.
+    /// Aggregated from the per-second slots by "seconds ago" — O(SecondSlots).
+    /// </summary>
     private double[] ComputePerMinute(DateTimeOffset now)
     {
         var result = new double[60];
-        for (int i = 0; i < 60; i++)
+        var nowSecond = now.UtcTicks / TimeSpan.TicksPerSecond;
+        for (var s = 0; s < SecondSlots; s++)
         {
-            var start = now.AddMinutes(-60 + i);
-            var end = start.AddMinutes(1);
-            result[i] = _recentCompletions.Count(c => c.Time >= start && c.Time < end);
+            var stamp = _secondStamps[s];
+            if (stamp == 0)
+                continue;
+            var age = nowSecond - stamp;
+            if (age < 0 || age >= SecondSlots)
+                continue;
+            result[59 - age / 60] += _secondCounts[s];
         }
         return result;
     }
 
+    /// <summary>
+    /// Tokens generated per second for the last 60 seconds, oldest first.
+    /// Aggregated from the per-second slots by "seconds ago" — O(SecondSlots).
+    /// </summary>
     private double[] ComputeTokensPerSecond(DateTimeOffset now)
     {
         var result = new double[60];
-        for (int i = 0; i < 60; i++)
+        var nowSecond = now.UtcTicks / TimeSpan.TicksPerSecond;
+        for (var s = 0; s < SecondSlots; s++)
         {
-            var start = now.AddSeconds(-60 + i);
-            var end = start.AddSeconds(1);
-            var tokensInWindow = _recentCompletions
-                .Where(c => c.Time >= start && c.Time < end)
-                .Sum(c => c.Tokens);
-            result[i] = tokensInWindow;
+            var stamp = _secondStamps[s];
+            if (stamp == 0)
+                continue;
+            var age = nowSecond - stamp;
+            if (age < 0 || age >= 60)
+                continue;
+            result[59 - age] += _secondTokens[s];
         }
         return result;
     }

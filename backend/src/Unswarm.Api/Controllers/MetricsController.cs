@@ -10,6 +10,24 @@ using Unswarm.Core.Persistence;
 
 namespace Unswarm.Api.Controllers;
 
+/// <summary>
+/// Usage analytics and metrics. Provides paginated usage records, time-bucketed
+/// aggregations, per-model/provider breakdowns, latency percentiles, API-key usage,
+/// a provider catalog, and a WebSocket live tail of inference events.
+/// </summary>
+/// <remarks>
+/// GET /api/metrics/usage — Paginated raw usage records
+/// GET /api/metrics/summary — Time-bucketed usage aggregates
+/// GET /api/metrics/models — Per-model usage with latency percentiles
+/// GET /api/metrics/providers — Per-provider usage summaries
+/// GET /api/metrics/totals — Usage totals for a window
+/// GET /api/metrics/latency-bands — Latency distribution histogram
+/// GET /api/metrics/api-keys — Per-API-key usage aggregation
+/// GET /api/metrics/api-keys/{keyId}/usage — Detailed usage for one API key
+/// GET /api/metrics/provider-catalog — Distinct providers in usage + configured
+/// DELETE /api/metrics/usage/purge — Purge old usage records (Admin)
+/// GET /ws/metrics — Live tail WebSocket
+/// </remarks>
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
@@ -228,36 +246,35 @@ public sealed class MetricsController : ControllerBase
             query = query.Where(u => u.Model.Contains(model));
         }
 
-        // Materialize to client for bucketing — SQLite lacks integer division
-        // in LINQ that EF Core can translate for this pattern.
-        var records = await query.Select(u => new
-        {
-            u.TimestampTicks,
-            u.PromptTokens,
-            u.CompletionTokens,
-            u.CachedTokens,
-            u.IsStreaming,
-            u.ElapsedMs
-        }).ToListAsync(ct);
-
-        var buckets = records
-            .GroupBy(r => r.TimestampTicks / ticksPerBucket)
-            .OrderBy(g => g.Key)
-            .Select(g =>
+        // SQL-side bucketing: GROUP BY on integer division of TimestampTicks
+        // translates to SQLite's `/` operator, so counts/sums/averages are
+        // computed in the database instead of materializing the whole window.
+        var rows = await query
+            .GroupBy(u => u.TimestampTicks / ticksPerBucket)
+            .Select(g => new
             {
-                var bucketStartTicks = g.Key * ticksPerBucket;
-                var count = g.Count();
-                return new MetricsTimeBucket
-                {
-                    BucketStart = new DateTimeOffset(bucketStartTicks, TimeSpan.Zero),
-                    BucketEnd = new DateTimeOffset((g.Key + 1) * ticksPerBucket, TimeSpan.Zero),
-                    RequestCount = count,
-                    StreamingRequests = g.Count(r => r.IsStreaming),
-                    PromptTokens = g.Sum(r => (long)r.PromptTokens),
-                    CompletionTokens = g.Sum(r => (long)r.CompletionTokens),
-                    CachedTokens = g.Sum(r => (long)r.CachedTokens),
-                    AvgLatencyMs = count > 0 ? g.Average(r => r.ElapsedMs) : 0
-                };
+                BucketKey = g.Key,
+                RequestCount = g.Count(),
+                StreamingRequests = g.Sum(u => u.IsStreaming ? 1 : 0),
+                PromptTokens = g.Sum(u => (long)u.PromptTokens),
+                CompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                CachedTokens = g.Sum(u => (long)u.CachedTokens),
+                TotalLatencyMs = g.Sum(u => u.ElapsedMs)
+            })
+            .OrderBy(b => b.BucketKey)
+            .ToListAsync(ct);
+
+        var buckets = rows
+            .Select(b => new MetricsTimeBucket
+            {
+                BucketStart = new DateTimeOffset(b.BucketKey * ticksPerBucket, TimeSpan.Zero),
+                BucketEnd = new DateTimeOffset((b.BucketKey + 1) * ticksPerBucket, TimeSpan.Zero),
+                RequestCount = b.RequestCount,
+                StreamingRequests = b.StreamingRequests,
+                PromptTokens = b.PromptTokens,
+                CompletionTokens = b.CompletionTokens,
+                CachedTokens = b.CachedTokens,
+                AvgLatencyMs = b.RequestCount > 0 ? (double)b.TotalLatencyMs / b.RequestCount : 0
             })
             .ToArray();
 
@@ -302,38 +319,50 @@ public sealed class MetricsController : ControllerBase
             query = query.Where(u => u.Model.Contains(model));
         }
 
-        // Percentiles need every ElapsedMs value per group; materialize and
-        // aggregate client-side (same pattern as GetSummary's bucketing).
-        var records = await query.Select(u => new
-        {
-            u.Provider,
-            u.Model,
-            u.PromptTokens,
-            u.CompletionTokens,
-            u.CachedTokens,
-            u.IsStreaming,
-            u.ElapsedMs
-        }).ToListAsync(ct);
-
-        var models = records
-            .GroupBy(r => new { r.Provider, r.Model })
-            .Select(g =>
+        // Counts/sums are aggregated SQL-side (GROUP BY provider+model); only the
+        // single ElapsedMs column per row is materialized for the in-memory
+        // percentiles (SQLite has no percentile aggregate).
+        var aggregates = await query
+            .GroupBy(u => new { u.Provider, u.Model })
+            .Select(g => new
             {
-                var latencies = g.Select(r => r.ElapsedMs).OrderBy(x => x).ToList();
+                g.Key.Provider,
+                g.Key.Model,
+                RequestCount = g.Count(),
+                StreamingRequests = g.Sum(u => u.IsStreaming ? 1 : 0),
+                PromptTokens = g.Sum(u => (long)u.PromptTokens),
+                CompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                CachedTokens = g.Sum(u => (long)u.CachedTokens)
+            })
+            .ToListAsync(ct);
+
+        var latencies = await query
+            .Select(u => new { u.Provider, u.Model, u.ElapsedMs })
+            .ToListAsync(ct);
+
+        var latencyGroups = latencies
+            .GroupBy(r => (r.Provider, r.Model))
+            .ToDictionary(g => g.Key, g => g.Select(r => r.ElapsedMs).OrderBy(x => x).ToList());
+
+        var models = aggregates
+            .Select(a =>
+            {
+                var key = (a.Provider, a.Model);
+                var sorted = latencyGroups.TryGetValue(key, out var l) ? l : [];
                 return new ModelUsageSummary
                 {
-                    Provider = g.Key.Provider,
-                    Model = g.Key.Model,
-                    RequestCount = g.Count(),
-                    StreamingRequests = g.Count(r => r.IsStreaming),
-                    PromptTokens = g.Sum(r => (long)r.PromptTokens),
-                    CompletionTokens = g.Sum(r => (long)r.CompletionTokens),
-                    CachedTokens = g.Sum(r => (long)r.CachedTokens),
-                    AvgLatencyMs = latencies.Average(),
-                    P50LatencyMs = Percentile(latencies, 50),
-                    P95LatencyMs = Percentile(latencies, 95),
-                    P99LatencyMs = Percentile(latencies, 99),
-                    MaxLatencyMs = latencies.Count > 0 ? latencies[^1] : 0
+                    Provider = a.Provider,
+                    Model = a.Model,
+                    RequestCount = a.RequestCount,
+                    StreamingRequests = a.StreamingRequests,
+                    PromptTokens = a.PromptTokens,
+                    CompletionTokens = a.CompletionTokens,
+                    CachedTokens = a.CachedTokens,
+                    AvgLatencyMs = sorted.Count > 0 ? sorted.Average() : 0,
+                    P50LatencyMs = Percentile(sorted, 50),
+                    P95LatencyMs = Percentile(sorted, 95),
+                    P99LatencyMs = Percentile(sorted, 99),
+                    MaxLatencyMs = sorted.Count > 0 ? sorted[^1] : 0
                 };
             })
             .OrderByDescending(m => m.CompletionTokens)
@@ -438,30 +467,35 @@ public sealed class MetricsController : ControllerBase
         var fromTicks = effectiveFrom.UtcTicks;
         var toTicks = effectiveTo.UtcTicks;
 
-        var records = await _db.UsageRecords
+        // SQL-side GROUP BY (key id + name snapshot); merged per key id below so a
+        // renamed key's historical name snapshots still resolve to one row with
+        // the newest non-empty name preferred.
+        var grouped = await _db.UsageRecords
             .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks && u.ApiKeyId != null)
-            .Select(u => new
+            .GroupBy(u => new { u.ApiKeyId, u.ApiKeyName })
+            .Select(g => new
             {
-                u.ApiKeyId,
-                u.ApiKeyName,
-                u.PromptTokens,
-                u.CompletionTokens,
-                u.CachedTokens,
-                u.IsStreaming
+                g.Key.ApiKeyId,
+                g.Key.ApiKeyName,
+                RequestCount = g.Count(),
+                StreamingRequests = g.Sum(u => u.IsStreaming ? 1 : 0),
+                PromptTokens = g.Sum(u => (long)u.PromptTokens),
+                CompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                CachedTokens = g.Sum(u => (long)u.CachedTokens)
             })
             .ToListAsync(ct);
 
-        var keys = records
-            .GroupBy(r => r.ApiKeyId)
+        var keys = grouped
+            .GroupBy(r => r.ApiKeyId!)
             .Select(g => new ApiKeyUsageSummary
             {
-                ApiKeyId = g.Key!,
+                ApiKeyId = g.Key,
                 KeyName = g.Select(r => r.ApiKeyName).FirstOrDefault(n => !string.IsNullOrEmpty(n)) ?? string.Empty,
-                RequestCount = g.Count(),
-                StreamingRequests = g.Count(r => r.IsStreaming),
-                PromptTokens = g.Sum(r => (long)r.PromptTokens),
-                CompletionTokens = g.Sum(r => (long)r.CompletionTokens),
-                CachedTokens = g.Sum(r => (long)r.CachedTokens)
+                RequestCount = g.Sum(r => r.RequestCount),
+                StreamingRequests = g.Sum(r => r.StreamingRequests),
+                PromptTokens = g.Sum(r => r.PromptTokens),
+                CompletionTokens = g.Sum(r => r.CompletionTokens),
+                CachedTokens = g.Sum(r => r.CachedTokens)
             })
             .OrderByDescending(k => k.CompletionTokens)
             .ToList();
@@ -491,42 +525,49 @@ public sealed class MetricsController : ControllerBase
         var fromTicks = effectiveFrom.UtcTicks;
         var toTicks = effectiveTo.UtcTicks;
 
-        var records = await _db.UsageRecords
+        // Both aggregates computed SQL-side: a single-row totals aggregate plus a
+        // per-(provider, model) GROUP BY — no row materialization.
+        var totalsRow = await _db.UsageRecords
             .Where(u => u.ApiKeyId == keyId
                         && u.TimestampTicks >= fromTicks
                         && u.TimestampTicks <= toTicks)
-            .Select(u => new
+            .GroupBy(_ => 1)
+            .Select(g => new
             {
-                u.Provider,
-                u.Model,
-                u.PromptTokens,
-                u.CompletionTokens,
-                u.CachedTokens
+                RequestCount = g.Count(),
+                PromptTokens = g.Sum(u => (long)u.PromptTokens),
+                CompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                CachedTokens = g.Sum(u => (long)u.CachedTokens)
             })
+            .FirstOrDefaultAsync(ct);
+
+        var modelRows = await _db.UsageRecords
+            .Where(u => u.ApiKeyId == keyId
+                        && u.TimestampTicks >= fromTicks
+                        && u.TimestampTicks <= toTicks)
+            .GroupBy(u => new { u.Provider, u.Model })
+            .Select(g => new KeyUsageModelRow
+            {
+                Provider = g.Key.Provider,
+                Model = g.Key.Model,
+                RequestCount = g.Count(),
+                PromptTokens = g.Sum(u => (long)u.PromptTokens),
+                CompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                CachedTokens = g.Sum(u => (long)u.CachedTokens)
+            })
+            .OrderByDescending(m => m.CompletionTokens)
             .ToListAsync(ct);
 
         return Ok(new KeyUsageResponse
         {
             Totals = new KeyUsageTotals
             {
-                RequestCount = records.Count,
-                PromptTokens = records.Sum(r => (long)r.PromptTokens),
-                CompletionTokens = records.Sum(r => (long)r.CompletionTokens),
-                CachedTokens = records.Sum(r => (long)r.CachedTokens)
+                RequestCount = totalsRow?.RequestCount ?? 0,
+                PromptTokens = totalsRow?.PromptTokens ?? 0,
+                CompletionTokens = totalsRow?.CompletionTokens ?? 0,
+                CachedTokens = totalsRow?.CachedTokens ?? 0
             },
-            Models = records
-                .GroupBy(r => new { r.Provider, r.Model })
-                .Select(g => new KeyUsageModelRow
-                {
-                    Provider = g.Key.Provider,
-                    Model = g.Key.Model,
-                    RequestCount = g.Count(),
-                    PromptTokens = g.Sum(r => (long)r.PromptTokens),
-                    CompletionTokens = g.Sum(r => (long)r.CompletionTokens),
-                    CachedTokens = g.Sum(r => (long)r.CachedTokens)
-                })
-                .OrderByDescending(m => m.CompletionTokens)
-                .ToList()
+            Models = modelRows
         });
     }
 
@@ -568,7 +609,18 @@ public sealed class MetricsController : ControllerBase
             query = query.Where(u => u.Model.Contains(model));
         }
 
-        var latencies = await query.Select(u => u.ElapsedMs).ToListAsync(ct);
+        // Pure counts → SQL-side GROUP BY on a computed band index. The nested
+        // conditionals translate to a SQLite CASE expression, so no latency
+        // values are materialized at all.
+        var bandCounts = await query
+            .GroupBy(u => u.ElapsedMs <= 500 ? 0
+                : u.ElapsedMs <= 1000 ? 1
+                : u.ElapsedMs <= 2000 ? 2
+                : u.ElapsedMs <= 5000 ? 3
+                : u.ElapsedMs <= 10000 ? 4
+                : 5)
+            .Select(g => new { Band = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
 
         // Upper bounds are inclusive: band i covers (bounds[i-1], bounds[i]].
         long[] bounds = [500, 1000, 2000, 5000, 10000];
@@ -582,16 +634,8 @@ public sealed class MetricsController : ControllerBase
                 Label = labels[i],
                 MinMs = i == 0 ? 0 : bounds[i - 1],
                 MaxMs = i < bounds.Length ? bounds[i] : null,
-                Count = 0
+                Count = bandCounts.FirstOrDefault(b => b.Band == i)?.Count ?? 0
             };
-        }
-
-        foreach (var ms in latencies)
-        {
-            var index = Array.FindIndex(bounds, b => ms <= b);
-            if (index < 0)
-                index = labels.Length - 1;
-            bands[index].Count++;
         }
 
         return Ok(bands);
@@ -635,20 +679,34 @@ public sealed class MetricsController : ControllerBase
             query = query.Where(u => u.Model.Contains(model));
         }
 
-        var rows = await query.Select(u => new { u.PromptTokens, u.CompletionTokens, u.CachedTokens, u.IsStreaming, u.ElapsedMs })
-            .ToListAsync(ct);
+        // Counts/sums aggregated SQL-side; only the single ElapsedMs column is
+        // materialized for the in-memory percentiles (SQLite has no percentile
+        // aggregate). Average latency derives from the summed column.
+        var totalsRow = await query
+            .GroupBy(_ => 1)
+            .Select(g => new
+            {
+                TotalRequests = g.Count(),
+                TotalStreamingRequests = g.Sum(u => u.IsStreaming ? 1 : 0),
+                TotalPromptTokens = g.Sum(u => (long)u.PromptTokens),
+                TotalCompletionTokens = g.Sum(u => (long)u.CompletionTokens),
+                TotalCachedTokens = g.Sum(u => (long)u.CachedTokens),
+                TotalLatencyMs = g.Sum(u => u.ElapsedMs)
+            })
+            .FirstOrDefaultAsync(ct);
 
-        var latencies = rows.Select(r => r.ElapsedMs).OrderBy(x => x).ToList();
+        var latencies = await query.Select(u => u.ElapsedMs).ToListAsync(ct);
+        latencies.Sort();
 
         var totals = new UsageTotalsResponse
         {
             From = effectiveFrom,
             To = effectiveTo,
-            TotalRequests = rows.Count,
-            TotalStreamingRequests = rows.Count(r => r.IsStreaming),
-            TotalPromptTokens = rows.Sum(r => (long)r.PromptTokens),
-            TotalCompletionTokens = rows.Sum(r => (long)r.CompletionTokens),
-            TotalCachedTokens = rows.Sum(r => (long)r.CachedTokens),
+            TotalRequests = totalsRow?.TotalRequests ?? 0,
+            TotalStreamingRequests = totalsRow?.TotalStreamingRequests ?? 0,
+            TotalPromptTokens = totalsRow?.TotalPromptTokens ?? 0,
+            TotalCompletionTokens = totalsRow?.TotalCompletionTokens ?? 0,
+            TotalCachedTokens = totalsRow?.TotalCachedTokens ?? 0,
             AvgLatencyMs = latencies.Count > 0 ? latencies.Average() : 0,
             P50LatencyMs = Percentile(latencies, 50),
             P95LatencyMs = Percentile(latencies, 95),

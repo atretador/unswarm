@@ -91,11 +91,18 @@ public sealed class InferenceProxy : IInferenceProxy
         // 2. Fallback: model name/image match against the registered container's
         //    Image/DisplayName (mirrors remote resolution semantics).
         // 3. Legacy: standalone model-name label path.
+        //
+        // The scheduler already resolved the model→runtime mapping at dispatch time
+        // and stamped it on the request — reuse it instead of re-querying the registry.
         RegisteredRuntime? registered = null;
-        string? registeredContainerId = null;
-        if (_containerRegistry is not null)
+        string? registeredContainerId = request.ResolvedRuntimeId;
+        if (request.ResolvedRuntime is not null)
         {
-            registeredContainerId = await _containerRegistry
+            registered = request.ResolvedRuntime;
+        }
+        else if (_containerRegistry is not null)
+        {
+            registeredContainerId ??= await _containerRegistry
                 .GetContainerIdForModelAsync(request.ModelName, ct).ConfigureAwait(false);
             if (registeredContainerId is not null)
             {
@@ -240,9 +247,11 @@ public sealed class InferenceProxy : IInferenceProxy
             return new InferenceResponse { StatusCode = 501, ContentType = "text/plain" };
         }
 
-        // Find the registered container serving this model on this agent.
-        string? registeredContainerId = null;
-        if (_containerRegistry is not null)
+        // Find the registered container serving this model on this agent. The
+        // scheduler resolved the mapping at dispatch time and stamped it on the
+        // request — reuse it instead of re-querying the registry.
+        string? registeredContainerId = request.ResolvedRuntimeId;
+        if (registeredContainerId is null && _containerRegistry is not null)
         {
             registeredContainerId = await _containerRegistry
                 .GetContainerIdForModelAsync(request.ModelName, ct).ConfigureAwait(false);
@@ -254,7 +263,8 @@ public sealed class InferenceProxy : IInferenceProxy
         // caller — the connection is held until the runtime is ready and serving.
         if (registeredContainerId is not null && _containerRegistry is not null)
         {
-            var registered = await _containerRegistry.GetAsync(registeredContainerId, ct).ConfigureAwait(false);
+            var registered = request.ResolvedRuntime
+                ?? await _containerRegistry.GetAsync(registeredContainerId, ct).ConfigureAwait(false);
             if (registered is not null && registered.RuntimeKind == RuntimeKind.Script)
             {
                 var scriptPort = registered.MappedPort ?? registered.ContainerPort;

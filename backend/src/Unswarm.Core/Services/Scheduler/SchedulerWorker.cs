@@ -75,6 +75,74 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         _lastActivityByRuntime[runtimeId] = _clock.UtcNow.UtcDateTime;
     }
 
+    // ── Conversation-hold wake timer ─────────────────────────────────────────
+
+    /// <summary>
+    /// Single coarse wake timer for conversation-affinity holds. Replaces the
+    /// previous Task.Delay(dwell).ContinueWith(WakeScheduler) scheduled PER
+    /// completion: while any hold is live the timer wakes the scheduler every
+    /// dwell/2 (covering the earliest hold's expiry); with no live holds it parks
+    /// until the next completion re-arms it.
+    /// </summary>
+    private Timer? _conversationHoldTimer;
+    private int _holdTimerDwellSeconds;
+
+    private void EnsureConversationHoldWakeTimer(int dwellSeconds)
+    {
+        Volatile.Write(ref _holdTimerDwellSeconds, Math.Max(1, dwellSeconds));
+        var period = TimeSpan.FromMilliseconds(Math.Max(1, dwellSeconds) * 500);
+
+        if (_conversationHoldTimer is null)
+        {
+            var created = new Timer(ConversationHoldTimerTick, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            if (Interlocked.CompareExchange(ref _conversationHoldTimer, created, null) is not null)
+                created.Dispose(); // lost the init race
+        }
+
+        // Due shortly after this hold expires, then every dwell/2 while holds persist.
+        _conversationHoldTimer.Change(
+            TimeSpan.FromSeconds(Math.Max(1, dwellSeconds)) + TimeSpan.FromMilliseconds(200),
+            period);
+    }
+
+    private void ConversationHoldTimerTick(object? state)
+    {
+        try
+        {
+            var dwell = TimeSpan.FromSeconds(Math.Max(1, Volatile.Read(ref _holdTimerDwellSeconds)));
+            var now = DateTime.UtcNow;
+            var anyLiveHold = false;
+            foreach (var group in _targets.Values)
+            {
+                foreach (var activity in group.RecentConversations.Values)
+                {
+                    if (now - activity.LastSeenUtc <= dwell)
+                    {
+                        anyLiveHold = true;
+                        break;
+                    }
+                }
+                if (anyLiveHold)
+                    break;
+            }
+
+            // Always wake: the earliest hold expiring between ticks IS the
+            // scheduling event this timer exists to signal.
+            WakeScheduler();
+
+            if (!anyLiveHold)
+            {
+                // No live holds remain: park until the next recorded completion
+                // re-arms us.
+                _conversationHoldTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            }
+        }
+        catch (Exception)
+        {
+            // Timer callbacks must never throw.
+        }
+    }
+
     /// <summary>
     /// Shared wake signal for the scheduler loop. Written on every enqueue and every
     /// inference completion; the scheduler drains it and re-scans all lanes.
@@ -400,10 +468,10 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 group.RecentConversations.TryRemove(kv.Key, out _);
         }
 
-        // Wake the scheduler shortly after this hold expires so waiting lanes
-        // re-scan (a small margin avoids racing the dwell boundary).
-        _ = Task.Delay(dwell + TimeSpan.FromMilliseconds(200))
-            .ContinueWith(_ => WakeScheduler(), TaskScheduler.Default);
+        // Arm the shared coarse wake timer so waiting lanes re-scan when this
+        // hold expires (a small margin avoids racing the dwell boundary). One
+        // timer serves all holds; it parks itself once no hold is live.
+        EnsureConversationHoldWakeTimer(dwellSeconds);
     }
 
     /// <summary>
@@ -662,6 +730,12 @@ public sealed class SchedulerWorker : ISchedulerDrainer
 
         var targetId = await _resolver.ResolveTargetAsync(request.ModelName, ct).ConfigureAwait(false);
         request.TargetId = targetId;
+
+        // Carry the resolved runtime identity through to the inference proxy so it
+        // never re-queries the model→runtime mapping (the dispatch-time lookup is
+        // the single authoritative resolution for this request).
+        request.ResolvedRuntimeId = runtimeId;
+        request.ResolvedRuntime = runtime;
 
         if (!_router.IsTargetReachable(targetId))
         {
@@ -2245,6 +2319,13 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
             $"Idle stop completed for runtime {runtimeId} on {targetId}");
         return IdleStopResult.Stopped;
+    }
+
+    /// <inheritdoc/>
+    public void ForgetRuntime(string runtimeId)
+    {
+        _lastActivityByRuntime.TryRemove(runtimeId, out _);
+        _runtimeCache.TryRemove(runtimeId, out _);
     }
 
     private sealed class HostOnlyTargetResolver : IModelTargetResolver

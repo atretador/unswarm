@@ -37,17 +37,28 @@ public sealed class ApiKeyAccessService : IApiKeyAccessService
 {
     private readonly Func<UnswarmDbContext> _dbFactory;
     private readonly IContainerRegistry _containers;
+    private readonly IApiKeyStore? _keyStore;
     private readonly ILogger<ApiKeyAccessService>? _logger;
 
-    public ApiKeyAccessService(Func<UnswarmDbContext> dbFactory, IContainerRegistry containers, ILogger<ApiKeyAccessService>? logger = null)
+    public ApiKeyAccessService(
+        Func<UnswarmDbContext> dbFactory,
+        IContainerRegistry containers,
+        ILogger<ApiKeyAccessService>? logger = null,
+        IApiKeyStore? keyStore = null)
     {
         _dbFactory = dbFactory;
         _containers = containers;
         _logger = logger;
+        _keyStore = keyStore;
     }
 
     public async Task<KeyAccess?> GetAccessAsync(string keyId, CancellationToken ct = default)
     {
+        // Prefer the store's hot-path cache (invalidated by SaveAccessAsync, 5-min
+        // TTL fallback); fall back to a direct read when no store is supplied.
+        if (_keyStore is not null)
+            return await _keyStore.GetAccessCachedAsync(keyId, ct).ConfigureAwait(false);
+
         await using var db = _dbFactory();
         var json = await db.ApiKeys
             .Where(k => k.Id == keyId)

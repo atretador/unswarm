@@ -62,6 +62,13 @@ public interface IApiKeyStore
     Task<KeyAccess?> GetAccessAsync(string keyId, CancellationToken ct = default);
 
     /// <summary>
+    /// Cached variant of <see cref="GetAccessAsync"/> for hot-path callers: serves
+    /// the parsed <see cref="KeyAccess"/> from an in-memory cache (5-minute TTL
+    /// fallback) that is invalidated by <see cref="SaveAccessAsync"/>.
+    /// </summary>
+    Task<KeyAccess?> GetAccessCachedAsync(string keyId, CancellationToken ct = default);
+
+    /// <summary>
     /// Persists the parsed per-key access restrictions for <paramref name="keyId"/>.
     /// Returns the stored value, or null when the key does not exist.
     /// </summary>

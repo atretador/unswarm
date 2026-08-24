@@ -6,10 +6,24 @@ using Unswarm.Core.Persistence;
 
 namespace Unswarm.Core.Services;
 
+/// <summary>
+/// Settings store with an in-memory snapshot cache. <see cref="GetAsync"/> serves
+/// the cached immutable-by-convention snapshot without touching SQLite; the cache
+/// is refreshed eagerly by <see cref="UpdateAsync"/> (the only writer) and has a
+/// short TTL fallback so out-of-band DB edits converge too. This removes the
+/// per-scheduling-step and per-completion settings reads on the scheduler hot path.
+/// </summary>
 public sealed class SettingsStore : ISettingsStore
 {
     private readonly Func<UnswarmDbContext> _dbFactory;
     private readonly ILogger<SettingsStore> _logger;
+
+    /// <summary>TTL for the cached snapshot (belt-and-braces re-read window).</summary>
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
+
+    private volatile CachedSettings? _cache;
+
+    private sealed record CachedSettings(Settings Value, DateTimeOffset LoadedAt);
 
     public SettingsStore(Func<UnswarmDbContext> dbFactory, ILogger<SettingsStore> logger)
     {
@@ -19,9 +33,27 @@ public sealed class SettingsStore : ISettingsStore
 
     public async Task<Settings> GetAsync(CancellationToken ct = default)
     {
-        await using var db = _dbFactory();
-        var entity = await db.Settings.FindAsync(["default"], ct).ConfigureAwait(false);
-        return entity is null ? new Settings() : MapToSettings(entity);
+        var cached = _cache;
+        if (cached is not null && DateTimeOffset.UtcNow - cached.LoadedAt < CacheTtl)
+            return cached.Value;
+
+        try
+        {
+            var fresh = await LoadAsync(ct).ConfigureAwait(false);
+            _cache = new CachedSettings(fresh, DateTimeOffset.UtcNow);
+            return fresh;
+        }
+        catch (Exception ex)
+        {
+            // Serve the last known snapshot when a re-read fails.
+            if (cached is not null)
+            {
+                _logger.LogWarning(ex, "Settings re-read failed; serving cached snapshot");
+                return cached.Value;
+            }
+
+            throw;
+        }
     }
 
     public async Task<Settings> UpdateAsync(Settings settings, CancellationToken ct = default)
@@ -58,7 +90,17 @@ public sealed class SettingsStore : ISettingsStore
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         _logger.LogInformation("Settings updated");
-        return MapToSettings(entity);
+
+        var updated = MapToSettings(entity);
+        _cache = new CachedSettings(updated, DateTimeOffset.UtcNow);
+        return updated;
+    }
+
+    private async Task<Settings> LoadAsync(CancellationToken ct)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.Settings.FindAsync(["default"], ct).ConfigureAwait(false);
+        return entity is null ? new Settings() : MapToSettings(entity);
     }
 
     private static Settings MapToSettings(SettingsEntity e) => new()

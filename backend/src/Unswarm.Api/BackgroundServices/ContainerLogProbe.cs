@@ -104,27 +104,11 @@ public sealed class ContainerLogProbe : BackgroundService
 
                 var currentLines = lines.ToArray();
 
-                if (_lastContainerLines.TryGetValue(runtime.RuntimeContainerId!, out var previousLines))
+                _lastContainerLines.TryGetValue(runtime.RuntimeContainerId!, out var previousLines);
+                foreach (var line in DiffNewLines(previousLines, currentLines))
                 {
-                    // Enqueue only lines that were NOT in the previous poll (new lines)
-                    var previousSet = new HashSet<string>(previousLines);
-                    foreach (var line in currentLines)
-                    {
-                        if (!previousSet.Contains(line))
-                        {
-                            var level = ClassifyContainerLogLine(line);
-                            logStore.Enqueue(level, runtime.DisplayName, line);
-                        }
-                    }
-                }
-                else
-                {
-                    // First poll for this container — enqueue all lines as initial history
-                    foreach (var line in currentLines)
-                    {
-                        var level = ClassifyContainerLogLine(line);
-                        logStore.Enqueue(level, runtime.DisplayName, line);
-                    }
+                    var level = ClassifyContainerLogLine(line);
+                    logStore.Enqueue(level, runtime.DisplayName, line);
                 }
 
                 _lastContainerLines[runtime.RuntimeContainerId!] = currentLines;
@@ -160,25 +144,11 @@ public sealed class ContainerLogProbe : BackgroundService
 
                 var currentLines = lines.ToArray();
 
-                if (_lastScriptLines.TryGetValue(runtime.Id, out var previousLines))
+                _lastScriptLines.TryGetValue(runtime.Id, out var previousScriptLines);
+                foreach (var line in DiffNewLines(previousScriptLines, currentLines))
                 {
-                    var previousSet = new HashSet<string>(previousLines);
-                    foreach (var line in currentLines)
-                    {
-                        if (!previousSet.Contains(line))
-                        {
-                            var level = ClassifyScriptLogLine(line);
-                            logStore.Enqueue(level, runtime.DisplayName, line);
-                        }
-                    }
-                }
-                else
-                {
-                    foreach (var line in currentLines)
-                    {
-                        var level = ClassifyScriptLogLine(line);
-                        logStore.Enqueue(level, runtime.DisplayName, line);
-                    }
+                    var level = ClassifyScriptLogLine(line);
+                    logStore.Enqueue(level, runtime.DisplayName, line);
                 }
 
                 _lastScriptLines[runtime.Id] = currentLines;
@@ -196,6 +166,31 @@ public sealed class ContainerLogProbe : BackgroundService
         {
             _lastScriptLines.Remove(staleId);
         }
+    }
+
+    /// <summary>
+    /// Cursor-based tail diff: when the previous poll's lines are a contiguous
+    /// suffix of the current tail (the common case — the log only grew), only the
+    /// appended lines after that suffix are new. This never re-enqueues overlapping
+    /// lines, even when identical lines repeat within the window (a set-diff would
+    /// misclassify duplicates as new). When continuity is broken (log rotation,
+    /// truncation, or more growth than the tail window), falls back to a set-diff.
+    /// </summary>
+    private static List<string> DiffNewLines(string[]? previousLines, string[] currentLines)
+    {
+        if (previousLines is null || previousLines.Length == 0)
+            return currentLines.ToList(); // first poll — full initial history
+
+        if (currentLines.Length >= previousLines.Length)
+        {
+            var overlap = previousLines.AsSpan();
+            var candidate = currentLines.AsSpan(currentLines.Length - previousLines.Length);
+            if (overlap.SequenceEqual(candidate))
+                return currentLines.Take(currentLines.Length - previousLines.Length).ToList();
+        }
+
+        var previousSet = new HashSet<string>(previousLines);
+        return currentLines.Where(line => !previousSet.Contains(line)).ToList();
     }
 
     /// <summary>

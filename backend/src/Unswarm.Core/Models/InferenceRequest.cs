@@ -18,6 +18,20 @@ public sealed class InferenceRequest
     public string? TargetId { get; set; }
 
     /// <summary>
+    /// Registered runtime id resolved ONCE by the scheduler at dispatch time and
+    /// carried through to the inference proxy, so the proxy never re-queries the
+    /// model→runtime mapping per request. Null when the dispatcher did not resolve
+    /// it (e.g. direct proxy use outside the scheduler).
+    /// </summary>
+    public string? ResolvedRuntimeId { get; set; }
+
+    /// <summary>
+    /// The registered runtime entity matching <see cref="ResolvedRuntimeId"/>,
+    /// resolved at dispatch time and carried through to the inference proxy.
+    /// </summary>
+    public RegisteredRuntime? ResolvedRuntime { get; set; }
+
+    /// <summary>
     /// Stable fingerprint grouping consecutive tool-call-loop requests into one
     /// conversation ("sid:&lt;value&gt;" or "conv:&lt;sha256&gt;"). Null when no
     /// affinity signal exists. Used by the scheduler to hold a runtime against
