@@ -150,6 +150,101 @@ describe("Settings", () => {
   });
 });
 
+describe("Settings save/cancel", () => {
+  async function renderGeneralTab() {
+    const seed = await mockClient.getSettings();
+    const updateSpy = vi
+      .spyOn(mockClient, "updateSettings")
+      .mockResolvedValue(seed);
+
+    render(
+      <TestWrapper initialEntries={["/settings"]}>
+        <Settings />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Log retention (hours)")).toBeInTheDocument();
+    });
+
+    return { seed, updateSpy };
+  }
+
+  it("disables Save when nothing changed", async () => {
+    await renderGeneralTab();
+
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+  });
+
+  it("does not call updateSettings until Save is clicked", async () => {
+    const user = userEvent.setup();
+    const { updateSpy } = await renderGeneralTab();
+
+    const retention = screen.getByLabelText("Log retention (hours)");
+    await user.clear(retention);
+    await user.type(retention, "96");
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(updateSpy).toHaveBeenCalledWith({ logRetention: 96 });
+  });
+
+  it("cancel reverts drafts without calling updateSettings", async () => {
+    const user = userEvent.setup();
+    const { updateSpy } = await renderGeneralTab();
+
+    const retention = screen.getByLabelText("Log retention (hours)");
+    await user.clear(retention);
+    await user.type(retention, "96");
+
+    await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+    expect(screen.getByLabelText("Log retention (hours)")).toHaveValue(168);
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps scheduler toggle changes as draft until Save", async () => {
+    const user = userEvent.setup();
+    const seed = await mockClient.getSettings();
+    const updateSpy = vi
+      .spyOn(mockClient, "updateSettings")
+      .mockResolvedValue(seed);
+
+    render(
+      <TestWrapper initialEntries={["/settings?tab=scheduler"]}>
+        <Settings />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Scheduler Policy")).toBeInTheDocument();
+    });
+
+    // Batch drain is false in the seed — toggle its switch
+    const batchDrainRow = screen.getByText("Batch drain").closest("div");
+    const batchDrainSwitch = within(
+      batchDrainRow?.parentElement ?? document.body,
+    ).getByRole("switch");
+    await user.click(batchDrainSwitch);
+
+    expect(updateSpy).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(updateSpy).toHaveBeenCalledWith({ batchDrain: true });
+  });
+});
+
 describe("Add User Modal", () => {
   it("opens and validates fields", async () => {
     const user = userEvent.setup();

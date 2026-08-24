@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Settings as SettingsIcon, Shield, Users, Plus } from "lucide-react";
@@ -29,6 +29,73 @@ type TabKey = (typeof TABS)[number]["key"];
 
 // ─── Scheduler Policy Section ────────────────────────────────────
 
+type NumericField =
+  | "maxQueueDepth"
+  | "parallelSlotSkipLimit"
+  | "queueStepsTillReset"
+  | "conversationDwellSeconds"
+  | "requestTimeout"
+  | "idleTimeout"
+  | "healthCheckInterval";
+
+type BooleanField =
+  | "autoShutdownIdle"
+  | "batchDrain"
+  | "lazyStop"
+  | "enableParallelSlotSkip"
+  | "enableConversationAffinity"
+  | "enableBenchmarking";
+
+function clampNumericField(field: NumericField, num: number): number {
+  if (field === "parallelSlotSkipLimit" || field === "queueStepsTillReset") {
+    return Math.max(1, Math.min(1000, num));
+  }
+  if (field === "conversationDwellSeconds") return Math.max(1, num);
+  if (field === "maxQueueDepth") return Math.max(0, num);
+  if (field === "requestTimeout") return Math.max(5, num);
+  if (field === "idleTimeout") return Math.max(10, num);
+  return Math.max(5, num); // healthCheckInterval
+}
+
+const TOGGLES: Array<{ key: string; label: string; desc: string; field: BooleanField }> = [
+  {
+    key: "auto-shutdown",
+    label: "Auto-shutdown idle",
+    desc: "Automatically stop containers after idle timeout",
+    field: "autoShutdownIdle",
+  },
+  {
+    key: "batch-drain",
+    label: "Batch drain",
+    desc: "Drain queue items in batches for efficiency",
+    field: "batchDrain",
+  },
+  {
+    key: "lazy-stop",
+    label: "Lazy stop",
+    desc: "Wait for in-flight requests before stopping",
+    field: "lazyStop",
+  },
+  {
+    key: "enable-parallel-slot-skip",
+    label: "Enable parallel slot skip",
+    desc: "Skip busy parallel slots and defer requests to later slots",
+    field: "enableParallelSlotSkip",
+  },
+  {
+    key: "conversation-affinity",
+    label: "Conversation affinity",
+    desc: "Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls",
+    field: "enableConversationAffinity",
+  },
+  {
+    key: "enable-benchmarking",
+    label: "Enable benchmarking",
+    desc: "Auto-run the default benchmark when a model is registered",
+    field: "enableBenchmarking",
+  },
+];
+
 function SchedulerPolicySection() {
   const queryClient = useQueryClient();
 
@@ -44,7 +111,8 @@ function SchedulerPolicySection() {
   const [draftRequestTimeout, setDraftRequestTimeout] = useState<string>("");
   const [draftIdleTimeout, setDraftIdleTimeout] = useState<string>("");
   const [draftHealthCheckInterval, setDraftHealthCheckInterval] = useState<string>("");
-  const draftInitRef = useState(true);
+  const [draftToggles, setDraftToggles] = useState<Partial<Record<BooleanField, boolean>>>({});
+  const [draftPriorityMode, setDraftPriorityMode] = useState<SettingsData["priorityMode"]>("fifo");
 
   // Reset draft when server data changes
   useEffect(() => {
@@ -56,49 +124,21 @@ function SchedulerPolicySection() {
       setDraftRequestTimeout(String(settings.requestTimeout));
       setDraftIdleTimeout(String(settings.idleTimeout));
       setDraftHealthCheckInterval(String(settings.healthCheckInterval));
-      draftInitRef[1](false);
+      setDraftPriorityMode(settings.priorityMode);
+      setDraftToggles({
+        autoShutdownIdle: settings.autoShutdownIdle,
+        batchDrain: settings.batchDrain,
+        lazyStop: settings.lazyStop,
+        enableParallelSlotSkip: settings.enableParallelSlotSkip,
+        enableConversationAffinity: settings.enableConversationAffinity,
+        enableBenchmarking: settings.enableBenchmarking,
+      });
     }
   }, [settings]);
-
-  const commitDraft = useCallback(
-    (
-      field:
-        | "maxQueueDepth"
-        | "parallelSlotSkipLimit"
-        | "queueStepsTillReset"
-        | "conversationDwellSeconds"
-        | "requestTimeout"
-        | "idleTimeout"
-        | "healthCheckInterval",
-      raw: string,
-    ) => {
-      const num = Number(raw);
-      if (!Number.isFinite(num)) return;
-      const clamped =
-        field === "parallelSlotSkipLimit" || field === "queueStepsTillReset"
-          ? Math.max(1, Math.min(1000, num))
-          : field === "conversationDwellSeconds"
-            ? Math.max(1, num)
-            : field === "maxQueueDepth"
-            ? Math.max(0, num)
-            : field === "requestTimeout"
-              ? Math.max(5, num)
-              : field === "idleTimeout"
-                ? Math.max(10, num)
-                : Math.max(5, num); // healthCheckInterval
-      if (settings && clamped !== settings[field]) {
-        updateMutation.mutate({ [field]: clamped });
-      }
-    },
-    [settings],
-  );
 
   const updateMutation = useMutation({
     mutationFn: (patch: Partial<SettingsData>) => client.updateSettings(patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
-    onError: (err: Error) => {
-      console.error("Failed to update settings:", err.message);
-    },
   });
 
   if (isLoading || !settings) {
@@ -114,56 +154,65 @@ function SchedulerPolicySection() {
     );
   }
 
-  const toggles: Array<{
-    key: string;
-    label: string;
-    desc: string;
-    checked: boolean;
-    field: string;
-  }> = [
-    {
-      key: "auto-shutdown",
-      label: "Auto-shutdown idle",
-      desc: "Automatically stop containers after idle timeout",
-      checked: settings.autoShutdownIdle,
-      field: "autoShutdownIdle",
-    },
-    {
-      key: "batch-drain",
-      label: "Batch drain",
-      desc: "Drain queue items in batches for efficiency",
-      checked: settings.batchDrain,
-      field: "batchDrain",
-    },
-    {
-      key: "lazy-stop",
-      label: "Lazy stop",
-      desc: "Wait for in-flight requests before stopping",
-      checked: settings.lazyStop,
-      field: "lazyStop",
-    },
-    {
-      key: "enable-parallel-slot-skip",
-      label: "Enable parallel slot skip",
-      desc: "Skip busy parallel slots and defer requests to later slots",
-      checked: settings.enableParallelSlotSkip,
-      field: "enableParallelSlotSkip",
-    },
-    {
-      key: "conversation-affinity",
-      label: "Conversation affinity",
-      desc: "Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls",
-      checked: settings.enableConversationAffinity,
-      field: "enableConversationAffinity",
-    },
-    {
-      key: "enable-benchmarking",
-      label: "Enable benchmarking",
-      desc: "Auto-run the default benchmark when a model is registered",
-      checked: settings.enableBenchmarking,
-      field: "enableBenchmarking",
-    },
+  // Build the set of changed fields (with clamping applied). Non-finite
+  // numeric input marks the form invalid instead of being silently dropped.
+  const numericDrafts: Array<{ field: NumericField; raw: string }> = [
+    { field: "maxQueueDepth", raw: draftMaxQueue },
+    { field: "parallelSlotSkipLimit", raw: draftParallelSkip },
+    { field: "queueStepsTillReset", raw: draftQueueStepsTillReset },
+    { field: "conversationDwellSeconds", raw: draftConversationDwell },
+    { field: "requestTimeout", raw: draftRequestTimeout },
+    { field: "idleTimeout", raw: draftIdleTimeout },
+    { field: "healthCheckInterval", raw: draftHealthCheckInterval },
   ];
+
+  let hasInvalidInput = false;
+  const patch: Partial<SettingsData> = {};
+
+  for (const { field, raw } of numericDrafts) {
+    const num = Number(raw);
+    if (!Number.isFinite(num)) {
+      hasInvalidInput = true;
+      continue;
+    }
+    const clamped = clampNumericField(field, num);
+    if (clamped !== settings[field]) {
+      patch[field] = clamped;
+    }
+  }
+
+  for (const t of TOGGLES) {
+    const draftValue = draftToggles[t.field];
+    if (draftValue !== undefined && draftValue !== settings[t.field]) {
+      patch[t.field] = draftValue;
+    }
+  }
+
+  if (draftPriorityMode !== settings.priorityMode) {
+    patch.priorityMode = draftPriorityMode;
+  }
+
+  const isDirty = Object.keys(patch).length > 0;
+  const canSave = isDirty && !hasInvalidInput;
+
+  const handleCancel = () => {
+    setDraftMaxQueue(String(settings.maxQueueDepth));
+    setDraftParallelSkip(String(settings.parallelSlotSkipLimit));
+    setDraftQueueStepsTillReset(String(settings.queueStepsTillReset));
+    setDraftConversationDwell(String(settings.conversationDwellSeconds));
+    setDraftRequestTimeout(String(settings.requestTimeout));
+    setDraftIdleTimeout(String(settings.idleTimeout));
+    setDraftHealthCheckInterval(String(settings.healthCheckInterval));
+    setDraftPriorityMode(settings.priorityMode);
+    setDraftToggles({
+      autoShutdownIdle: settings.autoShutdownIdle,
+      batchDrain: settings.batchDrain,
+      lazyStop: settings.lazyStop,
+      enableParallelSlotSkip: settings.enableParallelSlotSkip,
+      enableConversationAffinity: settings.enableConversationAffinity,
+      enableBenchmarking: settings.enableBenchmarking,
+    });
+  };
 
   return (
     <Card padding="lg">
@@ -175,15 +224,15 @@ function SchedulerPolicySection() {
       </div>
 
       <div className="space-y-4">
-        {toggles.map((t) => (
+        {TOGGLES.map((t) => (
           <div key={t.key} className="flex items-center justify-between">
             <div>
               <p className="text-sm text-[var(--color-text)]">{t.label}</p>
               <p className="text-[10px] text-[var(--color-text-muted)]">{t.desc}</p>
             </div>
             <Switch
-              checked={t.checked}
-              onCheckedChange={(v) => updateMutation.mutate({ [t.field]: v })}
+              checked={draftToggles[t.field] ?? settings[t.field]}
+              onCheckedChange={(v) => setDraftToggles((prev) => ({ ...prev, [t.field]: v }))}
             />
           </div>
         ))}
@@ -196,10 +245,6 @@ function SchedulerPolicySection() {
               value={draftConversationDwell}
               disabled={!settings.enableConversationAffinity}
               onChange={(e) => setDraftConversationDwell(e.target.value)}
-              onBlur={() => commitDraft("conversationDwellSeconds", draftConversationDwell)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitDraft("conversationDwellSeconds", draftConversationDwell);
-              }}
             />
             <p className="text-[10px] text-[var(--color-text-muted)]">
               How long a conversation keeps its runtime reserved after its last request (minimum 1)
@@ -210,10 +255,6 @@ function SchedulerPolicySection() {
             type="number"
             value={draftMaxQueue}
             onChange={(e) => setDraftMaxQueue(e.target.value)}
-            onBlur={() => commitDraft("maxQueueDepth", draftMaxQueue)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitDraft("maxQueueDepth", draftMaxQueue);
-            }}
           />
           {settings.enableParallelSlotSkip && (
             <>
@@ -222,10 +263,6 @@ function SchedulerPolicySection() {
                 type="number"
                 value={draftParallelSkip}
                 onChange={(e) => setDraftParallelSkip(e.target.value)}
-                onBlur={() => commitDraft("parallelSlotSkipLimit", draftParallelSkip)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitDraft("parallelSlotSkipLimit", draftParallelSkip);
-                }}
               />
               <div>
                 <Input
@@ -233,10 +270,6 @@ function SchedulerPolicySection() {
                   type="number"
                   value={draftQueueStepsTillReset}
                   onChange={(e) => setDraftQueueStepsTillReset(e.target.value)}
-                  onBlur={() => commitDraft("queueStepsTillReset", draftQueueStepsTillReset)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") commitDraft("queueStepsTillReset", draftQueueStepsTillReset);
-                  }}
                 />
                 <p className="text-[10px] text-[var(--color-text-muted)]">
                   How many queue items are processed before the parallel-slot skip counter resets
@@ -249,45 +282,51 @@ function SchedulerPolicySection() {
             type="number"
             value={draftRequestTimeout}
             onChange={(e) => setDraftRequestTimeout(e.target.value)}
-            onBlur={() => commitDraft("requestTimeout", draftRequestTimeout)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitDraft("requestTimeout", draftRequestTimeout);
-            }}
           />
           <Input
             label="Idle timeout (seconds)"
             type="number"
             value={draftIdleTimeout}
             onChange={(e) => setDraftIdleTimeout(e.target.value)}
-            onBlur={() => commitDraft("idleTimeout", draftIdleTimeout)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitDraft("idleTimeout", draftIdleTimeout);
-            }}
           />
           <Input
             label="Health check interval (seconds)"
             type="number"
             value={draftHealthCheckInterval}
             onChange={(e) => setDraftHealthCheckInterval(e.target.value)}
-            onBlur={() => commitDraft("healthCheckInterval", draftHealthCheckInterval)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitDraft("healthCheckInterval", draftHealthCheckInterval);
-            }}
           />
           <Select
             label="Priority mode"
-            value={settings.priorityMode}
+            value={draftPriorityMode}
             options={[
               { value: "fifo", label: "FIFO" },
               { value: "priority", label: "Priority" },
             ]}
             onChange={(e) => {
-              const next = e.target.value as SettingsData["priorityMode"];
-              if (next !== settings.priorityMode) {
-                updateMutation.mutate({ priorityMode: next });
-              }
+              setDraftPriorityMode(e.target.value as SettingsData["priorityMode"]);
             }}
           />
+        </div>
+
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-status-error)]">
+            {updateMutation.error.message}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => updateMutation.mutate(patch)}
+            disabled={!canSave}
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
         </div>
       </div>
     </Card>
@@ -683,22 +722,34 @@ function GeneralTab() {
   const updateMutation = useMutation({
     mutationFn: (patch: Partial<SettingsData>) => client.updateSettings(patch),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
-    onError: (err: Error) => {
-      console.error("Failed to update settings:", err.message);
-    },
   });
 
-  const commitRetention = useCallback(
-    (raw: string) => {
-      const num = Number(raw);
-      if (!Number.isFinite(num)) return;
-      const clamped = Math.max(1, num);
-      if (settings && clamped !== settings.logRetention) {
-        updateMutation.mutate({ logRetention: clamped });
-      }
-    },
-    [settings],
-  );
+  if (isLoading || !settings) {
+    return (
+      <Card padding="md">
+        <div className="flex items-center gap-2 mb-4">
+          <SettingsIcon className="size-4 text-[var(--color-text-muted)]" />
+          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+            System
+          </p>
+        </div>
+        <Skeleton className="h-8 w-full" />
+      </Card>
+    );
+  }
+
+  const num = Number(draftRetention);
+  const hasInvalidInput = !Number.isFinite(num);
+  const clampedRetention = hasInvalidInput ? settings.logRetention : Math.max(1, num);
+  const isDirty =
+    (!hasInvalidInput && clampedRetention !== settings.logRetention) ||
+    draftHideOriginPrefix !== settings.hideOriginPrefix;
+  const canSave = isDirty && !hasInvalidInput;
+
+  const handleCancel = () => {
+    setDraftRetention(String(settings.logRetention));
+    setDraftHideOriginPrefix(settings.hideOriginPrefix);
+  };
 
   return (
     <Card padding="md">
@@ -709,38 +760,55 @@ function GeneralTab() {
         </p>
       </div>
 
-      {isLoading || !settings ? (
-        <Skeleton className="h-8 w-full" />
-      ) : (
-        <div className="space-y-4">
-          <Input
-            label="Log retention (hours)"
-            type="number"
-            value={draftRetention}
-            onChange={(e) => setDraftRetention(e.target.value)}
-            onBlur={() => commitRetention(draftRetention)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") commitRetention(draftRetention);
-            }}
-          />
+      <div className="space-y-4">
+        <Input
+          label="Log retention (hours)"
+          type="number"
+          value={draftRetention}
+          onChange={(e) => setDraftRetention(e.target.value)}
+        />
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-text)]">Hide model origin prefix</p>
-              <p className="text-[10px] text-[var(--color-text-muted)]">
-                Strips "cloud/" or "managed/" from model names (e.g. "cloud/openai/gpt-4o" → "openai/gpt-4o")
-              </p>
-            </div>
-            <Switch
-              checked={draftHideOriginPrefix}
-              onCheckedChange={(v) => {
-                setDraftHideOriginPrefix(v);
-                updateMutation.mutate({ hideOriginPrefix: v });
-              }}
-            />
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text)]">Hide model origin prefix</p>
+            <p className="text-[10px] text-[var(--color-text-muted)]">
+              Strips "cloud/" or "managed/" from model names (e.g. "cloud/openai/gpt-4o" → "openai/gpt-4o")
+            </p>
           </div>
+          <Switch
+            checked={draftHideOriginPrefix}
+            onCheckedChange={(v) => setDraftHideOriginPrefix(v)}
+          />
         </div>
-      )}
+
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-status-error)]">
+            {updateMutation.error.message}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() =>
+              updateMutation.mutate({
+                ...(clampedRetention !== settings.logRetention ? { logRetention: clampedRetention } : {}),
+                ...(draftHideOriginPrefix !== settings.hideOriginPrefix
+                  ? { hideOriginPrefix: draftHideOriginPrefix }
+                  : {}),
+              })
+            }
+            disabled={!canSave}
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
     </Card>
   );
 }
