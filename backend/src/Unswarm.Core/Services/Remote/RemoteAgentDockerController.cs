@@ -250,8 +250,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }, JsonOptions);
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
-        var p = response.Payload;
-        if (p is null || !p.HasValue)
+        var p = UnwrapPayload(response.Payload);
+        if (!p.HasValue)
             return null;
 
         return new ContainerInspectResult
@@ -273,7 +273,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<ContainerInfo>();
-        var p = response.Payload;
+        var p = UnwrapPayload(response.Payload);
         if (p is null || !p.HasValue)
             return result;
 
@@ -312,7 +312,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<string>();
-        var p = response.Payload;
+        var p = UnwrapPayload(response.Payload);
         if (p is null || !p.HasValue)
             return result;
 
@@ -539,7 +539,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<AgentScriptInfo>();
-        var p = response.Payload;
+        var p = UnwrapPayload(response.Payload);
         if (p is null || !p.HasValue)
             return result;
 
@@ -622,7 +622,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<string>();
-        var p = response.Payload;
+        var p = UnwrapPayload(response.Payload);
         if (p is null || !p.HasValue)
             return result;
 
@@ -959,6 +959,30 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             JsonValueKind.False => false,
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Unwraps the <c>data</c> field from an agent command-result payload.
+    ///
+    /// The agent serialises <see cref="CommandResultPayload"/> as
+    /// <c>{"ok":true,"data":{...}}</c>.  Many backend callers, however, expect
+    /// the inner data fields to appear at the payload root (e.g.
+    /// <c>containers</c>, <c>logs</c>, <c>scripts</c>, <c>status</c>).
+    /// This method returns the <c>data</c> element when present so callers
+    /// can find the expected fields; otherwise it returns the payload as-is
+    /// so <c>ok</c> / <c>error</c> are still accessible.
+    /// </summary>
+    private static JsonElement? UnwrapPayload(JsonElement? payload)
+    {
+        if (payload is null || !payload.HasValue)
+            return payload;
+
+        if (payload.Value.TryGetProperty("data", out var dataProp) && dataProp.ValueKind != JsonValueKind.Null)
+        {
+            return dataProp;
+        }
+
+        return payload;
     }
 
     private static ContainerStatus MapStatus(string? status) => (status ?? string.Empty).ToLowerInvariant() switch

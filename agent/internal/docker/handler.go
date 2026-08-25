@@ -91,13 +91,13 @@ func (h *Handler) InspectContainer(ctx context.Context, name string) protocol.Co
 		return containerErrorResult("inspect", name, err)
 	}
 	data := map[string]interface{}{
-		"id":         info.ID,
-		"name":       strings.TrimPrefix(info.Name, "/"),
-		"state":      info.State.Status,
-		"running":    info.State.Running,
-		"startedAt":  info.State.StartedAt,
-		"finishedAt": info.State.FinishedAt,
-		"image":      info.Config.Image,
+		"id":          info.ID,
+		"name":        strings.TrimPrefix(info.Name, "/"),
+		"status":      info.State.Status,
+		"running":     info.State.Running,
+		"startedAt":   info.State.StartedAt,
+		"finishedAt":  info.State.FinishedAt,
+		"image":       info.Config.Image,
 	}
 	if info.State.Health != nil {
 		data["health"] = info.State.Health.Status
@@ -190,9 +190,14 @@ func (h *Handler) GetContainerLogs(ctx context.Context, name string, tailLines i
 	if err != nil {
 		return errorResult(fmt.Sprintf("read logs for %q: %v", name, err))
 	}
-	return okResult(map[string]string{
-		"name": name,
-		"logs": buf.String(),
+	lines := strings.Split(buf.String(), "\n")
+	// Trim trailing empty line from final newline
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return okResult(map[string]interface{}{
+		"name":  name,
+		"logs":  lines,
 	})
 }
 
