@@ -30,7 +30,8 @@ public sealed class AgentsControllerTests
         FakeDockerControllerRouter? router = null,
         HostScriptRuntimeController? scriptController = null)
         => new(_registry, router ?? CreateRouter(), _containerRegistry,
-            scriptController ?? CreateScriptController(), _healthChecker);
+            scriptController ?? CreateScriptController(), _healthChecker,
+            new LoggerFactory().CreateLogger<AgentsController>());
 
     private static string CreateTestScript(HostScriptRuntimeController controller, string content)
     {

@@ -140,7 +140,7 @@ func (h *Handler) ListContainers(ctx context.Context) protocol.CommandResultPayl
 			"ports":  formatPorts(c.Ports),
 		})
 	}
-	return okResult(result)
+	return okResult(map[string]interface{}{"containers": result})
 }
 
 // maxTailLines caps the tailLines parameter of GetContainerLogs so an

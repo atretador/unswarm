@@ -250,17 +250,15 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }, JsonOptions);
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
-        var p = UnwrapPayload(response.Payload);
-        if (!p.HasValue)
-            return null;
+        var p = RequireResultData(response, "inspect_container");
 
         return new ContainerInspectResult
         {
-            Status = GetString(p.Value, "status") ?? "unknown",
-            Pid = GetInt(p.Value, "pid"),
-            MemoryMb = GetLong(p.Value, "memoryMb") ?? 0,
-            CpuPercent = GetDouble(p.Value, "cpuPercent") ?? 0,
-            UptimeSeconds = GetLong(p.Value, "uptimeSeconds") ?? 0
+            Status = GetString(p, "status") ?? "unknown",
+            Pid = GetInt(p, "pid"),
+            MemoryMb = GetLong(p, "memoryMb") ?? 0,
+            CpuPercent = GetDouble(p, "cpuPercent") ?? 0,
+            UptimeSeconds = GetLong(p, "uptimeSeconds") ?? 0
         };
     }
 
@@ -273,11 +271,17 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<ContainerInfo>();
-        var p = UnwrapPayload(response.Payload);
-        if (p is null || !p.HasValue)
-            return result;
+        var p = RequireResultData(response, "list_containers");
 
-        if (p.Value.TryGetProperty("containers", out var array) && array.ValueKind == JsonValueKind.Array)
+        // Current agents return { containers: [...] }; old firmware sent a bare
+        // array as the result data — accept both.
+        var array = p.ValueKind == JsonValueKind.Array
+            ? p
+            : p.TryGetProperty("containers", out var containersProp) && containersProp.ValueKind == JsonValueKind.Array
+                ? containersProp
+                : default;
+
+        if (array.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in array.EnumerateArray())
             {
@@ -312,11 +316,9 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<string>();
-        var p = UnwrapPayload(response.Payload);
-        if (p is null || !p.HasValue)
-            return result;
+        var p = RequireResultData(response, "get_container_logs");
 
-        if (p.Value.TryGetProperty("logs", out var array) && array.ValueKind == JsonValueKind.Array)
+        if (p.TryGetProperty("logs", out var array) && array.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in array.EnumerateArray())
             {
@@ -349,7 +351,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             port
         }, JsonOptions);
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
-        return GetBool(response.Payload, "healthy") ?? false;
+        var p = RequireResultData(response, "health_check");
+        return GetBool(p, "healthy") ?? false;
     }
 
     /// <summary>
@@ -370,12 +373,18 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<DiscoveredModel>();
-        var p = response.Payload;
-        if (p is null || !p.HasValue)
-            return result;
+        var p = RequireResultData(response, "discover_models");
 
-        // Raw OpenAI shape: { data: [ { id, owned_by } ] }
-        if (p.Value.TryGetProperty("data", out var dataArray) && dataArray.ValueKind == JsonValueKind.Array)
+        // Raw OpenAI shape: { data: [ { id, owned_by } ] }. Depending on agent
+        // firmware the array is either the entire unwrapped result data or a
+        // "data" property on it.
+        JsonElement dataArray = default;
+        if (p.ValueKind == JsonValueKind.Array)
+            dataArray = p;
+        else if (p.TryGetProperty("data", out var dataProp) && dataProp.ValueKind == JsonValueKind.Array)
+            dataArray = dataProp;
+
+        if (dataArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in dataArray.EnumerateArray())
             {
@@ -397,7 +406,7 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }
 
         // Legacy flat shape: { models: [ { modelId, ownedBy } ] }
-        if (p.Value.TryGetProperty("models", out var modelsArray) && modelsArray.ValueKind == JsonValueKind.Array)
+        if (p.TryGetProperty("models", out var modelsArray) && modelsArray.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in modelsArray.EnumerateArray())
             {
@@ -539,11 +548,9 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<AgentScriptInfo>();
-        var p = UnwrapPayload(response.Payload);
-        if (p is null || !p.HasValue)
-            return result;
+        var p = RequireResultData(response, "list_scripts");
 
-        if (p.Value.TryGetProperty("scripts", out var array) && array.ValueKind == JsonValueKind.Array)
+        if (p.TryGetProperty("scripts", out var array) && array.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in array.EnumerateArray())
             {
@@ -622,11 +629,9 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
         var result = new List<string>();
-        var p = UnwrapPayload(response.Payload);
-        if (p is null || !p.HasValue)
-            return result;
+        var p = RequireResultData(response, "get_script_logs");
 
-        if (p.Value.TryGetProperty("logs", out var array) && array.ValueKind == JsonValueKind.Array)
+        if (p.TryGetProperty("logs", out var array) && array.ValueKind == JsonValueKind.Array)
         {
             foreach (var element in array.EnumerateArray())
             {
@@ -691,6 +696,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             _pending.TryRemove(commandId, out _);
+            _logger.LogWarning("Command '{CommandId}' to agent '{AgentName}' timed out after {TimeoutSeconds:0}s",
+                commandId, _agentName, timeout.TotalSeconds);
             throw new TimeoutException($"Command {commandId} to agent '{_agentName}' timed out after {timeout.TotalSeconds:0}s");
         }
         catch (OperationCanceledException)
@@ -906,15 +913,19 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }
     }
 
-    private static ContainerStartResult MapStartResult(AgentMessage response)
+    private ContainerStartResult MapStartResult(AgentMessage response)
     {
         var p = response.Payload;
         if (p is null || !p.HasValue)
+        {
+            _logger.LogWarning("Agent '{AgentName}' start_container returned an empty result", _agentName);
             return new ContainerStartResult { ContainerId = string.Empty, ErrorMessage = "Empty command result" };
+        }
 
         var error = GetString(p.Value, "error");
         if (error is not null)
         {
+            _logger.LogWarning("Agent '{AgentName}' start_container failed: {Error}", _agentName, error);
             return new ContainerStartResult
             {
                 ContainerId = GetString(p.Value, "containerId") ?? string.Empty,
@@ -922,10 +933,13 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             };
         }
 
+        // containerId/mappedPort live inside the {"ok":true,"data":{...}} envelope
+        // on current agents; legacy payloads carry them at the root.
+        var source = UnwrapPayload(p) ?? p.Value;
         return new ContainerStartResult
         {
-            ContainerId = GetString(p.Value, "containerId") ?? string.Empty,
-            MappedPort = GetInt(p.Value, "mappedPort")
+            ContainerId = GetString(source, "containerId") ?? string.Empty,
+            MappedPort = GetInt(source, "mappedPort")
         };
     }
 
@@ -959,6 +973,47 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
             JsonValueKind.False => false,
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Validates an agent command_result and returns the usable result data.
+    ///
+    /// The remote protocol wraps every command result as
+    /// <c>{"ok":true,"data":{...}}</c> or <c>{"ok":false,"error":"..."}</c>.
+    /// This helper fails loudly instead of letting error envelopes degrade into
+    /// empty results:
+    ///   - null/missing payload  → <see cref="AgentCommandException"/>
+    ///   - explicit ok:false     → <see cref="AgentCommandException"/> carrying the agent's error string
+    ///   - otherwise             → the unwrapped <c>data</c> element (legacy payloads
+    ///     without a "data" property pass through unchanged)
+    /// </summary>
+    private JsonElement RequireResultData(AgentMessage response, string command)
+    {
+        var p = response.Payload;
+        if (p is null || !p.HasValue)
+        {
+            _logger.LogWarning("Agent '{AgentName}' command '{Command}' returned an empty result",
+                _agentName, command);
+            throw new AgentCommandException(_agentName, command, "empty command result");
+        }
+
+        if (GetBool(p.Value, "ok") == false)
+        {
+            var error = GetString(p.Value, "error") ?? "unknown error";
+            _logger.LogWarning("Agent '{AgentName}' command '{Command}' failed: {Error}",
+                _agentName, command, error);
+            throw new AgentCommandException(_agentName, command, error);
+        }
+
+        var data = UnwrapPayload(p);
+        if (data is null || !data.HasValue)
+        {
+            _logger.LogWarning("Agent '{AgentName}' command '{Command}' returned no result data",
+                _agentName, command);
+            throw new AgentCommandException(_agentName, command, "missing result data");
+        }
+
+        return data.Value;
     }
 
     /// <summary>
@@ -1012,4 +1067,22 @@ public sealed record AgentScriptInfo
 {
     public required string Path { get; init; }
     public required string Name { get; init; }
+}
+
+/// <summary>
+/// Thrown when a remote agent command fails or returns an unusable result
+/// (explicit ok:false envelope, empty payload, or missing result data).
+/// Carries the agent name, the wire command, and the agent's error string.
+/// </summary>
+public sealed class AgentCommandException : Exception
+{
+    public string AgentName { get; }
+    public string Command { get; }
+
+    public AgentCommandException(string agentName, string command, string error)
+        : base($"Agent '{agentName}' command '{command}' failed: {error}")
+    {
+        AgentName = agentName;
+        Command = command;
+    }
 }

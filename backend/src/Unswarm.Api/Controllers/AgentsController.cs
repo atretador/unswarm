@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
@@ -32,19 +33,22 @@ public sealed class AgentsController : ControllerBase
     private readonly IContainerRegistry _containerRegistry;
     private readonly HostScriptRuntimeController _scriptController;
     private readonly IHealthChecker _healthChecker;
+    private readonly ILogger<AgentsController> _logger;
 
     public AgentsController(
         IAgentRegistry registry,
         IDockerControllerRouter router,
         IContainerRegistry containerRegistry,
         HostScriptRuntimeController scriptController,
-        IHealthChecker healthChecker)
+        IHealthChecker healthChecker,
+        ILogger<AgentsController> logger)
     {
         _registry = registry;
         _router = router;
         _containerRegistry = containerRegistry;
         _scriptController = scriptController;
         _healthChecker = healthChecker;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -108,8 +112,14 @@ public sealed class AgentsController : ControllerBase
             var scripts = await remote.ListScriptsAsync(ct).ConfigureAwait(false);
             return Ok(scripts);
         }
+        catch (AgentCommandException ex)
+        {
+            _logger.LogWarning(ex, "Agent '{AgentName}' failed to list scripts", name);
+            return StatusCode(502, new { error = $"Agent '{name}' failed to list scripts: {ex.Message}" });
+        }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
+            _logger.LogWarning(ex, "Failed to list scripts on agent '{AgentName}'", name);
             return StatusCode(503, new { error = $"Failed to list scripts on agent '{name}': {ex.Message}" });
         }
     }
@@ -128,8 +138,21 @@ public sealed class AgentsController : ControllerBase
         if (!_router.IsTargetReachable(target))
             return NotFound(new { error = $"Agent '{name}' is not reachable" });
 
-        var list = await _router.GetController(target).ListContainersAsync(ct).ConfigureAwait(false);
-        return Ok(list.Select(ContainerResponse.FromContainerInfo).ToList());
+        try
+        {
+            var list = await _router.GetController(target).ListContainersAsync(ct).ConfigureAwait(false);
+            return Ok(list.Select(ContainerResponse.FromContainerInfo).ToList());
+        }
+        catch (AgentCommandException ex)
+        {
+            _logger.LogWarning(ex, "Agent '{AgentName}' failed to list containers", name);
+            return StatusCode(502, new { error = $"Agent '{name}' failed to list containers: {ex.Message}" });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+        {
+            _logger.LogWarning(ex, "Failed to list containers on agent '{AgentName}'", name);
+            return StatusCode(503, new { error = $"Failed to list containers on agent '{name}': {ex.Message}" });
+        }
     }
 
     private async Task<AgentInfo> BuildHostInfoAsync(IReadOnlyList<RegisteredRuntime> allRegistered, CancellationToken ct)

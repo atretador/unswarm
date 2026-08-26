@@ -443,6 +443,13 @@ func handleStreamCommand(
 
 // sendCommandResult sends a command_result envelope echoing the command id.
 func sendCommandResult(ctx context.Context, wsClient *client.WSClient, cfg config.Config, id *string, result protocol.CommandResultPayload, logger *slog.Logger) {
+	if !result.OK {
+		msg := "<nil>"
+		if result.Error != nil {
+			msg = *result.Error
+		}
+		logger.Warn("command failed", "id", derefStr(id), "error", msg)
+	}
 	resultEnv := protocol.MustEnvelope(protocol.TypeCommandResult, id, strPtr(cfg.AgentName), result)
 	if err := wsClient.Send(ctx, resultEnv); err != nil {
 		logger.Error("send command result", "id", derefStr(id), "error", err)
