@@ -4,7 +4,7 @@
   <p><a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a></p>
 </div>
 
-A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your fleet — all from a single dashboard.
+A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your swarm — all from a single dashboard.
 
 demo video:
 [![Unswarm demo](https://img.youtube.com/vi/7wesHD9aXlo/maxresdefault.jpg)](https://youtu.be/7wesHD9aXlo)
@@ -53,7 +53,7 @@ These trade-offs are inherent to shared-VRAM scheduling. Unswarm is designed for
 
 ## Architecture
 
-Unswarm separates **control plane** traffic (managing the fleet) from the **inference data plane** (serving model requests). Both flow through the backend — agents and containers are never exposed directly.
+Unswarm separates **control plane** traffic (managing the swarm) from the **inference data plane** (serving model requests). Both flow through the backend — agents and containers are never exposed directly.
 
 ### Control Plane
 
@@ -103,11 +103,11 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 |-----------|-------|-------------|
 | **Backend** | C# / .NET 10, EF Core, SQLite | REST API + WebSocket server. Manages models, containers, scheduling, benchmarks, and proxies inference requests to agents. |
 | **Agent** | Go, Docker SDK, Gorilla WebSocket | Lightweight daemon that runs on each remote machine. Connects outbound to the backend, manages local Docker containers, streams telemetry, and serves inference requests. |
-| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS v4 | Single-page dashboard for fleet management, model registry, benchmarking, queue monitoring, and settings. |
+| **Frontend** | React 19, TypeScript, Vite, Tailwind CSS v4 | Single-page dashboard for swarm management, model registry, benchmarking, queue monitoring, and settings. |
 
 ## Features
 
-- **Fleet Management** — Register and manage Docker containers and script runtimes across multiple agent machines. Start, stop, restart, and inspect containers remotely.
+- **Swarm Management** — Register and manage Docker containers and script runtimes across multiple agent machines. Start, stop, restart, and inspect containers remotely.
 
 <img width="998" height="703" alt="image" src="https://github.com/user-attachments/assets/a59d0770-a48f-4ecd-9c3f-38763572e49a" />
 
@@ -121,7 +121,7 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 <img width="751" height="616" alt="image" src="https://github.com/user-attachments/assets/5c19f9bb-7e3e-413e-9cd9-07d00305b120" />
 
 - **Conversation Affinity** — Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls.
-- **Inference Queue** — Bounded request queue with scheduler for managing concurrent inference workloads across the fleet.
+- **Inference Queue** — Bounded request queue with scheduler for managing concurrent inference workloads across the swarm.
 - **Benchmarks** — Run benchmark prompts against models and track performance history (latency, tokens generated).
   
 <img width="1008" height="260" alt="image" src="https://github.com/user-attachments/assets/e32001d6-062e-4ce8-87a9-4da1258c8b14" />
@@ -283,7 +283,7 @@ Analytics endpoints (`usage`, `summary`, `models`, `totals`, `latency-bands`) ac
 | `GET /api/logs` | Query logs |
 | `GET /api/settings` | Get settings |
 | `PUT /api/settings` | Update settings |
-| `GET /api/stats` | Get fleet stats |
+| `GET /api/stats` | Get swarm stats |
 
 ### WebSocket Protocol
 
@@ -377,8 +377,9 @@ export UNSWARM_API_KEY="$(openssl rand -hex 32)"
 docker compose up -d --build
 ```
 
-The dashboard is served at `http://localhost:8080`, with `/api`, `/v1`, `/ws`,
-and `/health` proxied to the backend by nginx. SQLite persists in the
+The dashboard is served at `http://localhost:22301`, with `/api`, `/v1`, `/ws`,
+and `/health` proxied to the backend by nginx. The backend API is also
+directly reachable at `http://localhost:22302`. SQLite persists in the
 `unswarm-data` named volume.
 
 To also run an agent inside the compose network (local testing only — agents
@@ -434,7 +435,7 @@ unswarm/
 └── frontend/               # React SPA
     └── src/
         ├── components/     #   Layout and UI primitives
-        ├── features/       #   Dashboard, models, fleet, benchmarks, queue, logs, settings, auth, api-keys, profile
+        ├── features/       #   Dashboard, models, swarm, benchmarks, queue, logs, settings, auth, api-keys, profile
         ├── lib/            #   API client, auth context, nav items, query config, theme
         └── __tests__/      #   Component tests
 ```

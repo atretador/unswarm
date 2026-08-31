@@ -1,0 +1,12 @@
+.git
+node_modules
+**/node_modules
+**/bin
+**/obj
+**/dist
+**/.next
+**/out
+*.md
+LICENSE
+.vscode
+.idea

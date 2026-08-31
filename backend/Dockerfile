@@ -2,11 +2,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+# Copy solution and project files first for layer caching.
 COPY Unswarm.slnx ./
-COPY src/ ./src/
-COPY tests/ ./tests/
-RUN dotnet restore Unswarm.slnx
+COPY src/Unswarm.Api/Unswarm.Api.csproj src/Unswarm.Api/
+COPY src/Unswarm.Core/Unswarm.Core.csproj src/Unswarm.Core/
+RUN dotnet restore src/Unswarm.Api/Unswarm.Api.csproj
 
+# Copy full source and publish.
 COPY src/ ./src/
 RUN dotnet publish src/Unswarm.Api -c Release -o /app --no-restore
 
@@ -23,10 +25,10 @@ ENV ASPNETCORE_URLS=http://0.0.0.0:5014 \
 
 COPY --from=build /app ./
 
-RUN useradd --uid 1000 --create-home --home-dir /data unswarm \
-    && mkdir -p /data/.config/unswarm \
-    && chown -R unswarm:unswarm /data
+RUN mkdir -p /data/.config/unswarm \
+    && chown -R app:app /data
 
-USER unswarm
-
+USER app
 EXPOSE 5014
+
+ENTRYPOINT ["dotnet", "Unswarm.Api.dll"]
