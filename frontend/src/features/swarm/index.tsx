@@ -582,9 +582,9 @@ function ManageRuntimesModal({
           <button
             type="button"
             role="tab"
-            id="fleet-tab-containers"
+            id="swarm-tab-containers"
             aria-selected={activeTab === "containers"}
-            aria-controls="fleet-panel-containers"
+            aria-controls="swarm-panel-containers"
             onClick={() => setActiveTab("containers")}
             className={`
               flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
@@ -601,9 +601,9 @@ function ManageRuntimesModal({
           <button
             type="button"
             role="tab"
-            id="fleet-tab-scripts"
+            id="swarm-tab-scripts"
             aria-selected={activeTab === "scripts"}
-            aria-controls="fleet-panel-scripts"
+            aria-controls="swarm-panel-scripts"
             onClick={() => setActiveTab("scripts")}
             className={`
               flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium transition-colors
@@ -631,7 +631,7 @@ function ManageRuntimesModal({
       </div>
 
       {activeTab === "containers" ? (
-        <div role="tabpanel" id="fleet-panel-containers" aria-labelledby="fleet-tab-containers">
+        <div role="tabpanel" id="swarm-panel-containers" aria-labelledby="swarm-tab-containers">
           <ManageContainersBody
             key={open ? `containers:${agentName}:${open}` : "closed"}
             agentName={agentName}
@@ -640,7 +640,7 @@ function ManageRuntimesModal({
           />
         </div>
       ) : (
-        <div role="tabpanel" id="fleet-panel-scripts" aria-labelledby="fleet-tab-scripts">
+        <div role="tabpanel" id="swarm-panel-scripts" aria-labelledby="swarm-tab-scripts">
           <ManageScriptsBody
             key={open ? `scripts:${agentName}:${open}` : "closed"}
             agentName={agentName}
@@ -2135,9 +2135,9 @@ function AgentSection({
   );
 }
 
-// ─── Main Fleet page ──────────────────────────────────────────────
+// ─── Main Swarm page ──────────────────────────────────────────────
 
-export default function Fleet() {
+export default function Swarm() {
   const [manageAgent, setManageAgent] = useState<string | null>(null);
   const [concurrencyAgent, setConcurrencyAgent] = useState<string | null>(null);
   const [showAddAgent, setShowAddAgent] = useState(false);
@@ -2187,7 +2187,7 @@ export default function Fleet() {
     return (
       <div className="max-w-5xl p-6">
         <EmptyState
-          title="Failed to load fleet"
+          title="Failed to load swarm"
           description={error.message}
           action={
             <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>
@@ -2213,7 +2213,7 @@ export default function Fleet() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Fleet</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Swarm</h2>
           <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
             Manage registered runtimes and run model discovery across agents.
           </p>
@@ -2227,7 +2227,7 @@ export default function Fleet() {
       {!hasAgents ? (
         <EmptyState
           title="No agents connected"
-          description="Run the agent binary on a machine with Docker to add it to the fleet."
+          description="Run the agent binary on a machine with Docker to add it to the swarm."
           action={
             <Button size="sm" onClick={() => setShowAddAgent(true)}>
               <Plus className="size-3.5" />

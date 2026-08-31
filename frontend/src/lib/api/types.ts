@@ -54,9 +54,9 @@ export interface Model {
   sourceRuntimeAgent: string | null;
   createdAt: string;
   updatedAt: string;
-  /** Origin of the model: "fleet" for self-hosted, "cloud" for third-party API. */
+  /** Origin of the model: "swarm" for self-hosted, "cloud" for third-party API. */
   origin?: string;
-  /** Provider name for cloud models (e.g. "openai"). Null for fleet models. */
+  /** Provider name for cloud models (e.g. "openai"). Null for swarm models. */
   providerName?: string | null;
 }
 
@@ -125,7 +125,7 @@ export interface RegisteredRuntime {
   maxConcurrentInferences: number;
 }
 
-// ─── Fleet / Containers ───────────────────────────────────────────
+// ─── Swarm / Containers ───────────────────────────────────────────
 
 export type ContainerStatus =
   | "running"

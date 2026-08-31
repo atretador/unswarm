@@ -71,7 +71,7 @@ assert_theme_choice "Theme choice persisted after reload" "system"
 
 # --- Navigation: all 6 routes ---
 say "Route rendering"
-for route in "/:Dashboard" "/models:Models" "/fleet:Fleet" "/queue:Queue" "/logs:Logs" "/settings:Settings"; do
+for route in "/:Dashboard" "/models:Models" "/swarm:Swarm" "/queue:Queue" "/logs:Logs" "/settings:Settings"; do
   path="${route%%:*}"; heading="${route##*:}"
   agent-browser open "$BASE_URL$path" >/dev/null 2>&1
   sleep 1.2
@@ -120,12 +120,12 @@ else
   fail "Register submit button not found"
 fi
 
-say "Fleet: start a container"
-agent-browser open "$BASE_URL/fleet" >/dev/null 2>&1
+say "Swarm: start a container"
+agent-browser open "$BASE_URL/swarm" >/dev/null 2>&1
 sleep 1.2
 agent-browser find role button click --name "Start" >/dev/null 2>&1
 sleep 1.5
-assert_console_clean "Fleet start triggers no console errors"
+assert_console_clean "Swarm start triggers no console errors"
 
 say "Logs: filter by level"
 agent-browser open "$BASE_URL/logs" >/dev/null 2>&1

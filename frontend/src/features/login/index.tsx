@@ -297,7 +297,7 @@ export default function LoginPage() {
             >
               One console for your{" "}
               <span className="text-[var(--color-primary)]">
-                entire agent fleet.
+                entire agent swarm.
               </span>
             </motion.h2>
             <motion.p
@@ -329,7 +329,7 @@ export default function LoginPage() {
           </motion.div>
 
           <p className="text-2xs tracking-wide text-[var(--color-text-muted)]">
-            unswarm · fleet control plane
+            unswarm · swarm control plane
           </p>
         </div>
       </aside>
@@ -459,7 +459,7 @@ export default function LoginPage() {
             variants={reduceMotion ? itemStatic : item}
             className="mt-8 text-center text-xs text-[var(--color-text-muted)]"
           >
-            Need access? Contact your fleet administrator.
+            Need access? Contact your swarm administrator.
           </motion.p>
         </motion.div>
       </main>

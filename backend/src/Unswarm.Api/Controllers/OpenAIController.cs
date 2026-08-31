@@ -56,12 +56,12 @@ public sealed class OpenAIController : ControllerBase
     }
 
     /// <summary>
-    /// Lists all available models (fleet containers + cloud providers) in OpenAI format.
+    /// Lists all available models (swarm containers + cloud providers) in OpenAI format.
     /// </summary>
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken ct)
     {
-        // Fleet models
+        // Swarm models
         var models = await _registry.ListAllAsync(ct);
         var data = models.Select(m => new OpenAiModelData
         {

@@ -77,7 +77,7 @@ function formatRelativeTime(iso: string): string {
   return `${months}mo ago`;
 }
 
-/** Model statuses that are safe to benchmark — matches the fleet card semantics. */
+/** Model statuses that are safe to benchmark — matches the swarm card semantics. */
 function benchmarkDisabledReason(model: Model | undefined): string | null {
   if (!model) return "No models available yet";
   if (model.status === "validating") return `${model.name} is still validating — not ready to benchmark`;
@@ -1163,7 +1163,7 @@ export default function Benchmarks() {
           <EmptyState
             icon={<Activity className="size-12" strokeWidth={1.5} />}
             title="No benchmark runs yet"
-            description="Run one from the Benchmarks or Fleet page."
+            description="Run one from the Benchmarks or Swarm page."
           />
         </Card>
       ) : (

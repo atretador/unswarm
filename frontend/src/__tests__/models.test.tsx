@@ -22,7 +22,7 @@ describe("Models", () => {
       expect(screen.getByText("Models")).toBeInTheDocument();
     });
 
-    // Managed tab is default — fleet models visible
+    // Managed tab is default — swarm models visible
     expect(screen.getByText("llama-3.1-70b")).toBeInTheDocument();
     expect(screen.getByText("mistral-large-2")).toBeInTheDocument();
     expect(screen.getByText("codestral-22b")).toBeInTheDocument();
@@ -33,7 +33,7 @@ describe("Models", () => {
     expect(screen.queryByText("claude-sonnet-4-20250514")).not.toBeInTheDocument();
   });
 
-  it("shows status chips with fleet palette semantics", async () => {
+  it("shows status chips with swarm palette semantics", async () => {
     render(
       <TestWrapper>
         <Models />
@@ -96,7 +96,7 @@ describe("Models", () => {
         sourceRuntimeId: null,
         sourceRuntimeName: null,
         sourceRuntimeAgent: null,
-        origin: "fleet",
+        origin: "swarm",
         providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -161,7 +161,7 @@ describe("Models", () => {
         sourceRuntimeId: null,
         sourceRuntimeName: null,
         sourceRuntimeAgent: null,
-        origin: "fleet",
+        origin: "swarm",
         providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -195,10 +195,10 @@ describe("Models", () => {
 
     // llama-3.1-70b and gemma-2-27b both have sourceRuntimeId rc1 → deep links
     const links = screen.getAllByRole("link", {
-      name: "View source runtime on the Fleet page",
+      name: "View source runtime on the Swarm page",
     });
     expect(links.length).toBeGreaterThanOrEqual(1);
-    expect(links[0]).toHaveAttribute("href", "/fleet?focus=rc1");
+    expect(links[0]).toHaveAttribute("href", "/swarm?focus=rc1");
   });
 
   it("renders muted not-registered for models without a source container", async () => {
@@ -327,7 +327,7 @@ describe("Models", () => {
       expect(screen.getByText("Models")).toBeInTheDocument();
     });
 
-    // 5 fleet models, 3 cloud models
+    // 5 swarm models, 3 cloud models
     const managedTab = screen.getByRole("tab", { name: /Managed/i });
     expect(managedTab.textContent).toContain("5");
 

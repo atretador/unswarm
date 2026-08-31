@@ -469,7 +469,7 @@ export default function ApiKeys() {
         </div>
       </Card>
 
-      {/* Tab bar — same pattern as fleet ManageRuntimesModal */}
+      {/* Tab bar — same pattern as swarm ManageRuntimesModal */}
       <div role="tablist" aria-label="Key scope" className="flex border-b border-[var(--color-border-subtle)]">
         {TABS.map((tab) => (
           <button

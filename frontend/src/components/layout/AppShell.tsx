@@ -9,7 +9,8 @@ import { useAuth } from "../../lib/auth-context";
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/models": "Models",
-  "/fleet": "Fleet",
+  "/swarm": "Swarm",
+  "/fleet": "Swarm",
   "/benchmarks": "Benchmarks",
   "/queue": "Queue",
   "/logs": "Logs",

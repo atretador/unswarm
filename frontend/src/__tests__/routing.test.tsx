@@ -31,7 +31,7 @@ describe("Routing smoke tests", () => {
   const routes: Array<{ path: string; heading: string }> = [
     { path: "/", heading: "Dashboard" },
     { path: "/models", heading: "Models" },
-    { path: "/fleet", heading: "Fleet" },
+    { path: "/swarm", heading: "Swarm" },
     { path: "/benchmarks", heading: "Benchmarks" },
     { path: "/queue", heading: "Queue" },
     { path: "/logs", heading: "Logs" },

@@ -96,7 +96,7 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
-        // The fleet UI passes the registered runtime's persisted RuntimeContainerId,
+        // The swarm UI passes the registered runtime's persisted RuntimeContainerId,
         // which is stale after the docker container was recreated (same name, new id).
         // Resolve the live container id first; unknown ids pass through unchanged.
         var containerId = await _registrationService.ResolveLiveContainerIdAsync(id, ct);

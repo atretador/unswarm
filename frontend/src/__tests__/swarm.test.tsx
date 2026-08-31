@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
-import Fleet from "../features/fleet";
+import Swarm from "../features/swarm";
 import type { Agent, RegisterRuntimePayload, RegisteredRuntime } from "../lib/api/types";
 
 beforeEach(() => {
@@ -41,7 +41,7 @@ const HOST_RCS: RegisteredRuntime[] = [
         sourceRuntimeId: "rc1",
         sourceRuntimeName: "llama3.1-70b",
         sourceRuntimeAgent: "host",
-        origin: "fleet",
+        origin: "swarm",
         providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -59,7 +59,7 @@ const HOST_RCS: RegisteredRuntime[] = [
         sourceRuntimeId: "rc1",
         sourceRuntimeName: "gemma2-27b",
         sourceRuntimeAgent: "host",
-        origin: "fleet",
+        origin: "swarm",
         providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -92,17 +92,17 @@ function seedRegisteredRuntimes(rcs: RegisteredRuntime[]) {
   vi.spyOn(mockClient, "listRegisteredRuntimes").mockResolvedValue([...rcs]);
 }
 
-describe("Fleet", () => {
+describe("Swarm", () => {
   it("renders agent sections with host first, remotes collapsed", async () => {
     seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Fleet")).toBeInTheDocument();
+      expect(screen.getByText("Swarm")).toBeInTheDocument();
     });
 
     const hostHeader = screen.getByRole("button", { name: "Toggle host section" });
@@ -120,7 +120,7 @@ describe("Fleet", () => {
     seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -135,7 +135,7 @@ describe("Fleet", () => {
     seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -152,7 +152,7 @@ describe("Fleet", () => {
     seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -170,7 +170,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -194,7 +194,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -221,7 +221,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -264,7 +264,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -295,7 +295,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -335,7 +335,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -375,7 +375,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -402,7 +402,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -430,7 +430,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -458,7 +458,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -484,7 +484,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -513,7 +513,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -550,7 +550,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -569,7 +569,7 @@ describe("Fleet", () => {
     seedRegisteredRuntimes(HOST_RCS);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -607,7 +607,7 @@ describe("Fleet", () => {
     seedRegisteredRuntimes(validatingRcs);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -630,7 +630,7 @@ describe("Fleet", () => {
     setMockLatency(500);
     const { container } = render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -643,12 +643,12 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Failed to load fleet")).toBeInTheDocument();
+      expect(screen.getByText("Failed to load swarm")).toBeInTheDocument();
     });
 
     expect(screen.getByText("Connection refused")).toBeInTheDocument();
@@ -662,12 +662,12 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Failed to load fleet")).toBeInTheDocument();
+      expect(screen.getByText("Failed to load swarm")).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: /retry/i }));
@@ -682,12 +682,12 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Fleet")).toBeInTheDocument();
+      expect(screen.getByText("Swarm")).toBeInTheDocument();
     });
 
     const addButtons = screen.getAllByRole("button", { name: /add agent/i });
@@ -704,7 +704,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -726,7 +726,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -756,7 +756,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -807,7 +807,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -836,7 +836,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -860,7 +860,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -907,7 +907,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -939,7 +939,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -973,8 +973,8 @@ describe("Fleet", () => {
     );
     seedRegisteredRuntimes([...edgeRcs, HOST_RCS[0]]);
     render(
-      <TestWrapper initialEntries={["/fleet?focus=rc3"]}>
-        <Fleet />
+      <TestWrapper initialEntries={["/swarm?focus=rc3"]}>
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -999,8 +999,8 @@ describe("Fleet", () => {
     // focus=rc1 belongs to host (already expanded by default) — edge-node-1 must stay collapsed.
     seedRegisteredRuntimes(HOST_RCS);
     render(
-      <TestWrapper initialEntries={["/fleet?focus=rc1"]}>
-        <Fleet />
+      <TestWrapper initialEntries={["/swarm?focus=rc1"]}>
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1055,7 +1055,7 @@ describe("Fleet", () => {
     seedHostTelemetry("stopped");
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1082,7 +1082,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1135,7 +1135,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1162,7 +1162,7 @@ describe("Fleet", () => {
     seedHostTelemetry("running");
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1184,7 +1184,7 @@ describe("Fleet", () => {
     seedHostTelemetry("starting");
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1228,7 +1228,7 @@ describe("Fleet", () => {
     ]);
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1253,7 +1253,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1302,7 +1302,7 @@ describe("Fleet", () => {
           sourceRuntimeId: "rc1",
           sourceRuntimeName: "llama3.1-70b",
           sourceRuntimeAgent: null,
-          origin: "fleet",
+          origin: "swarm",
           providerName: null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -1350,7 +1350,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1371,7 +1371,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1431,7 +1431,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1465,7 +1465,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1504,7 +1504,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1534,7 +1534,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1601,7 +1601,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1629,7 +1629,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1729,7 +1729,7 @@ describe("Fleet", () => {
     const user = userEvent.setup();
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 
@@ -1796,7 +1796,7 @@ describe("Fleet", () => {
 
     render(
       <TestWrapper>
-        <Fleet />
+        <Swarm />
       </TestWrapper>,
     );
 

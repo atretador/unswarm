@@ -373,7 +373,7 @@ const MODELS: Model[] = [
     sourceRuntimeId: "rc1",
     sourceRuntimeName: "llama3.1-70b",
     sourceRuntimeAgent: "host",
-    origin: "fleet",
+    origin: "swarm",
     providerName: null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -391,7 +391,7 @@ const MODELS: Model[] = [
     sourceRuntimeId: null,
     sourceRuntimeName: null,
     sourceRuntimeAgent: null,
-    origin: "fleet",
+    origin: "swarm",
     providerName: null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -409,7 +409,7 @@ const MODELS: Model[] = [
     sourceRuntimeId: null,
     sourceRuntimeName: null,
     sourceRuntimeAgent: null,
-    origin: "fleet",
+    origin: "swarm",
     providerName: null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -427,7 +427,7 @@ const MODELS: Model[] = [
     sourceRuntimeId: null,
     sourceRuntimeName: null,
     sourceRuntimeAgent: null,
-    origin: "fleet",
+    origin: "swarm",
     providerName: null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -445,7 +445,7 @@ const MODELS: Model[] = [
     sourceRuntimeId: "rc1",
     sourceRuntimeName: "gemma2-27b",
     sourceRuntimeAgent: "host",
-    origin: "fleet",
+    origin: "swarm",
     providerName: null,
     createdAt: NOW,
     updatedAt: NOW,
@@ -1128,7 +1128,7 @@ export const mockClient: UnswarmClient = {
     const m: Model = {
       ...data,
       id: id(),
-      origin: data.origin ?? "fleet",
+      origin: data.origin ?? "swarm",
       providerName: data.providerName ?? null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -1354,7 +1354,7 @@ export const mockClient: UnswarmClient = {
     };
   },
 
-  // Fleet
+  // Swarm
   async listContainers() {
     await delay(rand(80, 200));
     return containers.map((c) => ({ ...c }));

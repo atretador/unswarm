@@ -243,7 +243,7 @@ public sealed class ContainersControllerTests
         var (container, _) = await SeedRegisteredWithModelAsync("reg-1", "model-1", "llama-3");
 
         // Scripted StartAsync failure: container persisted as Error with a message,
-        // endpoint returns 200 (not an error status) so the fleet refetch shows it.
+        // endpoint returns 200 (not an error status) so the swarm refetch shows it.
         _registrationService.StartResult = new RegisteredRuntimeWithModels
         {
             Container = container with
@@ -436,12 +436,12 @@ public sealed class ContainersControllerTests
         Assert.Null(response.RuntimeContainerId);
     }
 
-    // ── Generic stop/restart endpoints (fleet UI card buttons) ─────────
+    // ── Generic stop/restart endpoints (swarm UI card buttons) ─────────
 
     [Fact]
     public async Task Stop_StaleRuntimeContainerId_RestartsLiveContainerId()
     {
-        // The fleet UI Stop button posts the persisted RuntimeContainerId to
+        // The swarm UI Stop button posts the persisted RuntimeContainerId to
         // /api/containers/{id}/stop. After a container recreation that id is stale;
         // the controller must resolve and stop the LIVE id instead.
         _registrationService.LiveIdMap["old-id"] = "new-id";

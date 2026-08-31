@@ -33,7 +33,7 @@ import type { Model, ModelStatus, Settings } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
 import { TestChatDrawer } from "./test-chat-drawer";
 
-// ─── Status semantics — identical to the Fleet page palette ───────
+// ─── Status semantics — identical to the Swarm page palette ───────
 
 const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" | "default"> = {
   ready: "success",
@@ -93,7 +93,7 @@ function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model
   );
 }
 
-// ─── Model row (Managed / Fleet) ─────────────────────────────────
+// ─── Model row (Managed / Swarm) ─────────────────────────────────
 
 function MetricChip({
   icon,
@@ -244,8 +244,8 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <TestChatButton model={model} onChat={onChat} />
           {model.sourceRuntimeId ? (
             <Link
-              to={`/fleet?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
-              aria-label={`View source runtime on the Fleet page`}
+              to={`/swarm?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
+              aria-label={`View source runtime on the Swarm page`}
               className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
             >
               <ExternalLink className="size-2.5" />
@@ -657,7 +657,7 @@ export default function Models() {
             <EmptyState
               icon={<Box className="size-12" strokeWidth={1.5} />}
               title="No models discovered yet"
-              description="Register containers on the Fleet page to auto-discover their models, or add cloud providers to access hosted models."
+              description="Register containers on the Swarm page to auto-discover their models, or add cloud providers to access hosted models."
             />
           </Card>
         ) : filteredModels.length === 0 ? (

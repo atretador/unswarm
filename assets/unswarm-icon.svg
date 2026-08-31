@@ -32,7 +32,7 @@
   <!-- Ambient glow -->
   <ellipse cx="256" cy="256" rx="212" ry="212" fill="url(#ambient)"/>
 
-  <!-- Routing lines: control plane to fleet -->
+  <!-- Routing lines: control plane to swarm -->
   <g stroke="#67e8f9" stroke-opacity="0.38" stroke-width="9" stroke-linecap="round">
     <line x1="256" y1="256" x2="256" y2="106"/>
     <line x1="256" y1="256" x2="386" y2="181"/>
@@ -42,7 +42,7 @@
     <line x1="256" y1="256" x2="126" y2="181"/>
   </g>
 
-  <!-- Dormant fleet nodes -->
+  <!-- Dormant swarm nodes -->
   <g fill="url(#dim)" stroke="#22d3ee" stroke-opacity="0.45" stroke-width="3">
     <circle cx="256" cy="106" r="30"/>
     <circle cx="386" cy="331" r="30"/>

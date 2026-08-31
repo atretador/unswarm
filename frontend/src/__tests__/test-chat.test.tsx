@@ -231,7 +231,7 @@ describe("Models page — test chat", () => {
         sourceRuntimeId: null,
         sourceRuntimeName: null,
         sourceRuntimeAgent: null,
-        origin: "fleet",
+        origin: "swarm",
         providerName: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

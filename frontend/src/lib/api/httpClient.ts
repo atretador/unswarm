@@ -454,7 +454,7 @@ export const httpClient: UnswarmClient = {
     );
   },
 
-  // ── Fleet / Containers ────────────────────────────────────────
+  // ── Swarm / Containers ────────────────────────────────────────
   listContainers() {
     return request<Container[]>("/api/containers");
   },

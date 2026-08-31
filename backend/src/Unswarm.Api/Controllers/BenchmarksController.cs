@@ -12,7 +12,7 @@ namespace Unswarm.Api.Controllers;
 
 /// <summary>
 /// Benchmark history and model performance evaluation. Run benchmark prompts
-/// against models (fleet or cloud) to measure tokens/sec, latency, and response quality.
+/// against models (swarm or cloud) to measure tokens/sec, latency, and response quality.
 /// </summary>
 /// <remarks>
 /// POST /api/benchmarks?modelId= — Run a benchmark (Admin only)
@@ -59,7 +59,7 @@ public sealed class BenchmarksController : ControllerBase
     public async Task<IActionResult> Run([FromQuery] string modelId, [FromBody] BenchmarkRunRequest? body, CancellationToken ct)
     {
         // ── Cloud model path ──────────────────────────────────────────────
-        // Cloud IDs (cloud/<provider>/<model>) are not in the fleet registry;
+        // Cloud IDs (cloud/<provider>/<model>) are not in the swarm registry;
         // forward the request directly to the upstream provider via
         // CloudForwardingService and record the result in benchmark history.
         if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
@@ -67,7 +67,7 @@ public sealed class BenchmarksController : ControllerBase
             return await RunCloudBenchmarkAsync(modelId, body, ct);
         }
 
-        // ── Fleet model path (existing) ───────────────────────────────────
+        // ── Swarm model path (existing) ───────────────────────────────────
         var model = await _registry.GetAsync(modelId, ct);
         if (model is null) return NotFound(new { error = $"Model {modelId} not found" });
 
@@ -403,7 +403,7 @@ public sealed class BenchmarksController : ControllerBase
         {
             var item = BenchmarkResponse.FromEntry(entry);
 
-            // Cloud models are not in the fleet registry — derive a display name
+            // Cloud models are not in the swarm registry — derive a display name
             // from the ID: "cloud/openai/gpt-4o" → "openai/gpt-4o".
             if (entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal))
             {

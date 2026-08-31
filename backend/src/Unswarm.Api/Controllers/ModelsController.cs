@@ -192,7 +192,7 @@ public sealed class ModelsController : ControllerBase
 
     /// <summary>
     /// Send one interactive test-chat turn to a model through the SAME pipeline as
-    /// /v1/chat/completions: fleet models go through the scheduler queue, cloud
+    /// /v1/chat/completions: swarm models go through the scheduler queue, cloud
     /// models are forwarded directly to the provider. Streaming responses pass
     /// through untouched so the browser can render tokens live. Admin-only — this
     /// triggers real inference (and real cloud spend), mirroring benchmark runs.
@@ -224,14 +224,14 @@ public sealed class ModelsController : ControllerBase
                 messages, isStream: request.Stream,
                 maxTokens: request.MaxTokens, temperature: request.Temperature, ct).ConfigureAwait(false);
 
-        return await TestChatFleetAsync(
+        return await TestChatSwarmAsync(
             request.Model,
             messages, isStream: request.Stream,
             maxTokens: request.MaxTokens, temperature: request.Temperature, ct).ConfigureAwait(false);
     }
 
-    /// <summary>Fleet path: enqueue on the scheduler queue exactly like /v1 traffic.</summary>
-    private async Task<IActionResult> TestChatFleetAsync(
+    /// <summary>Swarm path: enqueue on the scheduler queue exactly like /v1 traffic.</summary>
+    private async Task<IActionResult> TestChatSwarmAsync(
         string modelId, List<TestChatMessage> messages, bool isStream, int? maxTokens, double? temperature, CancellationToken ct)
     {
         var model = await _registry.GetAsync(modelId, ct);
@@ -408,7 +408,7 @@ public sealed class ModelsController : ControllerBase
 
     /// <summary>
     /// Serializes an OpenAI chat-completions payload. The "model" field uses the
-    /// registry name for fleet models (what external clients pass to /v1) and the
+    /// registry name for swarm models (what external clients pass to /v1) and the
     /// full cloud/&lt;provider&gt;/&lt;model&gt; id otherwise.
     /// </summary>
     internal static string BuildTestChatPayload(

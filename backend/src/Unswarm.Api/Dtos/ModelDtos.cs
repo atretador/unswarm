@@ -33,7 +33,7 @@ public sealed class ModelResponse
     public string? SourceRuntimeAgent { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
-    public string Origin { get; set; } = "fleet";
+    public string Origin { get; set; } = "swarm";
     public string? ProviderName { get; set; }
 
     public static ModelResponse FromDefinition(ModelDefinition d) => FromDefinition(d, null);
@@ -52,7 +52,7 @@ public sealed class ModelResponse
         SourceRuntimeId = d.SourceRuntimeId,
         CreatedAt = d.CreatedAt,
         UpdatedAt = d.UpdatedAt,
-        Origin = "fleet"
+        Origin = "swarm"
     };
 }
 
@@ -92,7 +92,7 @@ public sealed class TestChatMessage
 /// </summary>
 public sealed class TestChatRequest
 {
-    /// <summary>Model id: a fleet registry id or a "cloud/&lt;provider&gt;/&lt;model&gt;" id.</summary>
+    /// <summary>Model id: a swarm registry id or a "cloud/&lt;provider&gt;/&lt;model&gt;" id.</summary>
     public string Model { get; set; } = "";
 
     /// <summary>Conversation so far, oldest first. Must contain at least one message.</summary>

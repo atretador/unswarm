@@ -7,7 +7,7 @@ export interface LogoProps {
 }
 
 /**
- * Unswarm brand mark — an ordered constellation of fleet nodes
+ * Unswarm brand mark — an ordered constellation of swarm nodes
  * around a central control core. The bright top-right node is the
  * active model; the hex cell in the core echoes the ordered hive.
  */

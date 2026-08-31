@@ -12,7 +12,7 @@ A standalone **Cloud Providers** page where users save all their cloud LLM provi
 provider traffic routes through unswarm's OpenAI-compatible endpoint: requests targeting a
 cloud provider **bypass the local queue/scheduler entirely** ("unqueued") and are proxied
 straight through with full SSE stream support. Provider models appear in `GET v1/models`
-alongside fleet-hosted models, so any OpenAI-compatible harness pointed at unswarm sees and
+alongside swarm-hosted models, so any OpenAI-compatible harness pointed at unswarm sees and
 uses them transparently.
 
 UI requirements (from user):
@@ -21,14 +21,14 @@ UI requirements (from user):
 
 ## Current state (verified recon + Gate 1 spot-checks)
 
-- Models are fleet-shaped: `ModelEntity` (`backend/src/Unswarm.Core/Persistence/UnswarmDbContext.cs:8-25`)
+- Models are swarm-shaped: `ModelEntity` (`backend/src/Unswarm.Core/Persistence/UnswarmDbContext.cs:8-25`)
   → FK `SourceRuntimeId` → `RegisteredRuntimeEntity` (:101-132) whose `Agent` field ("host"/agent name)
   drives `ModelTargetResolver.ResolveTargetAsync` (`backend/src/Unswarm.Core/Services/ModelTargetResolver.cs:20-35`).
 - Queue path: `OpenAIController.HandleInferenceAsync` (`backend/src/Unswarm.Api/Controllers/OpenAIController.cs`)
   builds `InferenceRequest` → `SchedulerQueue.EnqueueAsync` (bounded global channel) →
   `SchedulerWorker.DispatchAsync` → per-target slot → container switch → `InferenceProxy.InvokeAsync`;
   controller pipes response bytes flush-per-chunk for SSE (:130-164).
-- `GET v1/models` (:32-53) lists fleet models only, `OwnedBy="unswarm"`.
+- `GET v1/models` (:32-53) lists swarm models only, `OwnedBy="unswarm"`.
 - Persistence uses EF migrations (`Program.cs:331`) → additive migration is clean.
 - Auth: fail-closed `ApiKeyAuthMiddleware`, scoped keys (`InferenceKey` policy). Existing
   `ApiKeyEntity` is hash-only — NOT reusable for provider keys (see Security).
@@ -144,12 +144,12 @@ error body — never a scheduler miss.
 - Log-scrub: never log Authorization header or decrypted key.
 
 ### v1/models merge
-`GET v1/models` returns fleet models (`OwnedBy="unswarm"`) plus one entry per provider
+`GET v1/models` returns swarm models (`OwnedBy="unswarm"`) plus one entry per provider
 model: `id = "cloud/<providerName>/<model>"`, `OwnedBy = providerName`. Cloud rows need
 nullable/placeholder `Unswarm` DTO fields (`OpenAiModelData.Unswarm` is currently
-non-nullable with fleet-only fields — fixer-level detail in P2). Collision safety:
+non-nullable with swarm-only fields — fixer-level detail in P2). Collision safety:
 `cloud/` is a reserved prefix. **Enforcement point:** there is currently no model-name
-validation anywhere — fleet model names flow from container discovery →
+validation anywhere — swarm model names flow from container discovery →
 `ContainerRegistrationService.cs:987` → `ModelRegistry.CreateAsync`
 (`ModelRegistry.cs:45-67`) unchecked. Add the reservation guard in
 `ModelRegistry.CreateAsync`/`UpdateAsync` (reject model ids starting with `cloud/`),
@@ -170,8 +170,8 @@ provider.
   Input error prop / error-string precedent). Manual validation, no schema lib.
 - API layer additions across all four files: `types.ts` (`CloudProvider`,
   `CloudProviderInput`), `client.ts` signatures, `httpClient.ts` impl, `mock.ts`.
-- TanStack Query mutations with invalidate-on-success and onError rendering (fleet
-  rediscover precedent `features/fleet/index.tsx:1319-1327`).
+- TanStack Query mutations with invalidate-on-success and onError rendering (swarm
+  rediscover precedent `features/swarm/index.tsx:1319-1327`).
 
 ## Implementation phases (for future execution)
 

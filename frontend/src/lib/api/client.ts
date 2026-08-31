@@ -86,7 +86,7 @@ export interface UnswarmClient {
   /** Atomically toggle concurrency between two runtimes in a single DB transaction. */
   toggleRuntimeConcurrency(payload: ToggleConcurrencyPayload): Promise<ToggleConcurrencyResponse>;
 
-  // Fleet
+  // Swarm
   listContainers(): Promise<Container[]>;
   startContainer(modelId: string): Promise<Container>;
   stopContainer(containerId: string): Promise<void>;

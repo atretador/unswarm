@@ -978,7 +978,7 @@ describe("Benchmarks", () => {
     expect(runSpy.mock.calls[0][0]).toBe("c1");
   });
 
-  it("fleet models show name without [Cloud] prefix in dropdown", async () => {
+  it("swarm models show name without [Cloud] prefix in dropdown", async () => {
     render(
       <TestWrapper>
         <Benchmarks />
@@ -996,10 +996,10 @@ describe("Benchmarks", () => {
 
     const combo = screen.getByRole("combobox", { name: "Target model" }) as HTMLSelectElement;
     const optionTexts = Array.from(combo.options).map((o) => o.text);
-    // Fleet ready models show just the name
+    // Swarm ready models show just the name
     expect(optionTexts).toContain("llama-3.1-70b");
     expect(optionTexts).toContain("mistral-large-2");
-    // Fleet non-ready models show status suffix
+    // Swarm non-ready models show status suffix
     expect(optionTexts.some((t) => t.includes("codestral-22b") && t.includes("validating"))).toBe(true);
     expect(optionTexts.some((t) => t.includes("phi-3.5-mini") && t.includes("deprecated"))).toBe(true);
   });

@@ -124,7 +124,7 @@ public sealed class AgentsController : ControllerBase
         }
     }
 
-    // Admin-only: unlike the aggregated fleet listing above, this returns the
+    // Admin-only: unlike the aggregated swarm listing above, this returns the
     // agent's UNFILTERED container list (raw "docker ps") which can include
     // unrelated containers on the host.
     [HttpGet("{name}/containers")]

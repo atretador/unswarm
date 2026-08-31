@@ -116,10 +116,10 @@ public sealed class ModelsControllerTestChatTests
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
-    // ── Fleet path ───────────────────────────────────────────────────
+    // ── Swarm path ───────────────────────────────────────────────────
 
     [Fact]
-    public async Task TestChat_UnknownFleetModel_Returns404()
+    public async Task TestChat_UnknownSwarmModel_Returns404()
     {
         var result = await CreateController().TestChat(Turn(), CancellationToken.None);
         var notFound = Assert.IsType<NotFoundObjectResult>(result);
@@ -127,7 +127,7 @@ public sealed class ModelsControllerTestChatTests
     }
 
     [Fact]
-    public async Task TestChat_FleetModel_RoutesThroughSchedulerWithRegistryName()
+    public async Task TestChat_SwarmModel_RoutesThroughSchedulerWithRegistryName()
     {
         var model = await SeedModel(id: "model-1", name: "llama-3");
 

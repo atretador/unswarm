@@ -1,5 +1,5 @@
 import { Suspense, lazy } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "./components/layout/AppShell";
 import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 
@@ -9,7 +9,7 @@ import { ProtectedRoute } from "./components/auth/ProtectedRoute";
 const LoginPage = lazy(() => import("./features/login"));
 const Dashboard = lazy(() => import("./features/dashboard"));
 const Models = lazy(() => import("./features/models"));
-const Fleet = lazy(() => import("./features/fleet"));
+const Swarm = lazy(() => import("./features/swarm"));
 const Providers = lazy(() => import("./features/providers"));
 const Benchmarks = lazy(() => import("./features/benchmarks"));
 const Metrics = lazy(() => import("./features/metrics"));
@@ -41,7 +41,8 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/models" element={<Models />} />
-                  <Route path="/fleet" element={<Fleet />} />
+                  <Route path="/swarm" element={<Swarm />} />
+                  <Route path="/fleet" element={<Navigate to="/swarm" replace />} />
                   <Route path="/providers" element={<Providers />} />
                   <Route path="/benchmarks" element={<Benchmarks />} />
                   <Route path="/metrics" element={<Metrics />} />
