@@ -84,12 +84,7 @@ public sealed class HostScriptRuntimeController
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true,
-                Environment =
-                {
-                    ["UNSWARM_PORT"] = declaredPort.ToString(),
-                    ["UNSWARM_REG_ID"] = regId
-                }
+                CreateNoWindow = true
             };
             // ArgumentList: the launcher path is passed as a single argv element
             // — no space/quoting re-splitting, so paths with spaces or shell

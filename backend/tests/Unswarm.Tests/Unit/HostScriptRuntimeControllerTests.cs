@@ -149,11 +149,11 @@ public sealed class HostScriptRuntimeControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task StartScriptAsync_SetsEnvironmentVariables()
+    public async Task StartScriptAsync_NoEnvironmentInjection()
     {
-        // Script that writes env vars to a file
+        // Script that checks for injected env vars — they should NOT exist
         var envFile = Path.Combine(_testDir, $"env-{Guid.NewGuid():N}.txt");
-        var script = CreateScript($"echo PORT=$UNSWARM_PORT REG=$UNSWARM_REG_ID > {envFile} && sleep 30");
+        var script = CreateScript($"echo HAS_PORT=${{UNSWARM_PORT:-unset}} HAS_REG=${{UNSWARM_REG_ID:-unset}} > {envFile} && sleep 30");
 
         var result = await _controller.StartScriptAsync("test-env", script, 9090);
         Assert.Null(result.ErrorMessage);
@@ -161,8 +161,8 @@ public sealed class HostScriptRuntimeControllerTests : IAsyncLifetime
         await Task.Delay(500);
 
         var envContent = await File.ReadAllTextAsync(envFile);
-        Assert.Contains("PORT=9090", envContent);
-        Assert.Contains("REG=test-env", envContent);
+        Assert.Contains("HAS_PORT=unset", envContent);
+        Assert.Contains("HAS_REG=unset", envContent);
 
         await _controller.StopScriptAsync("test-env");
     }
