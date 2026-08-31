@@ -85,9 +85,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterAsync_Success_CreatesContainerAndStarts()
+    public async Task RegisterAsync_Success_CreatesContainerWithRegisteredStatus()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -104,11 +103,11 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal("ghcr.io/ollama/ollama:latest", result.Container.Image);
         Assert.Equal(8080, result.Container.ContainerPort);
         Assert.Equal(4096, result.Container.MemoryLimitMb);
-        // With fake Docker + health checker + a real discovery endpoint, the flow
-        // succeeds through to Ready (discovery returns zero models).
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.NotNull(result.Container.RuntimeContainerId);
-        Assert.NotNull(result.Container.MappedPort);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.RuntimeContainerId);
+        Assert.Null(result.Container.MappedPort);
+        Assert.Null(result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
         // Container was registered
         Assert.Single(_registry.CreatedContainers);
     }
@@ -116,7 +115,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task RegisterAsync_DisplayNameDefaultsToImage_WhenEmpty()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -129,11 +127,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterAsync_DockerStartFailure_SetsErrorStatus()
+    public async Task RegisterAsync_DockerStartFailure_StillRegistersSuccessfully()
     {
-        _docker.FailStart = true;
-        _docker.StartErrorMessage = "Image not found";
-
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -143,16 +138,14 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.Equal("Image not found", result.Container.ErrorMessage);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.ErrorMessage);
         Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
-    public async Task RegisterAsync_HealthTimeout_SetsErrorStatus()
+    public async Task RegisterAsync_HealthTimeout_StillRegisters()
     {
-        _healthChecker.IsReady = false;
-
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -162,15 +155,13 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.NotNull(result.Container.ErrorMessage);
-        Assert.Contains("Health check timeout", result.Container.ErrorMessage!);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.ErrorMessage);
     }
 
     [Fact]
     public async Task DeleteAsync_RemovesContainerAndMappings()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -202,7 +193,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_WithoutDeleteModels_DeprecatesModels()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -268,11 +258,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterAsync_DiscoveryTransportFailure_SetsErrorStatus()
+    public async Task RegisterAsync_DiscoveryTransportFailure_StillRegisters()
     {
-        // Dead port (no listener) → ModelDiscoveryService throws → register must
-        // surface the real error instead of silently going Ready.
-        _docker.MappedPortOverride = 1; // almost certainly nothing listening
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -282,10 +269,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.NotNull(result.Container.ErrorMessage);
-        // The transport failure (connection refused) surfaces, not a silent Ready.
-        Assert.Contains("Connection refused", result.Container.ErrorMessage);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
         Assert.Empty(result.DiscoveredModels);
     }
 
@@ -322,7 +306,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task DeleteAsync_RuntimeContainerStopped()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -331,20 +314,20 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         };
         var created = await service.RegisterAsync(request);
 
-        // The registration flow started a runtime container
-        Assert.NotNull(created.Container.RuntimeContainerId);
+        // Registration no longer starts a runtime container
+        Assert.Null(created.Container.RuntimeContainerId);
 
         await service.DeleteAsync(created.Container.Id, deleteModels: false);
 
-        // Docker stop should have been called with the runtime container id
-        Assert.Contains(created.Container.RuntimeContainerId!, _docker.StoppedContainerIds);
+        // No container to stop
+        Assert.Empty(_docker.StoppedContainerIds);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_HappyPath_RoutesThroughRemoteController()
+    public async Task RegisterAsync_RemoteAgent_RegistersWithRemoteAgentInfo()
     {
         // Remote controller: no mapped port in start result (agent omits it),
-        // health probe reports healthy immediately, discovery returns models.
+        // health probe reports healthy immediately.
         var remote = new FakeRemoteDockerController
         {
             StartResult = new ContainerStartResult { ContainerId = "remote-c1" },
@@ -359,11 +342,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
                     Port = 9090
                 }
             ],
-            Healthy = true,
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ]
+            Healthy = true
         };
 
         var router = new FakeDockerControllerRouter(
@@ -380,27 +359,17 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.Equal("remote-c1", result.Container.RuntimeContainerId);
-        Assert.Equal(9090, result.Container.MappedPort);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.MappedPort);
+        Assert.Empty(result.DiscoveredModels);
 
-        // Remote health check was performed on the resolved mapped port
-        Assert.Equal([9090], remote.HealthCheckedPorts);
-
-        // Discovery IS validation: the model is Ready immediately, with ZERO smoke
-        // inference calls (no chat_completion during registration).
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal("llama-3-8b", model.Id);
-        Assert.Equal(ModelStatus.Ready, model.Status);
-        Assert.Empty(remote.InferCalls);
-
-        // Start + discovery went through the remote controller, not the host
+        // RegisterAsync no longer starts; it only validates and persists.
         Assert.Empty(_docker.StartedContainerIds);
-        Assert.Equal(["vllm-serve"], remote.StartedImages);
+        Assert.Empty(remote.StartedImages);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_NoPortResolvable_SetsError()
+    public async Task RegisterAsync_RemoteAgent_NoPortResolvable_StillRegisters()
     {
         var remote = new FakeRemoteDockerController
         {
@@ -423,13 +392,13 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.Equal("Could not determine mapped port for remote container", result.Container.ErrorMessage);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.ErrorMessage);
         Assert.Null(result.Container.MappedPort);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_HealthNeverHealthy_EventuallyErrors()
+    public async Task RegisterAsync_RemoteAgent_HealthNeverHealthy_StillRegisters()
     {
         var remote = new FakeRemoteDockerController
         {
@@ -440,7 +409,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         var router = new FakeDockerControllerRouter(
             new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
 
-        // Small deadline keeps the test fast; poll interval also small.
         var service = CreateService(
             router: router,
             remoteHealthTimeout: TimeSpan.FromMilliseconds(300),
@@ -456,29 +424,17 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.Contains("health check timed out on agent 'gpu1'", result.Container.ErrorMessage);
-        // The health probe was actually polled
-        Assert.NotEmpty(remote.HealthCheckedPorts);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.ErrorMessage);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_ProbeThrowsOnce_ThenHealthy_Completes()
+    public async Task RegisterAsync_RemoteAgent_ProbeThrowsOnce_StillRegisters()
     {
         var remote = new FakeRemoteDockerController
         {
             StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 9090 },
-            Healthy = true,
-            // First probe throws (transient), subsequent probes are healthy. The poll
-            // loop must tolerate the exception and keep going until it succeeds.
-            HealthProbeScript = new Queue<HealthProbeStep>(
-            [
-                new HealthProbeStep { Throw = new InvalidOperationException("transient probe failure") }
-            ]),
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
-            ]
+            Healthy = true
         };
 
         var router = new FakeDockerControllerRouter(
@@ -499,19 +455,15 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        // Probe exception tolerated → registration completes Ready
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.Equal(9090, result.Container.MappedPort);
-        Assert.True(remote.HealthCheckedPorts.Count >= 2, "expected at least two probes (throw then healthy)");
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_PortZero_ResolvesViaListContainers()
+    public async Task RegisterAsync_RemoteAgent_PortZero_Registers()
     {
         var remote = new FakeRemoteDockerController
         {
-            // Start succeeds but reports mapped port 0 (meaningless) → must be
-            // treated as unresolved and resolved via ListContainersAsync.
             StartResult = new ContainerStartResult { ContainerId = "remote-c1", MappedPort = 0 },
             ListedContainers =
             [
@@ -523,10 +475,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
                     Status = ContainerStatus.Running,
                     Port = 8081
                 }
-            ],
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
             ]
         };
 
@@ -544,18 +492,16 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.Equal(8081, result.Container.MappedPort);
-        Assert.Equal([8081], remote.HealthCheckedPorts);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.MappedPort);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_ImageMatchCaseInsensitive()
+    public async Task RegisterAsync_RemoteAgent_ImageMatchCaseInsensitive_Registers()
     {
         var remote = new FakeRemoteDockerController
         {
-            // Start omits the mapped port → resolved from listing; the agent reports
-            // container names in a different case than the registered image.
             StartResult = new ContainerStartResult { ContainerId = "remote-c1" },
             ListedContainers =
             [
@@ -567,10 +513,6 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
                     Status = ContainerStatus.Running,
                     Port = 9092
                 }
-            ],
-            Discovered =
-            [
-                new DiscoveredModel { ModelId = "llama-3-8b", OwnedBy = "meta" }
             ]
         };
 
@@ -588,18 +530,13 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        Assert.Equal(9092, result.Container.MappedPort);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
-    public async Task RegisterAsync_Host_DiscoveredModel_LandsReady_WithoutSmokeValidation()
+    public async Task RegisterAsync_Host_RegistersWithoutDiscovery()
     {
-        // Discovery IS validation: a host-discovered model is created Ready directly,
-        // with no validator/smoke inference call during registration.
-        _docker.MappedPortOverride = StartDiscoveryServer(
-            """{"data":[{"id":"llama-3-8b","owned_by":"meta"}]}""");
-
         var service = CreateService();
         var request = new ContainerRegistrationRequest
         {
@@ -609,19 +546,12 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
-        var model = Assert.Single(result.DiscoveredModels);
-        Assert.Equal("llama-3-8b", model.Id);
-        Assert.Equal(ModelStatus.Ready, model.Status);
-
-        // The model is persisted Ready in the registry.
-        var persisted = await _modelRegistry.GetAsync("llama-3-8b");
-        Assert.NotNull(persisted);
-        Assert.Equal(ModelStatus.Ready, persisted!.Status);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
-    public async Task RegisterAsync_RemoteAgent_AmbiguousImageMatch_SetsError()
+    public async Task RegisterAsync_RemoteAgent_AmbiguousImageMatch_StillRegisters()
     {
         var remote = new FakeRemoteDockerController
         {
@@ -662,16 +592,16 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
-        Assert.Contains(
-            "2 containers match image 'vllm-serve' on agent 'gpu1'; cannot determine runtime container",
-            result.Container.ErrorMessage);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
     public async Task StartAsync_Host_StartsContainer_ReturnsReady_WithModelsPreserved()
     {
-        _docker.MappedPortOverride = StartDiscoveryServer();
+        _docker.MappedPortOverride = StartDiscoveryServer(
+            """{"data":[{"id":"model-1","owned_by":"test"}]}""");
         var service = CreateService();
 
         // Register first so models are mapped to the container.
@@ -682,27 +612,16 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         };
         var created = await service.RegisterAsync(request);
 
-        // Manually map a model (as the initial registration would).
-        var modelId = "model-1";
-        await _modelRegistry.CreateAsync(new ModelDefinition
-        {
-            Id = modelId,
-            Name = "start-model",
-            CreatedAt = _clock.UtcNow,
-            UpdatedAt = _clock.UtcNow
-        });
-        await _registry.AddModelMappingAsync(created.Container.Id, modelId);
-
         var started = await service.StartAsync(created.Container.Id);
 
         Assert.Equal(ContainerRegistrationStatus.Ready, started.Container.Status);
         Assert.NotNull(started.Container.RuntimeContainerId);
         Assert.NotNull(started.Container.MappedPort);
-        // Models preserved, no re-discovery: the same mapping still exists.
+        // Model discovered from the running container.
         var model = Assert.Single(started.DiscoveredModels);
-        Assert.Equal(modelId, model.Id);
+        Assert.Equal("model-1", model.Id);
         var mappedIds = await _registry.GetModelIdsForContainerAsync(created.Container.Id);
-        Assert.Equal([modelId], mappedIds);
+        Assert.Contains("model-1", mappedIds);
     }
 
     [Fact]
@@ -848,6 +767,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             }
         ];
 
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var result = await service.StartAsync("reg-alone");
 
@@ -876,6 +796,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             }
         ];
 
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var result = await service.StartAsync("reg-social");
 
@@ -903,6 +824,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             }
         ];
 
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var result = await service.StartAsync("reg-social");
 
@@ -930,6 +852,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             }
         ];
 
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var result = await service.StartAsync("reg-a");
 
@@ -1056,6 +979,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             MappedPort = 1234
         });
 
+        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
         var result = await service.StartAsync("reg-start");
 
@@ -1071,7 +995,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task ResolveLiveContainerId_RecreatedContainer_ReturnsNewIdAndPersistsRefresh()
     {
-        // Mirrors the fleet UI stop/restart path: the card passes the persisted
+        // Mirrors the swarm UI stop/restart path: the card passes the persisted
         // RuntimeContainerId, which is stale after the docker container was recreated.
         await _registry.CreateAsync(MakeRuntime("reg-ui", "localllama_gemma") with
         {

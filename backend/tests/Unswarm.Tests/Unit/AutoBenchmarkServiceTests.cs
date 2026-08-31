@@ -230,13 +230,16 @@ public sealed class AutoBenchmarkServiceTests
             new Dictionary<string, IDockerController> { ["agent:gpu1"] = remote });
 
         var service = MakeRegistrationService(registry, router, new FakeHealthChecker(), modelRegistry, auto);
-        var result = await service.RegisterAsync(new ContainerRegistrationRequest
+        var registered = await service.RegisterAsync(new ContainerRegistrationRequest
         {
             DisplayName = "Remote Auto",
             Image = "vllm-serve",
             ContainerPort = 8000,
             Agent = "gpu1"
         });
+        Assert.Equal(ContainerRegistrationStatus.Registered, registered.Container.Status);
+
+        var result = await service.StartAsync(registered.Container.Id);
 
         Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
         Assert.Equal(2, result.DiscoveredModels.Count);
@@ -275,13 +278,16 @@ public sealed class AutoBenchmarkServiceTests
             new Dictionary<string, IDockerController> { ["agent:gpu1"] = remote });
 
         var service = MakeRegistrationService(registry, router, new FakeHealthChecker(), modelRegistry, auto);
-        var result = await service.RegisterAsync(new ContainerRegistrationRequest
+        var registered = await service.RegisterAsync(new ContainerRegistrationRequest
         {
             DisplayName = "Remote NoBench",
             Image = "vllm-serve",
             ContainerPort = 8000,
             Agent = "gpu1"
         });
+        Assert.Equal(ContainerRegistrationStatus.Registered, registered.Container.Status);
+
+        var result = await service.StartAsync(registered.Container.Id);
 
         Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
         Assert.Single(result.DiscoveredModels);
@@ -307,13 +313,16 @@ public sealed class AutoBenchmarkServiceTests
             new Dictionary<string, IDockerController> { ["agent:gpu1"] = remote });
 
         var service = MakeRegistrationService(registry, router, new FakeHealthChecker(), modelRegistry, autoBenchmark: null);
-        var result = await service.RegisterAsync(new ContainerRegistrationRequest
+        var registered = await service.RegisterAsync(new ContainerRegistrationRequest
         {
             DisplayName = "No Auto",
             Image = "vllm-serve",
             ContainerPort = 8000,
             Agent = "gpu1"
         });
+        Assert.Equal(ContainerRegistrationStatus.Registered, registered.Container.Status);
+
+        var result = await service.StartAsync(registered.Container.Id);
 
         Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
         Assert.Empty(scheduler.EnqueuedRequests);

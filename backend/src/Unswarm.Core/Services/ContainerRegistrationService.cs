@@ -107,16 +107,13 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         container = await _registry.CreateAsync(container, ct).ConfigureAwait(false);
         _logger.LogInformation("Registered {Kind} {Id} for image {Image}", container.RuntimeKind, containerId, request.Image);
 
-        if (container.RuntimeKind == RuntimeKind.Script)
-        {
-            var scriptResult = await StartAndDiscoverScriptAsync(container, ct).ConfigureAwait(false);
-            await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
-            return scriptResult;
-        }
-
-        var containerResult = await StartAndDiscoverAsync(container, ct).ConfigureAwait(false);
         await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
-        return containerResult;
+
+        return new RegisteredRuntimeWithModels
+        {
+            Container = container,
+            DiscoveredModels = []
+        };
     }
 
     /// <summary>
@@ -219,20 +216,16 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
             container = await _registry.UpdateAsync(registeredContainerId, container with
             {
-                Status = ContainerRegistrationStatus.Ready,
+                Status = ContainerRegistrationStatus.Healthy,
                 UpdatedAt = _clock.UtcNow
-                // LastDiscoveredAt intentionally untouched: it records the last model
-                // discovery, not the last start.
             }, ct).ConfigureAwait(false);
 
             // RuntimeContainerId may have changed — refresh the agent's gate mapping.
             await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
 
-            return new RegisteredRuntimeWithModels
-            {
-                Container = container,
-                DiscoveredModels = await LoadModelsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false)
-            };
+            // Discover models and kick off auto-benchmarks (same flow as
+            // StartAndDiscoverAsync used during original registration).
+            return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
         }
         catch (KeyNotFoundException)
         {

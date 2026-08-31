@@ -97,12 +97,9 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
     }
 
     [Fact]
-    public async Task RegisterAsync_ScriptKind_UsesScriptController_SetsMappedPort()
+    public async Task RegisterAsync_ScriptKind_RegistersWithoutStarting()
     {
-        // Script that starts a simple HTTP server for discovery
-        var discoveryPort = StartDiscoveryServer(
-            """{"data":[{"id":"test-model","owned_by":"test"}]}""");
-        var script = CreateScript($"python3 -m http.server {discoveryPort} 2>/dev/null || true\nsleep 30");
+        var script = CreateScript("sleep 30");
 
         var scriptController = CreateScriptController();
         var service = CreateService(scriptController: scriptController);
@@ -113,20 +110,19 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             Image = "test-script:latest",
             RuntimeKind = RuntimeKind.Script,
             LauncherPath = script,
-            ContainerPort = discoveryPort
+            ContainerPort = 8080
         };
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
         Assert.Equal(RuntimeKind.Script, result.Container.RuntimeKind);
-        Assert.NotNull(result.Container.RuntimeProcessId);
-        Assert.Equal(discoveryPort, result.Container.MappedPort);
-        Assert.Equal(discoveryPort, result.Container.ContainerPort);
+        Assert.Null(result.Container.RuntimeProcessId);
+        Assert.Null(result.Container.MappedPort);
+        Assert.Equal(8080, result.Container.ContainerPort);
         Assert.Null(result.Container.RuntimeContainerId);
-
-        // Clean up
-        await scriptController.StopScriptAsync(result.Container.Id);
+        Assert.Equal("Test Script", result.Container.DisplayName);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
@@ -173,7 +169,6 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
     [Fact]
     public async Task DeleteAsync_ScriptKind_StopsScript()
     {
-        var discoveryPort = StartDiscoveryServer();
         var script = CreateScript("sleep 30");
         var scriptController = CreateScriptController();
         var service = CreateService(scriptController: scriptController);
@@ -184,13 +179,15 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             Image = "del:latest",
             RuntimeKind = RuntimeKind.Script,
             LauncherPath = script,
-            ContainerPort = discoveryPort
+            ContainerPort = 8080
         };
 
         var result = await service.RegisterAsync(request);
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
+        Assert.Null(result.Container.RuntimeProcessId);
 
-        // Delete should stop the script
+        // Delete — registration-only means the script was never started, so
+        // RuntimeProcessId is null and the delete skips the stop call.
         await service.DeleteAsync(result.Container.Id, deleteModels: false);
 
         Assert.Contains(result.Container.Id, _registry.DeletedContainerIds);
@@ -235,7 +232,6 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
     public async Task RegisterAsync_ContainerKind_StillWorks_NoRegression()
     {
         // Ensure container registration still works after script changes
-        _docker.MappedPortOverride = StartDiscoveryServer();
         var service = CreateService();
 
         var request = new ContainerRegistrationRequest
@@ -247,10 +243,11 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
 
         var result = await service.RegisterAsync(request);
 
-        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Equal(ContainerRegistrationStatus.Registered, result.Container.Status);
         Assert.Equal(RuntimeKind.Container, result.Container.RuntimeKind);
-        Assert.NotNull(result.Container.RuntimeContainerId);
-        Assert.Equal(_docker.MappedPortOverride, result.Container.MappedPort);
+        Assert.Null(result.Container.RuntimeContainerId);
+        Assert.Null(result.Container.MappedPort);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
@@ -292,7 +289,7 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             UpdatedAt = DateTimeOffset.UtcNow
         });
 
-        _docker.MappedPortOverride = 9090;
+        _docker.MappedPortOverride = StartDiscoveryServer();
 
         var result = await service.StartAsync("reg-target");
 
@@ -311,9 +308,9 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
     {
         var script = CreateScript("sleep 30");
         var scriptController = CreateScriptController();
-        _healthChecker.IsReady = false;
         var service = CreateService(scriptController: scriptController);
 
+        // Register succeeds (no start/health-check during registration)
         var request = new ContainerRegistrationRequest
         {
             DisplayName = "HealthFailing",
@@ -323,7 +320,13 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             ContainerPort = 8080
         };
 
-        var result = await service.RegisterAsync(request);
+        var regResult = await service.RegisterAsync(request);
+        Assert.Equal(ContainerRegistrationStatus.Registered, regResult.Container.Status);
+
+        // Now start — health checker is set to fail, so StartAsync should error
+        _healthChecker.IsReady = false;
+
+        var result = await service.StartAsync(regResult.Container.Id);
 
         Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
         Assert.NotNull(result.Container.ErrorMessage);
@@ -376,6 +379,7 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
         var scriptController = CreateScriptController();
         var service = CreateService(scriptController: scriptController);
 
+        // Register succeeds (no start/health-check during registration)
         var request = new ContainerRegistrationRequest
         {
             DisplayName = "TimeoutScript",
@@ -385,8 +389,13 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             ContainerPort = 8080
         };
 
-        // Register and let it start
-        var result = await service.RegisterAsync(request);
+        var regResult = await service.RegisterAsync(request);
+        Assert.Equal(ContainerRegistrationStatus.Registered, regResult.Container.Status);
+
+        // Now start — health checker is set to fail, so StartAsync should error
+        _healthChecker.IsReady = false;
+
+        var result = await service.StartAsync(regResult.Container.Id);
 
         // Health timeout should have failed the script
         Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
