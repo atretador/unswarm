@@ -202,7 +202,7 @@ func regexpAllBrackets(s string) []string {
 func isPCIIDBracket(s string) bool {
 	// Matches PCI device IDs like "1002:66a1" or "0300"
 	for _, ch := range s {
-		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F') || ch == ':') {
+		if (ch < '0' || ch > '9') && (ch < 'a' || ch > 'f') && (ch < 'A' || ch > 'F') && ch != ':' {
 			return false
 		}
 	}

@@ -179,7 +179,7 @@ func (h *Handler) GetContainerLogs(ctx context.Context, name string, tailLines i
 	if err != nil {
 		return containerErrorResult("get logs for", name, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var buf bytes.Buffer
 	if tty {
@@ -250,7 +250,7 @@ func (h *Handler) containerMemoryMb(ctx context.Context, id string) (int64, erro
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var stats container.StatsResponse
 	dec := json.NewDecoder(resp.Body)

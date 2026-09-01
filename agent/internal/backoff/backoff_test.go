@@ -8,20 +8,14 @@ import (
 func TestBackoffIncreases(t *testing.T) {
 	c := New(1*time.Second, 30*time.Second)
 
-	prev := time.Duration(0)
 	for i := 0; i < 10; i++ {
 		d := c.Next()
-		if d < prev && prev != c.max {
-			// Due to jitter it can sometimes be slightly lower, but the trend should increase
-			// Just check it's in a reasonable range
-		}
 		if d > c.max {
 			t.Errorf("attempt %d: backoff %v exceeds max %v", i, d, c.max)
 		}
 		if d < 0 {
 			t.Errorf("attempt %d: negative backoff %v", i, d)
 		}
-		prev = d
 	}
 }
 

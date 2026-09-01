@@ -321,7 +321,9 @@ func runSession(
 		case protocol.TypeError:
 			var errPayload protocol.ErrorPayload
 			if env.Payload != nil {
-				json.Unmarshal(env.Payload, &errPayload)
+				if err := json.Unmarshal(env.Payload, &errPayload); err != nil {
+					logger.Warn("unmarshal error payload", "error", err)
+				}
 			}
 			logger.Warn("server error", "error", errPayload.Error)
 

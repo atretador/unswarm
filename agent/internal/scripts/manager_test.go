@@ -11,10 +11,18 @@ import (
 func TestListScripts(t *testing.T) {
 	dir := t.TempDir()
 	// Create some .sh files and non-.sh files.
-	os.WriteFile(filepath.Join(dir, "model-a.sh"), []byte("#!/bin/bash\necho hi"), 0o755)
-	os.WriteFile(filepath.Join(dir, "model-b.sh"), []byte("#!/bin/bash\necho hi"), 0o755)
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not a script"), 0o644)
-	os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+	if err := os.WriteFile(filepath.Join(dir, "model-a.sh"), []byte("#!/bin/bash\necho hi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "model-b.sh"), []byte("#!/bin/bash\necho hi"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("not a script"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	scripts := m.ListScripts()
@@ -52,7 +60,9 @@ func TestListScripts_NonexistentDir(t *testing.T) {
 func TestStartScript(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "loop.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	defer m.Shutdown()
@@ -77,7 +87,9 @@ func TestStartScript(t *testing.T) {
 func TestStartScript_WhitelistReject(t *testing.T) {
 	dir := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "evil.sh")
-	os.WriteFile(outside, []byte("#!/bin/bash\necho pwned"), 0o755)
+	if err := os.WriteFile(outside, []byte("#!/bin/bash\necho pwned"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 
@@ -90,7 +102,9 @@ func TestStartScript_WhitelistReject(t *testing.T) {
 func TestStartScript_DuplicateGuard(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "dup.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	defer m.Shutdown()
@@ -115,7 +129,9 @@ func TestStartScript_DuplicateGuard(t *testing.T) {
 func TestStopScript(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "stopme.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 
@@ -138,7 +154,9 @@ func TestStopScript(t *testing.T) {
 func TestStopScriptByPath(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "stopbypath.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 
@@ -157,7 +175,9 @@ func TestStopScriptByPath(t *testing.T) {
 func TestGetScriptLogs(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "logger.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\necho line1\necho line2\necho line3\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\necho line1\necho line2\necho line3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	defer m.Shutdown()
@@ -183,7 +203,9 @@ func TestGetScriptLogs_TailLines(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "many.sh")
 	// Script that outputs 10 lines.
-	os.WriteFile(script, []byte("#!/bin/bash\nfor i in $(seq 1 10); do echo line$i; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nfor i in $(seq 1 10); do echo line$i; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	defer m.Shutdown()
@@ -206,7 +228,9 @@ func TestGetScriptLogs_TailLines(t *testing.T) {
 func TestGetStatuses(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "status.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 	defer m.Shutdown()
@@ -234,7 +258,9 @@ func TestGetStatuses(t *testing.T) {
 func TestShutdown(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "shutdown.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 
@@ -263,7 +289,9 @@ func TestIsEnabled(t *testing.T) {
 func TestStartScript_StaleEntryCleanup(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "stale.sh")
-	os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755)
+	if err := os.WriteFile(script, []byte("#!/bin/bash\nwhile true; do sleep 0.1; done\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	m := NewManager(dir)
 

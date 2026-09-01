@@ -177,7 +177,9 @@ func (c *WSClient) configureConn(conn *websocket.Conn) {
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(readTimeout))
 	})
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+		c.logger.Error("set initial read deadline", "error", err)
+	}
 }
 
 // SendHello sends the initial hello message to the backend.
@@ -197,8 +199,8 @@ func (c *WSClient) WaitForHelloAck(ctx context.Context) error {
 		return fmt.Errorf("not connected")
 	}
 
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetReadDeadline(time.Time{})
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	_, data, err := conn.ReadMessage()
 	if err != nil {
@@ -213,7 +215,9 @@ func (c *WSClient) WaitForHelloAck(ctx context.Context) error {
 	if env.Type == protocol.TypeError {
 		var errPayload protocol.ErrorPayload
 		if env.Payload != nil {
-			json.Unmarshal(env.Payload, &errPayload)
+			if err := json.Unmarshal(env.Payload, &errPayload); err != nil {
+				c.logger.Error("unmarshal error payload", "error", err)
+			}
 		}
 		return fmt.Errorf("backend rejected hello: %s", errPayload.Error)
 	}
@@ -251,7 +255,9 @@ func (c *WSClient) Send(ctx context.Context, env protocol.Envelope) error {
 	// the write so a peer that stopped reading cannot wedge the agent.
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return fmt.Errorf("set write deadline: %w", err)
+	}
 	return conn.WriteMessage(websocket.TextMessage, data)
 }
 
@@ -262,7 +268,9 @@ func (c *WSClient) Read() (protocol.Envelope, error) {
 		return protocol.Envelope{}, fmt.Errorf("not connected")
 	}
 	// Refresh the deadline so any traffic keeps the connection alive.
-	conn.SetReadDeadline(time.Now().Add(readTimeout))
+	if err := conn.SetReadDeadline(time.Now().Add(readTimeout)); err != nil {
+		return protocol.Envelope{}, fmt.Errorf("set read deadline: %w", err)
+	}
 	_, data, err := conn.ReadMessage()
 	if err != nil {
 		return protocol.Envelope{}, err
@@ -279,7 +287,9 @@ func (c *WSClient) Close() {
 	c.conn = nil
 	c.mu.Unlock()
 	if conn != nil {
-		conn.Close()
+		if err := conn.Close(); err != nil {
+			c.logger.Error("close websocket", "error", err)
+		}
 	}
 }
 

@@ -53,7 +53,7 @@ func HealthCheck(ctx context.Context, allow PortAllowlist, port int) protocol.Co
 			"error":   err.Error(),
 		})
 	}
-	conn.Close()
+	_ = conn.Close()
 
 	// If TCP is up, probe HTTP for a status code (best-effort).
 	data := map[string]interface{}{
@@ -63,7 +63,7 @@ func HealthCheck(ctx context.Context, allow PortAllowlist, port int) protocol.Co
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Get("http://" + addr + "/") //nolint:gosec
 	if err == nil {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		data["statusCode"] = resp.StatusCode
 	}
 	return okResult(data)
@@ -83,7 +83,7 @@ func DiscoverModels(ctx context.Context, allow PortAllowlist, port int) protocol
 	if err != nil {
 		return errorResult(fmt.Sprintf("discover models on port %d: %v", port, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -123,7 +123,7 @@ func ChatCompletion(ctx context.Context, allow PortAllowlist, port int, body jso
 		}
 		return errorResult(fmt.Sprintf("chat completion on port %d: %v", port, err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -172,7 +172,7 @@ func ChatCompletionStream(ctx context.Context, allow PortAllowlist, port int, js
 		}
 		return fmt.Errorf("chat completion stream on port %d: %w", port, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(resp.Body)

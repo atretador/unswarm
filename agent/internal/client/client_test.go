@@ -36,7 +36,7 @@ func startTestServer(t *testing.T, apiKey string, onMessage func(protocol.Envelo
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		// Hello handshake: read hello, reply with hello ack.
 		_, data, err := conn.ReadMessage()

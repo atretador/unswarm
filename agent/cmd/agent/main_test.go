@@ -104,7 +104,7 @@ func startFakeBackend(t *testing.T, sessions int) *httptest.Server {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -120,7 +120,7 @@ func startFakeBackend(t *testing.T, sessions int) *httptest.Server {
 			return
 		}
 
-		conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
+		_ = conn.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return

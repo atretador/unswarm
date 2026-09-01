@@ -150,7 +150,7 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open %q: %w", resolved, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return 0, fmt.Errorf("stat %q: %w", resolved, err)
@@ -195,7 +195,7 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	cmd.Stderr = logFile
 
 	if err := cmd.Start(); err != nil {
-		logFile.Close()
+		_ = logFile.Close()
 		return 0, fmt.Errorf("start script: %w", err)
 	}
 
@@ -296,7 +296,7 @@ func (m *Manager) GetScriptLogs(path string, tailLines int) ([]string, error) {
 		}
 		return nil, fmt.Errorf("open log file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Cap the read to the last 1MB of the file.
 	offset := int64(0)
@@ -350,7 +350,6 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 		alive := proc.isOurs()
 		status := "running"
 		if !alive {
-			status = "stopped"
 			m.cleanupProcess(proc)
 			delete(m.processes, path)
 			continue
@@ -417,7 +416,7 @@ func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
 
 func (m *Manager) cleanupProcess(proc *scriptProcess) {
 	if proc.LogFile != nil {
-		proc.LogFile.Close()
+		_ = proc.LogFile.Close()
 		proc.LogFile = nil
 	}
 	_ = os.Remove(m.pidPath(proc.Path))
