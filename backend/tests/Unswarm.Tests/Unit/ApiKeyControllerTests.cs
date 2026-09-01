@@ -12,7 +12,7 @@ public sealed class ApiKeyControllerTests
     private static IApiKeyStore NewStore() => TestApiKeyStore.Create();
 
     private static ApiKeyController CreateController(IApiKeyStore? store = null)
-        => new(store ?? NewStore(), new StubCloudProviderStore());
+        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry());
 
     /// <summary>Minimal ICloudProviderStore for controller tests: one configured provider.</summary>
     private sealed class StubCloudProviderStore : ICloudProviderStore
@@ -30,6 +30,22 @@ public sealed class ApiKeyControllerTests
         public Task<CloudProviderReadItem?> GetByNameAsync(string name, CancellationToken ct = default) => Task.FromResult<CloudProviderReadItem?>(null);
         public Task<bool> NameExistsAsync(string name, CancellationToken ct = default) => Task.FromResult(false);
         public Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+    }
+
+    /// <summary>Minimal IContainerRegistry for controller tests: no runtimes.</summary>
+    private sealed class StubContainerRegistry : IContainerRegistry
+    {
+        public Task<IReadOnlyList<RegisteredRuntime>> ListAllAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<RegisteredRuntime>>([]);
+        public Task<RegisteredRuntime?> GetAsync(string id, CancellationToken ct = default) => Task.FromResult<RegisteredRuntime?>(null);
+        public Task<RegisteredRuntime> CreateAsync(RegisteredRuntime container, CancellationToken ct = default) => Task.FromResult(container);
+        public Task<RegisteredRuntime> UpdateAsync(string id, RegisteredRuntime container, CancellationToken ct = default) => Task.FromResult(container);
+        public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
+        public Task AddModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task RemoveModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<string>> GetModelIdsForContainerAsync(string registeredContainerId, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(string idA, IReadOnlyList<string> newCanRunAlongWithA, string idB, IReadOnlyList<string> newCanRunAlongWithB, CancellationToken ct = default) => Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

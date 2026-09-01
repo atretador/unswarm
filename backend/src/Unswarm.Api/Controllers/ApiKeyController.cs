@@ -29,11 +29,13 @@ public sealed class ApiKeyController : ControllerBase
 {
     private readonly IApiKeyStore _keys;
     private readonly ICloudProviderStore _cloudProviders;
+    private readonly IContainerRegistry _containers;
 
-    public ApiKeyController(IApiKeyStore keys, ICloudProviderStore cloudProviders)
+    public ApiKeyController(IApiKeyStore keys, ICloudProviderStore cloudProviders, IContainerRegistry containers)
     {
         _keys = keys;
         _cloudProviders = cloudProviders;
+        _containers = containers;
     }
 
     [HttpPost]
@@ -141,9 +143,11 @@ public sealed class ApiKeyController : ControllerBase
         if (providers.Count > 200 || models.Count > 500)
             return BadRequest(new { error = "Too many entries (max 200 providers, 500 models)." });
 
-        // Strict validation: every listed provider must be a configured cloud provider.
+        // Strict validation: every listed provider must be a configured cloud provider
+        // or a registered local runtime display name.
         var configuredProviders = (await _cloudProviders.ListAsync(ct)).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var unknown = providers.Where(p => !configuredProviders.Contains(p)).ToList();
+        var runtimeNames = (await _containers.ListAllAsync(ct)).Select(r => r.DisplayName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var unknown = providers.Where(p => !configuredProviders.Contains(p) && !runtimeNames.Contains(p)).ToList();
         if (unknown.Count > 0)
             return BadRequest(new { error = $"Unknown provider(s): {string.Join(", ", unknown)}" });
 
