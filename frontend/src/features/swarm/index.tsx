@@ -10,7 +10,6 @@ import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Box,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -492,6 +491,9 @@ function EditRuntimeDialog({
   const [containerPort, setContainerPort] = useState(
     String(runtime?.containerPort ?? 8080),
   );
+  const [maxConcurrentInferences, setMaxConcurrentInferences] = useState(
+    runtime?.maxConcurrentInferences ?? 1,
+  );
 
   // Sync state when dialog opens or runtime changes
   const prevOpenRef = useRef(false);
@@ -499,6 +501,7 @@ function EditRuntimeDialog({
     if (open && !prevOpenRef.current) {
       setDisplayName(runtime?.displayName ?? "");
       setContainerPort(String(runtime?.containerPort ?? 8080));
+      setMaxConcurrentInferences(runtime?.maxConcurrentInferences ?? 1);
     }
     prevOpenRef.current = open;
   }, [open, runtime]);
@@ -521,13 +524,18 @@ function EditRuntimeDialog({
   const portValid = Number.isFinite(parsedPort) && parsedPort > 0 && parsedPort <= 65535;
   const hasChanges =
     displayName.trim() !== (runtime?.displayName ?? "") ||
-    (portValid && parsedPort !== (runtime?.containerPort ?? 8080));
+    (portValid && parsedPort !== (runtime?.containerPort ?? 8080)) ||
+    (Number.isFinite(maxConcurrentInferences) && maxConcurrentInferences > 0 && maxConcurrentInferences !== (runtime?.maxConcurrentInferences ?? 1));
 
   const handleSave = () => {
-    if (!runtime || !displayName.trim() || !portValid) return;
+    const slotsValid = Number.isFinite(maxConcurrentInferences) && maxConcurrentInferences > 0;
+    if (!runtime || !displayName.trim() || !portValid || !slotsValid) return;
     const payload: UpdateRuntimePayload = { displayName: displayName.trim() };
     if (parsedPort !== (runtime?.containerPort ?? 8080)) {
       payload.containerPort = parsedPort;
+    }
+    if (maxConcurrentInferences !== (runtime?.maxConcurrentInferences ?? 1)) {
+      payload.maxConcurrentInferences = maxConcurrentInferences;
     }
     updateMutation.mutate(payload);
   };
@@ -550,12 +558,24 @@ function EditRuntimeDialog({
         />
 
         <Input
-          label="Container port"
+          label="Runtime port"
           type="number"
           value={containerPort}
           onChange={(e) => setContainerPort(e.target.value)}
           placeholder="8080"
-          aria-label="Container port"
+          aria-label="Runtime port"
+        />
+
+        <Input
+          label="Parallel slots"
+          type="number"
+          value={String(maxConcurrentInferences)}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (!isNaN(v)) setMaxConcurrentInferences(Math.max(1, Math.min(128, v)));
+          }}
+          placeholder="1"
+          aria-label="Parallel slots"
         />
 
         {updateMutation.isError && (
@@ -1393,8 +1413,6 @@ function RegisteredContainerCard({
   const [ringActive, setRingActive] = useState(highlight);
   const [rediscoverError, setRediscoverError] = useState<string | null>(null);
   const [healthCheckError, setHealthCheckError] = useState<string | null>(null);
-  const [editingSlots, setEditingSlots] = useState(false);
-  const [slotsValue, setSlotsValue] = useState(container.maxConcurrentInferences);
   const [editingName, setEditingName] = useState(false);
 
   // Clear the highlight ring after a short window so it doesn't linger.
@@ -1475,18 +1493,6 @@ function RegisteredContainerCard({
         promptName: result.promptName,
         promptVersion: result.promptVersion,
       });
-    },
-  });
-
-  const updateConcurrencyMutation = useMutation({
-    mutationFn: (value: number) =>
-      client.updateRuntimeConcurrency(container.id, {
-        canRunAlongWith: container.canRunAlongWith,
-        maxConcurrentInferences: value,
-      }),
-    onSuccess: () => {
-      invalidate();
-      setEditingSlots(false);
     },
   });
 
@@ -1575,65 +1581,11 @@ function RegisteredContainerCard({
               {container.discoveredModels.length > 0 ? container.discoveredModels.length : "—"}
             </p>
           </div>
-          <div className="group/slots relative">
+          <div>
             <p className="text-[var(--color-text-muted)]">Parallel Slots</p>
-            {editingSlots ? (
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min={1}
-                  max={128}
-                  value={slotsValue}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (!isNaN(v)) setSlotsValue(Math.max(1, Math.min(128, v)));
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") updateConcurrencyMutation.mutate(slotsValue);
-                    if (e.key === "Escape") {
-                      setEditingSlots(false);
-                      setSlotsValue(container.maxConcurrentInferences);
-                    }
-                  }}
-                  autoFocus
-                  className="h-5 w-10 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] px-1 font-mono text-[var(--color-text-heading)] outline-none focus:border-[var(--color-accent)]"
-                />
-                <button
-                  type="button"
-                  disabled={updateConcurrencyMutation.isPending}
-                  onClick={() => updateConcurrencyMutation.mutate(slotsValue)}
-                  className="rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-success)] hover:bg-[color-mix(in_srgb,var(--color-status-success)_14%,transparent)] disabled:opacity-50"
-                  aria-label="Confirm parallel slots"
-                >
-                  <Check className="size-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingSlots(false);
-                    setSlotsValue(container.maxConcurrentInferences);
-                  }}
-                  className="rounded-[var(--radius-sm)] p-0.5 text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text-muted)_14%,transparent)]"
-                  aria-label="Cancel editing parallel slots"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setSlotsValue(container.maxConcurrentInferences);
-                  setEditingSlots(true);
-                }}
-                className="group/edit flex items-center gap-1 rounded-[var(--radius-sm)] px-0.5 -mx-0.5 text-left hover:bg-[color-mix(in_srgb,var(--color-text-muted)_8%,transparent)]"
-              >
-                <span className="font-mono text-[var(--color-text-heading)]">
-                  {container.maxConcurrentInferences}
-                </span>
-                <Pencil className="size-2.5 text-[var(--color-text-muted)] opacity-0 transition-opacity group-hover/slots:opacity-100 group-hover/edit:opacity-100" />
-              </button>
-            )}
+            <p className="font-mono text-[var(--color-text-heading)]">
+              {container.maxConcurrentInferences}
+            </p>
           </div>
           <div className="min-w-0">
             <p className="text-[var(--color-text-muted)]">Discovered</p>

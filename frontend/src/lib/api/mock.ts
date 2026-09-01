@@ -1224,6 +1224,9 @@ export const mockClient: UnswarmClient = {
       rc.containerPort = payload.containerPort;
       rc.mappedPort = null;
     }
+    if (payload.maxConcurrentInferences !== undefined) {
+      rc.maxConcurrentInferences = payload.maxConcurrentInferences;
+    }
     return {
       ...rc,
       discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),

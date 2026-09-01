@@ -305,6 +305,11 @@ public sealed class ContainersController : ControllerBase
             existing = existing with { ContainerPort = dto.ContainerPort.Value, MappedPort = null };
         }
 
+        if (dto.MaxConcurrentInferences.HasValue)
+        {
+            existing = existing with { MaxConcurrentInferences = dto.MaxConcurrentInferences.Value };
+        }
+
         var updated = await _containerRegistry.UpdateAsync(id, existing, ct).ConfigureAwait(false);
         return Ok(await BuildRegisteredResponseAsync(updated, ct).ConfigureAwait(false));
     }
