@@ -241,6 +241,18 @@ public sealed class CloudProviderEntity
     public DateTimeOffset UpdatedAt { get; set; }
 }
 
+public sealed class RouterProfileEntity
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Mode { get; set; } = nameof(RouterProfileMode.Auto);
+    /// <summary>JSON array of {modelId, priority, isEnabled}.</summary>
+    public string EntriesJson { get; set; } = "[]";
+    public string? ActiveModelId { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public sealed class UsageRecordEntity
 {
     public string Id { get; set; } = string.Empty;
@@ -286,6 +298,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ApiKeyEntity> ApiKeys => Set<ApiKeyEntity>();
     public DbSet<CloudProviderEntity> CloudProviders => Set<CloudProviderEntity>();
     public DbSet<UsageRecordEntity> UsageRecords => Set<UsageRecordEntity>();
+    public DbSet<RouterProfileEntity> RouterProfiles => Set<RouterProfileEntity>();
 
     public UnswarmDbContext(DbContextOptions<UnswarmDbContext> options) : base(options) { }
 
@@ -429,6 +442,16 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             // DB-level default backfills existing rows when the column is added;
             // the migration additionally flips Provider == 'cloud' rows to 'cloud'.
             e.Property(u => u.ProviderKind).IsRequired().HasDefaultValue("local").HasMaxLength(16);
+        });
+
+        modelBuilder.Entity<RouterProfileEntity>(e =>
+        {
+            e.HasKey(rp => rp.Id);
+            e.Property(rp => rp.Name).IsRequired().HasMaxLength(128);
+            e.HasIndex(rp => rp.Name).IsUnique();
+            e.Property(rp => rp.EntriesJson).IsRequired().HasMaxLength(65536);
+            e.Property(rp => rp.Mode).IsRequired().HasMaxLength(16);
+            e.Property(rp => rp.ActiveModelId).IsRequired(false).HasMaxLength(256);
         });
     }
 }

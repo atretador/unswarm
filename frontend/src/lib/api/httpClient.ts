@@ -22,6 +22,8 @@ import type {
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  RouterProfile,
+  RouterProfileInput,
   SendTestChatOptions,
   Settings,
   StatsSummary,
@@ -722,6 +724,42 @@ export const httpClient: UnswarmClient = {
     return request<ApiKeyCreateResponse>(
       `/api/api-keys/${encodeURIComponent(id)}/rotate`,
       { method: "POST" },
+    );
+  },
+
+  // ── Router Profiles ─────────────────────────────────────────
+  listRouterProfiles() {
+    return request<RouterProfile[]>("/api/router-profiles");
+  },
+
+  createRouterProfile(data: RouterProfileInput) {
+    return request<RouterProfile>("/api/router-profiles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  updateRouterProfile(id: string, data: RouterProfileInput) {
+    return request<void>(
+      `/api/router-profiles/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify(data) },
+    );
+  },
+
+  deleteRouterProfile(id: string) {
+    return request<void>(
+      `/api/router-profiles/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  setActiveEntry(id: string, activeModelId: string | null) {
+    return request<void>(
+      `/api/router-profiles/${encodeURIComponent(id)}/active-entry`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ activeModelId }),
+      },
     );
   },
 

@@ -416,7 +416,7 @@ export interface ApiKeyCreateResponse extends ApiKeyItem {
 /** One entry of GET /api/provider-model-catalog. */
 export interface ProviderModelCatalogEntry {
   name: string;
-  kind: "cloud" | "local";
+  kind: "cloud" | "local" | "router";
   models: string[];
 }
 
@@ -593,7 +593,7 @@ export interface ApiKeyUsageRow {
 /** One entry of the provider catalog (usage + configured + registered). */
 export interface ProviderCatalogEntry {
   name: string;
-  kind: "cloud" | "local";
+  kind: "cloud" | "local" | "router";
 }
 
 export interface UsageRecordResponse {
@@ -608,6 +608,36 @@ export interface UsageRecordResponse {
   elapsedMs: number;
   /** Name of the API key that authenticated the request, when known. */
   apiKeyName?: string | null;
+}
+
+// ─── Router Profiles ─────────────────────────────────────────────
+
+export interface RouterProfileEntry {
+  modelId: string;
+  priority: number;
+  isEnabled: boolean;
+}
+
+export interface RouterProfile {
+  id: string;
+  name: string;
+  mode: "Auto" | "Manual";
+  entries: RouterProfileEntry[];
+  activeModelId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RouterProfileEntryInput {
+  modelId: string;
+  priority: number;
+  isEnabled: boolean;
+}
+
+export interface RouterProfileInput {
+  name: string;
+  mode: "Auto" | "Manual";
+  entries: RouterProfileEntryInput[];
 }
 
 // ─── Test Chat (direct model testing through the proxy) ───────────

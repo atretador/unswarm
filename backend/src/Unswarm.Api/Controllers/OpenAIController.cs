@@ -6,6 +6,7 @@ using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
+using Unswarm.Api.Services;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.Controllers;
@@ -34,6 +35,8 @@ public sealed class OpenAIController : ControllerBase
     private readonly ICloudProviderStore _cloudProviderStore;
     private readonly IUsageRecorder _usageRecorder;
     private readonly IApiKeyAccessService _apiKeyAccess;
+    private readonly IRouterProfileService _routerProfile;
+    private readonly RouterProfileHandler _routerHandler;
 
     public OpenAIController(
         IModelRegistry registry,
@@ -43,7 +46,9 @@ public sealed class OpenAIController : ControllerBase
         ICloudForwardingService cloudForwarding,
         ICloudProviderStore cloudProviderStore,
         IUsageRecorder usageRecorder,
-        IApiKeyAccessService apiKeyAccess)
+        IApiKeyAccessService apiKeyAccess,
+        IRouterProfileService routerProfile,
+        RouterProfileHandler routerHandler)
     {
         _registry = registry;
         _scheduler = scheduler;
@@ -53,6 +58,8 @@ public sealed class OpenAIController : ControllerBase
         _cloudProviderStore = cloudProviderStore;
         _usageRecorder = usageRecorder;
         _apiKeyAccess = apiKeyAccess;
+        _routerProfile = routerProfile;
+        _routerHandler = routerHandler;
     }
 
     /// <summary>
@@ -93,6 +100,24 @@ public sealed class OpenAIController : ControllerBase
                     Unswarm = new OpenAiModelUnswarmInfo() // empty defaults for cloud models
                 });
             }
+        }
+
+        // Router profile models
+        var routerProfiles = await _routerProfile.ListProfilesAsync(ct);
+        foreach (var profile in routerProfiles)
+        {
+            data.Add(new OpenAiModelData
+            {
+                Id = $"router/{profile.Name}",
+                Created = profile.CreatedAt.ToUnixTimeSeconds(),
+                OwnedBy = "router",
+                Unswarm = new OpenAiModelUnswarmInfo
+                {
+                    // Indicate profile mode in a custom field
+                    Family = $"router-{profile.Mode.ToString().ToLowerInvariant()}",
+                    Status = profile.Entries.Any(e => e.IsEnabled) ? "active" : "empty"
+                }
+            });
         }
 
         // Per-key model access control on the listing itself: a key with a
@@ -258,6 +283,104 @@ public sealed class OpenAIController : ControllerBase
             }
 
             return new EmptyResult();
+        }
+
+        // Router profile models: resolve profile and attempt inference with fallback
+        if (modelName.StartsWith("router/", StringComparison.Ordinal))
+        {
+            var profileName = modelName["router/".Length..];
+
+            var routerStartTime = _clock.UtcNow;
+
+            try
+            {
+                var routerResult = await _routerHandler.HandleAsync(
+                    profileName, rawBody, Request.Path.Value ?? "/v1/chat/completions",
+                    isStream, conversationKey, ct);
+
+                if (routerResult.StatusCode >= 400 && routerResult.Body is null)
+                {
+                    _logStore.Enqueue(LogLevel.Error, "router",
+                        $"Router failed: profile={profileName}, error={routerResult.ErrorMessage}");
+                    return StatusCode(routerResult.StatusCode, new
+                    {
+                        error = new
+                        {
+                            message = routerResult.ErrorMessage ?? "Router inference failed",
+                            type = "invalid_request_error",
+                            param = "model",
+                            code = "router_inference_failed"
+                        }
+                    });
+                }
+
+                var routerElapsedMs = (long)(_clock.UtcNow - routerStartTime).TotalMilliseconds;
+                _logStore.Enqueue(LogLevel.Info, "router",
+                    $"Router complete: profile={profileName}, model={routerResult.ServedModel}, " +
+                    $"status={routerResult.StatusCode}, duration={routerElapsedMs}ms");
+
+                Response.StatusCode = routerResult.StatusCode;
+
+                if (isStream)
+                {
+                    Response.Headers["Cache-Control"] = "no-cache";
+                    Response.Headers["X-Accel-Buffering"] = "no";
+                    Response.ContentType = "text/event-stream";
+                }
+                else
+                {
+                    Response.ContentType = routerResult.ContentType;
+                }
+
+                if (routerResult.Body is not null)
+                {
+                    try
+                    {
+                        var buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = await routerResult.Body.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                        {
+                            await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
+                            await Response.Body.FlushAsync(ct);
+                        }
+                    }
+                    catch (IOException ex)
+                    {
+                        _logStore.Enqueue(LogLevel.Warn, "router",
+                            $"Router stream interrupted: model={routerResult.ServedModel}, error={ex.Message}");
+                    }
+                    finally
+                    {
+                        await routerResult.Body.DisposeAsync();
+                    }
+                }
+
+                _ = _usageRecorder.RecordAsync(
+                    routerResult.ServedByRuntimeName ?? "router",
+                    routerResult.ServedModel ?? modelName,
+                    routerResult.PromptTokens,
+                    routerResult.TokensGenerated,
+                    routerResult.PromptTokensCached,
+                    isStream,
+                    routerElapsedMs,
+                    apiKeyId,
+                    apiKeyName,
+                    providerKind: routerResult.ServedModel?.StartsWith("cloud/", StringComparison.Ordinal) == true ? "cloud" : "local");
+
+                return new EmptyResult();
+            }
+            catch (OperationCanceledException)
+            {
+                _logStore.Enqueue(LogLevel.Warn, "router",
+                    $"Router request cancelled: profile={profileName}");
+                return StatusCode(499);
+            }
+            catch (Exception ex)
+            {
+                _logStore.Enqueue(LogLevel.Error, "router",
+                    $"Router request failed: profile={profileName}, error={ex.Message}");
+                return StatusCode(502, new { error = "Router inference request failed" });
+            }
         }
 
         _logStore.Enqueue(LogLevel.Info, "proxy",

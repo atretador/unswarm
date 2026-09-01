@@ -12,7 +12,7 @@ public sealed class ApiKeyControllerTests
     private static IApiKeyStore NewStore() => TestApiKeyStore.Create();
 
     private static ApiKeyController CreateController(IApiKeyStore? store = null)
-        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry());
+        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry(), new StubRouterProfileStore());
 
     /// <summary>Minimal ICloudProviderStore for controller tests: one configured provider.</summary>
     private sealed class StubCloudProviderStore : ICloudProviderStore
@@ -46,6 +46,18 @@ public sealed class ApiKeyControllerTests
         public Task<IReadOnlyList<string>> GetModelIdsForContainerAsync(string registeredContainerId, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(string idA, IReadOnlyList<string> newCanRunAlongWithA, string idB, IReadOnlyList<string> newCanRunAlongWithB, CancellationToken ct = default) => Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
+    }
+
+    /// <summary>Minimal IRouterProfileStore for controller tests: no profiles.</summary>
+    private sealed class StubRouterProfileStore : IRouterProfileStore
+    {
+        public Task<IReadOnlyList<RouterProfile>> ListAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<RouterProfile>>([]);
+        public Task<RouterProfile?> GetAsync(string id, CancellationToken ct = default) => Task.FromResult<RouterProfile?>(null);
+        public Task<RouterProfile?> GetByNameAsync(string name, CancellationToken ct = default) => Task.FromResult<RouterProfile?>(null);
+        public Task<RouterProfile> CreateAsync(RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
+        public Task<RouterProfile> UpdateAsync(string id, RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
+        public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

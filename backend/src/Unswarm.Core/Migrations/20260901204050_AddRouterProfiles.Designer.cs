@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Unswarm.Core.Persistence;
 
@@ -10,9 +11,11 @@ using Unswarm.Core.Persistence;
 namespace Unswarm.Core.Migrations
 {
     [DbContext(typeof(UnswarmDbContext))]
-    partial class UnswarmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260901204050_AddRouterProfiles")]
+    partial class AddRouterProfiles
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -604,10 +607,6 @@ namespace Unswarm.Core.Migrations
             modelBuilder.Entity("Unswarm.Core.Persistence.RouterProfileEntity", b =>
                 {
                     b.Property<string>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ActiveModelId")
-                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTimeOffset>("CreatedAt")

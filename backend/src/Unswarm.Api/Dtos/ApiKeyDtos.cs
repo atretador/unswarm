@@ -75,3 +75,39 @@ public sealed class ProviderModelCatalogItem
     /// <summary>Model ids this provider/runtime can serve.</summary>
     public List<string> Models { get; set; } = [];
 }
+
+// ── Router Profile DTOs ────────────────────────────────────────────────
+
+public sealed class RouterProfileDto
+{
+    public string Id { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    [JsonConverter(typeof(CamelCaseEnumJsonConverter))]
+    public RouterProfileMode Mode { get; set; }
+    public List<RouterProfileEntryDto> Entries { get; set; } = [];
+    public string? ActiveModelId { get; init; }
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
+public sealed class RouterProfileEntryDto
+{
+    public string ModelId { get; set; } = string.Empty;
+    public int Priority { get; set; }
+    public bool IsEnabled { get; set; } = true;
+}
+
+public record CreateRouterProfileRequest(
+    string Name,
+    RouterProfileMode Mode = RouterProfileMode.Auto,
+    List<RouterProfileEntryDto>? Entries = null);
+
+public record UpdateRouterProfileRequest(
+    string Name,
+    RouterProfileMode Mode,
+    List<RouterProfileEntryDto> Entries);
+
+public sealed class SetActiveEntryRequest
+{
+    public string? ActiveModelId { get; init; }
+}

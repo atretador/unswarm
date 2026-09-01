@@ -22,11 +22,13 @@ public sealed class ProviderModelCatalogController : ControllerBase
 {
     private readonly ICloudProviderStore _cloudProviders;
     private readonly IContainerRegistry _containers;
+    private readonly IRouterProfileStore _routerProfiles;
 
-    public ProviderModelCatalogController(ICloudProviderStore cloudProviders, IContainerRegistry containers)
+    public ProviderModelCatalogController(ICloudProviderStore cloudProviders, IContainerRegistry containers, IRouterProfileStore routerProfiles)
     {
         _cloudProviders = cloudProviders;
         _containers = containers;
+        _routerProfiles = routerProfiles;
     }
 
     [HttpGet]
@@ -53,6 +55,22 @@ public sealed class ProviderModelCatalogController : ControllerBase
                 Name = runtime.DisplayName,
                 Kind = "local",
                 Models = [.. models]
+            });
+        }
+
+        foreach (var profile in await _routerProfiles.ListAsync(ct))
+        {
+            var modelIds = profile.Entries
+                .Where(e => e.IsEnabled)
+                .OrderBy(e => e.Priority)
+                .Select(e => e.ModelId)
+                .ToList();
+
+            catalog.Add(new ProviderModelCatalogItem
+            {
+                Name = profile.Name,
+                Kind = "router",
+                Models = modelIds
             });
         }
 

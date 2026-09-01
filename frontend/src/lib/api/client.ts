@@ -30,6 +30,8 @@ import type {
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  RouterProfile,
+  RouterProfileInput,
   SendTestChatOptions,
   Settings,
   StatsSummary,
@@ -173,6 +175,13 @@ export interface UnswarmClient {
   getApiKey(id: string): Promise<ApiKeyItem>;
   revokeApiKey(id: string): Promise<void>;
   rotateApiKey(id: string): Promise<ApiKeyCreateResponse>;
+
+  // Router Profiles
+  listRouterProfiles(): Promise<RouterProfile[]>;
+  createRouterProfile(data: RouterProfileInput): Promise<RouterProfile>;
+  updateRouterProfile(id: string, data: RouterProfileInput): Promise<void>;
+  deleteRouterProfile(id: string): Promise<void>;
+  setActiveEntry(id: string, activeModelId: string | null): Promise<void>;
 
   // Cloud Providers
   listCloudProviders(): Promise<CloudProvider[]>;

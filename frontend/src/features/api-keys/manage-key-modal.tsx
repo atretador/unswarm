@@ -20,6 +20,7 @@ import {
   Globe,
   HardDrive,
   Info,
+  Route,
   Search,
   Server,
   ShieldCheck,
@@ -521,7 +522,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                       />
                     </div>
 
-                    {catalogQuery.data && (["cloud", "local"] as const).map((kind) => {
+                    {catalogQuery.data && (["cloud", "local", "router"] as const).map((kind) => {
                       const entries = catalogQuery.data
                         .filter((c) => c.kind === kind)
                         .map((e) => ({
@@ -535,14 +536,16 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                       return (
                         <div key={kind} className="space-y-2">
                           <div className="flex items-center gap-2 pt-1">
-                            {kind === "cloud" ? (
-                              <Cloud className="size-3.5 text-[var(--color-text-muted)]" />
-                            ) : (
-                              <Server className="size-3.5 text-[var(--color-text-muted)]" />
-                            )}
-                            <p className="text-xs font-semibold text-[var(--color-text-heading)]">
-                              {kind === "cloud" ? "Cloud providers" : "Self-hosted agents"}
-                            </p>
+{kind === "cloud" ? (
+  <Cloud className="size-3.5 text-[var(--color-text-muted)]" />
+) : kind === "router" ? (
+  <Route className="size-3.5 text-[var(--color-text-muted)]" />
+) : (
+  <Server className="size-3.5 text-[var(--color-text-muted)]" />
+)}
+<p className="text-xs font-semibold text-[var(--color-text-heading)]">
+  {kind === "cloud" ? "Cloud providers" : kind === "router" ? "Router profiles" : "Self-hosted agents"}
+</p>
                           </div>
 
                           <div className="space-y-2">

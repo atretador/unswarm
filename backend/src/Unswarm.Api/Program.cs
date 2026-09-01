@@ -195,6 +195,11 @@ builder.Services.AddScoped<ICloudProviderStore, CloudProviderStore>();
 // IServiceScopeFactory to resolve scoped ICloudProviderStore per request.
 builder.Services.AddSingleton<ICloudForwardingService, CloudForwardingService>();
 
+// Router profiles: CRUD store following the same scoped pattern as CloudProviderStore
+builder.Services.AddSingleton<IRouterProfileStore, RouterProfileStore>();
+builder.Services.AddSingleton<IRouterProfileService, RouterProfileService>();
+builder.Services.AddSingleton<RouterProfileHandler>();
+
 // ── HTTP Client for cloud providers ──────────────────────────────────────
 // Dedicated named client with infinite timeout for long-running upstream streams.
 // Cancellation is driven by the request's CancellationToken so client disconnect

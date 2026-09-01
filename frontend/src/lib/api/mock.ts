@@ -21,6 +21,9 @@ import type {
   StatsSummary,
   TestChatTurnResult,
   ToggleConcurrencyPayload,
+  RouterProfile,
+  RouterProfileInput,
+  RouterProfileEntryInput,
   UpdateRuntimePayload,
   UsageRecordResponse,
   User,
@@ -933,6 +936,10 @@ const CLOUD_PROVIDERS: (CloudProvider & { apiKey?: string })[] = [
     updatedAt: NOW,
   },
 ];
+
+// ─── Router Profiles Seed ──────────────────────────────────────
+
+const routerProfiles: RouterProfile[] = [];
 
 // ─── Mutable state ────────────────────────────────────────────────
 
@@ -2116,6 +2123,53 @@ export const mockClient: UnswarmClient = {
     const deleted = usageRecords.length - kept.length;
     usageRecords = kept;
     return { deleted };
+  },
+
+  // ─── Router Profiles ────────────────────────────────────────────
+
+  async listRouterProfiles() {
+    await delay(rand(30, 80));
+    return routerProfiles.map((p) => ({ ...p, entries: [...p.entries] }));
+  },
+
+  async createRouterProfile(data) {
+    await delay(rand(40, 100));
+    const profile = {
+      id: crypto.randomUUID().replace(/-/g, ""),
+      name: data.name,
+      mode: data.mode,
+      entries: data.entries.map((e) => ({ ...e })),
+      activeModelId: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    routerProfiles.push(profile);
+    return { ...profile, entries: [...profile.entries] };
+  },
+
+  async updateRouterProfile(id: string, data: RouterProfileInput) {
+    await delay(rand(40, 100));
+    const idx = routerProfiles.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error("Not found");
+    routerProfiles[idx].name = data.name;
+    routerProfiles[idx].mode = data.mode;
+    routerProfiles[idx].entries = data.entries.map((e: RouterProfileEntryInput) => ({ ...e }));
+    routerProfiles[idx].updatedAt = new Date().toISOString();
+  },
+
+  async deleteRouterProfile(id) {
+    await delay(rand(30, 80));
+    const idx = routerProfiles.findIndex((p) => p.id === id);
+    if (idx === -1) throw new Error("Not found");
+    routerProfiles.splice(idx, 1);
+  },
+
+  async setActiveEntry(id, activeModelId) {
+    await delay(rand(40, 100));
+    const profile = routerProfiles.find((p) => p.id === id);
+    if (!profile) throw new Error("Not found");
+    profile.activeModelId = activeModelId;
+    profile.updatedAt = new Date().toISOString();
   },
 
 };

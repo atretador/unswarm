@@ -129,6 +129,14 @@ public sealed class ApiKeyAccessService : IApiKeyAccessService
                 || Contains(access.Models, modelName);
         }
 
+        // Router model: "router/<profileName>".
+        if (modelName.StartsWith("router/", StringComparison.Ordinal))
+        {
+            var profileName = ExtractRouterProfileName(modelName);
+            return (profileName is not null && Contains(access.Providers, profileName))
+                || Contains(access.Models, modelName);
+        }
+
         // Local model: exact match first...
         if (Contains(access.Models, modelName))
             return true;
@@ -151,5 +159,12 @@ public sealed class ApiKeyAccessService : IApiKeyAccessService
         var rest = modelName["cloud/".Length..];
         var slashIdx = rest.IndexOf('/');
         return slashIdx > 0 ? rest[..slashIdx] : null;
+    }
+
+    /// <summary>Profile name from "router/&lt;profileName&gt;", or null.</summary>
+    private static string? ExtractRouterProfileName(string modelName)
+    {
+        var rest = modelName["router/".Length..];
+        return rest.Length > 0 ? rest : null;
     }
 }

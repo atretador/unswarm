@@ -9,6 +9,7 @@ import {
   ScrollText,
   Settings,
   BarChart3,
+  Route,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -28,5 +29,6 @@ export const NAV_ITEMS: NavItem[] = [
   { to: "/queue", icon: ListOrdered, label: "Queue" },
   { to: "/logs", icon: ScrollText, label: "Logs" },
   { to: "/api-keys", icon: Key, label: "API Keys" },
+  { to: "/router-profiles", icon: Route, label: "Router Profiles" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

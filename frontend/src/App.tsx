@@ -16,6 +16,7 @@ const Metrics = lazy(() => import("./features/metrics"));
 const Queue = lazy(() => import("./features/queue"));
 const Logs = lazy(() => import("./features/logs"));
 const ApiKeys = lazy(() => import("./features/api-keys"));
+const RouterProfiles = lazy(() => import("./features/router-profiles"));
 const Settings = lazy(() => import("./features/settings"));
 const Profile = lazy(() => import("./features/profile"));
 const NotFound = lazy(() => import("./features/not-found"));
@@ -49,6 +50,7 @@ export default function App() {
                   <Route path="/queue" element={<Queue />} />
                   <Route path="/logs" element={<Logs />} />
                   <Route path="/api-keys" element={<ApiKeys />} />
+                  <Route path="/router-profiles" element={<RouterProfiles />} />
                   <Route path="/settings" element={<Settings />} />
                   <Route path="/profile" element={<Profile />} />
                   <Route path="*" element={<NotFound />} />
