@@ -1792,6 +1792,7 @@ export const mockClient: UnswarmClient = {
   // ── Cloud Providers ──────────────────────────────────────────
   async listCloudProviders() {
     await delay(rand(80, 200));
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     return CLOUD_PROVIDERS.map(({ apiKey: _, ...p }) => ({ ...p }));
   },
 

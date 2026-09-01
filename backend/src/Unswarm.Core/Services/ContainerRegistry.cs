@@ -241,7 +241,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
         _logger.LogInformation(
             "Atomically toggled concurrency between {IdA} and {IdB} (canRunAlongWith={CountA}/{CountB})",
-            idA, idB, newCanRunAlongWithA.Count, newCanRunAlongWithB.Count);
+            idA, idB, (newCanRunAlongWithA?.Count ?? 0), (newCanRunAlongWithB?.Count ?? 0));
         return (MapToModel(entityA), MapToModel(entityB));
     }
 

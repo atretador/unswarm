@@ -600,6 +600,8 @@ public sealed class AgentsController : ControllerBase
 
     private static long GetWindowsVramFromRegistry(string? pnpDeviceId)
     {
+        if (!OperatingSystem.IsWindows())
+            return 0;
         if (string.IsNullOrEmpty(pnpDeviceId))
             return 0;
 

@@ -138,19 +138,21 @@ export function FiltersModal({
   onApply,
 }: FiltersModalProps) {
   // Draft state — seeded from the live selection each time the modal opens.
-  const [draftProviders, setDraftProviders] = useState<string[]>([]);
-  const [draftModels, setDraftModels] = useState<string[]>([]);
+  const [draftProviders, setDraftProviders] = useState<string[]>(selectedProviders);
+  const [draftModels, setDraftModels] = useState<string[]>(selectedModels);
   const [providerSearch, setProviderSearch] = useState("");
   const [modelSearch, setModelSearch] = useState("");
 
+  // Re-sync draft state and clear searches each time the modal opens.
+  // Only depends on `open` to avoid re-syncing mid-edit when props change.
   useEffect(() => {
-    if (open) {
-      setDraftProviders([...selectedProviders]);
-      setDraftModels([...selectedModels]);
-      setProviderSearch("");
-      setModelSearch("");
-    }
-  }, [open, selectedProviders, selectedModels]);
+    if (!open) return;
+    setDraftProviders([...selectedProviders]);
+    setDraftModels([...selectedModels]);
+    setProviderSearch("");
+    setModelSearch("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   const toggle = (
     list: string[],

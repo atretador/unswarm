@@ -51,7 +51,7 @@ public sealed class StreamingTokenTapStream : Stream
     {
         var n = _inner.Read(buffer, offset, count);
         if (n > 0) TapBytes(buffer, offset, n);
-        else Finalize();
+        else FlushBuffer();
         return n;
     }
 
@@ -59,7 +59,7 @@ public sealed class StreamingTokenTapStream : Stream
     {
         var n = await _inner.ReadAsync(buffer, offset, count, ct).ConfigureAwait(false);
         if (n > 0) TapBytes(buffer, offset, n);
-        else Finalize();
+        else FlushBuffer();
         return n;
     }
 
@@ -72,7 +72,7 @@ public sealed class StreamingTokenTapStream : Stream
             var span = buffer.Span[..n];
             TapSpan(span);
         }
-        else Finalize();
+        else FlushBuffer();
         return n;
     }
 
@@ -88,7 +88,7 @@ public sealed class StreamingTokenTapStream : Stream
         _disposed = true;
         if (disposing)
         {
-            Finalize();
+            FlushBuffer();
             _inner.Dispose();
         }
     }
@@ -97,7 +97,7 @@ public sealed class StreamingTokenTapStream : Stream
     {
         if (_disposed) return;
         _disposed = true;
-        Finalize();
+        FlushBuffer();
         await _inner.DisposeAsync().ConfigureAwait(false);
     }
 
@@ -245,7 +245,7 @@ public sealed class StreamingTokenTapStream : Stream
         }
     }
 
-    private void Finalize()
+    private void FlushBuffer()
     {
         // Flush any remaining partial line
         if (_lineBuffer.Length > 0)

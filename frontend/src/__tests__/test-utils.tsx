@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { ThemeProvider } from "../lib/theme";
 import { AuthProvider } from "../lib/auth-context";
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function createTestQueryClient() {
   return new QueryClient({
     defaultOptions: {

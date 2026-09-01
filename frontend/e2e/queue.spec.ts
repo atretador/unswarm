@@ -2,7 +2,6 @@ import { expect, test } from "@playwright/test";
 import {
   completedSnapshot,
   installApiMocks,
-  multiLaneSnapshot,
   zeroBudgetSnapshot,
 } from "./helpers";
 

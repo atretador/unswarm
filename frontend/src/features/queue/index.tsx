@@ -51,13 +51,13 @@ function parseTarget(
  * Same per-second tick pattern as the processing elapsed timer below.
  */
 function HoldCountdown({ expiresAt }: { expiresAt: string }) {
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  const remainingMs = new Date(expiresAt).getTime() - Date.now();
+  const remainingMs = new Date(expiresAt).getTime() - now;
   const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
 
   return (
@@ -92,14 +92,12 @@ function TargetSection({
   const { label, kind } = parseTarget(targetId);
 
   // Live elapsed timer — ticks every second while anything is processing
-  const [, setTick] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (processing.length === 0) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [processing.map((p) => p.id).join(",")]);
-
-  const now = Date.now();
+  }, [processing.length]);
 
   return (
     <Card padding="none" className="overflow-hidden">

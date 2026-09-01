@@ -642,12 +642,6 @@ static async Task SeedAdminUserAsync(IServiceProvider services, string? adminSet
     }
 }
 
-/// <summary>
-/// Seed the configured static API key (UNSWARM_API_KEY / Auth.ApiKey) into the
-/// managed key store as an agent-scoped key, so the remote agent authenticates
-/// through the same store as generated keys. Idempotent: skips if a key matching
-/// the configured secret already exists.
-/// </summary>
 static async Task SeedStaticApiKeyAsync(IServiceProvider services)
 {
     var config = services.GetRequiredService<IConfiguration>();
