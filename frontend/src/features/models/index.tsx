@@ -437,6 +437,12 @@ export default function Models() {
         (m.sourceRuntimeName ?? "").toLowerCase().includes(q),
       );
     }
+    if (q && activeTab === "cloud") {
+      result = result.filter((m) =>
+        m.name.toLowerCase().includes(q) ||
+        (m.providerName ?? "").toLowerCase().includes(q),
+      );
+    }
     if (activeTab === "managed" && agentFilter) {
       result = result.filter((m) => m.sourceRuntimeAgent === agentFilter);
     }
@@ -580,7 +586,12 @@ export default function Models() {
           </Card>
         ) : (
           <>
-            {activeTab === "cloud" && <CloudModelSelector />}
+            {activeTab === "cloud" && (
+              <CloudModelSelector onChatModel={(modelName) => {
+                const found = (models ?? []).find((m) => m.name === modelName);
+                if (found) setChatModelId(found.id);
+              }} />
+            )}
             {activeTab === "managed" && (
               <Card padding="none">
                 {filteredModels.map((model, i) => (

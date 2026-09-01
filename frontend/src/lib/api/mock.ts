@@ -1866,6 +1866,16 @@ export const mockClient: UnswarmClient = {
     return { modelIds };
   },
 
+  async saveCloudProviderModels(providerId: string, modelIds: string[]) {
+    await delay(rand(60, 150));
+    const provider = CLOUD_PROVIDERS.find((p) => p.id === providerId);
+    if (!provider) throw new Error(`Cloud provider ${providerId} not found`);
+    provider.modelCount = modelIds.length;
+    provider.updatedAt = new Date().toISOString();
+    const { apiKey: _, ...rest } = provider;
+    return { ...rest, baseUrlFull: provider.baseUrl };
+  },
+
   async testAndFetchModels(baseUrl: string, apiKey: string) {
     await delay(rand(300, 800));
     void apiKey;

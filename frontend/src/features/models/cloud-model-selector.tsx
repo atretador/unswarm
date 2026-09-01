@@ -4,12 +4,13 @@ import {
   Cloud,
   ChevronDown,
   ChevronRight,
+  MessageSquare,
   TriangleAlert,
   RefreshCw,
   Save,
 } from "lucide-react";
 import { TriCheckbox } from "../../components/ui";
-import { Button, Badge } from "../../components/ui";
+import { Button, Badge, Tooltip } from "../../components/ui";
 import { getProviderModelCatalog } from "../api-keys/api-keys-api";
 import { client } from "../../lib/query-client";
 
@@ -17,7 +18,7 @@ import { client } from "../../lib/query-client";
  * Curates which cloud models are active. Model selection is saved per-provider
  * to ModelsJson via PUT /api/cloudproviders/{id}/models.
  */
-export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
+export function CloudModelSelector({ onSaved, onChatModel }: { onSaved?: () => void; onChatModel?: (modelId: string) => void }) {
   const queryClient = useQueryClient();
 
   // Fetch cloud providers (for ID ↔ name mapping)
@@ -359,11 +360,11 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
 
               {/* Model checkboxes (when expanded) */}
               {isExpanded && (
-                <div className="max-h-[180px] overflow-y-auto flex flex-wrap gap-x-4 gap-y-1.5 mt-2 ml-6">
+                <div className="max-h-[180px] overflow-y-auto flex flex-col gap-y-1 mt-2 ml-6">
                   {provider.models.map((modelId) => (
-                    <label
+                    <div
                       key={modelId}
-                      className="inline-flex items-center gap-1.5 cursor-pointer select-none"
+                      className="flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1 hover:bg-[var(--color-bg-muted)] transition-colors"
                     >
                       <input
                         type="checkbox"
@@ -375,10 +376,25 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
                         }
                         className="size-3.5 rounded accent-[var(--color-primary)] cursor-pointer"
                       />
-                      <span className="text-xs text-[var(--color-text)] font-mono">
+                      <span className="flex-1 text-xs text-[var(--color-text)] font-mono">
                         {modelId}
                       </span>
-                    </label>
+                      <Badge variant="info" size="sm">
+                        {provider.name}
+                      </Badge>
+                      {onChatModel && (
+                        <Tooltip content={`Test chat with ${modelId}`}>
+                          <button
+                            type="button"
+                            onClick={() => onChatModel(modelId)}
+                            aria-label={`Test chat with ${modelId}`}
+                            className="flex size-6 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+                          >
+                            <MessageSquare className="size-3" />
+                          </button>
+                        </Tooltip>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}

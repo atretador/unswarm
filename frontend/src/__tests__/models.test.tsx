@@ -5,6 +5,17 @@ import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import Models from "../features/models";
 
+vi.mock("../features/api-keys/api-keys-api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../features/api-keys/api-keys-api")>();
+  return {
+    ...orig,
+    getProviderModelCatalog: async () => [
+      { name: "openai", kind: "cloud" as const, models: ["gpt-4o", "gpt-4o-mini"] },
+      { name: "anthropic", kind: "cloud" as const, models: ["claude-sonnet-4-20250514", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"] },
+    ],
+  };
+});
+
 beforeEach(() => {
   setMockLatency(0);
   vi.restoreAllMocks();
