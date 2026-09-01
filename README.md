@@ -1,7 +1,10 @@
 <div align="center">
   <img src="assets/unswarm-icon.svg" alt="Unswarm" width="128" />
   <h1>Unswarm</h1>
-  <p><a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a></p>
+  <p>
+    <a href="https://github.com/atretador/unswarm/actions/workflows/ci.yml"><img src="https://github.com/atretador/unswarm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
+  </p>
 </div>
 
 A self-hosted control plane for managing LLM inference infrastructure across multiple machines. Unswarm lets you register remote agents, orchestrate Docker containers running model servers (llama.cpp, vLLM, etc.), route OpenAI-compatible inference requests, benchmark models, and monitor your swarm — all from a single dashboard.
