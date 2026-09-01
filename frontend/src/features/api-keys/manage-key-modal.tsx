@@ -10,14 +10,17 @@
 // deployed yet (404/error), the affected section degrades to a non-blocking
 // notice instead of crashing. If the usage endpoint 404s, that section hides.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Cloud,
   Globe,
   HardDrive,
   Info,
+  Search,
   Server,
   ShieldCheck,
   SlidersHorizontal,
@@ -351,10 +354,22 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const [initialSerialized, setInitialSerialized] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
+  const [modelSearch, setModelSearch] = useState("");
+  const expandedInit = useRef(false);
 
   // AccessJson grants are only enforced on /v1 inference; agent-scope keys
   // can't call /v1, so the access editor is hidden for them entirely.
   const isAgentKey = apiKey.scope === "agent";
+
+  function toggleExpand(name: string) {
+    setExpandedProviders((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }
 
   const catalogQuery = useQuery({
     queryKey: ["provider-model-catalog"],
@@ -372,6 +387,20 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const catalog = catalogQuery.data;
   const access = accessQuery.data;
 
+  // Default expansion: providers with ≤5 models start expanded.
+  const defaultExpanded = useMemo(() => {
+    if (!catalog) return new Set<string>();
+    return new Set(catalog.filter((e) => e.models.length <= 5).map((e) => e.name));
+  }, [catalog]);
+
+  // Seed expandedProviders from defaults once when catalog loads.
+  useEffect(() => {
+    if (catalog && !expandedInit.current) {
+      setExpandedProviders(defaultExpanded);
+      expandedInit.current = true;
+    }
+  }, [catalog, defaultExpanded]);
+
   // Build the editable draft once both catalog + current grants are loaded.
   useEffect(() => {
     if (!open || !catalog || !access) return;
@@ -387,6 +416,9 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
       setInitialSerialized(null);
       setSavedTick(false);
       setConfirmDiscard(false);
+      setModelSearch("");
+      expandedInit.current = false;
+      setExpandedProviders(new Set());
     }
   }, [open, apiKey.id]);
 
@@ -509,8 +541,27 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                       individual models for a narrower grant.
                     </p>
 
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--color-text-muted)]" />
+                      <input
+                        type="text"
+                        placeholder="Search models…"
+                        value={modelSearch}
+                        onChange={(e) => setModelSearch(e.target.value)}
+                        className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg)] pl-9 pr-3 py-1.5 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
+                      />
+                    </div>
+
                     {catalogQuery.data && (["cloud", "local"] as const).map((kind) => {
-                      const entries = catalogQuery.data.filter((c) => c.kind === kind);
+                      const entries = catalogQuery.data
+                        .filter((c) => c.kind === kind)
+                        .map((e) => ({
+                          ...e,
+                          models: modelSearch
+                            ? e.models.filter((m) => m.toLowerCase().includes(modelSearch.toLowerCase()))
+                            : e.models,
+                        }))
+                        .filter((e) => (modelSearch ? e.models.length > 0 : true));
                       if (entries.length === 0) return null;
                       return (
                         <div key={kind} className="space-y-2">
@@ -532,6 +583,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                 { all: false, models: new Set<string>() };
                               const picked = sel.models.size;
                               const some = picked > 0 && !sel.all;
+                              const isExpanded = expandedProviders.has(entry.name);
                               return (
                                 <div
                                   key={entry.name}
@@ -566,10 +618,25 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                         </Badge>
                                       )
                                     )}
+                                    <span className="flex-1" />
+                                    {entry.models.length > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleExpand(entry.name)}
+                                        className="p-1 rounded hover:bg-[var(--color-bg-muted)] transition-colors"
+                                        aria-label={isExpanded ? `Collapse ${entry.name} models` : `Expand ${entry.name} models`}
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronDown className="size-3.5 text-[var(--color-text-muted)]" />
+                                        ) : (
+                                          <ChevronRight className="size-3.5 text-[var(--color-text-muted)]" />
+                                        )}
+                                      </button>
+                                    )}
                                   </div>
 
-                                  {entry.models.length > 0 && (
-                                    <div className="flex flex-wrap gap-x-4 gap-y-1.5 mt-2 ml-6">
+                                  {isExpanded && entry.models.length > 0 && (
+                                    <div className="max-h-[180px] overflow-y-auto flex flex-wrap gap-x-4 gap-y-1.5 mt-2 ml-6">
                                       {entry.models.map((model) => {
                                         const granted = sel.all || sel.models.has(model);
                                         return (
