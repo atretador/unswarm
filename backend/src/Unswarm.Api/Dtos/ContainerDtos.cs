@@ -69,11 +69,12 @@ public sealed class RegisterRuntimeRequestDto
 }
 
 /// <summary>
-/// DTO for updating a registered runtime's display name.
+/// DTO for updating a registered runtime's display name and port.
 /// </summary>
 public sealed class UpdateRuntimeRequestDto
 {
     public string? DisplayName { get; set; }
+    public int? ContainerPort { get; set; }
 }
 
 /// <summary>

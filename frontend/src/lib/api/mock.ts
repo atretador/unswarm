@@ -1220,6 +1220,9 @@ export const mockClient: UnswarmClient = {
     if (payload.displayName !== undefined) {
       rc.displayName = payload.displayName;
     }
+    if (payload.containerPort !== undefined) {
+      rc.containerPort = payload.containerPort;
+    }
     return {
       ...rc,
       discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),

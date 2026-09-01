@@ -87,9 +87,10 @@ export interface UpdateRuntimeConcurrencyPayload {
   maxConcurrentInferences?: number;
 }
 
-/** Payload for updating a registered runtime's display name. */
+/** Payload for updating a registered runtime's display name and port. */
 export interface UpdateRuntimePayload {
   displayName?: string;
+  containerPort?: number;
 }
 
 /** Atomically toggle concurrency between two runtimes. */

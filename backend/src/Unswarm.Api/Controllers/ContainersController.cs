@@ -300,6 +300,11 @@ public sealed class ContainersController : ControllerBase
             existing = existing with { DisplayName = dto.DisplayName.Trim() };
         }
 
+        if (dto.ContainerPort.HasValue)
+        {
+            existing = existing with { ContainerPort = dto.ContainerPort.Value };
+        }
+
         var updated = await _containerRegistry.UpdateAsync(id, existing, ct).ConfigureAwait(false);
         return Ok(await BuildRegisteredResponseAsync(updated, ct).ConfigureAwait(false));
     }

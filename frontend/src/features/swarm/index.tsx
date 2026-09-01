@@ -489,12 +489,16 @@ function EditRuntimeDialog({
 }) {
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState(runtime?.displayName ?? "");
+  const [containerPort, setContainerPort] = useState(
+    String(runtime?.containerPort ?? 8080),
+  );
 
-  // Sync displayName when dialog opens or runtime changes
+  // Sync state when dialog opens or runtime changes
   const prevOpenRef = useRef(false);
   useEffect(() => {
     if (open && !prevOpenRef.current) {
       setDisplayName(runtime?.displayName ?? "");
+      setContainerPort(String(runtime?.containerPort ?? 8080));
     }
     prevOpenRef.current = open;
   }, [open, runtime]);
@@ -513,16 +517,26 @@ function EditRuntimeDialog({
     if (open) updateMutation.reset();
   }, [open]);
 
+  const parsedPort = Number(containerPort);
+  const portValid = Number.isFinite(parsedPort) && parsedPort > 0 && parsedPort <= 65535;
+  const hasChanges =
+    displayName.trim() !== (runtime?.displayName ?? "") ||
+    (portValid && parsedPort !== (runtime?.containerPort ?? 8080));
+
   const handleSave = () => {
-    if (!runtime || !displayName.trim()) return;
-    updateMutation.mutate({ displayName: displayName.trim() });
+    if (!runtime || !displayName.trim() || !portValid) return;
+    const payload: UpdateRuntimePayload = { displayName: displayName.trim() };
+    if (parsedPort !== (runtime?.containerPort ?? 8080)) {
+      payload.containerPort = parsedPort;
+    }
+    updateMutation.mutate(payload);
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title="Edit runtime">
       <div className="space-y-4 p-5">
         <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Update the display name for{" "}
+          Update settings for{" "}
           <span className="font-mono text-[var(--color-text-heading)]">{runtime?.displayName}</span>.
         </p>
 
@@ -533,6 +547,15 @@ function EditRuntimeDialog({
           placeholder="my-runtime"
           aria-label="Display name"
           autoFocus
+        />
+
+        <Input
+          label="Container port"
+          type="number"
+          value={containerPort}
+          onChange={(e) => setContainerPort(e.target.value)}
+          placeholder="8080"
+          aria-label="Container port"
         />
 
         {updateMutation.isError && (
@@ -549,7 +572,7 @@ function EditRuntimeDialog({
           <Button
             size="sm"
             loading={updateMutation.isPending}
-            disabled={!displayName.trim() || displayName.trim() === runtime?.displayName}
+            disabled={!hasChanges}
             onClick={handleSave}
           >
             Save
