@@ -35,6 +35,12 @@ public interface IContainerRegistrationService
     Task<RegisteredRuntime?> StopAsync(string id, CancellationToken ct = default);
 
     /// <summary>
+    /// Triggers a one-shot health check on a registered runtime, updating its status
+    /// and re-discovering models if healthy.
+    /// </summary>
+    Task<RegisteredRuntime?> HealthCheckAsync(string id, CancellationToken ct = default);
+
+    /// <summary>
     /// Resolves the LIVE docker container id for a possibly-stale persisted
     /// RuntimeContainerId. When the id belongs to a registered runtime whose container
     /// was recreated (same name, new docker id), the live id is returned AND persisted

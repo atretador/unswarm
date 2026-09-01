@@ -332,6 +332,10 @@ export interface Settings {
   /** Map of agent names to custom display names (e.g. { "host": "My Workstation" }). */
   agentDisplayNames: Record<string, string>;
   /**
+   * Max wait time for a runtime to become healthy during startup (seconds, 10–600).
+   */
+  healthCheckTimeoutSeconds: number;
+  /**
    * How long raw usage records are kept before purging (days, ≥0).
    * Optional — older backends may not expose it yet.
    */

@@ -36,7 +36,8 @@ type NumericField =
   | "conversationDwellSeconds"
   | "requestTimeout"
   | "idleTimeout"
-  | "healthCheckInterval";
+  | "healthCheckInterval"
+  | "healthCheckTimeoutSeconds";
 
 type BooleanField =
   | "autoShutdownIdle"
@@ -54,6 +55,7 @@ function clampNumericField(field: NumericField, num: number): number {
   if (field === "maxQueueDepth") return Math.max(0, num);
   if (field === "requestTimeout") return Math.max(5, num);
   if (field === "idleTimeout") return Math.max(10, num);
+  if (field === "healthCheckTimeoutSeconds") return Math.max(10, Math.min(600, num));
   return Math.max(5, num); // healthCheckInterval
 }
 
@@ -111,6 +113,7 @@ function SchedulerPolicySection() {
   const [draftRequestTimeout, setDraftRequestTimeout] = useState<string>("");
   const [draftIdleTimeout, setDraftIdleTimeout] = useState<string>("");
   const [draftHealthCheckInterval, setDraftHealthCheckInterval] = useState<string>("");
+  const [draftHealthCheckTimeoutSeconds, setDraftHealthCheckTimeoutSeconds] = useState<string>("");
   const [draftToggles, setDraftToggles] = useState<Partial<Record<BooleanField, boolean>>>({});
   const [draftPriorityMode, setDraftPriorityMode] = useState<SettingsData["priorityMode"]>("fifo");
 
@@ -124,6 +127,7 @@ function SchedulerPolicySection() {
       setDraftRequestTimeout(String(settings.requestTimeout));
       setDraftIdleTimeout(String(settings.idleTimeout));
       setDraftHealthCheckInterval(String(settings.healthCheckInterval));
+      setDraftHealthCheckTimeoutSeconds(String(settings.healthCheckTimeoutSeconds ?? 120));
       setDraftPriorityMode(settings.priorityMode);
       setDraftToggles({
         autoShutdownIdle: settings.autoShutdownIdle,
@@ -164,6 +168,7 @@ function SchedulerPolicySection() {
     { field: "requestTimeout", raw: draftRequestTimeout },
     { field: "idleTimeout", raw: draftIdleTimeout },
     { field: "healthCheckInterval", raw: draftHealthCheckInterval },
+    { field: "healthCheckTimeoutSeconds", raw: draftHealthCheckTimeoutSeconds },
   ];
 
   let hasInvalidInput = false;
@@ -203,6 +208,7 @@ function SchedulerPolicySection() {
     setDraftRequestTimeout(String(settings.requestTimeout));
     setDraftIdleTimeout(String(settings.idleTimeout));
     setDraftHealthCheckInterval(String(settings.healthCheckInterval));
+    setDraftHealthCheckTimeoutSeconds(String(settings.healthCheckTimeoutSeconds ?? 120));
     setDraftPriorityMode(settings.priorityMode);
     setDraftToggles({
       autoShutdownIdle: settings.autoShutdownIdle,
@@ -295,6 +301,18 @@ function SchedulerPolicySection() {
             value={draftHealthCheckInterval}
             onChange={(e) => setDraftHealthCheckInterval(e.target.value)}
           />
+          <Input
+            label="Health check timeout (seconds)"
+            type="number"
+            value={draftHealthCheckTimeoutSeconds}
+            onChange={(e) => setDraftHealthCheckTimeoutSeconds(e.target.value)}
+          />
+          <p className="text-[10px] text-[var(--color-text-muted)]">
+            Max wait time for a runtime to become healthy (10–600s)
+          </p>
+          {Number(draftHealthCheckTimeoutSeconds) !== 0 && (Number(draftHealthCheckTimeoutSeconds) < 10 || Number(draftHealthCheckTimeoutSeconds) > 600) && (
+            <p className="text-xs text-amber-500">Value will be clamped to 10–600 on save</p>
+          )}
           <Select
             label="Priority mode"
             value={draftPriorityMode}

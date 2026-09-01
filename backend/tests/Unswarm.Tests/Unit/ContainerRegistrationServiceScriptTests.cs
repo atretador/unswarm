@@ -85,6 +85,8 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
         FakeDockerControllerRouter? router = null,
         HostScriptRuntimeController? scriptController = null)
     {
+        var settings = new FakeSettingsStore(new Settings { HealthCheckTimeoutSeconds = 120 });
+
         return new ContainerRegistrationService(
             _registry,
             router ?? _router,
@@ -93,6 +95,7 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             _modelRegistry,
             _clock,
             _logger,
+            settings,
             scriptController: scriptController);
     }
 

@@ -109,6 +109,24 @@ public sealed class FakeContainerRegistrationService : IContainerRegistrationSer
         return Task.FromResult(StopResult);
     }
 
+    // ── HealthCheckAsync ────────────────────────────────────────────
+
+    public List<string> HealthCheckedIds { get; } = [];
+
+    /// <summary>Scriptable HealthCheckAsync result; when set, returned for any id.</summary>
+    public RegisteredRuntime? HealthCheckResult { get; set; }
+
+    /// <summary>When set, HealthCheckAsync returns null (simulates unknown id).</summary>
+    public bool HealthCheckReturnsNull { get; set; }
+
+    public Task<RegisteredRuntime?> HealthCheckAsync(string id, CancellationToken ct = default)
+    {
+        HealthCheckedIds.Add(id);
+        if (HealthCheckReturnsNull)
+            return Task.FromResult<RegisteredRuntime?>(null);
+        return Task.FromResult(HealthCheckResult);
+    }
+
     // ── ResolveLiveContainerIdAsync ────────────────────────────────────
 
     public List<string> ResolvedLiveIds { get; } = [];

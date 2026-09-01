@@ -80,6 +80,7 @@ public sealed class SettingsStore : ISettingsStore
         entity.ConversationDwellSeconds = settings.ConversationDwellSeconds;
         entity.HideOriginPrefix = settings.HideOriginPrefix;
         entity.AgentDisplayNames = settings.AgentDisplayNames;
+        entity.HealthCheckTimeoutSeconds = settings.HealthCheckTimeoutSeconds;
         entity.UsageRetentionDays = settings.UsageRetentionDays;
         entity.ProviderBudgetsJson = settings.ProviderBudgetsJson;
 
@@ -123,6 +124,7 @@ public sealed class SettingsStore : ISettingsStore
         ConversationDwellSeconds = e.ConversationDwellSeconds,
         HideOriginPrefix = e.HideOriginPrefix,
         AgentDisplayNames = e.AgentDisplayNames,
+        HealthCheckTimeoutSeconds = e.HealthCheckTimeoutSeconds,
         UsageRetentionDays = e.UsageRetentionDays,
         ProviderBudgetsJson = e.ProviderBudgetsJson
     };

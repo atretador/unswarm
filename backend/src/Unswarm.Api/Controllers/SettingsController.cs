@@ -52,6 +52,7 @@ public sealed class SettingsController : ControllerBase
             QueueStepsTillReset = Math.Clamp(request.QueueStepsTillReset ?? current.QueueStepsTillReset, 1, 1000),
             EnableConversationAffinity = request.EnableConversationAffinity ?? current.EnableConversationAffinity,
             ConversationDwellSeconds = Math.Max(1, request.ConversationDwellSeconds ?? current.ConversationDwellSeconds),
+            HealthCheckTimeoutSeconds = Math.Clamp(request.HealthCheckTimeoutSeconds ?? current.HealthCheckTimeoutSeconds, 10, 600),
             HideOriginPrefix = request.HideOriginPrefix ?? current.HideOriginPrefix,
             AgentDisplayNames = request.AgentDisplayNames ?? current.AgentDisplayNames,
             UsageRetentionDays = Math.Max(0, request.UsageRetentionDays ?? current.UsageRetentionDays),

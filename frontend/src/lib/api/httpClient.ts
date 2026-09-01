@@ -425,6 +425,13 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  healthCheckRuntime(id: string) {
+    return request<RegisteredRuntime>(
+      `/api/containers/registered/${encodeURIComponent(id)}/healthcheck`,
+      { method: "POST" },
+    );
+  },
+
   deleteRuntime(id: string, deleteModels = false) {
     const qs = deleteModels ? "?deleteModels=true" : "";
     return request<void>(

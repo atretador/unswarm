@@ -101,6 +101,8 @@ public sealed class SettingsEntity
     /// </summary>
     public string AgentDisplayNames { get; set; } = "{}";
 
+    public int HealthCheckTimeoutSeconds { get; set; } = 120;
+
     /// <summary>Usage records older than this many days are eligible for purge (0 = keep forever).</summary>
     public int UsageRetentionDays { get; set; } = 30;
 
@@ -344,6 +346,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 QueueStepsTillReset = 3,
                 EnableConversationAffinity = false,
                 ConversationDwellSeconds = 45,
+                HealthCheckTimeoutSeconds = 120,
                 HideOriginPrefix = false,
                 AgentDisplayNames = "{}",
                 UsageRetentionDays = 30,

@@ -848,6 +848,7 @@ const LOGS: LogEntry[] = [
 const SETTINGS: Settings = {
   requestTimeout: 120,
   healthCheckInterval: 10,
+  healthCheckTimeoutSeconds: 120,
   autoShutdownIdle: false,
   idleTimeout: 300,
   logRetention: 168,
@@ -1291,6 +1292,20 @@ export const mockClient: UnswarmClient = {
         (t) => t.containerId === rc.runtimeContainerId,
       );
       if (telemetry) telemetry.status = "stopped";
+    }
+    return {
+      ...rc,
+      discoveredModels: rc.discoveredModels.map((m) => ({ ...m })),
+    };
+  },
+
+  async healthCheckRuntime(runtimeId: string) {
+    await delay(rand(200, 500));
+    const rc = registeredRuntimes.find((x) => x.id === runtimeId);
+    if (!rc) throw new Error(`Registered runtime ${runtimeId} not found`);
+    // Simulate health check success — flip to "ready" if it was in a checkable state.
+    if (rc.status === "starting" || rc.status === "registered" || rc.status === "error") {
+      rc.status = "ready";
     }
     return {
       ...rc,

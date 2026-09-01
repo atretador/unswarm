@@ -31,6 +31,7 @@ import {
   Search,
   Server,
   Square,
+  Stethoscope,
   Terminal,
   Trash2,
   X,
@@ -1368,6 +1369,7 @@ function RegisteredContainerCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [ringActive, setRingActive] = useState(highlight);
   const [rediscoverError, setRediscoverError] = useState<string | null>(null);
+  const [healthCheckError, setHealthCheckError] = useState<string | null>(null);
   const [editingSlots, setEditingSlots] = useState(false);
   const [slotsValue, setSlotsValue] = useState(container.maxConcurrentInferences);
   const [editingName, setEditingName] = useState(false);
@@ -1425,6 +1427,22 @@ function RegisteredContainerCard({
     onSuccess: invalidate,
   });
 
+  const healthCheckMutation = useMutation({
+    mutationFn: () => client.healthCheckRuntime(container.id),
+    onMutate: () => {
+      setHealthCheckError(null);
+    },
+    onSuccess: () => {
+      setHealthCheckError(null);
+      queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
+      queryClient.invalidateQueries({ queryKey: ["agents"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+    },
+    onError: (err: Error) => {
+      setHealthCheckError(err.message || "Health check failed");
+    },
+  });
+
   const benchmarkMutation = useMutation({
     mutationFn: (modelId: string) => client.runBenchmark(modelId),
     onSuccess: (result) => {
@@ -1460,7 +1478,8 @@ function RegisteredContainerCard({
     restartMutation.isPending ||
     rediscoverMutation.isPending ||
     deleteMutation.isPending ||
-    stopScriptMutation.isPending;
+    stopScriptMutation.isPending ||
+    healthCheckMutation.isPending;
 
   return (
     <motion.div
@@ -1639,6 +1658,21 @@ function RegisteredContainerCard({
           </div>
         )}
 
+        {healthCheckError && (
+          <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
+            <AlertTriangle className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{healthCheckError}</span>
+            <button
+              type="button"
+              onClick={() => setHealthCheckError(null)}
+              aria-label="Dismiss health check error"
+              className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
+
         {/* Actions */}
         <div className="mt-auto flex flex-wrap items-center gap-1.5 pt-1">
           <Tooltip content={benchDisabledTooltip(firstModel)}>
@@ -1746,6 +1780,19 @@ function RegisteredContainerCard({
             <span className="text-[10px] italic text-[var(--color-text-muted)]">
               {RUNTIME_LABEL[signal]}
             </span>
+          )}
+          {(container.status === "error" || container.status === "starting" || container.status === "registered") && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              loading={healthCheckMutation.isPending}
+              onClick={() => healthCheckMutation.mutate()}
+              title="Trigger a manual health check"
+            >
+              <Stethoscope className="size-3" />
+              Check Health
+            </Button>
           )}
           <div className="ml-auto flex items-center gap-1">
             <Button

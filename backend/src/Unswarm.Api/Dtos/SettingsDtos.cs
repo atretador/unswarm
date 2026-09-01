@@ -21,6 +21,7 @@ public sealed class SettingsResponse
 
     public bool EnableConversationAffinity { get; set; }
     public int ConversationDwellSeconds { get; set; } = 45;
+    public int HealthCheckTimeoutSeconds { get; set; } = 120;
 
     public bool HideOriginPrefix { get; set; }
     public string AgentDisplayNames { get; set; } = "{}";
@@ -45,6 +46,7 @@ public sealed class SettingsResponse
         QueueStepsTillReset = s.QueueStepsTillReset,
         EnableConversationAffinity = s.EnableConversationAffinity,
         ConversationDwellSeconds = s.ConversationDwellSeconds,
+        HealthCheckTimeoutSeconds = s.HealthCheckTimeoutSeconds,
         HideOriginPrefix = s.HideOriginPrefix,
         AgentDisplayNames = s.AgentDisplayNames,
         UsageRetentionDays = s.UsageRetentionDays,
@@ -71,6 +73,7 @@ public sealed class SettingsUpdateRequest
 
     public bool? EnableConversationAffinity { get; set; }
     public int? ConversationDwellSeconds { get; set; }
+    public int? HealthCheckTimeoutSeconds { get; set; }
 
     public bool? HideOriginPrefix { get; set; }
     public string? AgentDisplayNames { get; set; }

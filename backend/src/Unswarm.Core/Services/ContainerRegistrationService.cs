@@ -26,6 +26,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly IModelRegistry _modelRegistry;
     private readonly IClock _clock;
     private readonly ILogger<ContainerRegistrationService> _logger;
+    private readonly ISettingsStore _settings;
     private readonly TimeSpan _remoteHealthTimeout;
     private readonly TimeSpan _remoteHealthPollInterval;
     private readonly HostScriptRuntimeController? _scriptController;
@@ -40,6 +41,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         IModelRegistry modelRegistry,
         IClock clock,
         ILogger<ContainerRegistrationService> logger,
+        ISettingsStore settings,
         TimeSpan? remoteHealthTimeout = null,
         TimeSpan? remoteHealthPollInterval = null,
         HostScriptRuntimeController? scriptController = null,
@@ -53,6 +55,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _modelRegistry = modelRegistry;
         _clock = clock;
         _logger = logger;
+        _settings = settings;
         _remoteHealthTimeout = remoteHealthTimeout ?? DefaultRemoteHealthTimeout;
         _remoteHealthPollInterval = remoteHealthPollInterval ?? DefaultRemoteHealthPollInterval;
         _scriptController = scriptController;
@@ -211,7 +214,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             }
             else
             {
-                await _healthChecker.WaitForReadyAsync(mappedPort.Value, 120, ct).ConfigureAwait(false);
+                var healthTimeout = await _settings.GetAsync(ct).ConfigureAwait(false);
+                await _healthChecker.WaitForReadyAsync(mappedPort.Value, healthTimeout.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
             }
 
             container = await _registry.UpdateAsync(registeredContainerId, container with
@@ -224,7 +228,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
 
             // Discover models and kick off auto-benchmarks (same flow as
-            // StartAndDiscoverAsync used during original registration).
+            // StartAsync's original registration path).
             return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
         }
         catch (KeyNotFoundException)
@@ -234,8 +238,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start registered container {Id}", registeredContainerId);
-            // Live token: see StartAndDiscoverAsync catch — a canceled ct must not
-            // prevent persisting the Error state.
+            // Live token: a canceled ct must not prevent persisting the Error state.
             return await FailAsync(container, ex.Message, CancellationToken.None).ConfigureAwait(false);
         }
     }
@@ -673,100 +676,6 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         }
     }
 
-    private async Task<RegisteredRuntimeWithModels> StartAndDiscoverAsync(RegisteredRuntime container, CancellationToken ct)
-    {
-        try
-        {
-            var controller = GetController(container);
-            var isRemote = controller is IRemoteDockerController;
-
-            // Step 1: Start the container via the target's controller
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                Status = ContainerRegistrationStatus.Starting
-            }, ct).ConfigureAwait(false);
-
-            var startResult = await controller.StartRegisteredContainerAsync(
-                container.Id,
-                container.Image,
-                container.ContainerPort,
-                gpuDevices: null,
-                memoryLimitMb: 0,
-                container.ExtraLabels,
-                ct).ConfigureAwait(false);
-
-            if (startResult.ErrorMessage is not null)
-            {
-                return await FailAsync(container, startResult.ErrorMessage, ct).ConfigureAwait(false);
-            }
-
-            // Resolve mapped port. Remote agents may omit it in the start result (or
-            // return 0, which is meaningless), so fall back to listing containers and
-            // matching the running container.
-            var mappedPort = startResult.MappedPort is > 0 ? startResult.MappedPort : null;
-            if (!mappedPort.HasValue && isRemote)
-            {
-                mappedPort = await ResolveRemoteMappedPortAsync(
-                    (IRemoteDockerController)controller,
-                    startResult.ContainerId,
-                    container.Image,
-                    container.Agent,
-                    ct).ConfigureAwait(false);
-            }
-
-            if (!mappedPort.HasValue && isRemote)
-            {
-                return await FailAsync(container, "Could not determine mapped port for remote container", ct).ConfigureAwait(false);
-            }
-
-            if (!mappedPort.HasValue)
-            {
-                // Host container without a published port binding (e.g. host
-                // networking): fall back to the declared container port.
-                mappedPort = container.ContainerPort;
-                _logger.LogInformation(
-                    "No published port binding on container {Id}; using declared port {Port}",
-                    container.Id, mappedPort);
-            }
-
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                RuntimeContainerId = startResult.ContainerId,
-                MappedPort = mappedPort
-            }, ct).ConfigureAwait(false);
-
-            // Step 2: Wait for health
-            if (mappedPort.HasValue)
-            {
-                if (isRemote)
-                {
-                    await WaitForRemoteHealthAsync((IRemoteDockerController)controller, mappedPort.Value, container.Agent, ct).ConfigureAwait(false);
-                }
-                else
-                {
-                    await _healthChecker.WaitForReadyAsync(mappedPort.Value, 120, ct).ConfigureAwait(false);
-                }
-            }
-
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                Status = ContainerRegistrationStatus.Healthy
-            }, ct).ConfigureAwait(false);
-
-            // Step 3: Discover models
-            return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to register and start container {Id}", container.Id);
-            // Persist the error state with a live token: when the failure IS a
-            // cancellation (e.g. the registered container was deleted mid-start),
-            // the canceled ct would make this update throw too and leave the
-            // registration stuck in a transient state.
-            return await FailAsync(container, ex.Message, CancellationToken.None).ConfigureAwait(false);
-        }
-    }
-
     /// <summary>
     /// Resolves the remote container's mapped port by listing containers on the agent.
     /// 1. An exact Id == runtimeContainerId match wins (most reliable).
@@ -1005,82 +914,6 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     }
 
     /// <summary>
-    /// Script-specific registration: start the script process, wait for health, discover models.
-    /// Supports both host scripts (via HostScriptRuntimeController) and agent-hosted scripts
-    /// (via RemoteAgentDockerController).
-    /// </summary>
-    private async Task<RegisteredRuntimeWithModels> StartAndDiscoverScriptAsync(RegisteredRuntime container, CancellationToken ct)
-    {
-        try
-        {
-            // Validate launcher path
-            if (string.IsNullOrWhiteSpace(container.LauncherPath))
-                return await FailAsync(container, "LauncherPath is required for Script runtimes", ct).ConfigureAwait(false);
-
-            var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
-
-            // Host scripts: validate local file exists
-            if (isHost && !File.Exists(container.LauncherPath))
-                return await FailAsync(container, $"Launcher script not found: {container.LauncherPath}", ct).ConfigureAwait(false);
-
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                Status = ContainerRegistrationStatus.Starting
-            }, ct).ConfigureAwait(false);
-
-            int pid;
-            if (!isHost)
-            {
-                // Agent-hosted script: start via RemoteAgentDockerController
-                var controller = GetController(container);
-                if (controller is not RemoteAgentDockerController remoteController)
-                    return await FailAsync(container, $"Agent '{container.Agent}' does not have a connected RemoteAgentDockerController", ct).ConfigureAwait(false);
-
-                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
-            }
-            else
-            {
-                // Host script: start via HostScriptRuntimeController
-                if (_scriptController is null)
-                    return await FailAsync(container, "HostScriptRuntimeController not available", ct).ConfigureAwait(false);
-
-                var startResult = await _scriptController.StartScriptAsync(
-                    container.Id, container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
-
-                if (startResult.ErrorMessage is not null)
-                    return await FailAsync(container, startResult.ErrorMessage, ct).ConfigureAwait(false);
-
-                pid = startResult.Pid ?? 0;
-            }
-
-            // Script MappedPort = declared ContainerPort (no docker inspect needed)
-            var mappedPort = container.ContainerPort;
-
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                RuntimeProcessId = pid,
-                MappedPort = mappedPort
-            }, ct).ConfigureAwait(false);
-
-            // Wait for health
-            await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
-
-            container = await _registry.UpdateAsync(container.Id, container with
-            {
-                Status = ContainerRegistrationStatus.Healthy
-            }, ct).ConfigureAwait(false);
-
-            // Discover models
-            return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to register and start script {Id}", container.Id);
-            return await FailAsync(container, ex.Message, ct).ConfigureAwait(false);
-        }
-    }
-
-    /// <summary>
     /// Script-specific start (no re-discovery): start script, wait for health, return existing models.
     /// Supports both host scripts (via HostScriptRuntimeController) and agent-hosted scripts
     /// (via RemoteAgentDockerController).
@@ -1144,7 +977,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         try
         {
-            await _healthChecker.WaitForReadyAsync(mappedPort, 120, ct).ConfigureAwait(false);
+            var scriptHealthTimeout = await _settings.GetAsync(ct).ConfigureAwait(false);
+            await _healthChecker.WaitForReadyAsync(mappedPort, scriptHealthTimeout.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -1402,6 +1236,73 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Container = container,
             DiscoveredModels = []
         };
+    }
+
+    /// <inheritdoc />
+    /// <summary>
+    /// Performs a single-shot health check on a registered runtime.
+    /// If healthy, triggers model discovery. Unlike <see cref="IHealthChecker.WaitForReadyAsync"/>, this does not poll.
+    /// </summary>
+    public async Task<RegisteredRuntime?> HealthCheckAsync(string id, CancellationToken ct)
+    {
+        var runtime = await _registry.GetAsync(id, ct).ConfigureAwait(false);
+        if (runtime == null) return null;
+
+        // Determine the port - use MappedPort if available, else ContainerPort
+        var port = runtime.MappedPort ?? runtime.ContainerPort;
+
+        // Remote agents: health probe runs on the remote machine via the agent
+        // WebSocket. Local host: the health checker connects to 127.0.0.1:port.
+        var controller = GetController(runtime);
+        bool healthy;
+        if (controller is IRemoteDockerController remote)
+        {
+            healthy = await remote.HealthCheckAsync(port, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            healthy = await _healthChecker.CheckAsync(port, ct).ConfigureAwait(false);
+        }
+
+        if (healthy)
+        {
+            // Update status to Healthy, clear any error message
+            runtime = await _registry.UpdateAsync(id, runtime with
+            {
+                Status = ContainerRegistrationStatus.Healthy,
+                ErrorMessage = null,
+                UpdatedAt = _clock.UtcNow
+            }, ct).ConfigureAwait(false);
+
+            // Discover and register models
+            try
+            {
+                await DiscoverAndRegisterModelsAsync(runtime, ct).ConfigureAwait(false);
+            }
+            catch (InvalidOperationException)
+            {
+                // Duplicate model mapping from concurrent health check — safe to ignore
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Model discovery failed for {Id} after health check", id);
+            }
+
+            // Re-read the container to return the post-discovery state (Status may
+            // have changed to Ready by DiscoverAndRegisterModelsAsync).
+            runtime = await _registry.GetAsync(id, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            runtime = await _registry.UpdateAsync(id, runtime with
+            {
+                Status = ContainerRegistrationStatus.Error,
+                ErrorMessage = "Health check failed — process may still be starting or unreachable",
+                UpdatedAt = _clock.UtcNow
+            }, ct).ConfigureAwait(false);
+        }
+
+        return runtime;
     }
 
     /// <summary>

@@ -75,6 +75,8 @@ export interface UnswarmClient {
   startRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
   /** Stop a registered runtime (script or container) by registration id. */
   stopRegisteredRuntime(id: string): Promise<RegisteredRuntime>;
+  /** Trigger a manual health check on a registered runtime. */
+  healthCheckRuntime(id: string): Promise<RegisteredRuntime>;
   deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
 
   /** Update a registered runtime's display name. */

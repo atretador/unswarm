@@ -72,6 +72,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         TimeSpan? remoteHealthTimeout = null,
         TimeSpan? remoteHealthPollInterval = null)
     {
+        var settings = new FakeSettingsStore(new Settings { HealthCheckTimeoutSeconds = 120 });
+
         return new ContainerRegistrationService(
             _registry,
             router ?? _router,
@@ -80,6 +82,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             _modelRegistry,
             _clock,
             _logger,
+            settings,
             remoteHealthTimeout,
             remoteHealthPollInterval);
     }
@@ -1074,6 +1077,111 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal("live-id", resolved);
         var persisted = await _registry.GetAsync("reg-live");
         Assert.Equal("live-id", persisted!.RuntimeContainerId);
+    }
+
+    // ── HealthCheckAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task HealthCheckAsync_HealthyRuntime_ReturnsHealthyWithModels()
+    {
+        _docker.MappedPortOverride = StartDiscoveryServer(
+            """{"data":[{"id":"model-hc1","owned_by":"test"}]}""");
+        var service = CreateService();
+
+        var container = new RegisteredRuntime
+        {
+            Id = "reg-hc-ok",
+            DisplayName = "HcOk",
+            Image = "test:latest",
+            MappedPort = _docker.MappedPortOverride,
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.HealthCheckAsync("reg-hc-ok", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Ready, result!.Status);
+        // Model was discovered from the running container.
+        var mappedIds = await _registry.GetModelIdsForContainerAsync("reg-hc-ok");
+        Assert.Contains("model-hc1", mappedIds);
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_UnhealthyRuntime_ReturnsErrorStatus()
+    {
+        _healthChecker.IsReady = false;
+
+        var service = CreateService();
+        var container = new RegisteredRuntime
+        {
+            Id = "reg-hc-fail",
+            DisplayName = "HcFail",
+            Image = "test:latest",
+            MappedPort = 9999,
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.HealthCheckAsync("reg-hc-fail", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Error, result!.Status);
+        Assert.NotNull(result.ErrorMessage);
+        Assert.Contains("Health check failed", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_UnknownId_ReturnsNull()
+    {
+        var service = CreateService();
+
+        var result = await service.HealthCheckAsync("nonexistent-id", CancellationToken.None);
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_RemoteAgent_RoutesThroughRemoteController()
+    {
+        var remote = new FakeRemoteDockerController
+        {
+            Healthy = true,
+            Discovered =
+            [
+                new DiscoveredModel { ModelId = "remote-model-hc" }
+            ]
+        };
+
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController> { ["host"] = _docker, ["agent:gpu1"] = remote });
+
+        var service = CreateService(router: router);
+        var container = new RegisteredRuntime
+        {
+            Id = "reg-hc-remote",
+            DisplayName = "RemoteHc",
+            Image = "vllm-serve",
+            ContainerPort = 8000,
+            MappedPort = 9090,
+            Agent = "gpu1",
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
+        await _registry.CreateAsync(container);
+
+        var result = await service.HealthCheckAsync("reg-hc-remote", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Ready, result!.Status);
+        // Health check went through the remote controller, not the local health checker.
+        Assert.Equal([9090], remote.HealthCheckedPorts);
+        Assert.Empty(_healthChecker.CheckedPorts);
     }
 
     public void Dispose()

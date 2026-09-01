@@ -206,6 +206,7 @@ public sealed class AutoBenchmarkServiceTests
             modelRegistry,
             new FakeClock(),
             new LoggerFactory().CreateLogger<ContainerRegistrationService>(),
+            new FakeSettingsStore(),
             autoBenchmark: autoBenchmark);
     }
 

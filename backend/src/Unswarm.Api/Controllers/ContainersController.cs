@@ -24,6 +24,7 @@ namespace Unswarm.Api.Controllers;
 /// POST /api/containers/registered/{id}/stop — Stop a registered runtime
 /// POST /api/containers/registered/{id}/restart — Restart a registered runtime
 /// POST /api/containers/registered/{id}/rediscover — Rediscover models from a runtime
+/// POST /api/containers/registered/{id}/healthcheck — Trigger a one-shot health check
 /// PUT /api/containers/registered/{id}/concurrency — Update co-location settings
 /// POST /api/containers/registered/concurrency — Toggle coexistence between two runtimes
 /// </remarks>
@@ -229,6 +230,26 @@ public sealed class ContainersController : ControllerBase
         catch (InvalidOperationException)
         {
             return NotFound(new { error = "Registered runtime not found" });
+        }
+    }
+
+    /// <summary>
+    /// Triggers a one-shot health check on a registered runtime.
+    /// </summary>
+    [Authorize(Roles = "Admin")]
+    [HttpPost("registered/{id}/healthcheck")]
+    public async Task<IActionResult> HealthCheckRegistered(string id, CancellationToken ct)
+    {
+        try
+        {
+            var runtime = await _registrationService.HealthCheckAsync(id, ct);
+            if (runtime == null) return NotFound();
+            var response = await BuildRegisteredResponseAsync(runtime, ct).ConfigureAwait(false);
+            return Ok(response);
+        }
+        catch (Exception)
+        {
+            return StatusCode(500, new { error = "Health check failed" });
         }
     }
 

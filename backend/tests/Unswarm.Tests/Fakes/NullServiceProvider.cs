@@ -68,4 +68,7 @@ internal sealed class NullContainerRegistrationService : IContainerRegistrationS
 
     public Task<string> ResolveLiveContainerIdAsync(string runtimeContainerId, CancellationToken ct = default)
         => Task.FromResult(runtimeContainerId);
+
+    public Task<RegisteredRuntime?> HealthCheckAsync(string id, CancellationToken ct = default)
+        => Task.FromResult<RegisteredRuntime?>(null);
 }
