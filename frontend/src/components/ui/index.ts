@@ -42,3 +42,5 @@ export type { ModalProps } from "./Modal";
 
 export { Drawer } from "./Drawer";
 export type { DrawerProps } from "./Drawer";
+
+export { TriCheckbox } from "./TriCheckbox";

@@ -32,6 +32,7 @@ import {
 import type { Model, ModelStatus, Settings } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
 import { TestChatDrawer } from "./test-chat-drawer";
+import { CloudModelSelector } from "./cloud-model-selector";
 
 // ─── Status semantics — identical to the Swarm page palette ───────
 
@@ -669,15 +670,18 @@ export default function Models() {
             />
           </Card>
         ) : (
-          <Card padding="none">
-            {activeTab === "managed"
-              ? filteredModels.map((model, i) => (
-                  <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
-                ))
-              : filteredModels.map((model, i) => (
-                  <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
-                ))}
-          </Card>
+          <>
+            {activeTab === "cloud" && <CloudModelSelector />}
+            <Card padding="none">
+              {activeTab === "managed"
+                ? filteredModels.map((model, i) => (
+                    <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
+                  ))
+                : filteredModels.map((model, i) => (
+                    <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
+                  ))}
+            </Card>
+          </>
         )}
       </div>
 

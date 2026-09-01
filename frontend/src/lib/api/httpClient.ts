@@ -771,6 +771,13 @@ export const httpClient: UnswarmClient = {
     });
   },
 
+  saveCloudProviderModels(providerId: string, modelIds: string[]) {
+    return request<CloudProviderRead>(
+      `/api/cloudproviders/${encodeURIComponent(providerId)}/models`,
+      { method: "PUT", body: JSON.stringify({ modelIds }) },
+    );
+  },
+
   // ── Metrics ──────────────────────────────────────────────────
   getMetricsUsage(opts) {
     const params = metricsParams(opts);

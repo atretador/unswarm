@@ -182,6 +182,7 @@ export interface UnswarmClient {
   deleteCloudProvider(id: string): Promise<void>;
   fetchCloudProviderModels(id: string): Promise<FetchModelsResult>;
   testAndFetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult>;
+  saveCloudProviderModels(providerId: string, modelIds: string[]): Promise<CloudProviderRead>;
 
   // Metrics
   getMetricsUsage(opts?: MetricsUsageParams): Promise<UsagePageResponse>;

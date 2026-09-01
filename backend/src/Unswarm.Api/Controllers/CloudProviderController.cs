@@ -19,6 +19,7 @@ namespace Unswarm.Api.Controllers;
 /// DELETE /api/cloudproviders/{id} — Delete a provider
 /// POST /api/cloudproviders/{id}/fetch-models — Fetch models from an upstream provider
 /// POST /api/cloudproviders/test-and-fetch — Test connection and preview models
+/// PUT /api/cloudproviders/{id}/models — Save selected model list
 /// </remarks>
 [ApiController]
 [Route("api/cloudproviders")]
@@ -177,6 +178,26 @@ public sealed class CloudProviderController : ControllerBase
             return result.Error;
 
         return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+    }
+
+    [HttpPut("{id}/models")]
+    public async Task<IActionResult> SaveModels(string id, [FromBody] CloudProviderModelListDto request, CancellationToken ct)
+    {
+        var existing = await _store.GetAsync(id, ct);
+        if (existing is null)
+            return NotFound(new { error = "Cloud provider not found." });
+
+        try
+        {
+            await _store.SaveModelsAsync(id, request.ModelIds, ct);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
+        var updated = await _store.GetAsync(id, ct);
+        return Ok(MapToReadDto(updated!));
     }
 
     // ── Helpers ───────────────────────────────────────────────────
