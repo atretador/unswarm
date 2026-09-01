@@ -302,7 +302,7 @@ public sealed class ContainersController : ControllerBase
 
         if (dto.ContainerPort.HasValue)
         {
-            existing = existing with { ContainerPort = dto.ContainerPort.Value };
+            existing = existing with { ContainerPort = dto.ContainerPort.Value, MappedPort = null };
         }
 
         var updated = await _containerRegistry.UpdateAsync(id, existing, ct).ConfigureAwait(false);

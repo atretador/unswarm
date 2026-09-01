@@ -1222,6 +1222,7 @@ export const mockClient: UnswarmClient = {
     }
     if (payload.containerPort !== undefined) {
       rc.containerPort = payload.containerPort;
+      rc.mappedPort = null;
     }
     return {
       ...rc,
