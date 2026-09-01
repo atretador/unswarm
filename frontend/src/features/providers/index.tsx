@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Cloud, Plus, Pencil, Trash2, Loader2, Check, AlertCircle, List } from "lucide-react";
+import { Cloud, Plus, Pencil, Trash2, Loader2, Check, AlertCircle } from "lucide-react";
 import { client } from "../../lib/query-client";
 import {
   Card,
@@ -10,7 +10,9 @@ import {
   EmptyState,
   ConfirmDialog,
   Dialog,
+  TriCheckbox,
 } from "../../components/ui";
+import { getProviderModelCatalog } from "../api-keys/api-keys-api";
 import type {
   CloudProvider,
   CloudProviderInput,
@@ -120,6 +122,10 @@ function ProviderDialog({
   const [fetchModelsPending, setFetchModelsPending] = useState(false);
   const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
 
+  // Model selection state
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [savedModelIds, setSavedModelIds] = useState<Set<string> | null>(null);
+
   // Reset state on open / editProvider change
   useEffect(() => {
     if (open) {
@@ -135,34 +141,38 @@ function ProviderDialog({
       setError(null);
       setFetchedModels(null);
       setFetchModelsError(null);
+      setSelectedModels(new Set());
+      setSavedModelIds(null);
     }
+  }, [open, editProvider]);
+
+  // Fetch saved models from catalog when editing an existing provider
+  useEffect(() => {
+    if (!open || !editProvider) return;
+
+    let cancelled = false;
+    getProviderModelCatalog()
+      .then((catalog) => {
+        if (cancelled) return;
+        const entry = catalog.find(
+          (e) => e.name === editProvider.name && e.kind === "cloud",
+        );
+        setSavedModelIds(new Set(entry?.models ?? []));
+      })
+      .catch(() => {
+        if (!cancelled) setSavedModelIds(new Set());
+      });
+
+    return () => { cancelled = true; };
   }, [open, editProvider]);
 
   const createMutation = useMutation({
     mutationFn: (data: CloudProviderInput) => client.createCloudProvider(data),
-    onSuccess: async (result: any) => {
-      // Auto-fetch models after creation so they appear on the Models page
-      try {
-        await client.fetchCloudProviderModels(result.id);
-      } catch {
-        // Non-critical — models can be fetched later via Edit
-      }
-      queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-      onClose();
-    },
-    onError: (err: Error) => setError(err.message),
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }: { id: string; data: CloudProviderUpdateInput }) =>
       client.updateCloudProvider(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
-      queryClient.invalidateQueries({ queryKey: ["models"] });
-      onClose();
-    },
-    onError: (err: Error) => setError(err.message),
   });
 
   const handleFetchModels = async () => {
@@ -178,6 +188,13 @@ function ProviderDialog({
         result = await client.testAndFetchModels(baseUrl.trim(), apiKey);
       }
       setFetchedModels(result.modelIds);
+
+      // Populate selection: for edit, pre-check previously saved models; otherwise select all
+      if (isEdit && savedModelIds && savedModelIds.size > 0) {
+        setSelectedModels(new Set(result.modelIds.filter((id) => savedModelIds.has(id))));
+      } else {
+        setSelectedModels(new Set(result.modelIds));
+      }
     } catch (err) {
       setFetchModelsError(err instanceof Error ? err.message : "Failed to fetch models");
     } finally {
@@ -185,9 +202,38 @@ function ProviderDialog({
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Select all / deselect all
+  const allModelsSelected =
+    fetchedModels !== null &&
+    fetchedModels.length > 0 &&
+    selectedModels.size === fetchedModels.length;
+  const someModelsSelected =
+    fetchedModels !== null && selectedModels.size > 0 && !allModelsSelected;
+
+  const toggleSelectAll = useCallback(() => {
+    if (allModelsSelected) {
+      setSelectedModels(new Set());
+    } else if (fetchedModels) {
+      setSelectedModels(new Set(fetchedModels));
+    }
+  }, [allModelsSelected, fetchedModels]);
+
+  const toggleModel = useCallback((modelId: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(modelId)) {
+        next.delete(modelId);
+      } else {
+        next.add(modelId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setFetchModelsError(null);
 
     if (!name.trim()) {
       setError("Provider name is required.");
@@ -202,19 +248,51 @@ function ProviderDialog({
       return;
     }
 
-    if (isEdit && editProvider) {
-      const patch: CloudProviderUpdateInput = {
-        baseUrl: baseUrl.trim(),
-        apiKey: apiKey || null,
-      };
-      updateMutation.mutate({ id: editProvider.id, data: patch });
-    } else {
-      const input: CloudProviderInput = {
-        name: name.trim(),
-        baseUrl: baseUrl.trim(),
-        apiKey,
-      };
-      createMutation.mutate(input);
+    try {
+      if (isEdit && editProvider) {
+        const patch: CloudProviderUpdateInput = {
+          baseUrl: baseUrl.trim(),
+          apiKey: apiKey || null,
+        };
+        await updateMutation.mutateAsync({ id: editProvider.id, data: patch });
+
+        // Persist model selection if the user fetched and curated models
+        if (fetchedModels !== null) {
+          await client.saveCloudProviderModels(
+            editProvider.id,
+            Array.from(selectedModels),
+          );
+        }
+      } else {
+        const input: CloudProviderInput = {
+          name: name.trim(),
+          baseUrl: baseUrl.trim(),
+          apiKey,
+        };
+        const result = await createMutation.mutateAsync(input);
+
+        if (fetchedModels !== null && selectedModels.size > 0) {
+          // Save the user's curated selection
+          await client.saveCloudProviderModels(
+            result.id,
+            Array.from(selectedModels),
+          );
+        } else {
+          // No models fetched — auto-fetch all so they appear on the Models page
+          try {
+            await client.fetchCloudProviderModels(result.id);
+          } catch {
+            // Non-critical — models can be fetched later via Edit
+          }
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["cloud-providers"] });
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: ["provider-model-catalog"] });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save");
     }
   };
 
@@ -277,14 +355,38 @@ function ProviderDialog({
             )}
           </div>
           {fetchedModels !== null && fetchedModels.length > 0 && (
-            <div className="max-h-40 overflow-y-auto rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30">
-              <div className="p-2 space-y-0.5">
-                {fetchedModels.map((modelId) => (
-                  <div key={modelId} className="flex items-center gap-2 px-2 py-1 text-xs text-[var(--color-text)]">
-                    <List className="size-3 text-[var(--color-text-muted)] shrink-0" />
-                    <span className="font-mono truncate">{modelId}</span>
-                  </div>
-                ))}
+            <div className="space-y-2">
+              {/* Select All / Deselect All + count */}
+              <div className="flex items-center justify-between px-1">
+                <TriCheckbox
+                  checked={allModelsSelected}
+                  indeterminate={someModelsSelected}
+                  onChange={toggleSelectAll}
+                  label={allModelsSelected ? "Deselect all models" : "Select all models"}
+                />
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  {selectedModels.size} of {fetchedModels.length} models selected
+                </span>
+              </div>
+
+              {/* Scrollable model list */}
+              <div className="max-h-48 overflow-y-auto rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30">
+                <div className="p-2 space-y-0.5">
+                  {fetchedModels.map((modelId) => (
+                    <label
+                      key={modelId}
+                      className="flex items-center gap-2 px-2 py-1 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-muted)]/50 rounded cursor-pointer select-none transition-colors duration-[var(--duration-fast)]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedModels.has(modelId)}
+                        onChange={() => toggleModel(modelId)}
+                        className="size-3.5 rounded accent-[var(--color-primary)] cursor-pointer"
+                      />
+                      <span className="font-mono truncate">{modelId}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
           )}

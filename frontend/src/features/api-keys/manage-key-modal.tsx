@@ -370,26 +370,26 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
     }
   }, [catalog, defaultExpanded]);
 
-  // Build the editable draft once both catalog + current grants are loaded.
+  // Reset transient state then build the editable draft.
+  // Must be a single effect so init always runs after reset, preventing
+  // the race where React batches both setDraft calls and the null wins.
   useEffect(() => {
-    if (!open || !catalog || !access) return;
-    const parsed = parseAccess(access, catalog);
-    setDraft(parsed);
-    setInitialSerialized(JSON.stringify(serializeDraft(parsed)));
-  }, [open, catalog, access]);
-
-  // Reset transient state whenever the target key changes or the modal opens.
-  useEffect(() => {
-    if (open) {
-      setDraft(null);
-      setInitialSerialized(null);
-      setSavedTick(false);
-      setConfirmDiscard(false);
-      setModelSearch("");
-      expandedInit.current = false;
-      setExpandedProviders(new Set());
+    if (!open) return;
+    // Reset first
+    setDraft(null);
+    setInitialSerialized(null);
+    setSavedTick(false);
+    setConfirmDiscard(false);
+    setModelSearch("");
+    expandedInit.current = false;
+    setExpandedProviders(new Set());
+    // Then init if data is already available
+    if (catalog && access) {
+      const parsed = parseAccess(access, catalog);
+      setDraft(parsed);
+      setInitialSerialized(JSON.stringify(serializeDraft(parsed)));
     }
-  }, [open, apiKey.id]);
+  }, [open, apiKey.id, catalog, access]);
 
   const saveMutation = useMutation({
     mutationFn: (next: ApiKeyAccess) => putApiKeyAccess(apiKey.id, next),
