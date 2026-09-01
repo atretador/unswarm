@@ -336,61 +336,6 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   );
 }
 
-// ─── Model row (Cloud) ───────────────────────────────────────────
-
-function CloudModelRow({ model, index, settings, isSelected, onChat }: { model: Model; index: number; settings?: Settings; isSelected?: boolean; onChat: (model: Model) => void }) {
-  return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, delay: Math.min(index * 0.04, 0.3) }}
-      data-model-id={model.id}
-    >
-      <div
-        className="flex items-center gap-x-4 px-4 py-3.5 border-b border-[var(--color-border-subtle)] last:border-0 hover:bg-[var(--color-bg-muted)] transition-colors"
-        style={isSelected ? {
-          boxShadow: "0 0 0 2px var(--color-primary), 0 0 12px 2px color-mix(in srgb, var(--color-primary) 25%, transparent)",
-          borderLeft: "3px solid var(--color-primary)",
-          backgroundColor: "color-mix(in srgb, var(--color-primary) 5%, transparent)",
-        } : undefined}
-      >
-        {/* Cloud icon + Name + Provider */}
-        <div className="flex min-w-0 flex-1 items-center gap-2.5">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-primary)_10%,transparent)]">
-            <Cloud className="size-3.5 text-[var(--color-primary)]" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
-              {formatModelName(model.name, model.providerName ?? "cloud", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
-            </p>
-            <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-              {model.contextWindow.toLocaleString()} context
-            </p>
-          </div>
-        </div>
-
-        {/* Provider badge */}
-        <Badge variant="info" className="shrink-0">
-          {model.providerName}
-        </Badge>
-
-        {/* Status */}
-        <div className="shrink-0">
-          <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
-            {MODEL_STATUS_LABEL[model.status]}
-          </Badge>
-        </div>
-
-        {/* Actions */}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          <TestChatButton model={model} onChat={onChat} />
-        </div>
-      </div>
-    </motion.div>
-  );
-}
-
 // ─── Main Models page ─────────────────────────────────────────────
 
 type Tab = "managed" | "cloud";
@@ -407,7 +352,6 @@ export default function Models() {
 
   const [filter, setFilter] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("managed");
-  const [providerFilter, setProviderFilter] = useState("");
   const [agentFilter, setAgentFilter] = useState("");
   // Test-chat drawer: track the selected model ID so the row object stays fresh
   // (status may flip to invalid while the drawer is open).
@@ -434,7 +378,6 @@ export default function Models() {
     const isCloud = selectedModelId.startsWith("cloud/");
     setActiveTab(isCloud ? "cloud" : "managed");
     setFilter("");
-    setProviderFilter("");
     setAgentFilter("");
   }, [selectedModelId]);
 
@@ -477,12 +420,6 @@ export default function Models() {
 
   const activeModels = activeTab === "managed" ? managedModels : cloudModels;
 
-  const uniqueProviders = useMemo(() => {
-    if (cloudModels.length === 0) return [];
-    const names = [...new Set(cloudModels.map((m) => m.providerName).filter(Boolean))];
-    return names as string[];
-  }, [cloudModels]);
-
   const uniqueAgents = useMemo(() => {
     if (managedModels.length === 0) return [];
     const names = [...new Set(managedModels.map((m) => m.sourceRuntimeAgent).filter(Boolean))];
@@ -492,30 +429,19 @@ export default function Models() {
   const filteredModels = useMemo(() => {
     let result = activeModels;
     const q = filter.trim().toLowerCase();
-    if (q) {
-      result = result.filter((m) => {
-        if (activeTab === "cloud") {
-          return (
-            m.name.toLowerCase().includes(q) ||
-            (m.providerName ?? "").toLowerCase().includes(q)
-          );
-        }
-        return (
-          m.name.toLowerCase().includes(q) ||
-          m.family.toLowerCase().includes(q) ||
-          m.parameterSize.toLowerCase().includes(q) ||
-          (m.sourceRuntimeName ?? "").toLowerCase().includes(q)
-        );
-      });
-    }
-    if (activeTab === "cloud" && providerFilter) {
-      result = result.filter((m) => m.providerName === providerFilter);
+    if (q && activeTab === "managed") {
+      result = result.filter((m) =>
+        m.name.toLowerCase().includes(q) ||
+        m.family.toLowerCase().includes(q) ||
+        m.parameterSize.toLowerCase().includes(q) ||
+        (m.sourceRuntimeName ?? "").toLowerCase().includes(q),
+      );
     }
     if (activeTab === "managed" && agentFilter) {
       result = result.filter((m) => m.sourceRuntimeAgent === agentFilter);
     }
     return result;
-  }, [activeModels, filter, activeTab, providerFilter, agentFilter]);
+  }, [activeModels, filter, activeTab, agentFilter]);
 
   if (isLoading) {
     return (
@@ -576,7 +502,7 @@ export default function Models() {
                 id={`models-tab-${tab.key}`}
                 aria-selected={activeTab === tab.key}
                 aria-controls="models-panel"
-                onClick={() => { setActiveTab(tab.key); setFilter(""); setProviderFilter(""); setAgentFilter(""); }}
+                onClick={() => { setActiveTab(tab.key); setFilter(""); setAgentFilter(""); }}
                 className={`
                   flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors
                   border-b-2 -mb-px
@@ -614,23 +540,6 @@ export default function Models() {
             aria-label="Search models"
             className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
           />
-        </div>
-      )}
-
-      {/* Provider filter (Cloud tab) */}
-      {activeTab === "cloud" && uniqueProviders.length > 0 && (
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-[var(--color-text-muted)]">Provider:</label>
-          <select
-            value={providerFilter}
-            onChange={(e) => setProviderFilter(e.target.value)}
-            className="h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-focus-ring)]"
-          >
-            <option value="">All providers</option>
-            {uniqueProviders.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
         </div>
       )}
 
@@ -672,15 +581,13 @@ export default function Models() {
         ) : (
           <>
             {activeTab === "cloud" && <CloudModelSelector />}
-            <Card padding="none">
-              {activeTab === "managed"
-                ? filteredModels.map((model, i) => (
-                    <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
-                  ))
-                : filteredModels.map((model, i) => (
-                    <CloudModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
-                  ))}
-            </Card>
+            {activeTab === "managed" && (
+              <Card padding="none">
+                {filteredModels.map((model, i) => (
+                  <ManagedModelRow key={model.id} model={model} index={i} settings={settings} isSelected={model.id === selectedModelId} onChat={(m) => setChatModelId(m.id)} />
+                ))}
+              </Card>
+            )}
           </>
         )}
       </div>

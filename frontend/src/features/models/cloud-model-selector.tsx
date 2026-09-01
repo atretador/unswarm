@@ -1,8 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Cloud,
-  Search,
   ChevronDown,
   ChevronRight,
   TriangleAlert,
@@ -86,10 +85,20 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
       if (p.models.length <= 5) initial.add(p.name);
     }
     setExpanded(initial);
-  }, [cloudProviders, expanded]);
+  }, [cloudProviders]);
 
-  // Search
-  const [search, setSearch] = useState("");
+  // Per-provider refresh state: track which providers are currently refreshing
+  const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
+  // Per-provider error state
+  const [errors, setErrors] = useState<Map<string, string>>(new Map());
+
+  const clearError = useCallback((name: string) => {
+    setErrors((prev) => {
+      const next = new Map(prev);
+      next.delete(name);
+      return next;
+    });
+  }, []);
 
   // Dirty tracking
   const isDirty = useMemo(() => {
@@ -104,17 +113,6 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
     }
     return false;
   }, [selection, initialSelection]);
-
-  // Filter providers by search
-  const filteredProviders = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return cloudProviders;
-    return cloudProviders.filter(
-      (p) =>
-        p.name.toLowerCase().includes(q) ||
-        p.models.some((m) => m.toLowerCase().includes(q)),
-    );
-  }, [cloudProviders, search]);
 
   // Selection helpers
   const getProviderState = (name: string, models: string[]) => {
@@ -178,8 +176,8 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
     },
   });
 
-  // Check for new models (fetch from each provider)
-  const fetchModelsMutation = useMutation({
+  // Check all providers for new models
+  const fetchAllMutation = useMutation({
     mutationFn: async () => {
       const providers = providersQuery.data ?? [];
       await Promise.all(
@@ -192,6 +190,7 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
       // Reset initialized so selection picks up any new models
       setInitialized(false);
       setInitialSelection(new Map());
+      setErrors(new Map());
     },
   });
 
@@ -217,27 +216,39 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
         </div>
       </div>
 
-      {/* Search input */}
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
-        <input
-          type="search"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search providers or models..."
-          aria-label="Search cloud providers"
-          className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
-        />
+      {/* Action bar — always visible at top */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => fetchAllMutation.mutate()}
+          loading={fetchAllMutation.isPending}
+        >
+          <RefreshCw className="size-3.5" />
+          Check all providers
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => saveMutation.mutate()}
+          loading={saveMutation.isPending}
+          disabled={!isDirty}
+        >
+          <Save className="size-3.5" />
+          Save
+        </Button>
       </div>
 
       {/* Per-provider sections */}
       <div className="space-y-2">
-        {filteredProviders.map((provider) => {
+        {cloudProviders.map((provider) => {
           const { checked, indeterminate } = getProviderState(
             provider.name,
             provider.models,
           );
           const isExpanded = expanded.has(provider.name);
+          const isRefreshing = refreshing.has(provider.name);
+          const error = errors.get(provider.name);
 
           return (
             <div
@@ -245,43 +256,105 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
               className="rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] px-3 py-2.5"
             >
               {/* Provider header */}
-              <div className="flex items-center gap-2">
-                {/* Expand toggle */}
-                <button
-                  type="button"
-                  onClick={() => toggleExpanded(provider.name)}
-                  className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-                  aria-label={isExpanded ? "Collapse" : "Expand"}
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="size-3.5" />
-                  ) : (
-                    <ChevronRight className="size-3.5" />
+              <div className="flex items-center justify-between gap-2">
+                {/* Left: expand + icon + checkbox + name + badge */}
+                <div className="flex items-center gap-2 min-w-0">
+                  {/* Expand toggle */}
+                  <button
+                    type="button"
+                    onClick={() => toggleExpanded(provider.name)}
+                    className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+                    aria-label={isExpanded ? "Collapse" : "Expand"}
+                  >
+                    {isExpanded ? (
+                      <ChevronDown className="size-3.5" />
+                    ) : (
+                      <ChevronRight className="size-3.5" />
+                    )}
+                  </button>
+
+                  {/* Provider icon */}
+                  <Cloud className="size-3.5 shrink-0 text-[var(--color-primary)]" />
+
+                  {/* TriCheckbox (select-all) */}
+                  <TriCheckbox
+                    checked={checked}
+                    indeterminate={indeterminate}
+                    onChange={(c) =>
+                      toggleProvider(provider.name, provider.models, c)
+                    }
+                    label={`Select all ${provider.name} models`}
+                  />
+
+                  {/* Provider name */}
+                  <span className="text-xs font-medium text-[var(--color-text-heading)] truncate">
+                    {provider.name}
+                  </span>
+
+                  {/* Model count badge */}
+                  <Badge variant="default" size="sm">
+                    {provider.models.length}
+                  </Badge>
+                </div>
+
+                {/* Right: error indicator + refresh button */}
+                <div className="flex shrink-0 items-center gap-2">
+                  {/* Error indicator */}
+                  {error && (
+                    <button
+                      type="button"
+                      onClick={() => clearError(provider.name)}
+                      className="flex items-center gap-1 text-xs text-[var(--color-status-error)] hover:text-[var(--color-text)] transition-colors"
+                      title={error}
+                      aria-label="Dismiss error"
+                    >
+                      <TriangleAlert className="size-3.5" />
+                      Error
+                    </button>
                   )}
-                </button>
 
-                {/* Provider icon */}
-                <Cloud className="size-3.5 shrink-0 text-[var(--color-primary)]" />
-
-                {/* TriCheckbox (select-all) */}
-                <TriCheckbox
-                  checked={checked}
-                  indeterminate={indeterminate}
-                  onChange={(c) =>
-                    toggleProvider(provider.name, provider.models, c)
-                  }
-                  label={`Select all ${provider.name} models`}
-                />
-
-                {/* Provider name */}
-                <span className="text-xs font-medium text-[var(--color-text-heading)]">
-                  {provider.name}
-                </span>
-
-                {/* Model count badge */}
-                <Badge variant="default" size="sm">
-                  {provider.models.length}
-                </Badge>
+                  {/* Per-provider refresh */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const providerId = nameToId.get(provider.name);
+                      if (!providerId) return;
+                      clearError(provider.name);
+                      setRefreshing((prev) => new Set(prev).add(provider.name));
+                      client.fetchCloudProviderModels(providerId)
+                        .then(() => {
+                          queryClient.invalidateQueries({ queryKey: ["provider-model-catalog"] });
+                          queryClient.invalidateQueries({ queryKey: ["models"] });
+                          setInitialized(false);
+                          setInitialSelection(new Map());
+                        })
+                        .catch((err: Error) => {
+                          setErrors((prev) => {
+                            const next = new Map(prev);
+                            next.set(provider.name, err.message);
+                            return next;
+                          });
+                        })
+                        .finally(() => {
+                          setRefreshing((prev) => {
+                            const next = new Set(prev);
+                            next.delete(provider.name);
+                            return next;
+                          });
+                        });
+                    }}
+                    disabled={isRefreshing}
+                    className={`flex shrink-0 items-center gap-1 rounded-[var(--radius-md)] px-1.5 py-1 text-xs transition-colors disabled:opacity-40 ${
+                      isRefreshing
+                        ? "cursor-wait text-[var(--color-text-muted)]"
+                        : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
+                    }`}
+                    aria-label={`Refresh models for ${provider.name}`}
+                  >
+                    <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+                    <span>{isRefreshing ? "Fetching…" : "Refresh"}</span>
+                  </button>
+                </div>
               </div>
 
               {/* Model checkboxes (when expanded) */}
@@ -312,29 +385,6 @@ export function CloudModelSelector({ onSaved }: { onSaved?: () => void }) {
             </div>
           );
         })}
-      </div>
-
-      {/* Bottom bar */}
-      <div className="flex items-center gap-2">
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={() => fetchModelsMutation.mutate()}
-          loading={fetchModelsMutation.isPending}
-        >
-          <RefreshCw className="size-3.5" />
-          Check for new models
-        </Button>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => saveMutation.mutate()}
-          loading={saveMutation.isPending}
-          disabled={!isDirty}
-        >
-          <Save className="size-3.5" />
-          Save
-        </Button>
       </div>
     </div>
   );
