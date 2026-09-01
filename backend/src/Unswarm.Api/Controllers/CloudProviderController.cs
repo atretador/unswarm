@@ -131,7 +131,16 @@ public sealed class CloudProviderController : ControllerBase
         if (existing is null)
             return NotFound(new { error = "Cloud provider not found." });
 
-        var apiKey = await _store.GetApiKeyAsync(id, ct);
+        string? apiKey;
+        try
+        {
+            apiKey = await _store.GetApiKeyAsync(id, ct);
+        }
+        catch (System.Security.Cryptography.CryptographicException)
+        {
+            return BadRequest(new { error = "Unable to decrypt the API key for this provider. The encryption key ring may have changed — please re-enter the API key." });
+        }
+
         if (apiKey == null)
             return StatusCode(500, new { error = "Provider key is unavailable." });
 
