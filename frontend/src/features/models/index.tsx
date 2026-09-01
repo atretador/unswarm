@@ -587,7 +587,7 @@ export default function Models() {
         ) : (
           <>
             {activeTab === "cloud" && (
-              <CloudModelSelector onChatModel={(modelName) => {
+              <CloudModelSelector filter={filter} onChatModel={(modelName) => {
                 const found = (models ?? []).find((m) => m.name === modelName);
                 if (found) setChatModelId(found.id);
               }} />

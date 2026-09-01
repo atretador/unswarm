@@ -18,7 +18,7 @@ import { client } from "../../lib/query-client";
  * Curates which cloud models are active. Model selection is saved per-provider
  * to ModelsJson via PUT /api/cloudproviders/{id}/models.
  */
-export function CloudModelSelector({ onSaved, onChatModel }: { onSaved?: () => void; onChatModel?: (modelId: string) => void }) {
+export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?: () => void; onChatModel?: (modelId: string) => void; filter?: string }) {
   const queryClient = useQueryClient();
 
   // Fetch cloud providers (for ID ↔ name mapping)
@@ -46,6 +46,22 @@ export function CloudModelSelector({ onSaved, onChatModel }: { onSaved?: () => v
   const cloudProviders = useMemo(() => {
     return (catalogQuery.data ?? []).filter((e) => e.kind === "cloud");
   }, [catalogQuery.data]);
+
+  // Filtered providers/models based on search string
+  const filteredProviders = useMemo(() => {
+    const q = (filter ?? "").trim().toLowerCase();
+    if (!q) return cloudProviders;
+    return cloudProviders
+      .map((p) => ({
+        ...p,
+        models: p.models.filter(
+          (m) =>
+            m.toLowerCase().includes(q) ||
+            p.name.toLowerCase().includes(q),
+        ),
+      }))
+      .filter((p) => p.models.length > 0 || p.name.toLowerCase().includes(q));
+  }, [cloudProviders, filter]);
 
   // Selection state: Map<providerName, Set<modelId>>
   const [selection, setSelection] = useState<Map<string, Set<string>>>(
@@ -242,7 +258,7 @@ export function CloudModelSelector({ onSaved, onChatModel }: { onSaved?: () => v
 
       {/* Per-provider sections */}
       <div className="space-y-2">
-        {cloudProviders.map((provider) => {
+        {filteredProviders.map((provider) => {
           const { checked, indeterminate } = getProviderState(
             provider.name,
             provider.models,
