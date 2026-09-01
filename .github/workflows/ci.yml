@@ -38,6 +38,7 @@ jobs:
         working-directory: agent
       - uses: golangci/golangci-lint-action@v6
         with:
+          version: v2.13.2
           working-directory: agent
       - name: Test
         run: go test -race ./...
