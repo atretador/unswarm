@@ -95,6 +95,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
 
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Stable identity across renders (memoized) so effect/dep arrays below behave.
   const turns = useMemo(
@@ -146,6 +147,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
       ];
 
       setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "";
       appendTurn(model.id, { id: nextTurnId(), role: "user", content: text, reasoning: null });
       appendTurn(model.id, { id: nextTurnId(), role: "assistant", content: "", reasoning: null });
       setPending(true);
@@ -202,6 +204,13 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
     [model, pending, input, turns, system, maxTokensText, appendTurn, patchLastAssistantTurn],
   );
 
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
   const handleStop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
@@ -233,19 +242,21 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
     <div className="space-y-2 p-4">
       <div className="flex items-end gap-2">
         <textarea
+          ref={textareaRef}
           aria-label="Message"
           value={input}
           autoFocus
           rows={1}
           placeholder={`Message ${displayName}…`}
           onChange={(e) => setInput(e.target.value)}
+          onInput={autoResize}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void handleSend();
             }
           }}
-          className="max-h-32 min-h-[38px] w-full resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
+          className="max-h-32 min-h-[38px] flex-1 resize-none rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
         />
         {pending ? (
           <Button

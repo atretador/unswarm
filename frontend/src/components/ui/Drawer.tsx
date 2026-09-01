@@ -163,7 +163,7 @@ export function Drawer({
         ref={panelRef}
         tabIndex={-1}
         className={[
-          "absolute right-0 top-0 flex h-full w-full flex-col outline-none",
+          "absolute right-0 top-0 flex h-full w-full flex-col overflow-hidden outline-none",
           "max-w-lg border-l border-[var(--color-border)] bg-[var(--color-bg-surface)]",
           "shadow-xl transition-transform duration-200 ease-out",
           className,
