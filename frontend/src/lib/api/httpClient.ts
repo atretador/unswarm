@@ -15,6 +15,9 @@ import type {
   LogEntry,
   MetricsAnalyticsParams,
   Model,
+  OAuthStartResult,
+  OAuthPollResult,
+  OAuthRefreshResult,
   Prompt,
   PromptInput,
   PromptVersion,
@@ -813,6 +816,28 @@ export const httpClient: UnswarmClient = {
     return request<CloudProviderRead>(
       `/api/cloudproviders/${encodeURIComponent(providerId)}/models`,
       { method: "PUT", body: JSON.stringify({ modelIds }) },
+    );
+  },
+
+  // ── OAuth (ChatGPT Subscription) ─────────────────────────────
+  startOAuth(providerId: string) {
+    return request<OAuthStartResult>(
+      `/api/cloudproviders/${encodeURIComponent(providerId)}/oauth/start`,
+      { method: "POST" },
+    );
+  },
+
+  pollOAuth(providerId: string, data: { deviceAuthId: string; userCode: string }) {
+    return request<OAuthPollResult>(
+      `/api/cloudproviders/${encodeURIComponent(providerId)}/oauth/poll`,
+      { method: "POST", body: JSON.stringify(data) },
+    );
+  },
+
+  refreshOAuth(providerId: string) {
+    return request<OAuthRefreshResult>(
+      `/api/cloudproviders/${encodeURIComponent(providerId)}/oauth/refresh`,
+      { method: "POST" },
     );
   },
 

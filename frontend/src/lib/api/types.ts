@@ -455,11 +455,15 @@ export interface ApiKeyUsageResponse {
 
 // ─── Cloud Providers ──────────────────────────────────────────────
 
+/** Auth type for cloud providers: 0 = API Key, 1 = ChatGPT Subscription (OAuth). */
+export type CloudProviderAuthType = 0 | 1;
+
 export interface CloudProvider {
   id: string;
   name: string;
   baseUrl: string;
   apiKeyHint: string;
+  authType: CloudProviderAuthType;
   modelCount: number;
   createdAt: string;
   updatedAt: string;
@@ -467,12 +471,15 @@ export interface CloudProvider {
 
 export interface CloudProviderRead extends CloudProvider {
   baseUrlFull: string;
+  chatgptAccountId: string | null;
+  tokenExpiresAt: string | null;
 }
 
 export interface CloudProviderInput {
   name: string;
   baseUrl: string;
   apiKey: string;
+  authType: CloudProviderAuthType;
 }
 
 export interface CloudProviderUpdateInput {
@@ -483,6 +490,24 @@ export interface CloudProviderUpdateInput {
 
 export interface FetchModelsResult {
   modelIds: string[];
+}
+
+export interface OAuthStartResult {
+  deviceAuthId: string;
+  userCode: string;
+  verificationUrl: string;
+  interval: number;
+}
+
+export interface OAuthPollResult {
+  status?: string;
+  chatgptAccountId?: string;
+  error?: string;
+}
+
+export interface OAuthRefreshResult {
+  success: boolean;
+  tokenExpiresAt: string;
 }
 
 // ─── Metrics ──────────────────────────────────────────────────────

@@ -6,6 +6,12 @@ using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Core.Persistence;
 
+public enum CloudProviderAuthType
+{
+    ApiKey = 0,
+    ChatGPTSubscription = 1
+}
+
 public sealed class ModelEntity
 {
     public string Id { get; set; } = string.Empty;
@@ -225,11 +231,13 @@ public sealed class ApiKeyEntity
 }
 
 /// <summary>
-/// Cloud LLM provider registration. The API key is stored encrypted at rest
-/// via ASP.NET DataProtection; the plaintext never leaves the forwarding
-/// service's memory. <see cref="ApiKeyHint"/> is a masked preview captured
-/// at create/update time (e.g. "sk-…3f9a") and is never derived from the
-/// ciphertext — it is stored separately as a plain string column.
+/// Cloud LLM provider registration. Supports two auth modes:
+/// <list type="bullet">
+///   <item><see cref="CloudProviderAuthType.ApiKey"/> — traditional API key auth (encrypted at rest).</item>
+///   <item><see cref="CloudProviderAuthType.ChatGPTSubscription"/> — OAuth tokens for ChatGPT Plus/Pro subscription auth.</item>
+/// </list>
+/// API keys and OAuth tokens are stored encrypted at rest via ASP.NET DataProtection;
+/// the plaintext never leaves the forwarding service's memory.
 /// </summary>
 public sealed class CloudProviderEntity
 {
@@ -240,6 +248,11 @@ public sealed class CloudProviderEntity
     public string ApiKeyHint { get; set; } = string.Empty;
     /// <summary>JSON array of model id strings (same pattern as ExtraLabelsJson).</summary>
     public string ModelsJson { get; set; } = "[]";
+    public int AuthType { get; set; } = 0;
+    public string AccessTokenCiphertext { get; set; } = string.Empty;
+    public string RefreshTokenCiphertext { get; set; } = string.Empty;
+    public string? ChatgptAccountId { get; set; }
+    public DateTimeOffset? TokenExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -432,6 +445,10 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.Property(cp => cp.ApiKeyCiphertext).IsRequired();
             e.Property(cp => cp.ApiKeyHint).IsRequired().HasMaxLength(64);
             e.Property(cp => cp.ModelsJson).IsRequired().HasMaxLength(65536);
+            e.Property(cp => cp.AuthType).IsRequired().HasDefaultValue(0);
+            e.Property(cp => cp.AccessTokenCiphertext).IsRequired().HasDefaultValue(string.Empty);
+            e.Property(cp => cp.RefreshTokenCiphertext).IsRequired().HasDefaultValue(string.Empty);
+            e.Property(cp => cp.ChatgptAccountId).HasMaxLength(128);
             e.HasIndex(cp => cp.Name).IsUnique();
         });
 
