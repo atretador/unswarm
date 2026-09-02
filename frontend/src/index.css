@@ -237,3 +237,22 @@ code, pre, kbd {
   background: var(--color-primary-soft);
   color: var(--color-text-heading);
 }
+
+/* ── Recharts dark-mode text fix ──
+   SVG presentation attributes (e.g. <text fill="var(...)">) don't always
+   resolve CSS custom properties correctly.  These rules ensure the tick
+   labels and legend text pick up the theme tokens at the CSS level. */
+.recharts-text.recharts-cartesian-axis-tick-value,
+.recharts-cartesian-axis-tick-value text {
+  fill: var(--color-text-muted);
+}
+
+.recharts-legend-item-text {
+  color: var(--color-text-muted);
+}
+
+/* Tooltip body text — inherit from the page so it stays legible on
+   both light and dark surfaces. */
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  color: var(--color-text);
+}
