@@ -136,6 +136,8 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 - **Cloud Providers** — Register external cloud inference providers (any OpenAI-compatible endpoint, e.g. OpenAI or OpenRouter) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
 <img width="995" height="430" alt="image" src="https://github.com/user-attachments/assets/dfbb85c9-9c1b-4b5c-b8c3-1984b88a8594" />
 
+- **Router Profiles** — Define ordered fallback chains of cloud or self-hosted models. Send a request to `router/<profile-name>` and Unswarm tries each model in priority order, falling back on error (Auto mode) or using only the active model (Manual mode). Useful for provider redundancy, model cascading (e.g. try local first, fall back to cloud), and manual model switching at runtime.
+
 - **Usage Analytics** — Metrics dashboard tracking every request: tokens (prompt/completion/cached), streaming split, latency percentiles (p50/p95/p99/max) with distribution bands, hourly heatmap, period-over-period comparison, live request tail over WebSocket, per-provider/per-model/per-API-key breakdowns, drill-down from any chart point to the raw request feed, CSV export, saved filter presets, and configurable data retention with admin purge.
 - **Cost Tracking & Budgets** — Three pricing modes per provider: per-1M-token API rates, fixed monthly subscriptions, and self-hosted flat monthly cost (power/hardware) with a derived $/1M figure so you can compare against cloud pricing. Estimated-cost cards, cost columns, cost chart series, cache-savings estimates, and per-provider monthly token/cost budgets with progress bars.
 
@@ -269,6 +271,13 @@ See [agent configuration](backend/docs/agent-config.md) for all options.
 | `GET /api/api-keys/{id}/access` | Get a key's provider/model access grants |
 | `PUT /api/api-keys/{id}/access` | Update a key's access grants |
 | `GET /api/provider-model-catalog` | List providers (cloud + self-hosted) with their servable models |
+| **Router Profiles** | |
+| `GET /api/router-profiles` | List all router profiles |
+| `POST /api/router-profiles` | Create a router profile |
+| `GET /api/router-profiles/{id}` | Get a router profile by id |
+| `PUT /api/router-profiles/{id}` | Update a router profile |
+| `DELETE /api/router-profiles/{id}` | Delete a router profile |
+| `PATCH /api/router-profiles/{id}/active-entry` | Set the active model for a router profile |
 | **Usage & Metrics** | |
 | `GET /api/metrics/usage` | Paginated raw usage records (filterable, `?since=` cursor) |
 | `GET /api/metrics/summary` | Time-bucketed usage aggregates; `?groupBy=provider\|model` splits each bucket per entity |
