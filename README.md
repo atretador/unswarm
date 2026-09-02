@@ -116,11 +116,13 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 
 
 - **Model Registry** — Auto-discover models from running inference servers. Track model status, associate models with containers, and manage model-to-runtime mappings.
+  
 <img width="1003" height="402" alt="image" src="https://github.com/user-attachments/assets/fe74721a-b64d-4400-b40c-91c541775e9f" />
 
 - **OpenAI-Compatible Proxy** — Backend exposes `/v1/chat/completions` that routes requests to the correct agent and container, enabling a unified API endpoint for all your models.
 - **Automatic Model Switching** — Scheduler loads and unloads models on demand, letting you serve many models from limited VRAM with a single API endpoint.
 - **Model Groups** — Define exclusive groups (one model at a time) and co-located groups (models that share VRAM) to match your hardware constraints.
+
 <img width="751" height="616" alt="image" src="https://github.com/user-attachments/assets/5c19f9bb-7e3e-413e-9cd9-07d00305b120" />
 
 - **Conversation Affinity** — Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls.
@@ -131,9 +133,11 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 
 <img width="983" height="614" alt="image" src="https://github.com/user-attachments/assets/b6394fa3-0f07-42c7-badf-41d1cb86f087" />
 
+
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
 - **Cloud Providers** — Register external cloud inference providers (any OpenAI-compatible endpoint, e.g. OpenAI or OpenRouter) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
+
 <img width="995" height="430" alt="image" src="https://github.com/user-attachments/assets/dfbb85c9-9c1b-4b5c-b8c3-1984b88a8594" />
 
 - **Router Profiles** — Define ordered fallback chains of cloud or self-hosted models. Send a request to `router/<profile-name>` and Unswarm tries each model in priority order, falling back on error (Auto mode) or using only the active model (Manual mode). Useful for provider redundancy, model cascading (e.g. try local first, fall back to cloud), and manual model switching at runtime.
@@ -197,6 +201,13 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
          │  failed             │
          └─────────────────────┘
 ```
+
+<img width="704" height="600" alt="image" src="https://github.com/user-attachments/assets/927a10bb-3291-43e9-8f8a-00678ed11205" />
+
+
+<img width="686" height="751" alt="image" src="https://github.com/user-attachments/assets/628e34eb-1c29-4f7e-bcb8-e3f02d4e8aab" />
+
+
 
 - **Usage Analytics** — Metrics dashboard tracking every request: tokens (prompt/completion/cached), streaming split, latency percentiles (p50/p95/p99/max) with distribution bands, hourly heatmap, period-over-period comparison, live request tail over WebSocket, per-provider/per-model/per-API-key breakdowns, drill-down from any chart point to the raw request feed, CSV export, saved filter presets, and configurable data retention with admin purge.
 - **Cost Tracking & Budgets** — Three pricing modes per provider: per-1M-token API rates, fixed monthly subscriptions, and self-hosted flat monthly cost (power/hardware) with a derived $/1M figure so you can compare against cloud pricing. Estimated-cost cards, cost columns, cost chart series, cache-savings estimates, and per-provider monthly token/cost budgets with progress bars.
