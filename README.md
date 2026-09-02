@@ -141,6 +141,7 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 <img width="995" height="430" alt="image" src="https://github.com/user-attachments/assets/dfbb85c9-9c1b-4b5c-b8c3-1984b88a8594" />
 
 - **Router Profiles** — Define ordered fallback chains of cloud or self-hosted models. Send a request to `router/<profile-name>` and Unswarm tries each model in priority order, falling back on error (Auto mode) or using only the active model (Manual mode). Useful for provider redundancy, model cascading (e.g. try local first, fall back to cloud), and manual model switching at runtime.
+- Router profiles show under /v1/models like regular models
 
 ```
                             Router Profile Flow
@@ -207,6 +208,9 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 
 <img width="686" height="751" alt="image" src="https://github.com/user-attachments/assets/628e34eb-1c29-4f7e-bcb8-e3f02d4e8aab" />
 
+API Key access for routers:
+
+<img width="699" height="708" alt="image" src="https://github.com/user-attachments/assets/fe777c10-19f3-405a-a08b-05ca1c1efcc8" />
 
 
 - **Usage Analytics** — Metrics dashboard tracking every request: tokens (prompt/completion/cached), streaming split, latency percentiles (p50/p95/p99/max) with distribution bands, hourly heatmap, period-over-period comparison, live request tail over WebSocket, per-provider/per-model/per-API-key breakdowns, drill-down from any chart point to the raw request feed, CSV export, saved filter presets, and configurable data retention with admin purge.
