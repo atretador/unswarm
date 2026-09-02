@@ -273,4 +273,82 @@ public sealed class RouterProfileStoreTests
         Assert.NotNull(fetched);
         Assert.Single(fetched!.Entries);
     }
+
+    [Fact]
+    public async Task SetActiveModelIdAsync_SetsActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "with-active",
+            Mode = RouterProfileMode.Auto,
+            Entries = [new RouterProfileEntry { ModelId = "m1", Priority = 0 }],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        await store.SetActiveModelIdAsync(created.Id, "m1");
+
+        var fetched = await store.GetAsync(created.Id);
+        Assert.NotNull(fetched);
+        Assert.Equal("m1", fetched!.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task SetActiveModelIdAsync_UpdatesCache()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "cached-active",
+            Mode = RouterProfileMode.Auto,
+            Entries = [new RouterProfileEntry { ModelId = "m1", Priority = 0 }],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        // Populate cache
+        var first = await store.GetAsync(created.Id);
+        Assert.Null(first!.ActiveModelId);
+
+        // Update via SetActiveModelIdAsync
+        await store.SetActiveModelIdAsync(created.Id, "m1");
+
+        // Cache should reflect the update
+        var second = await store.GetAsync(created.Id);
+        Assert.Equal("m1", second!.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task SetActiveModelIdAsync_MissingId_Throws()
+    {
+        var store = NewStore();
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => store.SetActiveModelIdAsync("nonexistent", "m1"));
+    }
+
+    [Fact]
+    public async Task SetActiveModelIdAsync_ClearsActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "clear-active",
+            Mode = RouterProfileMode.Auto,
+            Entries = [new RouterProfileEntry { ModelId = "m1", Priority = 0 }],
+            ActiveModelId = "m1",
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        Assert.Equal("m1", (await store.GetAsync(created.Id))!.ActiveModelId);
+
+        await store.SetActiveModelIdAsync(created.Id, null);
+
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Null(fetched!.ActiveModelId);
+    }
 }

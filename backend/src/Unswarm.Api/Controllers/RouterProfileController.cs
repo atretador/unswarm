@@ -137,22 +137,9 @@ public sealed class RouterProfileController : ControllerBase
     {
         try
         {
+            await _profiles.SetActiveModelIdAsync(id, request.ActiveModelId, ct);
             var profile = await _profiles.GetAsync(id, ct);
-            if (profile is null)
-                return NotFound(new { message = $"Router profile '{id}' not found." });
-
-            var updated = new RouterProfile
-            {
-                Id = profile.Id,
-                Name = profile.Name,
-                Mode = profile.Mode,
-                Entries = profile.Entries,
-                ActiveModelId = request.ActiveModelId,
-                CreatedAt = profile.CreatedAt,
-                UpdatedAt = profile.UpdatedAt,
-            };
-            await _profiles.UpdateAsync(id, updated, ct);
-            return Ok(MapToDto(updated));
+            return Ok(MapToDto(profile!));
         }
         catch (KeyNotFoundException ex)
         {

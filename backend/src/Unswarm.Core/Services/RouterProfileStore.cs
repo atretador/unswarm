@@ -129,6 +129,22 @@ public sealed class RouterProfileStore : IRouterProfileStore
         return result;
     }
 
+    public async Task SetActiveModelIdAsync(string id, string? activeModelId, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.RouterProfiles.FindAsync([id], ct)
+            ?? throw new KeyNotFoundException($"Router profile '{id}' not found.");
+
+        entity.ActiveModelId = activeModelId;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        // Update both caches with the modified profile
+        var profile = MapToDomain(entity);
+        _cache[id] = (profile, DateTimeOffset.UtcNow);
+        _nameCache[entity.Name] = (profile, DateTimeOffset.UtcNow);
+    }
+
     public async Task DeleteAsync(string id, CancellationToken ct = default)
     {
         await using var db = _dbFactory();

@@ -146,4 +146,123 @@ public sealed class RouterProfileServiceTests
         Assert.Equal("profile-a", profiles[0].Name);
         Assert.Equal("profile-b", profiles[1].Name);
     }
+
+    [Fact]
+    public async Task ResolveAsync_ActiveModelId_MovesEntryToFirst()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "active-profile",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0, IsEnabled = true },
+                new RouterProfileEntry { ModelId = "model-b", Priority = 1, IsEnabled = true },
+                new RouterProfileEntry { ModelId = "model-c", Priority = 2, IsEnabled = true },
+            ],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+        var created = await store.GetByNameAsync("active-profile");
+        await store.SetActiveModelIdAsync(created!.Id, "model-b");
+
+        var service = new RouterProfileService(store);
+        var result = await service.ResolveAsync("active-profile");
+
+        Assert.NotNull(result);
+        Assert.Equal(3, result!.Value.Entries.Count);
+        Assert.Equal("model-b", result.Value.Entries[0].ModelId);
+        Assert.Equal("model-a", result.Value.Entries[1].ModelId);
+        Assert.Equal("model-c", result.Value.Entries[2].ModelId);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ActiveModelId_NoMatch_FallsBackToPriority()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "no-match",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0, IsEnabled = true },
+                new RouterProfileEntry { ModelId = "model-b", Priority = 1, IsEnabled = true },
+            ],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+        var created = await store.GetByNameAsync("no-match");
+        await store.SetActiveModelIdAsync(created!.Id, "model-nonexistent");
+
+        var service = new RouterProfileService(store);
+        var result = await service.ResolveAsync("no-match");
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Value.Entries.Count);
+        Assert.Equal("model-a", result.Value.Entries[0].ModelId);
+        Assert.Equal("model-b", result.Value.Entries[1].ModelId);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ActiveModelId_Null_UsesPriorityOrder()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "null-active",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-c", Priority = 2, IsEnabled = true },
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0, IsEnabled = true },
+            ],
+            ActiveModelId = null,
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        var service = new RouterProfileService(store);
+        var result = await service.ResolveAsync("null-active");
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Value.Entries.Count);
+        Assert.Equal("model-a", result.Value.Entries[0].ModelId);
+        Assert.Equal("model-c", result.Value.Entries[1].ModelId);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ActiveModelId_DisabledEntry_FallsBackToPriority()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "",
+            Name = "disabled-active",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0, IsEnabled = true },
+                new RouterProfileEntry { ModelId = "model-b", Priority = 1, IsEnabled = false },
+                new RouterProfileEntry { ModelId = "model-c", Priority = 2, IsEnabled = true },
+            ],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+        var created = await store.GetByNameAsync("disabled-active");
+        await store.SetActiveModelIdAsync(created!.Id, "model-b");
+
+        var service = new RouterProfileService(store);
+        var result = await service.ResolveAsync("disabled-active");
+
+        Assert.NotNull(result);
+        Assert.Equal(2, result!.Value.Entries.Count);
+        // Disabled entry is filtered out, so active match fails; priority order preserved
+        Assert.Equal("model-a", result.Value.Entries[0].ModelId);
+        Assert.Equal("model-c", result.Value.Entries[1].ModelId);
+    }
 }

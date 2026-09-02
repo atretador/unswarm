@@ -55,6 +55,16 @@ public sealed class RouterProfileHandlerTests
                 .OrderBy(e => e.Priority)
                 .ToList();
 
+            if (!string.IsNullOrEmpty(profile.ActiveModelId))
+            {
+                var activeEntry = entries.FirstOrDefault(e => e.ModelId == profile.ActiveModelId);
+                if (activeEntry is not null)
+                {
+                    entries.Remove(activeEntry);
+                    entries.Insert(0, activeEntry);
+                }
+            }
+
             return Task.FromResult<(IReadOnlyList<RouterProfileEntry>, RouterProfileMode)?>(
                 (entries, profile.Mode));
         }

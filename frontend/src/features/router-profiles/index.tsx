@@ -377,6 +377,16 @@ function ProfileDetailPanel({
 
   const activeModelId = liveProfile?.activeModelId ?? null;
 
+  // Compute the effective active model: manual override or first enabled by priority
+  const effectiveActiveModelId = useMemo(() => {
+    if (activeModelId) return activeModelId;
+    if (!liveProfile) return null;
+    const enabled = liveProfile.entries
+      .filter((e) => e.isEnabled)
+      .sort((a, b) => a.priority - b.priority);
+    return enabled[0]?.modelId ?? null;
+  }, [activeModelId, liveProfile]);
+
   // Sort entries by priority descending for display
   const sortedEntries = useMemo(() => {
     if (!liveProfile) return [];
@@ -408,23 +418,24 @@ function ProfileDetailPanel({
               Active Model
             </span>
           </div>
-          {activeModelId !== null && liveProfile.entries.some(e => e.modelId === activeModelId) ? (
+          {effectiveActiveModelId ? (
             <div className="flex items-center gap-2">
               <span className="size-2 rounded-full bg-[var(--color-status-success)] shrink-0" />
               <span className="text-sm font-medium text-[var(--color-text)]">
-                {activeModelId}
+                {effectiveActiveModelId}
               </span>
-              <Badge variant="success" className="ml-auto">Manual</Badge>
+              {activeModelId !== null ? (
+                <Badge variant="success" className="ml-auto">Manual</Badge>
+              ) : (
+                <Badge variant="info" className="ml-auto">Auto</Badge>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <span className="size-2 rounded-full bg-[var(--color-text-muted)] shrink-0" />
               <span className="text-sm text-[var(--color-text-muted)]">
-                Default (by priority)
+                No enabled models
               </span>
-              {liveProfile.mode === "Auto" && (
-                <Badge variant="info" className="ml-auto">Auto</Badge>
-              )}
             </div>
           )}
         </div>
@@ -442,7 +453,7 @@ function ProfileDetailPanel({
 
           <div className="space-y-1.5">
             {sortedEntries.map((entry) => {
-              const isActive = activeModelId === entry.modelId;
+              const isActive = effectiveActiveModelId === entry.modelId;
               return (
                 <div
                   key={entry.modelId}
