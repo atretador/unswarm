@@ -5,8 +5,8 @@
 // - "open"       → streaming
 // - "reconnecting" → socket dropped after having opened; retrying with
 //   exponential backoff (1s → 30s cap) while the toggle stays on
-// - "unavailable" → the first connection attempt failed outright; the UI
-//   disables the toggle rather than spinning forever
+// - "unavailable" → all initial connection attempts failed (up to 3 with
+//   backoff); the UI disables live mode but allows retrying
 
 import { useEffect, useRef, useState } from "react";
 import type { UsageRecordResponse } from "../../lib/api/types";
@@ -85,8 +85,16 @@ export function useLiveTail(
         if (disposed) return;
         ws = null;
         if (!everOpened) {
-          // Never managed to connect — give up and let the UI disable the toggle.
-          setStatus("unavailable");
+          // Never managed to connect — retry a few times with backoff
+          // before giving up.
+          attempts += 1;
+          if (attempts < 3) {
+            setStatus("connecting");
+            const delay = Math.min(30_000, 1_000 * 2 ** attempts);
+            reconnectTimer = window.setTimeout(connect, delay);
+          } else {
+            setStatus("unavailable");
+          }
           return;
         }
         attempts += 1;

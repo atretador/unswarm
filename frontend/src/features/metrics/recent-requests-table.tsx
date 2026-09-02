@@ -4,7 +4,7 @@
 // Respects the page's provider/model/time filters and can additionally be
 // narrowed to a custom window via drill-down (see index.tsx).
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, RadioTower, X } from "lucide-react";
 import type { MetricsAnalyticsParams, UsageRecordResponse } from "../../lib/api/types";
@@ -45,7 +45,6 @@ export function RecentRequestsTable({
 }: RecentRequestsTableProps) {
   const [page, setPage] = useState(0);
   const [live, setLive] = useState(false);
-  const [wsFailedOnce, setWsFailedOnce] = useState(false);
   const [liveEvents, setLiveEvents] = useState<UsageRecordResponse[]>([]);
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
   const freshTimers = useRef<Map<string, number>>(new Map());
@@ -115,14 +114,28 @@ export function RecentRequestsTable({
 
   const liveStatus = useLiveTail(live, handleEvent);
 
-  // A failed first connection backs out of live mode and disables the toggle
-  // for this visit — no point spinning on a dead endpoint.
+  // When the hook declares the endpoint unreachable, automatically turn off
+  // live mode — but don't permanently disable the toggle so the user can
+  // retry later.
   useEffect(() => {
     if (liveStatus === "unavailable") {
-      setWsFailedOnce(true);
       setLive(false);
     }
   }, [liveStatus]);
+
+  // Client-side filter for live events to respect active provider/model
+  // filters, consistent with the paginated view.
+  const filteredLiveEvents = useMemo(() => {
+    if (!filterParams.providers?.length && !filterParams.models?.length)
+      return liveEvents;
+    return liveEvents.filter((r) => {
+      const providerOk =
+        !filterParams.providers?.length || filterParams.providers.includes(r.provider);
+      const modelOk =
+        !filterParams.models?.length || filterParams.models.includes(r.model);
+      return providerOk && modelOk;
+    });
+  }, [liveEvents, filterParams.providers, filterParams.models]);
 
   // Tear down transient live state when switching modes.
   function toggleLive() {
@@ -194,22 +207,17 @@ export function RecentRequestsTable({
                   : "bg-[var(--color-text-muted)] animate-pulse"
               }`}
             />
-            {LIVE_STATUS_LABELS[liveStatus]} · {liveEvents.length} buffered
+            {LIVE_STATUS_LABELS[liveStatus]} · {filteredLiveEvents.length} buffered
           </span>
         )}
         <Tooltip
-          content={
-            wsFailedOnce
-              ? "Live tail unavailable — couldn't reach /ws/metrics"
-              : "Stream incoming requests as they happen"
-          }
+          content="Stream incoming requests as they happen"
           side="top"
         >
           <Button
             variant={live ? "primary" : "secondary"}
             size="sm"
             onClick={toggleLive}
-            disabled={wsFailedOnce}
             className="gap-1.5"
             title="Toggle live request stream"
           >
@@ -252,7 +260,7 @@ export function RecentRequestsTable({
               </tr>
             </thead>
             <tbody>
-              {liveEvents.length === 0 && (
+              {filteredLiveEvents.length === 0 && (
                 <tr>
                   <td
                     colSpan={8}
@@ -262,7 +270,7 @@ export function RecentRequestsTable({
                   </td>
                 </tr>
               )}
-              {liveEvents.map((r) => (
+              {filteredLiveEvents.map((r) => (
                 <RequestRow key={r.id} record={r} fresh={freshIds.has(r.id)} />
               ))}
             </tbody>

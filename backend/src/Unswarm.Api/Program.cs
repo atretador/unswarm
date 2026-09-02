@@ -375,13 +375,14 @@ builder.Services.AddProblemDetails();
 builder.Services.AddHealthChecks();
 
 // ── CORS ──────────────────────────────────────────────────────────────────
+var corsAllowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:3000", "http://localhost:5173"];
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("SpaCors", policy =>
     {
-        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-            ?? ["http://localhost:3000", "http://localhost:5173"];
-        policy.WithOrigins(allowedOrigins)
+        policy.WithOrigins(corsAllowedOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader()
               .AllowCredentials();
@@ -506,10 +507,10 @@ app.UseAuthentication();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 app.UseAuthorization();
 app.UseRateLimiter();
-app.UseWebSockets(new WebSocketOptions
-{
-    AllowedOrigins = { "http://localhost:3000", "http://localhost:5173" }
-});
+var wsOptions = new WebSocketOptions();
+foreach (var origin in corsAllowedOrigins)
+    wsOptions.AllowedOrigins.Add(origin);
+app.UseWebSockets(wsOptions);
 app.UseMiddleware<SecurityHeadersMiddleware>();
 
 // ── Swagger ────────────────────────────────────────────────────────────────
