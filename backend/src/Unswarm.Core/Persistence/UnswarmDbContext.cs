@@ -111,6 +111,9 @@ public sealed class SettingsEntity
     /// {"cloud":{"tokenBudget":1000000,"costBudget":25.0}}.
     /// </summary>
     public string ProviderBudgetsJson { get; set; } = "{}";
+
+    public int RouterRetryAttempts { get; set; } = 3;
+    public int RouterRetryDelayMs { get; set; } = 1000;
 }
 
 /// <summary>
@@ -363,7 +366,9 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
                 HideOriginPrefix = false,
                 AgentDisplayNames = "{}",
                 UsageRetentionDays = 30,
-                ProviderBudgetsJson = "{}"
+                ProviderBudgetsJson = "{}",
+                RouterRetryAttempts = 3,
+                RouterRetryDelayMs = 1000
             });
         });
 

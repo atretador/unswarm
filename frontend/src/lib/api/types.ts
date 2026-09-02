@@ -348,6 +348,11 @@ export interface Settings {
    * Optional — older backends may not expose it yet.
    */
   providerBudgetsJson?: string;
+
+  /** Number of retry attempts for server errors (5xx) before falling back to the next router model. */
+  routerRetryAttempts: number;
+  /** Delay between retry attempts in milliseconds. */
+  routerRetryDelayMs: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────

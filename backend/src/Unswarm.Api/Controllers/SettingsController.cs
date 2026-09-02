@@ -56,7 +56,9 @@ public sealed class SettingsController : ControllerBase
             HideOriginPrefix = request.HideOriginPrefix ?? current.HideOriginPrefix,
             AgentDisplayNames = request.AgentDisplayNames ?? current.AgentDisplayNames,
             UsageRetentionDays = Math.Max(0, request.UsageRetentionDays ?? current.UsageRetentionDays),
-            ProviderBudgetsJson = request.ProviderBudgetsJson ?? current.ProviderBudgetsJson
+            ProviderBudgetsJson = request.ProviderBudgetsJson ?? current.ProviderBudgetsJson,
+            RouterRetryAttempts = Math.Clamp(request.RouterRetryAttempts ?? current.RouterRetryAttempts, 0, 10),
+            RouterRetryDelayMs = Math.Clamp(request.RouterRetryDelayMs ?? current.RouterRetryDelayMs, 0, 30000)
         };
 
         var result = await _settingsStore.UpdateAsync(updated, ct);

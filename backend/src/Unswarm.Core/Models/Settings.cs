@@ -55,4 +55,10 @@ public sealed class Settings
     /// {"cloud":{"tokenBudget":1000000,"costBudget":25.0}}.
     /// </summary>
     public string ProviderBudgetsJson { get; init; } = "{}";
+
+    /// <summary>Number of retry attempts for server errors (5xx) before falling back to the next model in a router profile.</summary>
+    public int RouterRetryAttempts { get; init; } = 3;
+
+    /// <summary>Delay between retry attempts in milliseconds.</summary>
+    public int RouterRetryDelayMs { get; init; } = 1000;
 }
