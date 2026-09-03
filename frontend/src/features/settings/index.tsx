@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Settings as SettingsIcon, Shield, Users, Plus } from "lucide-react";
+import { Settings as SettingsIcon, Shield, Users, Plus, Route } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { ApiError } from "../../lib/api/httpClient";
 import {
@@ -23,6 +23,7 @@ const TABS = [
   { key: "general", label: "General", icon: SettingsIcon },
   { key: "users", label: "Users", icon: Users },
   { key: "scheduler", label: "Scheduler", icon: Shield },
+  { key: "router", label: "Router", icon: Route },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -831,6 +832,132 @@ function GeneralTab() {
   );
 }
 
+// ─── Router Tab ────────────────────────────────────────────────
+
+function RouterTab() {
+  const queryClient = useQueryClient();
+
+  const { data: settings, isLoading } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => client.getSettings(),
+  });
+
+  const [draftRetryAttempts, setDraftRetryAttempts] = useState<string>("");
+  const [draftRetryDelayMs, setDraftRetryDelayMs] = useState<string>("");
+
+  useEffect(() => {
+    if (settings) {
+      setDraftRetryAttempts(String(settings.routerRetryAttempts ?? 3));
+      setDraftRetryDelayMs(String(settings.routerRetryDelayMs ?? 1000));
+    }
+  }, [settings]);
+
+  const updateMutation = useMutation({
+    mutationFn: (patch: Partial<SettingsData>) => client.updateSettings(patch),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+  });
+
+  if (isLoading || !settings) {
+    return (
+      <Card padding="md">
+        <div className="flex items-center gap-2 mb-4">
+          <Route className="size-4 text-[var(--color-text-muted)]" />
+          <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+            Router
+          </p>
+        </div>
+        <Skeleton className="h-8 w-full" />
+      </Card>
+    );
+  }
+
+  const numAttempts = Number(draftRetryAttempts);
+  const numDelay = Number(draftRetryDelayMs);
+  const hasInvalidInput = !Number.isFinite(numAttempts) || !Number.isFinite(numDelay);
+  const clampedAttempts = hasInvalidInput ? (settings.routerRetryAttempts ?? 3) : Math.max(0, Math.min(10, numAttempts));
+  const clampedDelay = hasInvalidInput ? (settings.routerRetryDelayMs ?? 1000) : Math.max(0, Math.min(30000, numDelay));
+  const isDirty =
+    (!hasInvalidInput && (clampedAttempts !== (settings.routerRetryAttempts ?? 3) || clampedDelay !== (settings.routerRetryDelayMs ?? 1000)));
+  const canSave = isDirty && !hasInvalidInput;
+
+  const handleCancel = () => {
+    setDraftRetryAttempts(String(settings.routerRetryAttempts ?? 3));
+    setDraftRetryDelayMs(String(settings.routerRetryDelayMs ?? 1000));
+  };
+
+  return (
+    <Card padding="md">
+      <div className="flex items-center gap-2 mb-4">
+        <Route className="size-4 text-[var(--color-text-muted)]" />
+        <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
+          Router
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <div>
+          <p className="text-sm text-[var(--color-text)] mb-1">Server Error Retry</p>
+          <p className="text-[10px] text-[var(--color-text-muted)] mb-3">
+            When a cloud provider returns a 5xx server error, retry the same model before falling back to the next one in the profile.
+          </p>
+
+          <Input
+            label="Retry attempts"
+            type="number"
+            value={draftRetryAttempts}
+            onChange={(e) => setDraftRetryAttempts(e.target.value)}
+          />
+          <p className="text-[10px] text-[var(--color-text-muted)]">
+            Number of retry attempts per model on server error (0–10)
+          </p>
+          {Number(draftRetryAttempts) !== 0 && (Number(draftRetryAttempts) < 0 || Number(draftRetryAttempts) > 10) && (
+            <p className="text-xs text-amber-500">Value will be clamped to 0–10 on save</p>
+          )}
+
+          <Input
+            label="Retry delay (ms)"
+            type="number"
+            value={draftRetryDelayMs}
+            onChange={(e) => setDraftRetryDelayMs(e.target.value)}
+          />
+          <p className="text-[10px] text-[var(--color-text-muted)]">
+            Delay between retry attempts in milliseconds (0–30000)
+          </p>
+          {Number(draftRetryDelayMs) !== 0 && (Number(draftRetryDelayMs) < 0 || Number(draftRetryDelayMs) > 30000) && (
+            <p className="text-xs text-amber-500">Value will be clamped to 0–30000 on save</p>
+          )}
+        </div>
+
+        {updateMutation.error && (
+          <p className="text-sm text-[var(--color-status-error)]">
+            {updateMutation.error.message}
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() =>
+              updateMutation.mutate({
+                ...(clampedAttempts !== (settings.routerRetryAttempts ?? 3) ? { routerRetryAttempts: clampedAttempts } : {}),
+                ...(clampedDelay !== (settings.routerRetryDelayMs ?? 1000) ? { routerRetryDelayMs: clampedDelay } : {}),
+              })
+            }
+            disabled={!canSave}
+            loading={updateMutation.isPending}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Main Settings Page ─────────────────────────────────────────
 
 export default function Settings() {
@@ -903,6 +1030,7 @@ export default function Settings() {
       {effectiveTab === "general" && <GeneralTab />}
       {effectiveTab === "users" && <UsersTab />}
       {effectiveTab === "scheduler" && <SchedulerPolicySection />}
+      {effectiveTab === "router" && <RouterTab />}
     </div>
   );
 }

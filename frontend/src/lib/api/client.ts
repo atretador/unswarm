@@ -22,6 +22,9 @@ import type {
   MetricsWindow,
   Model,
   ModelUsageSummary,
+  OAuthStartResult,
+  OAuthPollResult,
+  OAuthRefreshResult,
   Prompt,
   PromptInput,
   PromptVersion,
@@ -192,6 +195,11 @@ export interface UnswarmClient {
   fetchCloudProviderModels(id: string): Promise<FetchModelsResult>;
   testAndFetchModels(baseUrl: string, apiKey: string): Promise<FetchModelsResult>;
   saveCloudProviderModels(providerId: string, modelIds: string[]): Promise<CloudProviderRead>;
+
+  // OAuth (ChatGPT Subscription)
+  startOAuth(providerId: string): Promise<OAuthStartResult>;
+  pollOAuth(providerId: string, data: { deviceAuthId: string; userCode: string }): Promise<OAuthPollResult>;
+  refreshOAuth(providerId: string): Promise<OAuthRefreshResult>;
 
   // Metrics
   getMetricsUsage(opts?: MetricsUsageParams): Promise<UsagePageResponse>;

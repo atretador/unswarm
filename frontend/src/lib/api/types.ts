@@ -74,6 +74,7 @@ export interface RegisterRuntimePayload {
   displayName: string;
   image: string;   // container name (pre-provisioned)
   containerPort: number;
+  mappedPort?: number; // host-mapped port (auto-resolved via Docker inspect when omitted)
   agent?: string;   // "host" or agent name, default "host"
   canRunAlongWith?: string[];   // same-agent container names this may run with
   extraLabels?: Record<string, string>;
@@ -91,6 +92,7 @@ export interface UpdateRuntimeConcurrencyPayload {
 export interface UpdateRuntimePayload {
   displayName?: string;
   containerPort?: number;
+  mappedPort?: number;
   maxConcurrentInferences?: number;
 }
 
@@ -348,6 +350,11 @@ export interface Settings {
    * Optional — older backends may not expose it yet.
    */
   providerBudgetsJson?: string;
+
+  /** Number of retry attempts for server errors (5xx) before falling back to the next router model. */
+  routerRetryAttempts: number;
+  /** Delay between retry attempts in milliseconds. */
+  routerRetryDelayMs: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────
@@ -450,11 +457,15 @@ export interface ApiKeyUsageResponse {
 
 // ─── Cloud Providers ──────────────────────────────────────────────
 
+/** Auth type for cloud providers: 0 = API Key, 1 = ChatGPT Subscription (OAuth). */
+export type CloudProviderAuthType = 0 | 1;
+
 export interface CloudProvider {
   id: string;
   name: string;
   baseUrl: string;
   apiKeyHint: string;
+  authType: CloudProviderAuthType;
   modelCount: number;
   createdAt: string;
   updatedAt: string;
@@ -462,12 +473,15 @@ export interface CloudProvider {
 
 export interface CloudProviderRead extends CloudProvider {
   baseUrlFull: string;
+  chatgptAccountId: string | null;
+  tokenExpiresAt: string | null;
 }
 
 export interface CloudProviderInput {
   name: string;
   baseUrl: string;
   apiKey: string;
+  authType: CloudProviderAuthType;
 }
 
 export interface CloudProviderUpdateInput {
@@ -478,6 +492,24 @@ export interface CloudProviderUpdateInput {
 
 export interface FetchModelsResult {
   modelIds: string[];
+}
+
+export interface OAuthStartResult {
+  deviceAuthId: string;
+  userCode: string;
+  verificationUrl: string;
+  interval: number;
+}
+
+export interface OAuthPollResult {
+  status?: string;
+  chatgptAccountId?: string;
+  error?: string;
+}
+
+export interface OAuthRefreshResult {
+  success: boolean;
+  tokenExpiresAt: string;
 }
 
 // ─── Metrics ──────────────────────────────────────────────────────

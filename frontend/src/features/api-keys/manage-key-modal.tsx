@@ -326,6 +326,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [modelSearch, setModelSearch] = useState("");
+  const [saveError, setSaveError] = useState<string | null>(null);
   const expandedInit = useRef(false);
 
   // AccessJson grants are only enforced on /v1 inference; agent-scope keys
@@ -398,7 +399,11 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
       const effective = saved ?? serializeDraft(draft!);
       setInitialSerialized(JSON.stringify(effective));
       setSavedTick(true);
+      setSaveError(null);
       setTimeout(() => setSavedTick(false), 1800);
+    },
+    onError: (error: Error) => {
+      setSaveError(error.message);
     },
   });
 
@@ -414,6 +419,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
     serialized !== initialSerialized;
 
   function patchProvider(name: string, patch: Partial<ProviderSelection>) {
+    setSaveError(null);
     setDraft((prev) => {
       if (!prev) return prev;
       const providers = new Map(prev.providers);
@@ -424,6 +430,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   }
 
   function toggleModel(providerName: string, model: string, granted: boolean) {
+    setSaveError(null);
     setDraft((prev) => {
       if (!prev) return prev;
       const providers = new Map(prev.providers);
@@ -674,6 +681,12 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                     )}
 
                     {/* Save bar */}
+                    {saveError && (
+                      <div className="flex items-start gap-2 rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3.5 py-2.5">
+                        <TriangleAlert className="size-4 shrink-0 mt-0.5 text-[var(--color-status-error)]" />
+                        <p className="text-xs text-[var(--color-status-error)]">{saveError}</p>
+                      </div>
+                    )}
                     <div className="flex items-center justify-end gap-3 pt-1">
                       {dirty && (
                         <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-status-warning)]">

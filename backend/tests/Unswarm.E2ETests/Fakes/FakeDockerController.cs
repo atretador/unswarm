@@ -83,4 +83,7 @@ public sealed class FakeDockerController : IDockerController
         => Task.FromResult<IReadOnlyList<string>>([]);
 
     public Task RemoveContainerAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
+
+    public Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
+        => Task.FromResult<int?>(null);
 }

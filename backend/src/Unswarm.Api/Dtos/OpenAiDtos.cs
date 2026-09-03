@@ -24,3 +24,20 @@ public sealed class OpenAiModelUnswarmInfo
     public string ContainerImage { get; set; } = "";
     public string Status { get; set; } = "";
 }
+
+/// <summary>
+/// Response from chatgpt.com/backend-api/codex/models — different shape from standard /v1/models.
+/// </summary>
+public sealed class CodexModelsResponse
+{
+    public List<CodexModelInfo> Models { get; set; } = [];
+}
+
+public sealed class CodexModelInfo
+{
+    public string Slug { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string DefaultReasoningLevel { get; set; } = "";
+    public bool SupportedInApi { get; set; }
+}

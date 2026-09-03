@@ -5,9 +5,11 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Api.Services;
 
 /// <summary>
-/// Handles inference requests for router profiles with auto-fallback.
-/// Tries models in priority order; on error (status >= 400 or exception),
-/// falls back to the next enabled entry. Manual mode tries only the first entry.
+/// Handles inference requests for router profiles with auto-fallback and retry.
+/// Tries models in priority order; on server error (5xx), retries the same model
+/// up to <see cref="Settings.RouterRetryAttempts"/> times before falling back.
+/// Client errors (4xx) and exceptions fall back immediately to the next model.
+/// Manual mode tries only the first entry.
 /// </summary>
 public sealed class RouterProfileHandler
 {
@@ -16,19 +18,22 @@ public sealed class RouterProfileHandler
     private readonly ISchedulerQueue _scheduler;
     private readonly ILogStore _logStore;
     private readonly IClock _clock;
+    private readonly ISettingsStore _settings;
 
     public RouterProfileHandler(
         IRouterProfileService routerProfile,
         ICloudForwardingService cloudForwarding,
         ISchedulerQueue scheduler,
         ILogStore logStore,
-        IClock clock)
+        IClock clock,
+        ISettingsStore settings)
     {
         _routerProfile = routerProfile;
         _cloudForwarding = cloudForwarding;
         _scheduler = scheduler;
         _logStore = logStore;
         _clock = clock;
+        _settings = settings;
     }
 
     /// <summary>
@@ -57,7 +62,7 @@ public sealed class RouterProfileHandler
     }
 
     /// <summary>
-    /// Attempt inference through a router profile with fallback.
+    /// Attempt inference through a router profile with fallback and retry on 5xx errors.
     /// </summary>
     /// <param name="profileName">The router profile name (without "router/" prefix).</param>
     /// <param name="rawBody">The original JSON request body.</param>
@@ -83,6 +88,10 @@ public sealed class RouterProfileHandler
             };
         }
 
+        var settings = await _settings.GetAsync(ct);
+        var retryAttempts = settings.RouterRetryAttempts;
+        var retryDelayMs = settings.RouterRetryDelayMs;
+
         var entries = resolved.Value.Entries;
         var mode = resolved.Value.Mode;
         var maxAttempts = mode == RouterProfileMode.Manual ? 1 : entries.Count;
@@ -91,45 +100,74 @@ public sealed class RouterProfileHandler
         {
             var entry = entries[i];
             var modelId = entry.ModelId;
+            var lastWasRetryable = false;
 
-            try
+            for (var attempt = 0; attempt <= retryAttempts; attempt++)
             {
-                _logStore.Enqueue(LogLevel.Info, "router",
-                    $"Router attempt {i + 1}/{maxAttempts}: profile={profileName}, model={modelId}");
-
-                if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
+                if (attempt > 0)
                 {
-                    var result = await TryCloudModelAsync(modelId, rawBody, requestPath, isStreaming, ct);
-                    if (result is not null)
-                        return result;
-                }
-                else
-                {
-                    var result = await TryLocalModelAsync(modelId, rawBody, isStreaming, conversationKey, ct);
-                    if (result is not null)
-                        return result;
+                    _logStore.Enqueue(LogLevel.Info, "router",
+                        $"Router retry {attempt}/{retryAttempts}: profile={profileName}, model={modelId}, delay={retryDelayMs}ms");
+                    await Task.Delay(retryDelayMs, ct);
                 }
 
-                _logStore.Enqueue(LogLevel.Warn, "router",
-                    $"Router fallback: model={modelId} returned no response, trying next");
-            }
-            catch (OperationCanceledException)
-            {
-                throw; // Don't catch cancellations
-            }
-            catch (Exception ex)
-            {
-                _logStore.Enqueue(LogLevel.Warn, "router",
-                    $"Router fallback: model={modelId} failed: {ex.Message}");
-
-                if (mode == RouterProfileMode.Manual || i == maxAttempts - 1)
+                try
                 {
-                    return new RouterResult
+                    _logStore.Enqueue(LogLevel.Info, "router",
+                        $"Router attempt {attempt + 1}/{retryAttempts + 1} (entry {i + 1}/{maxAttempts}): profile={profileName}, model={modelId}");
+
+                    RouterResult? result = null;
+                    bool isRetryable;
+
+                    if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
                     {
-                        StatusCode = 502,
-                        ErrorMessage = $"All router models failed. Last error: {ex.Message}"
-                    };
+                        (result, isRetryable) = await TryCloudModelAsync(modelId, rawBody, requestPath, isStreaming, ct);
+                    }
+                    else
+                    {
+                        (result, isRetryable) = await TryLocalModelAsync(modelId, rawBody, isStreaming, conversationKey, ct);
+                    }
+
+                    if (result is not null)
+                        return result;
+
+                    lastWasRetryable = isRetryable;
+
+                    // Non-retryable error (4xx) → break inner loop, fall to next entry
+                    if (!isRetryable)
+                        break;
+
+                    // Retryable (5xx) → continue inner loop for retry
                 }
+                catch (OperationCanceledException)
+                {
+                    throw; // Don't catch cancellations
+                }
+                catch (Exception ex)
+                {
+                    _logStore.Enqueue(LogLevel.Warn, "router",
+                        $"Router fallback: model={modelId} failed: {ex.Message}");
+
+                    if (mode == RouterProfileMode.Manual || i == maxAttempts - 1)
+                    {
+                        return new RouterResult
+                        {
+                            StatusCode = 502,
+                            ErrorMessage = $"All router models failed. Last error: {ex.Message}"
+                        };
+                    }
+                    break; // Fall through to next entry
+                }
+            }
+
+            // If we exhausted retries on a retryable error and it's the last entry in Manual mode
+            if (lastWasRetryable && (mode == RouterProfileMode.Manual || i == maxAttempts - 1))
+            {
+                return new RouterResult
+                {
+                    StatusCode = 502,
+                    ErrorMessage = $"Model {entries[i].ModelId} returned server error after {retryAttempts + 1} attempts for profile '{profileName}'."
+                };
             }
         }
 
@@ -140,7 +178,7 @@ public sealed class RouterProfileHandler
         };
     }
 
-    private async Task<RouterResult?> TryCloudModelAsync(
+    private async Task<(RouterResult? Result, bool IsRetryable)> TryCloudModelAsync(
         string modelId, string rawBody, string requestPath, bool isStreaming, CancellationToken ct)
     {
         var response = await _cloudForwarding.ForwardAsync(modelId, rawBody, requestPath, isStreaming, ct);
@@ -154,20 +192,21 @@ public sealed class RouterProfileHandler
             if (response.Body is not null)
                 await response.Body.DisposeAsync();
 
-            return null; // Signal fallback
+            var isRetryable = response.StatusCode >= 500;
+            return (null, isRetryable);
         }
 
-        return new RouterResult
+        return (new RouterResult
         {
             ServedModel = modelId,
             StatusCode = response.StatusCode,
             ContentType = response.ContentType,
             Body = response.Body,
             IsStreaming = isStreaming,
-        };
+        }, false);
     }
 
-    private async Task<RouterResult?> TryLocalModelAsync(
+    private async Task<(RouterResult? Result, bool IsRetryable)> TryLocalModelAsync(
         string modelId, string rawBody, bool isStreaming, string? conversationKey, CancellationToken ct)
     {
         var request = new InferenceRequest
@@ -195,10 +234,11 @@ public sealed class RouterProfileHandler
             if (response.Body is not null)
                 await response.Body.DisposeAsync();
 
-            return null; // Signal fallback
+            var isRetryable = response.StatusCode >= 500;
+            return (null, isRetryable);
         }
 
-        return new RouterResult
+        return (new RouterResult
         {
             ServedModel = modelId,
             StatusCode = response.StatusCode,
@@ -209,6 +249,6 @@ public sealed class RouterProfileHandler
             PromptTokens = response.PromptTokens,
             PromptTokensCached = response.PromptTokensCached,
             ServedByRuntimeName = response.ServedByRuntimeName,
-        };
+        }, false);
     }
 }

@@ -33,6 +33,7 @@ public sealed class OpenAIController : ControllerBase
     private readonly ILogStore _logStore;
     private readonly ICloudForwardingService _cloudForwarding;
     private readonly ICloudProviderStore _cloudProviderStore;
+    private readonly IChatGPTSubscriptionForwardingService _chatGptSubscription;
     private readonly IUsageRecorder _usageRecorder;
     private readonly IApiKeyAccessService _apiKeyAccess;
     private readonly IRouterProfileService _routerProfile;
@@ -45,6 +46,7 @@ public sealed class OpenAIController : ControllerBase
         ILogStore logStore,
         ICloudForwardingService cloudForwarding,
         ICloudProviderStore cloudProviderStore,
+        IChatGPTSubscriptionForwardingService chatGptSubscription,
         IUsageRecorder usageRecorder,
         IApiKeyAccessService apiKeyAccess,
         IRouterProfileService routerProfile,
@@ -56,6 +58,7 @@ public sealed class OpenAIController : ControllerBase
         _logStore = logStore;
         _cloudForwarding = cloudForwarding;
         _cloudProviderStore = cloudProviderStore;
+        _chatGptSubscription = chatGptSubscription;
         _usageRecorder = usageRecorder;
         _apiKeyAccess = apiKeyAccess;
         _routerProfile = routerProfile;
@@ -210,11 +213,34 @@ public sealed class OpenAIController : ControllerBase
                 $"Cloud request start: model={modelName}, stream={isStream}");
 
             var cloudStartTime = _clock.UtcNow;
-            CloudForwardResponse cloudResponse;
+
+            // Determine auth type: look up the provider and dispatch to the right forwarding service
+            var providerName = ExtractCloudProviderName(modelName);
+            int authType = 0;
+            if (providerName is not null)
+            {
+                var provider = await _cloudProviderStore.GetByNameAsync(providerName, ct);
+                if (provider is not null)
+                    authType = await _cloudProviderStore.GetAuthTypeAsync(provider.Id, ct);
+            }
+
+            Stream? subscriptionStream = null;
+            CloudForwardResponse? cloudResponse = null;
+
             try
             {
-                cloudResponse = await _cloudForwarding.ForwardAsync(
-                    modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+                if (authType == 1)
+                {
+                    // ChatGPT subscription provider — returns raw SSE stream
+                    subscriptionStream = await _chatGptSubscription.ForwardAsync(
+                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+                }
+                else
+                {
+                    // API key provider — existing behavior
+                    cloudResponse = await _cloudForwarding.ForwardAsync(
+                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -230,27 +256,27 @@ public sealed class OpenAIController : ControllerBase
             }
 
             var cloudElapsedMs = (long)(_clock.UtcNow - cloudStartTime).TotalMilliseconds;
-            _logStore.Enqueue(LogLevel.Info, "cloud-proxy",
-                $"Cloud request complete: model={modelName}, status={cloudResponse.StatusCode}, duration={cloudElapsedMs}ms");
 
-            Response.StatusCode = cloudResponse.StatusCode;
-            Response.ContentType = cloudResponse.ContentType;
-
-            if (isStream)
+            if (authType == 1 && subscriptionStream is not null)
             {
-                Response.Headers["Cache-Control"] = "no-cache";
-                Response.Headers["X-Accel-Buffering"] = "no";
-            }
+                // Subscription path: pipe the SSE stream directly to the response
+                _logStore.Enqueue(LogLevel.Info, "cloud-proxy",
+                    $"Cloud subscription request complete: model={modelName}, duration={cloudElapsedMs}ms");
 
-            if (cloudResponse.Body is not null)
-            {
-                var cloudTokenResponse = new InferenceResponse();
-                var tappedStream = new StreamingTokenTapStream(cloudResponse.Body, cloudTokenResponse);
+                Response.StatusCode = 200;
+                Response.ContentType = "text/event-stream";
+
+                if (isStream)
+                {
+                    Response.Headers["Cache-Control"] = "no-cache";
+                    Response.Headers["X-Accel-Buffering"] = "no";
+                }
+
                 try
                 {
                     var buffer = new byte[8192];
                     int bytesRead;
-                    while ((bytesRead = await tappedStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                    while ((bytesRead = await subscriptionStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
                     {
                         await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
                         await Response.Body.FlushAsync(ct);
@@ -258,31 +284,87 @@ public sealed class OpenAIController : ControllerBase
                 }
                 catch (IOException ex)
                 {
-                    // Upstream closed prematurely or client disconnected during
-                    // write. Since HTTP 200 + headers are already sent, the stream
-                    // just ends — log and let finally handle upstream disposal.
                     _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
-                        $"Cloud stream interrupted: model={modelName}, error={ex.Message}");
+                        $"Cloud subscription stream interrupted: model={modelName}, error={ex.Message}");
                 }
                 finally
                 {
-                    await tappedStream.DisposeAsync();
+                    await subscriptionStream.DisposeAsync();
                 }
 
                 _ = _usageRecorder.RecordAsync(
-                    ExtractCloudProviderName(modelName) ?? "cloud",
+                    providerName ?? "cloud",
                     modelName,
-                    cloudTokenResponse.PromptTokens,
-                    cloudTokenResponse.TokensGenerated,
-                    cloudTokenResponse.PromptTokensCached,
+                    0, 0, 0,
                     isStream,
                     cloudElapsedMs,
                     apiKeyId,
                     apiKeyName,
                     providerKind: "cloud");
+
+                return new EmptyResult();
             }
 
-            return new EmptyResult();
+            // API key path
+            if (cloudResponse is not null)
+            {
+                _logStore.Enqueue(LogLevel.Info, "cloud-proxy",
+                    $"Cloud request complete: model={modelName}, status={cloudResponse.StatusCode}, duration={cloudElapsedMs}ms");
+
+                Response.StatusCode = cloudResponse.StatusCode;
+                Response.ContentType = cloudResponse.ContentType;
+
+                if (isStream)
+                {
+                    Response.Headers["Cache-Control"] = "no-cache";
+                    Response.Headers["X-Accel-Buffering"] = "no";
+                }
+
+                if (cloudResponse.Body is not null)
+                {
+                    var cloudTokenResponse = new InferenceResponse();
+                    var tappedStream = new StreamingTokenTapStream(cloudResponse.Body, cloudTokenResponse);
+                    try
+                    {
+                        var buffer = new byte[8192];
+                        int bytesRead;
+                        while ((bytesRead = await tappedStream.ReadAsync(buffer, 0, buffer.Length, ct)) > 0)
+                        {
+                            await Response.Body.WriteAsync(buffer, 0, bytesRead, ct);
+                            await Response.Body.FlushAsync(ct);
+                        }
+                    }
+                    catch (IOException ex)
+                    {
+                        // Upstream closed prematurely or client disconnected during
+                        // write. Since HTTP 200 + headers are already sent, the stream
+                        // just ends — log and let finally handle upstream disposal.
+                        _logStore.Enqueue(LogLevel.Warn, "cloud-proxy",
+                            $"Cloud stream interrupted: model={modelName}, error={ex.Message}");
+                    }
+                    finally
+                    {
+                        await tappedStream.DisposeAsync();
+                    }
+
+                    _ = _usageRecorder.RecordAsync(
+                        providerName ?? "cloud",
+                        modelName,
+                        cloudTokenResponse.PromptTokens,
+                        cloudTokenResponse.TokensGenerated,
+                        cloudTokenResponse.PromptTokensCached,
+                        isStream,
+                        cloudElapsedMs,
+                        apiKeyId,
+                        apiKeyName,
+                        providerKind: "cloud");
+                }
+
+                return new EmptyResult();
+            }
+
+            // Should not reach here, but handle gracefully
+            return StatusCode(500, new { error = "Unexpected cloud proxy state" });
         }
 
         // Router profile models: resolve profile and attempt inference with fallback

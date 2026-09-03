@@ -7,10 +7,17 @@ namespace Unswarm.Core.Contracts;
 public interface ICloudProviderStore
 {
     /// <summary>
-    /// Create a new provider. <paramref name="apiKeyPlaintext"/> is encrypted
+    /// Create a new provider with API key auth. <paramref name="apiKeyPlaintext"/> is encrypted
     /// and stored; <paramref name="apiKeyHint"/> is captured as-is (e.g. "sk-…3f9a").
     /// </summary>
     Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default);
+
+    /// <summary>
+    /// Create a new provider with a specified auth type.
+    /// When <paramref name="authType"/> is <c>0</c> (ApiKey), <paramref name="apiKeyPlaintext"/> is
+    /// encrypted and stored. For other auth types the API key fields may be empty.
+    /// </summary>
+    Task CreateAsync(string name, string baseUrl, string? apiKeyPlaintext, string apiKeyHint, int authType, CancellationToken ct = default);
 
     /// <summary>
     /// Update an existing provider. When <paramref name="apiKeyPlaintext"/> is null/empty,
@@ -45,7 +52,22 @@ public interface ICloudProviderStore
 
     /// <summary>Get the model ID list for a provider.</summary>
     Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default);
+
+    /// <summary>Save OAuth tokens for a ChatGPT subscription provider.</summary>
+    Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default);
+
+    /// <summary>Get OAuth tokens for a provider. Returns null if not found.</summary>
+    Task<OAuthTokenSet?> GetOAuthTokensAsync(string id, CancellationToken ct = default);
+
+    /// <summary>Get the auth type for a provider (0 = ApiKey, 1 = ChatGPTSubscription).</summary>
+    Task<int> GetAuthTypeAsync(string id, CancellationToken ct = default);
 }
+
+public record OAuthTokenSet(
+    string AccessTokenCiphertext,
+    string RefreshTokenCiphertext,
+    DateTimeOffset? ExpiresAt,
+    string? ChatgptAccountId);
 
 public class CloudProviderListItem
 {
@@ -54,6 +76,7 @@ public class CloudProviderListItem
     public string BaseUrl { get; set; } = string.Empty;
     public string ApiKeyHint { get; set; } = string.Empty;
     public int ModelCount { get; set; }
+    public int AuthType { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -62,4 +85,6 @@ public sealed class CloudProviderReadItem : CloudProviderListItem
 {
     /// <summary>Full base URL (origin) — not masked.</summary>
     public string BaseUrlFull { get; set; } = string.Empty;
+    public string? ChatgptAccountId { get; set; }
+    public DateTimeOffset? TokenExpiresAt { get; set; }
 }

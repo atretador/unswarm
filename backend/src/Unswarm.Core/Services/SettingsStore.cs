@@ -83,6 +83,8 @@ public sealed class SettingsStore : ISettingsStore
         entity.HealthCheckTimeoutSeconds = settings.HealthCheckTimeoutSeconds;
         entity.UsageRetentionDays = settings.UsageRetentionDays;
         entity.ProviderBudgetsJson = settings.ProviderBudgetsJson;
+        entity.RouterRetryAttempts = settings.RouterRetryAttempts;
+        entity.RouterRetryDelayMs = settings.RouterRetryDelayMs;
 
         if (entity.Id == "default" && db.Entry(entity).State == EntityState.Detached)
         {
@@ -126,6 +128,8 @@ public sealed class SettingsStore : ISettingsStore
         AgentDisplayNames = e.AgentDisplayNames,
         HealthCheckTimeoutSeconds = e.HealthCheckTimeoutSeconds,
         UsageRetentionDays = e.UsageRetentionDays,
-        ProviderBudgetsJson = e.ProviderBudgetsJson
+        ProviderBudgetsJson = e.ProviderBudgetsJson,
+        RouterRetryAttempts = e.RouterRetryAttempts,
+        RouterRetryDelayMs = e.RouterRetryDelayMs
     };
 }

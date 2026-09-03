@@ -6,6 +6,7 @@ import type {
   BenchmarkResult,
   ChatMessage,
   CloudProvider,
+  CloudProviderAuthType,
   Container,
   LastBenchmarkResult,
   LogEntry,
@@ -867,6 +868,8 @@ const SETTINGS: Settings = {
   conversationDwellSeconds: 45,
   hideOriginPrefix: false,
   agentDisplayNames: {},
+  routerRetryAttempts: 2,
+  routerRetryDelayMs: 500,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────
@@ -921,6 +924,7 @@ const CLOUD_PROVIDERS: (CloudProvider & { apiKey?: string })[] = [
     baseUrl: "https://api.openai.com",
     apiKeyHint: "sk-proj…x9aZ",
     apiKey: "sk-proj-real-key-placeholder",
+    authType: 0,
     modelCount: 2,
     createdAt: NOW,
     updatedAt: NOW,
@@ -931,6 +935,7 @@ const CLOUD_PROVIDERS: (CloudProvider & { apiKey?: string })[] = [
     baseUrl: "https://api.anthropic.com",
     apiKeyHint: "sk-ant…3f9a",
     apiKey: "sk-ant-real-key-placeholder",
+    authType: 0,
     modelCount: 3,
     createdAt: NOW,
     updatedAt: NOW,
@@ -1808,10 +1813,10 @@ export const mockClient: UnswarmClient = {
     const p = CLOUD_PROVIDERS.find((x) => x.id === providerId);
     if (!p) throw new Error(`Cloud provider ${providerId} not found`);
     const { apiKey: _, ...rest } = p;
-    return { ...rest, baseUrlFull: p.baseUrl };
+    return { ...rest, baseUrlFull: p.baseUrl, chatgptAccountId: null, tokenExpiresAt: null };
   },
 
-  async createCloudProvider(data: { name: string; baseUrl: string; apiKey: string }) {
+  async createCloudProvider(data: { name: string; baseUrl: string; apiKey: string; authType?: number }) {
     await delay(rand(100, 300));
     if (!data.name.trim()) throw new Error("Name is required.");
     if (CLOUD_PROVIDERS.some((p) => p.name === data.name.trim())) {
@@ -1826,13 +1831,14 @@ export const mockClient: UnswarmClient = {
       baseUrl: data.baseUrl.trim().replace(/\/+$/, ""),
       apiKeyHint: hint,
       apiKey: data.apiKey,
+      authType: (data.authType as CloudProviderAuthType) ?? 0,
       modelCount: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     CLOUD_PROVIDERS.push(provider);
     const { apiKey: _, ...rest } = provider;
-    return { ...rest, baseUrlFull: provider.baseUrl };
+    return { ...rest, baseUrlFull: provider.baseUrl, chatgptAccountId: null, tokenExpiresAt: null };
   },
 
   async updateCloudProvider(providerId: string, data: { baseUrl: string; apiKey?: string | null; apiKeyHint?: string | null }) {
@@ -1848,7 +1854,7 @@ export const mockClient: UnswarmClient = {
     }
     p.updatedAt = new Date().toISOString();
     const { apiKey: _, ...rest } = p;
-    return { ...rest, baseUrlFull: p.baseUrl };
+    return { ...rest, baseUrlFull: p.baseUrl, chatgptAccountId: null, tokenExpiresAt: null };
   },
 
   async deleteCloudProvider(providerId: string) {
@@ -1880,7 +1886,7 @@ export const mockClient: UnswarmClient = {
     provider.modelCount = modelIds.length;
     provider.updatedAt = new Date().toISOString();
     const { apiKey: _, ...rest } = provider;
-    return { ...rest, baseUrlFull: provider.baseUrl };
+    return { ...rest, baseUrlFull: provider.baseUrl, chatgptAccountId: null, tokenExpiresAt: null };
   },
 
   async testAndFetchModels(baseUrl: string, apiKey: string) {
@@ -1896,6 +1902,32 @@ export const mockClient: UnswarmClient = {
       modelMap[host.replace(/^www\./, "")] ??
       (host ? [`hosted-${host.split(".")[0]}-model`] : ["model-1"]);
     return { modelIds };
+  },
+
+  // ── OAuth (ChatGPT Subscription) ─────────────────────────────
+  async startOAuth(_providerId: string) {
+    await delay(rand(100, 300));
+    // Mock: return a fake device code
+    return {
+      deviceAuthId: "mock-device-auth-id",
+      userCode: "ABCD-1234",
+      verificationUrl: "https://chatgpt.com/authorize",
+      interval: 5,
+    };
+  },
+
+  async pollOAuth(_providerId: string, _data: { deviceAuthId: string; userCode: string }) {
+    await delay(rand(100, 200));
+    // Mock: always succeeds immediately
+    return { status: "success", chatgptAccountId: "mock-account-id" };
+  },
+
+  async refreshOAuth(_providerId: string) {
+    await delay(rand(80, 150));
+    return {
+      success: true,
+      tokenExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    };
   },
 
   // ── Metrics ──────────────────────────────────────────────────

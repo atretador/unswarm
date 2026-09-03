@@ -29,6 +29,9 @@ public sealed class SettingsResponse
     public int UsageRetentionDays { get; set; } = 30;
     public string ProviderBudgetsJson { get; set; } = "{}";
 
+    public int RouterRetryAttempts { get; set; } = 3;
+    public int RouterRetryDelayMs { get; set; } = 1000;
+
     public static SettingsResponse FromSettings(Settings s) => new()
     {
         RequestTimeout = s.RequestTimeout,
@@ -50,7 +53,9 @@ public sealed class SettingsResponse
         HideOriginPrefix = s.HideOriginPrefix,
         AgentDisplayNames = s.AgentDisplayNames,
         UsageRetentionDays = s.UsageRetentionDays,
-        ProviderBudgetsJson = s.ProviderBudgetsJson
+        ProviderBudgetsJson = s.ProviderBudgetsJson,
+        RouterRetryAttempts = s.RouterRetryAttempts,
+        RouterRetryDelayMs = s.RouterRetryDelayMs
     };
 }
 
@@ -80,4 +85,7 @@ public sealed class SettingsUpdateRequest
 
     public int? UsageRetentionDays { get; set; }
     public string? ProviderBudgetsJson { get; set; }
+
+    public int? RouterRetryAttempts { get; set; }
+    public int? RouterRetryDelayMs { get; set; }
 }

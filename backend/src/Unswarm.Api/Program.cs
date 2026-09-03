@@ -195,6 +195,14 @@ builder.Services.AddScoped<ICloudProviderStore, CloudProviderStore>();
 // IServiceScopeFactory to resolve scoped ICloudProviderStore per request.
 builder.Services.AddSingleton<ICloudForwardingService, CloudForwardingService>();
 
+// ChatGPT subscription forwarding: singleton (global SemaphoreSlim concurrency cap)
+// Translates chat/completions → Responses API and SSE back to chat/completions.
+builder.Services.AddSingleton<IChatGPTSubscriptionForwardingService, ChatGPTSubscriptionForwardingService>();
+
+// ChatGPT OAuth device code flow
+builder.Services.AddHttpClient("chatgpt-oauth");
+builder.Services.AddSingleton<IChatGptOAuthService, ChatGptOAuthService>();
+
 // Router profiles: CRUD store following the same scoped pattern as CloudProviderStore
 builder.Services.AddSingleton<IRouterProfileStore, RouterProfileStore>();
 builder.Services.AddSingleton<IRouterProfileService, RouterProfileService>();

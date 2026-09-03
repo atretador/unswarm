@@ -28,10 +28,17 @@ public sealed class CloudProviderStore : ICloudProviderStore
 
     public async Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default)
     {
+        await CreateAsync(name, baseUrl, apiKeyPlaintext, apiKeyHint, authType: 0, ct);
+    }
+
+    public async Task CreateAsync(string name, string baseUrl, string? apiKeyPlaintext, string apiKeyHint, int authType, CancellationToken ct = default)
+    {
         if (await NameExistsInDbAsync(name, ct))
             throw new InvalidOperationException($"Provider with name '{name}' already exists.");
 
-        var encrypted = _encryptor.Protect(apiKeyPlaintext);
+        var encrypted = !string.IsNullOrEmpty(apiKeyPlaintext)
+            ? _encryptor.Protect(apiKeyPlaintext)
+            : string.Empty;
 
         await using var db = _dbFactory();
         var now = DateTimeOffset.UtcNow;
@@ -43,12 +50,15 @@ public sealed class CloudProviderStore : ICloudProviderStore
             ApiKeyCiphertext = encrypted,
             ApiKeyHint = apiKeyHint,
             ModelsJson = "[]",
+            AuthType = authType,
+            AccessTokenCiphertext = string.Empty,
+            RefreshTokenCiphertext = string.Empty,
             CreatedAt = now,
             UpdatedAt = now,
         };
         db.CloudProviders.Add(entity);
         await db.SaveChangesAsync(ct);
-        _logger.LogInformation("Created cloud provider {Name} ({Id})", name, entity.Id);
+        _logger.LogInformation("Created cloud provider {Name} ({Id}) authType={AuthType}", name, entity.Id, authType);
     }
 
     public async Task UpdateAsync(string id, string baseUrl, string? apiKeyPlaintext, string? apiKeyHint, CancellationToken ct = default)
@@ -170,6 +180,38 @@ public sealed class CloudProviderStore : ICloudProviderStore
         }
     }
 
+    public async Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct)
+    {
+        using var db = _dbFactory();
+        var entity = await db.CloudProviders.FindAsync([id], ct)
+            ?? throw new InvalidOperationException($"Cloud provider {id} not found");
+        entity.AccessTokenCiphertext = accessTokenCiphertext;
+        entity.RefreshTokenCiphertext = refreshTokenCiphertext;
+        entity.TokenExpiresAt = expiresAt;
+        entity.ChatgptAccountId = chatgptAccountId;
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+    }
+
+    public async Task<OAuthTokenSet?> GetOAuthTokensAsync(string id, CancellationToken ct)
+    {
+        using var db = _dbFactory();
+        var entity = await db.CloudProviders.FindAsync([id], ct);
+        if (entity is null) return null;
+        return new OAuthTokenSet(
+            entity.AccessTokenCiphertext,
+            entity.RefreshTokenCiphertext,
+            entity.TokenExpiresAt,
+            entity.ChatgptAccountId);
+    }
+
+    public async Task<int> GetAuthTypeAsync(string id, CancellationToken ct)
+    {
+        using var db = _dbFactory();
+        var entity = await db.CloudProviders.FindAsync([id], ct);
+        return entity?.AuthType ?? 0;
+    }
+
     // ── Internal helpers ──────────────────────────────────────────
 
     private async Task<bool> NameExistsInDbAsync(string name, CancellationToken ct)
@@ -207,6 +249,7 @@ public sealed class CloudProviderStore : ICloudProviderStore
         ModelCount = e.ModelsJson.Length > 2
             ? CountModels(e.ModelsJson)
             : 0,
+        AuthType = e.AuthType,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt,
     };
@@ -222,6 +265,9 @@ public sealed class CloudProviderStore : ICloudProviderStore
             BaseUrlFull = item.BaseUrl,
             ApiKeyHint = item.ApiKeyHint,
             ModelCount = item.ModelCount,
+            AuthType = item.AuthType,
+            ChatgptAccountId = e.ChatgptAccountId,
+            TokenExpiresAt = e.TokenExpiresAt,
             CreatedAt = item.CreatedAt,
             UpdatedAt = item.UpdatedAt,
         };

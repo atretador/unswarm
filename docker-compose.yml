@@ -12,8 +12,13 @@ services:
       # Keeping the key ring here means API-key ciphertexts stay decryptable
       # across container recreation.
       - unswarm-data:/data
+      # Docker socket: backend queries the daemon for container stats / lifecycle
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment:
-      # API key for agent authentication (empty = auth disabled)
+      # Static API key seeded into the managed key store at startup (agent scope).
+      # Leave empty to skip; generate a key via the dashboard instead.
       UNSWARM_API_KEY: ${UNSWARM_API_KEY:-}
       # Optional: bootstrap/reset the admin password on first run
       # UNSWARM_ADMIN_PASSWORD: ${UNSWARM_ADMIN_PASSWORD:-}

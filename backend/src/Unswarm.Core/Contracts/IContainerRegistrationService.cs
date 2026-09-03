@@ -9,6 +9,9 @@ public sealed record ContainerRegistrationRequest
     public RuntimeKind RuntimeKind { get; init; } = RuntimeKind.Container;
     public string? LauncherPath { get; init; }
     public int ContainerPort { get; init; } = 8080;
+    /// <summary>Host-mapped port resolved from Docker inspect. When null, the service
+    /// will attempt automatic resolution via Docker inspect or fall back to ContainerPort.</summary>
+    public int? MappedPort { get; init; }
     public string? GpuDevices { get; init; }
     public long MemoryLimitMb { get; init; }
     public Dictionary<string, string> ExtraLabels { get; init; } = [];
