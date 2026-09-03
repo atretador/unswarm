@@ -10,7 +10,6 @@ import {
   AlertCircle,
   ExternalLink,
   Copy,
-  Clock,
   KeyRound,
   Shield,
   RefreshCw,
@@ -196,7 +195,7 @@ function OAuthModal({
   onSuccess: () => void;
 }) {
   const [userCode, setUserCode] = useState<string | null>(null);
-  const [deviceAuthId, setDeviceAuthId] = useState<string | null>(null);
+  const [_deviceAuthId, setDeviceAuthId] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string>("https://auth.openai.com/codex/device");
   const [status, setStatus] = useState<"loading" | "waiting" | "success" | "error">("loading");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);

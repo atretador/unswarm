@@ -868,6 +868,8 @@ const SETTINGS: Settings = {
   conversationDwellSeconds: 45,
   hideOriginPrefix: false,
   agentDisplayNames: {},
+  routerRetryAttempts: 2,
+  routerRetryDelayMs: 500,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────
@@ -1907,9 +1909,10 @@ export const mockClient: UnswarmClient = {
     await delay(rand(100, 300));
     // Mock: return a fake device code
     return {
+      deviceAuthId: "mock-device-auth-id",
       userCode: "ABCD-1234",
-      verificationUri: "https://chatgpt.com/authorize",
-      expiresIn: 300,
+      verificationUrl: "https://chatgpt.com/authorize",
+      interval: 5,
     };
   },
 
