@@ -544,6 +544,8 @@ public sealed class InferenceProxyErrorPathTests
             => _inner.GetContainerLogsAsync(id, tailLines, ct);
         public Task RemoveContainerAsync(string id, CancellationToken ct = default)
             => _inner.RemoveContainerAsync(id, ct);
+        public Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
+            => _inner.ResolveMappedPortAsync(containerName, containerPort, ct);
         public Task<bool> HealthCheckAsync(int port, CancellationToken ct = default)
             => _inner.HealthCheckAsync(port, ct);
         public Task<IReadOnlyList<DiscoveredModel>> DiscoverModelsAsync(int port, CancellationToken ct = default)

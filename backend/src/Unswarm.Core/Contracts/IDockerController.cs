@@ -35,4 +35,9 @@ public interface IDockerController
     Task<IReadOnlyList<ContainerInfo>> ListContainersAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetContainerLogsAsync(string id, int tailLines = 100, CancellationToken ct = default);
     Task RemoveContainerAsync(string id, CancellationToken ct = default);
+    /// <summary>
+    /// Resolves the host-mapped port for a container by inspecting its Docker port bindings.
+    /// Returns null when the container is not found or has no port mapping (e.g. host networking).
+    /// </summary>
+    Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default);
 }

@@ -712,6 +712,7 @@ function ManageContainersBody({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [port, setPort] = useState("8080");
+  const [mappedPort, setMappedPort] = useState("");
 
   const { data: containers, isLoading, error } = useQuery({
     queryKey: ["agent-containers", agentName],
@@ -720,11 +721,12 @@ function ManageContainersBody({
   });
 
   const registerMutation = useMutation({
-    mutationFn: (payload: { displayName: string; image: string; port: number }) =>
+    mutationFn: (payload: { displayName: string; image: string; port: number; mappedPort?: number }) =>
       client.registerRuntime({
         displayName: payload.displayName,
         image: payload.image,
         containerPort: payload.port,
+        mappedPort: payload.mappedPort,
         agent: agentName,
       }),
     onSuccess: () => {
@@ -761,14 +763,17 @@ function ManageContainersBody({
     // Prefill from the container's detected port; fall back to the platform
     // default when telemetry reports none (e.g. a stopped container).
     setPort(c.port != null ? String(c.port) : "8080");
+    setMappedPort("");
   };
 
   const confirmRegister = () => {
     if (!selected || !displayName.trim()) return;
+    const mp = parseInt(mappedPort, 10);
     registerMutation.mutate({
       displayName: displayName.trim(),
       image: selected.modelName || selected.id,
       port: parseInt(port, 10) || 8080,
+      ...(mp > 0 ? { mappedPort: mp } : {}),
     });
   };
 
@@ -1004,6 +1009,17 @@ function ManageContainersBody({
                   placeholder="8080"
                   aria-label="Port"
                 />
+                <Input
+                  label="Mapped port (optional)"
+                  type="number"
+                  value={mappedPort}
+                  onChange={(e) => setMappedPort(e.target.value)}
+                  placeholder="auto-resolve"
+                  aria-label="Mapped port"
+                />
+                <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
+                  Host port exposed by Docker. Leave empty to auto-resolve via Docker inspect.
+                </p>
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>

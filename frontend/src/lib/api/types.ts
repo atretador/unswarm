@@ -74,6 +74,7 @@ export interface RegisterRuntimePayload {
   displayName: string;
   image: string;   // container name (pre-provisioned)
   containerPort: number;
+  mappedPort?: number; // host-mapped port (auto-resolved via Docker inspect when omitted)
   agent?: string;   // "host" or agent name, default "host"
   canRunAlongWith?: string[];   // same-agent container names this may run with
   extraLabels?: Record<string, string>;
@@ -91,6 +92,7 @@ export interface UpdateRuntimeConcurrencyPayload {
 export interface UpdateRuntimePayload {
   displayName?: string;
   containerPort?: number;
+  mappedPort?: number;
   maxConcurrentInferences?: number;
 }
 

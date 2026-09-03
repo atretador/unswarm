@@ -48,6 +48,8 @@ public sealed class RegisterRuntimeRequestDto
     public string DisplayName { get; set; } = "";
     public required string Image { get; set; }
     public int ContainerPort { get; set; } = 8080;
+    /// <summary>Host-mapped port (resolved from Docker inspect). Null = auto-resolve on registration.</summary>
+    public int? MappedPort { get; set; }
     public string? RuntimeKind { get; set; }
     public string? LauncherPath { get; set; }
     public string Agent { get; set; } = "host";
@@ -62,6 +64,7 @@ public sealed class RegisterRuntimeRequestDto
         RuntimeKind = RuntimeKind?.ToLowerInvariant() == "script" ? Unswarm.Core.Models.RuntimeKind.Script : Unswarm.Core.Models.RuntimeKind.Container,
         LauncherPath = LauncherPath,
         ContainerPort = ContainerPort,
+        MappedPort = MappedPort,
         Agent = Agent,
         CanRunAlongWith = CanRunAlongWith ?? [],
         ExtraLabels = ExtraLabels ?? []
@@ -75,6 +78,7 @@ public sealed class UpdateRuntimeRequestDto
 {
     public string? DisplayName { get; set; }
     public int? ContainerPort { get; set; }
+    public int? MappedPort { get; set; }
     public int? MaxConcurrentInferences { get; set; }
 }
 

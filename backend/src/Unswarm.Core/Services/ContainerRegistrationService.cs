@@ -95,6 +95,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             DisplayName = string.IsNullOrEmpty(request.DisplayName) ? request.Image : request.DisplayName,
             Image = request.Image,
             ContainerPort = request.ContainerPort,
+            MappedPort = request.MappedPort,
             RuntimeKind = request.RuntimeKind,
             LauncherPath = request.LauncherPath,
             GpuDevices = request.GpuDevices,
@@ -248,18 +249,33 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var container = await _registry.GetAsync(registeredContainerId, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {registeredContainerId} not found");
 
-        if (!container.MappedPort.HasValue)
-            throw new InvalidOperationException($"Container {registeredContainerId} has no mapped port; is it running?");
+        var controller = GetController(container);
+        var isRemote = controller is IRemoteDockerController;
 
-        _logger.LogInformation("Re-discovering models for container {Id} on port {Port}", registeredContainerId, container.MappedPort.Value);
+        // Resolve MappedPort when null (e.g. container was registered without
+        // Docker inspect). Try Docker inspect first; fall back to ContainerPort.
+        if (!container.MappedPort.HasValue)
+        {
+            _logger.LogInformation("Container {Id} has no mapped port; attempting Docker inspect resolution", registeredContainerId);
+            var resolved = await controller.ResolveMappedPortAsync(container.Image, container.ContainerPort, ct).ConfigureAwait(false);
+            var resolvedPort = resolved ?? container.ContainerPort;
+
+            container = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                MappedPort = resolvedPort
+            }, ct).ConfigureAwait(false);
+
+            _logger.LogInformation("Resolved mapped port for container {Id}: {Port} (source: {Source})",
+                registeredContainerId, resolvedPort, resolved.HasValue ? "docker inspect" : "container port fallback");
+        }
+
+        _logger.LogInformation("Re-discovering models for container {Id} on port {Port}", registeredContainerId, container.MappedPort!.Value);
 
         container = await _registry.UpdateAsync(registeredContainerId, container with
         {
             Status = ContainerRegistrationStatus.Discovering
         }, ct).ConfigureAwait(false);
 
-        var controller = GetController(container);
-        var isRemote = controller is IRemoteDockerController;
         var mappedPort = container.MappedPort!.Value;
 
         IReadOnlyList<DiscoveredModel> discovered = Array.Empty<DiscoveredModel>();
@@ -363,43 +379,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var container = await _registry.GetAsync(id, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {id} not found");
 
-        // Stop and remove the runtime container if it exists
-        if (container.RuntimeKind == RuntimeKind.Script)
-        {
-            var isHost = string.Equals(container.Agent, "host", StringComparison.OrdinalIgnoreCase);
-            if (!isHost && container.RuntimeProcessId.HasValue)
-            {
-                // Agent-hosted script: stop via RemoteAgentDockerController by PID
-                var controller = GetController(container);
-                if (controller is RemoteAgentDockerController remoteController)
-                {
-                    _logger.LogInformation("Stopping agent script runtime {Id} (PID {Pid}) on agent {Agent}", id, container.RuntimeProcessId.Value, container.Agent);
-                    await remoteController.StopScriptAsync(container.RuntimeProcessId.Value, ct).ConfigureAwait(false);
-                }
-            }
-            else if (isHost && _scriptController is not null && container.RuntimeProcessId.HasValue)
-            {
-                _logger.LogInformation("Stopping script runtime {Id} (PID {Pid})", id, container.RuntimeProcessId.Value);
-                await _scriptController.StopScriptAsync(id, ct).ConfigureAwait(false);
-            }
-        }
-        else
-        {
-            // Resolve the CURRENT runtime container by name before stopping/removing:
-            // a recreated container (same name, new id) would otherwise be missed when
-            // stopping by the stale persisted RuntimeContainerId.
-            var controller = GetController(container);
-            var live = await ResolveLiveRuntimeContainerAsync(controller, container, ct).ConfigureAwait(false);
-            var targetId = live?.Id ?? container.RuntimeContainerId;
-
-            if (targetId is not null)
-            {
-                _logger.LogInformation("Stopping runtime container {RuntimeContainerId} for registered container {Id}",
-                    targetId[..Math.Min(12, targetId.Length)], id);
-                await controller.StopContainerAsync(targetId, ct).ConfigureAwait(false);
-                await controller.RemoveContainerAsync(targetId, ct).ConfigureAwait(false);
-            }
-        }
+        // NOTE: Intentionally do NOT stop or remove the container/script here.
+        // Delete removes the runtime from the app (database only). The container
+        // itself keeps running on the host/agent. If the user wants to stop it,
+        // they use the separate stop endpoint.
 
         // Remove model mappings
         var modelIds = await _registry.GetModelIdsForContainerAsync(id, ct).ConfigureAwait(false);
@@ -781,13 +764,19 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
     private async Task<RegisteredRuntimeWithModels> DiscoverAndRegisterModelsAsync(RegisteredRuntime container, CancellationToken ct)
     {
+        var controller = GetController(container);
+
         if (!container.MappedPort.HasValue)
         {
-            return new RegisteredRuntimeWithModels
+            // Resolve MappedPort when null (e.g. container started externally or registered without Docker inspect).
+            var resolved = await controller.ResolveMappedPortAsync(container.Image, container.ContainerPort, ct).ConfigureAwait(false);
+            container = await _registry.UpdateAsync(container.Id, container with
             {
-                Container = container,
-                DiscoveredModels = []
-            };
+                MappedPort = resolved ?? container.ContainerPort
+            }, ct).ConfigureAwait(false);
+
+            _logger.LogInformation("Resolved mapped port for container {Id}: {Port} (source: {Source})",
+                container.Id, container.MappedPort!.Value, resolved.HasValue ? "docker inspect" : "container port fallback");
         }
 
         container = await _registry.UpdateAsync(container.Id, container with
@@ -795,7 +784,6 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Status = ContainerRegistrationStatus.Discovering
         }, ct).ConfigureAwait(false);
 
-        var controller = GetController(container);
         var isRemote = controller is IRemoteDockerController;
 
         var discovered = isRemote

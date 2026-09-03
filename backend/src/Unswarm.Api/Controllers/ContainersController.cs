@@ -227,9 +227,13 @@ public sealed class ContainersController : ControllerBase
             var result = await _registrationService.RediscoverAsync(id, ct);
             return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
         {
             return NotFound(new { error = "Registered runtime not found" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
     }
 
@@ -303,6 +307,11 @@ public sealed class ContainersController : ControllerBase
         if (dto.ContainerPort.HasValue)
         {
             existing = existing with { ContainerPort = dto.ContainerPort.Value, MappedPort = null };
+        }
+
+        if (dto.MappedPort.HasValue)
+        {
+            existing = existing with { MappedPort = dto.MappedPort.Value };
         }
 
         if (dto.MaxConcurrentInferences.HasValue)

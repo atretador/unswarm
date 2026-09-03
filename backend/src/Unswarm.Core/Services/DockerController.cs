@@ -382,6 +382,47 @@ public sealed class DockerController : IDockerController
         return false;
     }
 
+    public async Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
+    {
+        try
+        {
+            var containers = await _client.Containers.ListContainersAsync(new ContainersListParameters
+            {
+                All = true
+            }, ct).ConfigureAwait(false);
+
+            var match = containers.FirstOrDefault(c => c.Names.Any(n =>
+                n.TrimStart('/').Equals(containerName, StringComparison.OrdinalIgnoreCase)));
+
+            if (match is null)
+            {
+                _logger.LogDebug("Container {ContainerName} not found for port resolution", containerName);
+                return null;
+            }
+
+            var inspect = await _client.Containers.InspectContainerAsync(match.ID, ct).ConfigureAwait(false);
+
+            var portBinding = $"{containerPort}/tcp";
+            if (inspect.NetworkSettings.Ports.TryGetValue(portBinding, out var bindings) && bindings is { Count: > 0 })
+            {
+                if (int.TryParse(bindings[0].HostPort, out var hp))
+                {
+                    _logger.LogDebug("Resolved mapped port for {ContainerName}: {Port} (containerPort {ContainerPort})",
+                        containerName, hp, containerPort);
+                    return hp;
+                }
+            }
+
+            _logger.LogDebug("No port mapping found for {ContainerName} on containerPort {ContainerPort}", containerName, containerPort);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve mapped port for container {ContainerName}", containerName);
+            return null;
+        }
+    }
+
     private static ContainerStatus MapContainerStatus(string state) => state.ToLowerInvariant() switch
     {
         "running" => ContainerStatus.Running,

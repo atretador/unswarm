@@ -913,6 +913,13 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }
     }
 
+    public Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
+    {
+        // Remote agents handle their own port resolution during start;
+        // if MappedPort is null the agent likely doesn't expose port mapping info.
+        return Task.FromResult<int?>(null);
+    }
+
     private ContainerStartResult MapStartResult(AgentMessage response)
     {
         var p = response.Payload;
