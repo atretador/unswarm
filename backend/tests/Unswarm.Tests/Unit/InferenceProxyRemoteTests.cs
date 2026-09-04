@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
@@ -30,6 +31,7 @@ public sealed class InferenceProxyRemoteTests
             _healthChecker,
             new LoggerFactory().CreateLogger<InferenceProxy>(),
             NullServiceProvider.Instance,
+            Options.Create(new ContainerHostOptions()),
             _containerRegistry,
             _router);
 

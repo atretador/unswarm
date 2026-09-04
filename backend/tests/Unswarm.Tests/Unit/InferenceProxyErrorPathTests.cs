@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
@@ -39,6 +40,7 @@ public sealed class InferenceProxyErrorPathTests
             _healthChecker,
             new LoggerFactory().CreateLogger<InferenceProxy>(),
             serviceProvider ?? NullServiceProvider.Instance,
+            Options.Create(new ContainerHostOptions()),
             _containerRegistry,
             _router);
 
@@ -513,7 +515,7 @@ public sealed class InferenceProxyErrorPathTests
         });
         var proxy = new InferenceProxy(
             _host, _healthChecker, new LoggerFactory().CreateLogger<InferenceProxy>(),
-            NullServiceProvider.Instance, _containerRegistry, router);
+            NullServiceProvider.Instance, Options.Create(new ContainerHostOptions()), _containerRegistry, router);
 
         var response = await proxy.InvokeAsync(MakeRequest("any-model", targetId: "agent:x"));
 
@@ -569,7 +571,7 @@ public sealed class InferenceProxyErrorPathTests
         });
         var proxy = new InferenceProxy(
             _host, _healthChecker, new LoggerFactory().CreateLogger<InferenceProxy>(),
-            NullServiceProvider.Instance, _containerRegistry, router);
+            NullServiceProvider.Instance, Options.Create(new ContainerHostOptions()), _containerRegistry, router);
 
         var response = await proxy.InvokeAsync(MakeRequest("remote-list-model", targetId: "agent:gpu1"));
 

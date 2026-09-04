@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Core.Services;
@@ -11,15 +12,17 @@ namespace Unswarm.Core.Services;
 public sealed class ModelDiscoveryService
 {
     private readonly ILogger<ModelDiscoveryService> _logger;
+    private readonly string _host;
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
 
-    public ModelDiscoveryService(ILogger<ModelDiscoveryService> logger)
+    public ModelDiscoveryService(ILogger<ModelDiscoveryService> logger, IOptions<ContainerHostOptions> options)
     {
         _logger = logger;
+        _host = options.Value.Host;
     }
 
     /// <summary>
-    /// Queries http://127.0.0.1:{port}/v1/models and returns the list of discovered models.
+    /// Queries http://{host}:{port}/v1/models and returns the list of discovered models.
     /// Expects an OpenAI-compatible response: { "data": [{ "id": "...", "owned_by": "..." }] }
     ///
     /// TRANSPORT FAILURES THROW: connection refused, timeouts, and non-2xx responses
@@ -29,7 +32,7 @@ public sealed class ModelDiscoveryService
     /// </summary>
     public async Task<IReadOnlyList<DiscoveredModel>> DiscoverModelsAsync(int port, CancellationToken ct = default)
     {
-        var url = $"http://127.0.0.1:{port}/v1/models";
+        var url = $"http://{_host}:{port}/v1/models";
         _logger.LogDebug("Querying container models at {Url}", url);
 
         JsonElement json;

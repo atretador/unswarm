@@ -1,16 +1,20 @@
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Unswarm.Core.Models;
 
 namespace Unswarm.Core.Services.Validation;
 
 public sealed class ModelValidator
 {
     private readonly ILogger<ModelValidator> _logger;
+    private readonly string _host;
 
-    public ModelValidator(ILogger<ModelValidator> logger)
+    public ModelValidator(ILogger<ModelValidator> logger, IOptions<ContainerHostOptions> options)
     {
         _logger = logger;
+        _host = options.Value.Host;
     }
 
     /// <summary>
@@ -49,12 +53,12 @@ public sealed class ModelValidator
         return ModelValidationResult.Success();
     }
 
-    private static async Task<bool> TcpCheckAsync(int port, CancellationToken ct)
+    private async Task<bool> TcpCheckAsync(int port, CancellationToken ct)
     {
         try
         {
             using var client = new TcpClient();
-            await client.ConnectAsync("127.0.0.1", port, ct).ConfigureAwait(false);
+            await client.ConnectAsync(_host, port, ct).ConfigureAwait(false);
             return true;
         }
         catch
@@ -63,12 +67,12 @@ public sealed class ModelValidator
         }
     }
 
-    private static async Task<bool> HealthCheckAsync(int port, CancellationToken ct)
+    private async Task<bool> HealthCheckAsync(int port, CancellationToken ct)
     {
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetAsync($"http://127.0.0.1:{port}/health", ct).ConfigureAwait(false);
+            var response = await http.GetAsync($"http://{_host}:{port}/health", ct).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch
@@ -77,12 +81,12 @@ public sealed class ModelValidator
         }
     }
 
-    private static async Task<bool> IdentityCheckAsync(int port, string expectedModelName, CancellationToken ct)
+    private async Task<bool> IdentityCheckAsync(int port, string expectedModelName, CancellationToken ct)
     {
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-            var response = await http.GetStringAsync($"http://127.0.0.1:{port}/v1/models", ct).ConfigureAwait(false);
+            var response = await http.GetStringAsync($"http://{_host}:{port}/v1/models", ct).ConfigureAwait(false);
             // Simple check: response should contain the model name
             return response.Contains(expectedModelName, StringComparison.OrdinalIgnoreCase);
         }
@@ -92,14 +96,14 @@ public sealed class ModelValidator
         }
     }
 
-    private static async Task<bool> SmokeInferenceAsync(int port, CancellationToken ct)
+    private async Task<bool> SmokeInferenceAsync(int port, CancellationToken ct)
     {
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
             var payload = """{"model":"test","messages":[{"role":"user","content":"hi"}],"max_tokens":1}""";
             var content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json");
-            var response = await http.PostAsync($"http://127.0.0.1:{port}/v1/chat/completions", content, ct)
+            var response = await http.PostAsync($"http://{_host}:{port}/v1/chat/completions", content, ct)
                 .ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }

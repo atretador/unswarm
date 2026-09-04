@@ -1,19 +1,23 @@
 using System.Net.Sockets;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Unswarm.Core.Models;
 
 namespace Unswarm.Core.Services;
 
 public sealed class HealthChecker : Contracts.IHealthChecker
 {
     private readonly ILogger<HealthChecker> _logger;
+    private readonly string _defaultHost;
 
-    public HealthChecker(ILogger<HealthChecker> logger)
+    public HealthChecker(ILogger<HealthChecker> logger, IOptions<ContainerHostOptions> options)
     {
         _logger = logger;
+        _defaultHost = options.Value.Host;
     }
 
     public async Task WaitForReadyAsync(int port, int timeoutSeconds = 120, CancellationToken ct = default)
-        => await WaitForReadyAsync(port, "127.0.0.1", timeoutSeconds, ct).ConfigureAwait(false);
+        => await WaitForReadyAsync(port, _defaultHost, timeoutSeconds, ct).ConfigureAwait(false);
 
     public async Task WaitForReadyAsync(int port, string host, int timeoutSeconds = 120, CancellationToken ct = default)
     {
@@ -28,7 +32,7 @@ public sealed class HealthChecker : Contracts.IHealthChecker
     }
 
     public async Task<bool> CheckAsync(int port, CancellationToken ct = default)
-        => await CheckAsync(port, "127.0.0.1", ct).ConfigureAwait(false);
+        => await CheckAsync(port, _defaultHost, ct).ConfigureAwait(false);
 
     public async Task<bool> CheckAsync(int port, string host, CancellationToken ct = default)
     {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Scheduler;
@@ -33,7 +34,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
         return new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            _containerRegistry);
+            Options.Create(new ContainerHostOptions()), _containerRegistry);
     }
 
     private static InferenceRequest MakeRequest(
@@ -163,7 +164,7 @@ public sealed class SchedulerWorkerContainerAwareTests : IDisposable
         var worker = new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            containerRegistry: null);
+            Options.Create(new ContainerHostOptions()), containerRegistry: null);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);
 

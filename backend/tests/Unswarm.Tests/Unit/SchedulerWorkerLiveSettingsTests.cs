@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Scheduler;
@@ -50,7 +51,7 @@ public sealed class SchedulerWorkerLiveSettingsTests : IDisposable
         return new SchedulerWorker(
             channel, _docker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            _containerRegistry, settingsStore: settingsStore);
+            Options.Create(new ContainerHostOptions()), _containerRegistry, settingsStore: settingsStore);
     }
 
     private static InferenceRequest MakeRequest(

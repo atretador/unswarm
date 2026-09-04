@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
@@ -46,7 +47,7 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
         _worker = new SchedulerWorker(
             _channel, host, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            containerRegistry ?? _containerRegistry, router, resolver,
+            Options.Create(new ContainerHostOptions()), containerRegistry ?? _containerRegistry, router, resolver,
             scriptController: scriptController,
             agentRegistry: _agentRegistry);
         _cts = new CancellationTokenSource();

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
@@ -78,7 +79,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             _registry,
             router ?? _router,
             _healthChecker,
-            discoveryService ?? new ModelDiscoveryService(new LoggerFactory().CreateLogger<ModelDiscoveryService>()),
+            discoveryService ?? new ModelDiscoveryService(new LoggerFactory().CreateLogger<ModelDiscoveryService>(), Options.Create(new ContainerHostOptions())),
             _modelRegistry,
             _clock,
             _logger,

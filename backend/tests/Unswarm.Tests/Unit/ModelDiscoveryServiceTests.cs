@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Unswarm.Core.Models;
 using Unswarm.Core.Services;
 
 namespace Unswarm.Tests.Unit;
@@ -16,7 +18,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     public async Task DiscoverModelsAsync_EmptyData_ReturnsEmptyList()
     {
         var port = StartServer("""{"data":[]}""");
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -27,7 +29,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     public async Task DiscoverModelsAsync_SingleModel_ReturnsOne()
     {
         var port = StartServer("""{"data":[{"id":"llama3","owned_by":"ollama"}]}""");
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -41,7 +43,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     {
         var json = """{"data":[{"id":"llama3","owned_by":"ollama"},{"id":"mistral","owned_by":"mistralai"},{"id":"codellama","owned_by":"meta"}]}""";
         var port = StartServer(json);
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -56,7 +58,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     {
         var json = """{"data":[{"owned_by":"ollama"},{"id":"valid-model","owned_by":"ollama"}]}""";
         var port = StartServer(json);
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -68,7 +70,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     public async Task DiscoverModelsAsync_NoDataProperty_ReturnsEmpty()
     {
         var port = StartServer("""{"models":[]}""");
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -79,7 +81,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     public async Task DiscoverModelsAsync_MalformedJson_ReturnsEmpty()
     {
         var port = StartServer("not json at all");
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         var models = await service.DiscoverModelsAsync(port);
 
@@ -90,7 +92,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     public async Task DiscoverModelsAsync_HttpError_Throws()
     {
         var port = StartServerError();
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         await Assert.ThrowsAsync<HttpRequestException>(() => service.DiscoverModelsAsync(port));
     }
@@ -100,7 +102,7 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
     {
         // Port almost certainly not listening → transport failure must surface,
         // not silently return an empty list.
-        var service = new ModelDiscoveryService(_logger);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
 
         await Assert.ThrowsAsync<HttpRequestException>(() => service.DiscoverModelsAsync(1));
     }

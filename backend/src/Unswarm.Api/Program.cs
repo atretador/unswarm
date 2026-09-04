@@ -144,6 +144,9 @@ builder.Services.ConfigureApplicationCookie(options =>
     };
 });
 
+// Container host address for reaching model containers (127.0.0.1 bare metal, host.docker.internal in Docker).
+builder.Services.Configure<ContainerHostOptions>(builder.Configuration.GetSection(ContainerHostOptions.SectionName));
+
 // API key auth (backward compat with agent WebSocket connections)
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 var envApiKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");

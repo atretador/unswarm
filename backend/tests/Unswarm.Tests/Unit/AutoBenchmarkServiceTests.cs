@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
@@ -202,7 +203,7 @@ public sealed class AutoBenchmarkServiceTests
             registry,
             router,
             healthChecker,
-            new ModelDiscoveryService(new LoggerFactory().CreateLogger<ModelDiscoveryService>()),
+            new ModelDiscoveryService(new LoggerFactory().CreateLogger<ModelDiscoveryService>(), Options.Create(new ContainerHostOptions())),
             modelRegistry,
             new FakeClock(),
             new LoggerFactory().CreateLogger<ContainerRegistrationService>(),

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Unswarm.Core.Models;
 using Unswarm.Core.Services.Validation;
 
 namespace Unswarm.Tests.Unit;
@@ -13,7 +15,7 @@ public sealed class ModelValidatorTests : IDisposable
     [Fact]
     public async Task ValidateAsync_FailsWhenPortNotListening()
     {
-        var validator = new ModelValidator(_logger);
+        var validator = new ModelValidator(_logger, Options.Create(new ContainerHostOptions()));
 
         // Port 1 is almost certainly not listening
         var result = await validator.ValidateAsync(1, "test-model");
@@ -30,7 +32,7 @@ public sealed class ModelValidatorTests : IDisposable
         tcpListener.Start();
         var port = ((IPEndPoint)tcpListener.LocalEndpoint).Port;
 
-        var validator = new ModelValidator(_logger);
+        var validator = new ModelValidator(_logger, Options.Create(new ContainerHostOptions()));
         var result = await validator.ValidateAsync(port, "test-model");
 
         // TCP succeeds, but /health fails
@@ -50,7 +52,7 @@ public sealed class ModelValidatorTests : IDisposable
 
         try
         {
-            var validator = new ModelValidator(_logger);
+            var validator = new ModelValidator(_logger, Options.Create(new ContainerHostOptions()));
             var result = await validator.ValidateAsync(port, "test-model", cts.Token);
 
             Assert.True(result.IsSuccess);
@@ -73,7 +75,7 @@ public sealed class ModelValidatorTests : IDisposable
 
         try
         {
-            var validator = new ModelValidator(_logger);
+            var validator = new ModelValidator(_logger, Options.Create(new ContainerHostOptions()));
             var result = await validator.ValidateAsync(port, "expected-model", cts.Token);
 
             Assert.False(result.IsSuccess);

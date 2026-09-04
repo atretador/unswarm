@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Scheduler;
@@ -36,7 +37,7 @@ public sealed class SchedulerWorkerMultiTargetTests : IDisposable
         _worker = new SchedulerWorker(
             _channel, new FakeDockerController(), _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger, settings,
-            _containerRegistry, router, resolver);
+            Options.Create(new ContainerHostOptions()), _containerRegistry, router, resolver);
         _cts = new CancellationTokenSource();
         _worker.Start(_cts.Token);
         return _worker;

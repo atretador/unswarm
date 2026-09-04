@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Scheduler;
@@ -48,7 +49,7 @@ public sealed class SchedulerWorkerDrainGatingTests
         channel ??= Channel.CreateUnbounded<InferenceRequest>();
         settings ??= new SchedulerSettings { MaxContainerStartRetries = 1 };
         return new SchedulerWorker(channel, _docker, _inference, _healthChecker, _logStore, _statsTracker, _clock, _logger, settings,
-            _containerRegistry);
+            Options.Create(new ContainerHostOptions()), _containerRegistry);
     }
 
     private static InferenceRequest MakeRequest(string model, string id)
@@ -183,7 +184,7 @@ public sealed class SchedulerWorkerDrainGatingTests
             channel, hostDocker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger,
             new SchedulerSettings { MaxContainerStartRetries = 1 },
-            registry, router, resolver);
+            Options.Create(new ContainerHostOptions()), registry, router, resolver);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);
 
@@ -268,7 +269,7 @@ public sealed class SchedulerWorkerDrainGatingTests
             channel, hostDocker, _inference, _healthChecker,
             _logStore, _statsTracker, _clock, _logger,
             new SchedulerSettings { MaxContainerStartRetries = 1 },
-            registry, router, resolver);
+            Options.Create(new ContainerHostOptions()), registry, router, resolver);
         var cts = new CancellationTokenSource();
         worker.Start(cts.Token);
 

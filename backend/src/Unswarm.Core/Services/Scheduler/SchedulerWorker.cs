@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Remote;
@@ -44,6 +45,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
     private readonly HostScriptRuntimeController? _scriptController;
     private readonly ISettingsStore? _settingsStore;
     private readonly IAgentRegistry? _agentRegistry;
+    private readonly string _containerHost;
 
     // ── Lane state ────────────────────────────────────────────────────────────
 
@@ -175,6 +177,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         IClock clock,
         ILogger<SchedulerWorker> logger,
         SchedulerSettings settings,
+        Microsoft.Extensions.Options.IOptions<ContainerHostOptions> containerHostOptions,
         IContainerRegistry? containerRegistry = null,
         IDockerControllerRouter? router = null,
         IModelTargetResolver? resolver = null,
@@ -197,6 +200,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         _scriptController = scriptController;
         _settingsStore = settingsStore;
         _agentRegistry = agentRegistry;
+        _containerHost = containerHostOptions.Value.Host;
 
         // Publish total queue depth (global channel + all lane channels) to the
         // "unswarm.queue.depth" gauge. No-op unless an OTel provider listens to the
@@ -252,7 +256,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
     {
         var target = ExecutionTarget.FromId(targetId);
         if (!target.IsAgent || target.AgentName is null)
-            return "127.0.0.1";
+            return _containerHost;
 
         // Try to get the agent's reported hostname from the registry
         var connection = _agentRegistry?.Get(target.AgentName);

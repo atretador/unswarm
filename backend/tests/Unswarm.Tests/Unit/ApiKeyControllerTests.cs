@@ -18,6 +18,7 @@ public sealed class ApiKeyControllerTests
     private sealed class StubCloudProviderStore : ICloudProviderStore
     {
         public Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default) => Task.CompletedTask;
+        public Task CreateAsync(string name, string baseUrl, string? apiKeyPlaintext, string apiKeyHint, int authType, CancellationToken ct = default) => Task.CompletedTask;
         public Task UpdateAsync(string id, string baseUrl, string? apiKeyPlaintext, string? apiKeyHint, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<CloudProviderListItem>> ListAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<CloudProviderListItem>>([
@@ -30,6 +31,9 @@ public sealed class ApiKeyControllerTests
         public Task<CloudProviderReadItem?> GetByNameAsync(string name, CancellationToken ct = default) => Task.FromResult<CloudProviderReadItem?>(null);
         public Task<bool> NameExistsAsync(string name, CancellationToken ct = default) => Task.FromResult(false);
         public Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<OAuthTokenSet?> GetOAuthTokensAsync(string id, CancellationToken ct = default) => Task.FromResult<OAuthTokenSet?>(null);
+        public Task<int> GetAuthTypeAsync(string id, CancellationToken ct = default) => Task.FromResult(0);
     }
 
     /// <summary>Minimal IContainerRegistry for controller tests: no runtimes.</summary>

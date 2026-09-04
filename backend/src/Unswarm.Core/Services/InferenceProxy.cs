@@ -18,6 +18,7 @@ public sealed class InferenceProxy : IInferenceProxy
     private readonly ILogger<InferenceProxy> _logger;
     private readonly ILogStore? _logStore;
     private readonly IServiceProvider _serviceProvider;
+    private readonly string _containerHost;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _startLocks = new(StringComparer.Ordinal);
     private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromMinutes(5) };
 
@@ -38,6 +39,7 @@ public sealed class InferenceProxy : IInferenceProxy
         IHealthChecker healthChecker,
         ILogger<InferenceProxy> logger,
         IServiceProvider serviceProvider,
+        Microsoft.Extensions.Options.IOptions<ContainerHostOptions> containerHostOptions,
         IContainerRegistry? containerRegistry = null,
         IDockerControllerRouter? router = null,
         ILogStore? logStore = null)
@@ -46,6 +48,7 @@ public sealed class InferenceProxy : IInferenceProxy
         _healthChecker = healthChecker;
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _containerHost = containerHostOptions.Value.Host;
         _containerRegistry = containerRegistry;
         _router = router ?? new HostOnlyDockerControllerRouter(docker);
         _logStore = logStore;
@@ -843,7 +846,7 @@ public sealed class InferenceProxy : IInferenceProxy
 
     private async Task<InferenceResponse> ProxyToPortCoreAsync(InferenceRequest request, int port, CancellationToken ct)
     {
-        var url = $"http://127.0.0.1:{port}/v1/chat/completions";
+        var url = $"http://{_containerHost}:{port}/v1/chat/completions";
 
         using var httpContent = new StringContent(
             request.OriginalJson,
