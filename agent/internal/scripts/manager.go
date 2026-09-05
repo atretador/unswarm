@@ -277,7 +277,9 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	}
 
 	// Spawn the script.
-	cmd := exec.Command("bash", resolved)
+	// --login sources /etc/profile + ~/.profile so scripts inherit the user's
+	// PATH and environment (e.g. llama-server in ~/.local/bin).
+	cmd := exec.Command("bash", "--login", resolved)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	logPath := m.logPath(resolved)

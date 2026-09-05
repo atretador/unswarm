@@ -973,8 +973,18 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         try
         {
-            var scriptHealthTimeout = await _settings.GetAsync(ct).ConfigureAwait(false);
-            await _healthChecker.WaitForReadyAsync(mappedPort, scriptHealthTimeout.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+            if (!isHost)
+            {
+                // Remote agent script: poll health via the agent's WebSocket channel.
+                var controller = GetController(container);
+                await WaitForRemoteHealthAsync((IRemoteDockerController)controller, mappedPort, container.Agent, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                // Host script: local TCP + HTTP health check.
+                var scriptHealthTimeout = await _settings.GetAsync(ct).ConfigureAwait(false);
+                await _healthChecker.WaitForReadyAsync(mappedPort, scriptHealthTimeout.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {

@@ -86,9 +86,9 @@ public sealed class HostScriptRuntimeController
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
-            // ArgumentList: the launcher path is passed as a single argv element
-            // — no space/quoting re-splitting, so paths with spaces or shell
-            // metacharacters cannot change how bash interprets the invocation.
+            // --login sources /etc/profile + ~/.profile so scripts inherit the
+            // user's PATH and environment (e.g. llama-server in ~/.local/bin).
+            psi.ArgumentList.Add("--login");
             psi.ArgumentList.Add(launcherPath);
 
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };

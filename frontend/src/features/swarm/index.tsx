@@ -1142,6 +1142,7 @@ function RegisteredContainerCard({
   const [ringActive, setRingActive] = useState(highlight);
   const [rediscoverError, setRediscoverError] = useState<string | null>(null);
   const [healthCheckError, setHealthCheckError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const [editingName, setEditingName] = useState(false);
 
   // Clear the highlight ring after a short window so it doesn't linger.
@@ -1162,7 +1163,17 @@ function RegisteredContainerCard({
 
   const startMutation = useMutation({
     mutationFn: (id: string) => client.startRegisteredRuntime(id),
-    onSuccess: invalidate,
+    onMutate: () => {
+      setStartError(null);
+    },
+    onSuccess: () => {
+      setStartError(null);
+      invalidate();
+    },
+    onError: (err: Error) => {
+      setStartError(err.message || "Start failed");
+      invalidate();
+    },
   });
 
   const stopMutation = useMutation({
@@ -1370,6 +1381,21 @@ function RegisteredContainerCard({
               type="button"
               onClick={() => setHealthCheckError(null)}
               aria-label="Dismiss health check error"
+              className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
+
+        {startError && (
+          <div className="flex items-center gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-2 py-1 text-[10px] text-[var(--color-status-error)]">
+            <AlertTriangle className="size-3 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{startError}</span>
+            <button
+              type="button"
+              onClick={() => setStartError(null)}
+              aria-label="Dismiss start error"
               className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
             >
               <X className="size-3" />
