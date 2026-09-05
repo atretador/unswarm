@@ -2,10 +2,12 @@ name: unswarm
 
 services:
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
-      - "22302:5014"
+      - "22301:5014"
     volumes:
       # Persistent app data: SQLite DB + DataProtection key ring
       # ($HOME=/data → /data/.config/unswarm/unswarm.db and .../keys).
@@ -14,6 +16,9 @@ services:
       - unswarm-data:/data
       # Docker socket: backend queries the daemon for container stats / lifecycle
       - /var/run/docker.sock:/var/run/docker.sock
+      # Host scripts directory: launcher scripts (.sh) managed via the API.
+      # Maps the host's script directory into the container at /data/scripts.
+      - ${HOST_SCRIPTS_DIR:-~/.config/unswarm/scripts}:/data/scripts
     group_add:
       - "${DOCKER_GID:-999}"
     extra_hosts:
@@ -27,23 +32,19 @@ services:
       ContainerHost__Host: ${ContainerHost__Host:-host.docker.internal}
       # Optional: bootstrap/reset the admin password on first run
       # UNSWARM_ADMIN_PASSWORD: ${UNSWARM_ADMIN_PASSWORD:-}
-      # CORS origins for browser access if not same-origin via the frontend proxy
+      # Signals that the backend is running inside Docker.
+      # Gates features that require bare-metal host access (e.g. host script execution).
+      RUNNING_IN_DOCKER: "true"
+      # CORS origins for browser access if not same-origin
       # Cors__AllowedOrigins: https://unswarm.example.com
+      # Host scripts directory path inside the container (matches the bind mount above).
+      HostScripts__Directory: /data/scripts
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5014/health"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 15s
-
-  frontend:
-    build: ./frontend
-    restart: unless-stopped
-    ports:
-      - "22301:8080"
-    depends_on:
-      backend:
-        condition: service_healthy
 
   # ── Optional: run an agent inside this compose network ────────────────────
   # In production, agents typically run on REMOTE hosts with access to that

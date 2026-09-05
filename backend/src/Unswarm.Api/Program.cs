@@ -147,6 +147,10 @@ builder.Services.ConfigureApplicationCookie(options =>
 // Container host address for reaching model containers (127.0.0.1 bare metal, host.docker.internal in Docker).
 builder.Services.Configure<ContainerHostOptions>(builder.Configuration.GetSection(ContainerHostOptions.SectionName));
 
+// Host scripts directory for runtime launcher scripts (.sh).
+// Default: ~/.config/unswarm/scripts/ (bare metal) or /data/scripts (Docker bind mount).
+builder.Services.Configure<HostScriptsOptions>(builder.Configuration.GetSection(HostScriptsOptions.SectionName));
+
 // API key auth (backward compat with agent WebSocket connections)
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 var envApiKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");
@@ -174,6 +178,7 @@ builder.Services.AddScoped<IPromptStore, PromptStore>();
 builder.Services.AddSingleton<IApiKeyStore, ApiKeyStore>();
 builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
 builder.Services.AddSingleton<HostScriptRuntimeController>();
+builder.Services.AddSingleton<HostScriptDirectoryService>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
@@ -382,6 +387,12 @@ builder.Services.AddHostedService<ContainerLogProbe>();
 builder.Services.AddExceptionHandler(_ => { });
 builder.Services.AddProblemDetails();
 
+// ── Response compression (replaces nginx gzip) ───────────────────────────
+builder.Services.AddResponseCompression(options =>
+{
+    options.EnableForHttps = true;
+});
+
 // ── Health checks ─────────────────────────────────────────────────────────
 builder.Services.AddHealthChecks();
 
@@ -509,6 +520,8 @@ await app.Services.GetRequiredService<HostScriptRuntimeController>()
     .AdoptOrphanedScriptsAsync();
 
 // ── Middleware ────────────────────────────────────────────────────────────
+app.UseResponseCompression();
+
 // Early: unhandled exceptions anywhere in the pipeline become RFC7807
 // ProblemDetails instead of an empty 500.
 app.UseExceptionHandler();
@@ -524,9 +537,31 @@ foreach (var origin in corsAllowedOrigins)
 app.UseWebSockets(wsOptions);
 app.UseMiddleware<SecurityHeadersMiddleware>();
 
+// ── SPA static files ───────────────────────────────────────────────────
+// Serve the React build output from wwwroot/. UseDefaultFiles serves
+// index.html for directory requests; UseStaticFiles serves CSS/JS/images.
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        // Immutable cache for hashed assets (e.g. /assets/index-CI0GKdDi.js)
+        var path = ctx.Context.Request.Path.Value ?? "";
+        if (path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "public, max-age=2592000, immutable";
+        }
+    }
+});
+
 // ── Swagger ────────────────────────────────────────────────────────────────
 // Serves the auto-generated OpenAPI spec JSON.
 app.UseSwagger();
+
+// Swagger UI — interactive API docs. Anonymous so unauthenticated users can explore.
+app.UseSwaggerUI(options => {
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Unswarm API v1");
+});
 
 // ── Prometheus /metrics scrape protection ─────────────────────────────────
 // The endpoint itself stays AllowAnonymous (scrapers can't do the cookie
@@ -582,10 +617,10 @@ app.MapHealthChecks("/health");
 // collected, including the "Unswarm" meter.
 app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
 
-// Swagger UI — interactive API docs. Anonymous so unauthenticated users can explore.
-app.UseSwaggerUI(options => {
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "Unswarm API v1");
-});
+// ── SPA fallback ────────────────────────────────────────────────────────
+// Any request that doesn't match a controller, health check, metrics,
+// or Swagger endpoint falls through to index.html for client-side routing.
+app.MapFallbackToFile("index.html");
 
 app.Run();
 
@@ -693,7 +728,7 @@ sealed class SecurityHeadersMiddleware(RequestDelegate next)
         headers["X-Frame-Options"] = "DENY";
         headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
         headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()";
-        headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'";
+        headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'sha256-1+DROQAKTZlEcPm7GPp54//iskyUpZgoetwc1Q+oHiM='; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
 
         await next(context);
     }

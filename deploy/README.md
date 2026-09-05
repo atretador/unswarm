@@ -49,8 +49,8 @@ Check status with `journalctl -u unswarm-agent -f`.
 proxy in front of the backend and point `backend_url` at `wss://...`.
 
 The same reverse proxy should also terminate TLS for browser/dashboard traffic:
-serve the frontend over `https://` and forward `/api`, `/v1`, `/ws`, and
-`/health` to the backend. The backend enables HSTS outside development, so once
+proxy all traffic (`/`, `/api`, `/v1`, `/ws`, `/health`) to the backend over
+`https://`. The backend enables HSTS outside development, so once
 a client has seen an HTTPS response it will refuse plain HTTP — put the TLS
 layer in place before exposing the stack beyond loopback. Cookies are issued
 with `Secure` policy regardless, so dashboard sign-in only works over HTTPS.

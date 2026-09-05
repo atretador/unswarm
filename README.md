@@ -464,10 +464,9 @@ export UNSWARM_API_KEY="$(openssl rand -hex 32)"
 docker compose up -d --build
 ```
 
-The dashboard is served at `http://localhost:22301`, with `/api`, `/v1`, `/ws`,
-and `/health` proxied to the backend by nginx. The backend API is also
-directly reachable at `http://localhost:22302`. SQLite persists in the
-`unswarm-data` named volume.
+The dashboard and API are served at `http://localhost:22301`. The backend
+serves the React SPA static files directly — no separate frontend container.
+SQLite persists in the `unswarm-data` named volume.
 
 To also run an agent inside the compose network (local testing only — agents
 normally run on remote hosts):
@@ -482,7 +481,7 @@ for the host Docker socket mount and `docker.socket` group setup.
 ### Reverse Proxy / TLS
 
 Terminate TLS at your reverse proxy (Caddy, Traefik, nginx) in front of the
-frontend container and proxy WebSocket upgrades through. HTTPS is required:
+backend container and proxy WebSocket upgrades through. HTTPS is required:
 the auth cookie is issued with `SecurePolicy.Always`, so logins only work over
 HTTPS. Set `Cors__AllowedOrigins` on the backend if you serve the SPA from a
 different origin than the API; same-origin via the bundled proxy needs no CORS.
