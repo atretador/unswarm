@@ -313,7 +313,7 @@ describe("Swarm", () => {
     await user.click(screen.getByText("vllm-serve"));
 
     // Port auto-fills from the container's detected port (8000 in the mock seed)
-    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    const portInput = within(dialog).getByLabelText("Port") as HTMLInputElement;
     expect(portInput).toHaveValue(8000);
 
     await user.click(await screen.findByRole("button", { name: /register on edge-node-1/i }));
@@ -352,7 +352,7 @@ describe("Swarm", () => {
 
     await user.click(screen.getByText("vllm-serve"));
 
-    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    const portInput = within(dialog).getByLabelText("Port") as HTMLInputElement;
     expect(portInput).toHaveValue(8000);
 
     // Manual override of the auto-detected port
@@ -393,7 +393,7 @@ describe("Swarm", () => {
     // ray-worker is stopped → telemetry reports no port → fallback default
     await user.click(screen.getByText("ray-worker"));
 
-    const portInput = within(dialog).getByRole("spinbutton", { name: /port/i });
+    const portInput = within(dialog).getByLabelText("Port") as HTMLInputElement;
     expect(portInput).toHaveValue(8080);
   });
 
@@ -815,13 +815,13 @@ describe("Swarm", () => {
       expect(screen.getByText("llama-server")).toBeInTheDocument();
     });
 
-    // First click arms the inline confirmation — no client call yet
+    // First click opens the delete confirmation modal — no client call yet
     const deleteBtn = screen.getByRole("button", { name: "Delete llama-server registration" });
     await user.click(deleteBtn);
     expect(deleteSpy).not.toHaveBeenCalled();
 
-    // Inline confirm appears; clicking Delete confirms and calls the client
-    const confirmBtn = screen.getByRole("button", { name: "Confirm delete llama-server registration" });
+    // The confirmation modal appears; clicking Delete confirms and calls the client
+    const confirmBtn = screen.getByRole("button", { name: "Delete" });
     await user.click(confirmBtn);
     await waitFor(() => {
       expect(deleteSpy).toHaveBeenCalledTimes(1);
@@ -845,11 +845,11 @@ describe("Swarm", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Delete llama-server registration" }));
-    await user.click(screen.getByRole("button", { name: "Cancel delete llama-server registration" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(deleteSpy).not.toHaveBeenCalled();
-    // The inline confirm is gone; the plain delete affordance is back
-    expect(screen.queryByRole("button", { name: "Confirm delete llama-server registration" })).not.toBeInTheDocument();
+    // The confirmation modal is closed; the plain delete affordance is back
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete llama-server registration" })).toBeInTheDocument();
   });
 

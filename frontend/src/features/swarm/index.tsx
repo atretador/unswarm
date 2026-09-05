@@ -48,10 +48,10 @@ import {
   Input,
   Switch,
   Tooltip,
+  ConfirmDialog,
 } from "../../components/ui";
 import type {
   Agent,
-  AgentAvailableScript,
   AgentScriptStatus,
   Container,
   ContainerRegistrationStatus,
@@ -60,6 +60,7 @@ import type {
   Settings,
   UpdateRuntimePayload,
 } from "../../lib/api/types";
+import { HostScriptUpload, AgentScriptUpload } from "./ScriptEditor";
 
 // ─── Status semantics ─────────────────────────────────────────────
 
@@ -1050,17 +1051,6 @@ function ManageContainersBody({
 
 // ─── Manage scripts body ─────────────────────────────────────────
 
-/** Derive a display name from a script file path (e.g. /opt/scripts/run_vllm.sh → run_vllm). */
-function displayNameFromScript(path: string): string {
-  const basename = path.split("/").pop() ?? path;
-  return basename
-    .replace(/\.sh$/i, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "script";
-}
-
 function ManageScriptsBody({
   agentName,
   onClose,
@@ -1070,295 +1060,18 @@ function ManageScriptsBody({
   onClose: () => void;
   registered: RegisteredRuntime[];
 }) {
-  const queryClient = useQueryClient();
   const isHost = agentName === "host";
 
-  // Host: manual entry form state
-  const [hostDisplayName, setHostDisplayName] = useState("");
-  const [hostPath, setHostPath] = useState("");
-  const [hostPort, setHostPort] = useState("8080");
-
-  // Remote: selection state
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [remoteDisplayName, setRemoteDisplayName] = useState("");
-  const [remotePort, setRemotePort] = useState("8080");
-
-  const { data: availableScripts, isLoading, error } = useQuery({
-    queryKey: ["agent-available-scripts", agentName],
-    queryFn: () => client.listAvailableScripts(agentName),
-    staleTime: 15_000,
-    enabled: !isHost,
-  });
-
-  const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
-    queryClient.invalidateQueries({ queryKey: ["models"] });
-    onClose();
-  };
-
-  const registerMutation = useMutation({
-    mutationFn: (payload: { displayName: string; launcherPath: string; port: number }) =>
-      client.registerRuntime({
-        displayName: payload.displayName,
-        image: payload.displayName,
-        containerPort: payload.port,
-        agent: agentName,
-        runtimeKind: "script",
-        launcherPath: payload.launcherPath,
-      }),
-    onSuccess: invalidate,
-  });
-
-  const handleHostRegister = () => {
-    if (!hostPath.trim() || !hostDisplayName.trim()) return;
-    registerMutation.mutate({
-      displayName: hostDisplayName.trim(),
-      launcherPath: hostPath.trim(),
-      port: parseInt(hostPort, 10) || 8080,
-    });
-  };
-
-  const handleRemoteRegister = () => {
-    if (!selectedPath || !remoteDisplayName.trim()) return;
-    registerMutation.mutate({
-      displayName: remoteDisplayName.trim(),
-      launcherPath: selectedPath,
-      port: parseInt(remotePort, 10) || 8080,
-    });
-  };
-
-  const pickRemoteScript = (script: AgentAvailableScript) => {
-    if (selectedPath === script.path) {
-      setSelectedPath(null);
-      return;
-    }
-    setSelectedPath(script.path);
-    setRemoteDisplayName(displayNameFromScript(script.path));
-  };
-
-  const isScriptRegistered = (path: string) =>
-    registered.some(
-      (rc) =>
-        rc.runtimeKind === "script" &&
-        rc.launcherPath?.toLowerCase() === path.toLowerCase(),
-    );
-
   if (isHost) {
-    return (
-      <div className="space-y-4 p-5">
-        <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Register a launcher script on{" "}
-          <span className="font-mono text-[var(--color-text-heading)]">host</span>.
-          Enter the full path to the script — it will be launched when the runtime starts.
-        </p>
-
-        <div className="space-y-3">
-          <Input
-            label="Display name"
-            value={hostDisplayName}
-            onChange={(e) => setHostDisplayName(e.target.value)}
-            placeholder="my-vllm-script"
-          />
-          <Input
-            label="Launcher path"
-            value={hostPath}
-            onChange={(e) => setHostPath(e.target.value)}
-            placeholder="/home/user/scripts/run_vllm.sh"
-          />
-          <Input
-            label="Port"
-            type="number"
-            value={hostPort}
-            onChange={(e) => setHostPort(e.target.value)}
-            placeholder="8080"
-          />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            size="sm"
-            loading={registerMutation.isPending}
-            disabled={!hostDisplayName.trim() || !hostPath.trim()}
-            onClick={handleHostRegister}
-          >
-            <Terminal className="size-3" />
-            Register script
-          </Button>
-        </div>
-
-        {registerMutation.isError && (
-          <p className="text-xs text-[var(--color-status-error)]">
-            {registerMutation.error.message}
-          </p>
-        )}
-      </div>
-    );
+    return <HostScriptUpload registered={registered} onClose={onClose} />;
   }
 
-  // Remote agent: picker flow
   return (
-    <div className="space-y-4 p-5">
-      <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Launcher scripts discovered on{" "}
-        <span className="font-mono text-[var(--color-text-heading)]">{agentName}</span>{" "}
-        from its <code className="font-mono">scripts_dir</code> configuration.
-        Select one to register as a runtime.
-      </p>
-
-      {isLoading ? (
-        <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 3 }, (_, i) => (
-            <Skeleton key={i} className="h-20 w-full" />
-          ))}
-        </div>
-      ) : error ? (
-        <EmptyState
-          title="Couldn't list scripts"
-          description={`Couldn't reach ${agentName} to list scripts.`}
-          action={
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() =>
-                queryClient.invalidateQueries({ queryKey: ["agent-available-scripts", agentName] })
-              }
-            >
-              Retry
-            </Button>
-          }
-        />
-      ) : (availableScripts ?? []).length === 0 ? (
-        <EmptyState
-          icon={<Terminal className="size-12" strokeWidth={1.5} />}
-          title="No scripts found"
-          description={`No scripts found on ${agentName}. Add .sh files to the agent's scripts_dir.`}
-        />
-      ) : (
-        <>
-          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {(availableScripts ?? []).map((s) => {
-              const already = isScriptRegistered(s.path);
-              const selected = selectedPath === s.path;
-              return (
-                <button
-                  key={s.path}
-                  type="button"
-                  onClick={() => !already && pickRemoteScript(s)}
-                  disabled={already}
-                  aria-pressed={selected}
-                  className={`
-                    group relative flex flex-col gap-2 overflow-hidden rounded-[var(--radius-xl)] border p-3 text-left
-                    transition-all duration-[var(--duration-fast)]
-                    focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
-                    ${
-                      selected
-                        ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] cursor-pointer"
-                        : already
-                          ? "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-bg-muted)] opacity-55"
-                          : "cursor-pointer border-[var(--color-border)] bg-[var(--color-bg-surface)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-elevated)]"
-                    }
-                  `}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.name}>
-                      {s.name}
-                    </span>
-                    {already ? (
-                      <Badge variant="success" className="shrink-0 gap-1">
-                        <Terminal className="size-2.5" />
-                        registered
-                      </Badge>
-                    ) : selected ? (
-                      <Badge variant="info" className="shrink-0">
-                        selected
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        register
-                      </Badge>
-                    )}
-                  </div>
-                  <p className="truncate text-[10px] text-[var(--color-text-muted)]" title={s.path}>
-                    {s.path}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Inline confirm: display name + port + register */}
-          <AnimatePresence>
-            {selectedPath && (
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 8 }}
-                transition={{ duration: 0.18 }}
-                className="space-y-3 rounded-[var(--radius-xl)] border border-[var(--color-primary)] bg-[var(--color-bg-muted)] p-3.5"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-xs font-medium text-[var(--color-text-heading)]">
-                    Register script
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPath(null)}
-                    aria-label="Cancel selection"
-                    className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)]"
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-                <p className="truncate font-mono text-[10px] text-[var(--color-text-muted)]">
-                  {selectedPath}
-                </p>
-                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
-                  <Input
-                    label="Display name"
-                    value={remoteDisplayName}
-                    onChange={(e) => setRemoteDisplayName(e.target.value)}
-                    placeholder="my-script-server"
-                  />
-                  <Input
-                    label="Port"
-                    type="number"
-                    value={remotePort}
-                    onChange={(e) => setRemotePort(e.target.value)}
-                    placeholder="8080"
-                  />
-                </div>
-                <div className="flex justify-end gap-2 pt-1">
-                  <Button variant="ghost" size="sm" onClick={() => setSelectedPath(null)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    loading={registerMutation.isPending}
-                    disabled={!remoteDisplayName.trim()}
-                    onClick={handleRemoteRegister}
-                  >
-                    <Terminal className="size-3" />
-                    Register on {agentName}
-                  </Button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </>
-      )}
-
-      {registerMutation.isError && (
-        <p className="text-xs text-[var(--color-status-error)]">
-          {registerMutation.error.message}
-        </p>
-      )}
-    </div>
+    <AgentScriptUpload
+      agentName={agentName}
+      registered={registered}
+      onClose={onClose}
+    />
   );
 }
 
@@ -1808,32 +1521,19 @@ function RegisteredContainerCard({
               Rediscover
             </Button>
             {confirmingDelete ? (
-              <span className="inline-flex items-center gap-1 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] px-1.5 py-0.5">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  loading={deleteMutation.isPending}
-                  onClick={() => {
-                    deleteMutation.mutate(container.id);
-                    setConfirmingDelete(false);
-                  }}
-                  aria-label={`Confirm delete ${container.displayName} registration`}
-                  className="text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
-                >
-                  <Trash2 className="size-3" />
-                  Delete
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy}
-                  onClick={() => setConfirmingDelete(false)}
-                  aria-label={`Cancel delete ${container.displayName} registration`}
-                >
-                  Cancel
-                </Button>
-              </span>
+              <ConfirmDialog
+                open={confirmingDelete}
+                title={`Delete ${container.displayName}?`}
+                description="This will remove the runtime registration and all associated data."
+                confirmLabel="Delete"
+                variant="danger"
+                loading={deleteMutation.isPending}
+                onConfirm={() => {
+                  deleteMutation.mutate(container.id);
+                  setConfirmingDelete(false);
+                }}
+                onCancel={() => setConfirmingDelete(false)}
+              />
             ) : (
               <Button
                 variant="ghost"
