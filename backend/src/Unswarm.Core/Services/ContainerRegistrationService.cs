@@ -85,8 +85,16 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 throw new ArgumentException("LauncherPath is required for Script runtimes");
 
             // Remote scripts don't have a local file path to validate
-            if (string.Equals(agent, "host", StringComparison.OrdinalIgnoreCase) && !File.Exists(request.LauncherPath))
-                throw new ArgumentException($"Launcher script not found: {request.LauncherPath}");
+            if (string.Equals(agent, "host", StringComparison.OrdinalIgnoreCase))
+            {
+                if (HostEnvironment.IsRunningInDocker)
+                    throw new InvalidOperationException(
+                        "Host script execution is not available in Docker mode. " +
+                        "Use an agent on the host, or run the backend with dotnet run.");
+
+                if (!File.Exists(request.LauncherPath))
+                    throw new ArgumentException($"Launcher script not found: {request.LauncherPath}");
+            }
         }
 
         var container = new RegisteredRuntime

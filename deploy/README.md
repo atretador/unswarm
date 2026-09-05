@@ -34,7 +34,7 @@ Edit `/etc/unswarm/agent.yaml`:
 
 ```yaml
 backend_url: "wss://unswarm.example.com"
-api_key: "<UNSWARM_API_KEY from the backend>"
+api_key: "<key created via dashboard or POST /api/api-keys/agent>"
 agent_name: "machine-b"
 docker_socket: "unix:///var/run/docker.sock"
 ```

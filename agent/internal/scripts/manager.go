@@ -98,6 +98,100 @@ func (m *Manager) ListScripts() []ScriptInfo {
 	return out
 }
 
+// maxScriptBytes is the maximum allowed size for uploaded/updated scripts (1MB).
+const maxScriptBytes int64 = 1 << 20
+
+// validateScriptName checks that a filename is a valid .sh script name
+// (no path components, .sh extension). Returns the sanitized basename.
+func validateScriptName(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("script name is required")
+	}
+	// Strip any directory components — filepath.Base already handles traversal.
+	name = filepath.Base(name)
+	if !strings.HasSuffix(name, ".sh") {
+		return "", fmt.Errorf("only .sh scripts are allowed")
+	}
+	return name, nil
+}
+
+// WriteScript writes a new script file to scriptsDir. The name must end with
+// .sh. Content is validated for size before writing. The file is made
+// executable after writing.
+func (m *Manager) WriteScript(name string, content string) (ScriptInfo, error) {
+	if m.scriptsDir == "" {
+		return ScriptInfo{}, fmt.Errorf("script support is not configured")
+	}
+
+	name, err := validateScriptName(name)
+	if err != nil {
+		return ScriptInfo{}, err
+	}
+
+	if len(content) == 0 {
+		return ScriptInfo{}, fmt.Errorf("script content is empty")
+	}
+	if int64(len(content)) > maxScriptBytes {
+		return ScriptInfo{}, fmt.Errorf("script exceeds maximum size of %dKB", maxScriptBytes/1024)
+	}
+
+	// Resolve to final path and validate containment.
+	resolved, err := m.resolveWithinScriptsDir(filepath.Join(m.scriptsDir, name))
+	if err != nil {
+		return ScriptInfo{}, err
+	}
+
+	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
+		return ScriptInfo{}, fmt.Errorf("write script: %w", err)
+	}
+
+	// Make executable.
+	if err := chmodPlusX(resolved); err != nil {
+		slog.Warn("failed to set executable permission", "path", resolved, "error", err)
+	}
+
+	abs, _ := filepath.Abs(resolved)
+	return ScriptInfo{Path: abs, Name: name}, nil
+}
+
+// UpdateScript overwrites an existing script file. Same validation as WriteScript.
+func (m *Manager) UpdateScript(name string, content string) (ScriptInfo, error) {
+	// Delegate to WriteScript — same validation, same write path.
+	return m.WriteScript(name, content)
+}
+
+// ReadScript returns the content of a script file. The path must resolve
+// within scriptsDir.
+func (m *Manager) ReadScript(name string) (string, error) {
+	if m.scriptsDir == "" {
+		return "", fmt.Errorf("script support is not configured")
+	}
+
+	name, err := validateScriptName(name)
+	if err != nil {
+		return "", err
+	}
+
+	resolved, err := m.resolveWithinScriptsDir(filepath.Join(m.scriptsDir, name))
+	if err != nil {
+		return "", err
+	}
+
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return "", fmt.Errorf("read script: %w", err)
+	}
+
+	return string(data), nil
+}
+
+// chmodPlusX sets the executable bit on a file using an argument array
+// (avoids shell interpretation of filenames with spaces or special chars).
+func chmodPlusX(path string) error {
+	cmd := exec.Command("chmod", "+x", path)
+	return cmd.Run()
+}
+
 // resolveWithinScriptsDir resolves path to an absolute, symlink-resolved
 // location and enforces the scripts_dir whitelist (security boundary). Used by
 // both StartScript and GetScriptLogs so log reads cannot escape scripts_dir.

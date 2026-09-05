@@ -35,6 +35,7 @@ import type {
   RegisteredRuntime,
   RouterProfile,
   RouterProfileInput,
+  ScriptInfo,
   SendTestChatOptions,
   Settings,
   StatsSummary,
@@ -107,6 +108,18 @@ export interface UnswarmClient {
 
   /** Launcher scripts available on a remote agent (queried live over WebSocket). */
   listAvailableScripts(agentName: string): Promise<AgentAvailableScript[]>;
+
+  // Host script management
+  listHostScripts(): Promise<ScriptInfo[]>;
+  uploadHostScript(file: File): Promise<ScriptInfo>;
+  updateHostScript(fileName: string, file: File): Promise<ScriptInfo>;
+  getScriptContent(fileName: string): Promise<string>;
+  deleteHostScript(fileName: string): Promise<void>;
+
+  // Agent script management
+  uploadAgentScript(agentName: string, file: File): Promise<ScriptInfo>;
+  updateAgentScript(agentName: string, fileName: string, file: File): Promise<ScriptInfo>;
+  getAgentScriptContent(agentName: string, fileName: string): Promise<string>;
 
   /** Run a benchmark against a model. Optional promptId resolves server-side. */
   runBenchmark(modelId: string, opts?: { promptId?: string }): Promise<BenchmarkResult>;

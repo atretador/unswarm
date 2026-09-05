@@ -151,4 +151,13 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
             throw ThrowOnListScripts;
         return Task.FromResult<IReadOnlyList<AgentScriptInfo>>(ListedScripts.ToList());
     }
+
+    public Task<AgentScriptInfo> UploadScriptAsync(string name, string content, CancellationToken ct = default)
+        => Task.FromResult(new AgentScriptInfo { Name = name, Path = name });
+
+    public Task<AgentScriptInfo> UpdateScriptAsync(string name, string content, CancellationToken ct = default)
+        => Task.FromResult(new AgentScriptInfo { Name = name, Path = name });
+
+    public Task<string> GetScriptContentAsync(string path, CancellationToken ct = default)
+        => Task.FromResult("");
 }

@@ -558,6 +558,12 @@ public sealed class InferenceProxyErrorPathTests
             => _inner.InferStreamAsync(port, requestJson, ct);
         public Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default)
             => _inner.ListScriptsAsync(ct);
+        public Task<AgentScriptInfo> UploadScriptAsync(string name, string content, CancellationToken ct = default)
+            => _inner.UploadScriptAsync(name, content, ct);
+        public Task<AgentScriptInfo> UpdateScriptAsync(string name, string content, CancellationToken ct = default)
+            => _inner.UpdateScriptAsync(name, content, ct);
+        public Task<string> GetScriptContentAsync(string path, CancellationToken ct = default)
+            => _inner.GetScriptContentAsync(path, ct);
     }
 
     [Fact]

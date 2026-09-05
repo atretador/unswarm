@@ -178,6 +178,13 @@ export interface AgentAvailableScript {
   name: string;
 }
 
+export interface ScriptInfo {
+  name: string;
+  path: string;
+  sizeBytes: number;
+  lastModified: string; // ISO 8601
+}
+
 export interface Agent {
   name: string;
   connectionId: string | null;

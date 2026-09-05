@@ -32,6 +32,7 @@ public sealed class AgentsController : ControllerBase
     private readonly IDockerControllerRouter _router;
     private readonly IContainerRegistry _containerRegistry;
     private readonly HostScriptRuntimeController _scriptController;
+    private readonly HostScriptDirectoryService _hostScriptDir;
     private readonly IHealthChecker _healthChecker;
     private readonly ILogger<AgentsController> _logger;
 
@@ -40,6 +41,7 @@ public sealed class AgentsController : ControllerBase
         IDockerControllerRouter router,
         IContainerRegistry containerRegistry,
         HostScriptRuntimeController scriptController,
+        HostScriptDirectoryService hostScriptDir,
         IHealthChecker healthChecker,
         ILogger<AgentsController> logger)
     {
@@ -47,6 +49,7 @@ public sealed class AgentsController : ControllerBase
         _router = router;
         _containerRegistry = containerRegistry;
         _scriptController = scriptController;
+        _hostScriptDir = hostScriptDir;
         _healthChecker = healthChecker;
         _logger = logger;
     }
@@ -87,15 +90,21 @@ public sealed class AgentsController : ControllerBase
     }
 
     /// <summary>
-    /// Lists launcher scripts available on a remote agent by querying the agent
-    /// over WebSocket. Host is rejected (host scripts are registered by full path,
-    /// not discovered remotely).
+    /// Lists launcher scripts available on an execution target.
+    /// For remote agents: queries the agent over WebSocket.
+    /// For host: lists .sh files from the configured host scripts directory.
     /// </summary>
     [HttpGet("{name}/scripts/available")]
     public async Task<IActionResult> ListAvailableScripts(string name, CancellationToken ct)
     {
         if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { error = "Host scripts are registered by full path; use /api/agents/host/scripts instead" });
+        {
+            if (HostEnvironment.IsRunningInDocker)
+                return BadRequest(new { error = "Host script execution is not available in Docker mode. Use an agent on the host." });
+
+            var hostScripts = _hostScriptDir.ListScripts();
+            return Ok(hostScripts);
+        }
 
         var info = _registry.GetInfo(name);
         if (info is null)

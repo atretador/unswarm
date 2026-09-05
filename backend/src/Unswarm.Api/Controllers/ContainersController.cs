@@ -147,9 +147,9 @@ public sealed class ContainersController : ControllerBase
             var result = await _registrationService.RegisterAsync(dto.ToRequest(), ct);
             return Ok(RegisteredRuntimeResponse.From(result.Container, result.DiscoveredModels));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            return StatusCode(500, new { error = "Failed to register runtime" });
+            return StatusCode(500, new { error = $"Failed to register runtime: {ex.Message}" });
         }
     }
 
@@ -264,7 +264,8 @@ public sealed class ContainersController : ControllerBase
         RegisteredRuntimeWithModels result;
         try
         {
-            result = await _registrationService.StartAsync(id, ct);
+            // Use CancellationToken.None — start must complete even if the client disconnects (e.g. browser refresh).
+            result = await _registrationService.StartAsync(id, CancellationToken.None);
         }
         catch (KeyNotFoundException)
         {
@@ -377,7 +378,8 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("registered/{id}/stop")]
     public async Task<IActionResult> StopRegistered(string id, CancellationToken ct)
     {
-        var result = await _registrationService.StopAsync(id, ct).ConfigureAwait(false);
+        // Use CancellationToken.None — stop must complete even if the client disconnects (e.g. browser refresh).
+        var result = await _registrationService.StopAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (result is null)
             return NotFound(new { error = "Registered runtime not found" });
 

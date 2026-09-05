@@ -31,4 +31,13 @@ public interface IRemoteDockerController : IDockerController
 
     /// <summary>Lists launcher scripts available on the remote agent.</summary>
     Task<IReadOnlyList<AgentScriptInfo>> ListScriptsAsync(CancellationToken ct = default);
+
+    /// <summary>Uploads a script to the remote agent's scripts directory.</summary>
+    Task<AgentScriptInfo> UploadScriptAsync(string name, string content, CancellationToken ct = default);
+
+    /// <summary>Updates an existing script on the remote agent.</summary>
+    Task<AgentScriptInfo> UpdateScriptAsync(string name, string content, CancellationToken ct = default);
+
+    /// <summary>Reads the text content of a script on the remote agent.</summary>
+    Task<string> GetScriptContentAsync(string path, CancellationToken ct = default);
 }

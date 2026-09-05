@@ -27,6 +27,7 @@ import type {
   RegisteredRuntime,
   RouterProfile,
   RouterProfileInput,
+  ScriptInfo,
   SendTestChatOptions,
   Settings,
   StatsSummary,
@@ -160,6 +161,70 @@ async function request<T>(
   const text = await res.text();
   if (!text) return undefined as T;
   return JSON.parse(text) as T;
+}
+
+// ─── Multipart upload helpers ─────────────────────────────────────
+
+/** Helper for multipart uploads (bypasses request<T> which sets JSON content-type). */
+async function uploadMultipart<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+    // Don't set Content-Type — browser auto-sets multipart/form-data with boundary
+  });
+  if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(path);
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      message = body.message || body.error || message;
+    } catch {}
+    throw new ApiError(res.status, message);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+async function uploadMultipartPut<T>(path: string, file: File): Promise<T> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: "PUT",
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(path);
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      message = body.message || body.error || message;
+    } catch {}
+    throw new ApiError(res.status, message);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+/** Helper for fetching plain text content. */
+async function fetchText(path: string): Promise<string> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    credentials: "include",
+    headers: { Accept: "text/plain" },
+  });
+  if (!res.ok) {
+    if (res.status === 401) handleUnauthorized(path);
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      message = body.message || body.error || message;
+    } catch {}
+    throw new ApiError(res.status, message);
+  }
+  return res.text();
 }
 
 // ─── Test-chat streaming helpers ─────────────────────────────────
@@ -507,6 +572,54 @@ export const httpClient: UnswarmClient = {
   listAvailableScripts(agentName: string) {
     return request<AgentAvailableScript[]>(
       `/api/agents/${encodeURIComponent(agentName)}/scripts/available`,
+    );
+  },
+
+  // ── Host Script Management ──────────────────────────────────
+  listHostScripts() {
+    return request<ScriptInfo[]>("/api/scripts");
+  },
+
+  uploadHostScript(file: File) {
+    return uploadMultipart<ScriptInfo>("/api/scripts/upload", file);
+  },
+
+  updateHostScript(fileName: string, file: File) {
+    return uploadMultipartPut<ScriptInfo>(
+      `/api/scripts/${encodeURIComponent(fileName)}`,
+      file,
+    );
+  },
+
+  getScriptContent(fileName: string) {
+    return fetchText(`/api/scripts/${encodeURIComponent(fileName)}/content`);
+  },
+
+  deleteHostScript(fileName: string) {
+    return request<void>(
+      `/api/scripts/${encodeURIComponent(fileName)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  // ── Agent Script Management ─────────────────────────────────
+  uploadAgentScript(agentName: string, file: File) {
+    return uploadMultipart<ScriptInfo>(
+      `/api/scripts/agent/${encodeURIComponent(agentName)}/upload`,
+      file,
+    );
+  },
+
+  updateAgentScript(agentName: string, fileName: string, file: File) {
+    return uploadMultipartPut<ScriptInfo>(
+      `/api/scripts/agent/${encodeURIComponent(agentName)}/${encodeURIComponent(fileName)}`,
+      file,
+    );
+  },
+
+  getAgentScriptContent(agentName: string, fileName: string) {
+    return fetchText(
+      `/api/scripts/agent/${encodeURIComponent(agentName)}/${encodeURIComponent(fileName)}/content`,
     );
   },
 

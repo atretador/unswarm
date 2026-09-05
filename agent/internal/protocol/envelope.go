@@ -40,10 +40,13 @@ const (
 	CmdChatCompletionStream = "chat_completion_stream"
 
 	// Script management commands (Phase 3).
-	CmdListScripts   = "list_scripts"
-	CmdStartScript   = "start_script"
-	CmdStopScript    = "stop_script"
-	CmdGetScriptLogs = "get_script_logs"
+	CmdListScripts      = "list_scripts"
+	CmdStartScript      = "start_script"
+	CmdStopScript       = "stop_script"
+	CmdGetScriptLogs    = "get_script_logs"
+	CmdUploadScript     = "upload_script"
+	CmdUpdateScript     = "update_script"
+	CmdGetScriptContent = "get_script_content"
 )
 
 // Envelope is the top-level JSON structure for every message.
@@ -97,6 +100,7 @@ type CommandPayload struct {
 	JsonBody            json.RawMessage   `json:"json,omitempty"`
 	ScriptPath          string            `json:"scriptPath,omitempty"`
 	ScriptPort          int               `json:"scriptPort,omitempty"`
+	ScriptContent       string            `json:"scriptContent,omitempty"`
 	PID                 int               `json:"pid,omitempty"`
 }
 

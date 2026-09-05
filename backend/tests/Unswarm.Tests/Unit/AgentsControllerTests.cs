@@ -2,6 +2,8 @@ using System.Net.WebSockets;
 using System.Runtime.InteropServices;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
@@ -18,6 +20,9 @@ public sealed class AgentsControllerTests
     private readonly FakeDockerController _docker = new();
     private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly FakeHealthChecker _healthChecker = new();
+    private readonly HostScriptDirectoryService _hostScriptDir = new(
+        NullLogger<HostScriptDirectoryService>.Instance,
+        Options.Create(new HostScriptsOptions { Directory = Path.Combine(Path.GetTempPath(), $"test-scripts-{Guid.NewGuid():N}") }));
 
     private FakeDockerControllerRouter CreateRouter()
         => new(new Dictionary<string, IDockerController> { ["host"] = _docker });
@@ -30,7 +35,7 @@ public sealed class AgentsControllerTests
         FakeDockerControllerRouter? router = null,
         HostScriptRuntimeController? scriptController = null)
         => new(_registry, router ?? CreateRouter(), _containerRegistry,
-            scriptController ?? CreateScriptController(), _healthChecker,
+            scriptController ?? CreateScriptController(), _hostScriptDir, _healthChecker,
             new LoggerFactory().CreateLogger<AgentsController>());
 
     private static string CreateTestScript(HostScriptRuntimeController controller, string content)

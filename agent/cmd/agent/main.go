@@ -620,6 +620,57 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"logs": logs}}
 	})
 
+	// upload_script — writes a new .sh file to scripts_dir
+	d.Register(protocol.CmdUploadScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if p.ScriptPath == "" {
+			return errorResult("scriptPath is required")
+		}
+		if p.ScriptContent == "" {
+			return errorResult("scriptContent is required")
+		}
+		info, err := scriptMgr.WriteScript(p.ScriptPath, p.ScriptContent)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: info}
+	})
+
+	// update_script — overwrites an existing .sh file in scripts_dir
+	d.Register(protocol.CmdUpdateScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if p.ScriptPath == "" {
+			return errorResult("scriptPath is required")
+		}
+		if p.ScriptContent == "" {
+			return errorResult("scriptContent is required")
+		}
+		info, err := scriptMgr.UpdateScript(p.ScriptPath, p.ScriptContent)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: info}
+	})
+
+	// get_script_content — reads and returns a script's content
+	d.Register(protocol.CmdGetScriptContent, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if p.ScriptPath == "" {
+			return errorResult("scriptPath is required")
+		}
+		content, err := scriptMgr.ReadScript(p.ScriptPath)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"content": content}}
+	})
+
 	return d
 }
 

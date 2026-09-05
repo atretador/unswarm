@@ -218,6 +218,29 @@ public sealed class HostScriptRuntimeController
         }
     }
 
+    /// <summary>
+    /// Checks if any tracked script is using the given launcher path.
+    /// Used to prevent deletion of scripts that are currently running.
+    /// </summary>
+    public bool IsRunningByPath(string launcherPath)
+    {
+        var full = Path.GetFullPath(launcherPath);
+        foreach (var kvp in _processes)
+        {
+            try
+            {
+                if (!kvp.Value.Process.HasExited &&
+                    string.Equals(kvp.Value.Process.StartInfo.ArgumentList.FirstOrDefault(), full, StringComparison.Ordinal))
+                    return true;
+            }
+            catch
+            {
+                // Stale entry; will be pruned on next status check
+            }
+        }
+        return false;
+    }
+
     public int? GetProcessId(string regId)
     {
         if (!_processes.TryGetValue(regId, out var info))

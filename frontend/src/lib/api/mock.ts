@@ -17,6 +17,7 @@ import type {
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
+  ScriptInfo,
   SendTestChatOptions,
   Settings,
   StatsSummary,
@@ -1407,6 +1408,44 @@ export const mockClient: UnswarmClient = {
     await delay(rand(80, 200));
     return (AGENT_AVAILABLE_SCRIPTS[agentName] ?? []).map((s) => ({ ...s }));
   },
+
+  // ── Host Script Management ──────────────────────────────────
+  async listHostScripts(): Promise<ScriptInfo[]> {
+    await delay(rand(80, 200));
+    return [
+      { name: "sample.sh", path: "/home/user/.config/unswarm/scripts/sample.sh", sizeBytes: 512, lastModified: new Date().toISOString() },
+    ];
+  },
+  async uploadHostScript(file: File): Promise<ScriptInfo> {
+    await delay(rand(100, 300));
+    return { name: file.name, path: `/home/user/.config/unswarm/scripts/${file.name}`, sizeBytes: file.size, lastModified: new Date().toISOString() };
+  },
+  async updateHostScript(fileName: string, file: File): Promise<ScriptInfo> {
+    await delay(rand(80, 200));
+    return { name: fileName, path: `/home/user/.config/unswarm/scripts/${fileName}`, sizeBytes: file.size, lastModified: new Date().toISOString() };
+  },
+  async getScriptContent(_fileName: string): Promise<string> {
+    await delay(rand(60, 150));
+    return "#!/bin/bash\necho 'Hello from script'";
+  },
+  async deleteHostScript(_fileName: string): Promise<void> {
+    await delay(rand(60, 150));
+  },
+
+  // ── Agent Script Management ─────────────────────────────────
+  async uploadAgentScript(_agentName: string, file: File): Promise<ScriptInfo> {
+    await delay(rand(100, 300));
+    return { name: file.name, path: `/opt/unswarm/scripts/${file.name}`, sizeBytes: file.size, lastModified: new Date().toISOString() };
+  },
+  async updateAgentScript(_agentName: string, fileName: string, file: File): Promise<ScriptInfo> {
+    await delay(rand(80, 200));
+    return { name: fileName, path: `/opt/unswarm/scripts/${fileName}`, sizeBytes: file.size, lastModified: new Date().toISOString() };
+  },
+  async getAgentScriptContent(_agentName: string, _fileName: string): Promise<string> {
+    await delay(rand(60, 150));
+    return "#!/bin/bash\necho 'Hello from agent script'";
+  },
+
   async runBenchmark(modelId: string, opts?: { promptId?: string }) {
     await delay(rand(200, 500));
     const model = models.find((m) => m.id === modelId);

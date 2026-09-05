@@ -643,6 +643,73 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         return result;
     }
 
+    /// <summary>Uploads a new script to the remote agent's scripts directory.</summary>
+    public async Task<AgentScriptInfo> UploadScriptAsync(string name, string content, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "upload_script",
+            scriptPath = name,
+            scriptContent = content
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var p = RequireResultData(response, "upload_script");
+
+        var path = GetString(p, "path");
+        if (string.IsNullOrEmpty(path))
+            throw new InvalidOperationException($"Agent '{_agentName}' upload_script returned no path");
+
+        return new AgentScriptInfo
+        {
+            Path = path,
+            Name = GetString(p, "name") ?? name
+        };
+    }
+
+    /// <summary>Updates an existing script on the remote agent.</summary>
+    public async Task<AgentScriptInfo> UpdateScriptAsync(string name, string content, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "update_script",
+            scriptPath = name,
+            scriptContent = content
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var p = RequireResultData(response, "update_script");
+
+        var path = GetString(p, "path");
+        if (string.IsNullOrEmpty(path))
+            throw new InvalidOperationException($"Agent '{_agentName}' update_script returned no path");
+
+        return new AgentScriptInfo
+        {
+            Path = path,
+            Name = GetString(p, "name") ?? name
+        };
+    }
+
+    /// <summary>Reads the text content of a script on the remote agent.</summary>
+    public async Task<string> GetScriptContentAsync(string path, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "get_script_content",
+            scriptPath = path
+        }, JsonOptions);
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+
+        var p = RequireResultData(response, "get_script_content");
+
+        var content = GetString(p, "content");
+        if (content is null)
+            throw new InvalidOperationException($"Agent '{_agentName}' get_script_content returned no content");
+
+        return content;
+    }
+
     private async Task<ContainerStartResult> ExecuteStartAsync(string command, string containerName, int containerPort, CancellationToken ct)
     {
         var payload = JsonSerializer.SerializeToElement(new
