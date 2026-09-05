@@ -151,13 +151,8 @@ builder.Services.Configure<ContainerHostOptions>(builder.Configuration.GetSectio
 // Default: ~/.config/unswarm/scripts/ (bare metal) or /data/scripts (Docker bind mount).
 builder.Services.Configure<HostScriptsOptions>(builder.Configuration.GetSection(HostScriptsOptions.SectionName));
 
-// API key auth (backward compat with agent WebSocket connections)
+// Auth options (ProtectedPaths for path-scoped API key protection)
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
-var envApiKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");
-if (!string.IsNullOrWhiteSpace(envApiKey))
-{
-    builder.Services.PostConfigure<AuthOptions>(o => o.ApiKey = envApiKey);
-}
 
 // ── Core services ─────────────────────────────────────────────────────────
 builder.Services.AddSingleton<IClock, SystemClock>();
@@ -502,13 +497,6 @@ await using (var scope = app.Services.CreateAsyncScope())
     await db.Database.MigrateAsync();
 }
 
-// ── Migrate the static API key into the managed key store ────────────
-// The single configured key (UNSWARM_API_KEY / Auth.ApiKey) is the remote agent's
-// credential for /api/agents and /ws/agent. Rather than keep it out-of-band, seed
-// it as an agent-scoped managed row so it authenticates through the same store as
-// newly generated keys. Idempotent.
-await SeedStaticApiKeyAsync(app.Services);
-
 // ── Seed roles and admin user ──────────────────────────────────────────
 await SeedRolesAsync(app.Services);
 await SeedAdminUserAsync(app.Services, adminSetupPassword);
@@ -692,27 +680,6 @@ static async Task SeedAdminUserAsync(IServiceProvider services, string? adminSet
     {
         Console.Error.WriteLine($"Failed to create admin user: {string.Join(", ", createResult.Errors.Select(e => e.Description))}");
     }
-}
-
-static async Task SeedStaticApiKeyAsync(IServiceProvider services)
-{
-    var config = services.GetRequiredService<IConfiguration>();
-    string? envKey = Environment.GetEnvironmentVariable("UNSWARM_API_KEY");
-    string staticKey = (!string.IsNullOrWhiteSpace(envKey) ? envKey
-        : (config["Auth:ApiKey"] ?? string.Empty).Trim());
-
-    if (string.IsNullOrWhiteSpace(staticKey))
-        return;
-
-    var store = services.GetRequiredService<IApiKeyStore>();
-    if (await store.AuthenticateAsync(staticKey) is not null)
-        return; // already seeded
-
-    await store.CreateAsync(
-        "Static API key (UNSWARM_API_KEY / Auth.ApiKey)",
-        ApiKeyScope.Agent,
-        staticKey);
-    Console.WriteLine("Seeded static API key into managed key store (agent scope).");
 }
 
 /// <summary>

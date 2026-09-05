@@ -24,9 +24,6 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
-      # Static API key seeded into the managed key store at startup (agent scope).
-      # Leave empty to skip; generate a key via the dashboard instead.
-      UNSWARM_API_KEY: ${UNSWARM_API_KEY:-}
       # Container host address — host.docker.internal routes to the Docker host
       # so the backend can reach model-container ports mapped to the host.
       ContainerHost__Host: ${ContainerHost__Host:-host.docker.internal}

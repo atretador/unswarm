@@ -386,7 +386,6 @@ Environment variables:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `UNSWARM_API_KEY` | API key for authentication | (empty — auth disabled) |
 | `UNSWARM_ADMIN_PASSWORD` | Bootstrap/reset the admin password on first run (alternative to the `--admin-setup` flag) | (unset) |
 | `PROMETHEUS_SCRAPE_TOKEN` | Bearer token required to scrape `GET /metrics`. Unset: loopback-only access (127.0.0.1 / ::1); remote scrapers get 403 | (unset) |
 | `ASPNETCORE_URLS` | Listening URLs | `http://localhost:5014` |
@@ -396,7 +395,6 @@ Settings in `appsettings.json`:
 ```json
 {
   "Auth": {
-    "ApiKey": "",
     "ProtectedPaths": ["/api/agents", "/ws/agent"]
   },
   "Prometheus": {
@@ -460,7 +458,6 @@ go test ./...
 ### Docker Compose Quickstart
 
 ```bash
-export UNSWARM_API_KEY="$(openssl rand -hex 32)"
 docker compose up -d --build
 ```
 
