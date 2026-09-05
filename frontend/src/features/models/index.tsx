@@ -65,6 +65,13 @@ function formatTokens(v: number | undefined): string {
   return `${v.toLocaleString()} tok`;
 }
 
+function formatContextWindow(n: number | undefined): string {
+  if (!n || n <= 0) return "";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return `${n}`;
+}
+
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   if (diff < 60_000) return "just now";
@@ -130,11 +137,15 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   // Edit state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [editFamily, setEditFamily] = useState("");
+  const [editParamSize, setEditParamSize] = useState("");
+  const [editQuant, setEditQuant] = useState("");
+  const [editCtxWindow, setEditCtxWindow] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: ({ name }: { name: string }) =>
-      client.updateModel(model.id, { name }),
+    mutationFn: (data: { name: string; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
+      client.updateModel(model.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
       setEditing(false);
@@ -144,6 +155,10 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
 
   const handleEdit = () => {
     setEditName(model.name);
+    setEditFamily(model.family ?? "");
+    setEditParamSize(model.parameterSize ?? "");
+    setEditQuant(model.quantization ?? "");
+    setEditCtxWindow(model.contextWindow?.toString() ?? "");
     setEditError(null);
     setEditing(true);
   };
@@ -153,7 +168,19 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       setEditError("Model name is required.");
       return;
     }
-    updateMutation.mutate({ name: editName.trim() });
+    const ctxWindow = editCtxWindow ? parseInt(editCtxWindow, 10) : 0;
+    if (editCtxWindow && (isNaN(ctxWindow) || ctxWindow <= 0 || ctxWindow > 10_000_000)) {
+      setEditError("Context window must be a positive number up to 10M");
+      return;
+    }
+    setEditError(null);
+    updateMutation.mutate({
+      name: editName.trim(),
+      family: editFamily.trim(),
+      parameterSize: editParamSize.trim(),
+      quantization: editQuant.trim(),
+      contextWindow: ctxWindow,
+    });
   };
 
   const handleDelete = async () => {
@@ -191,7 +218,12 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
             </p>
             <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-              {model.family} · {model.parameterSize} · {model.quantization}
+              {[
+                model.family,
+                model.parameterSize,
+                model.quantization,
+                model.contextWindow ? `${formatContextWindow(model.contextWindow)} ctx` : null,
+              ].filter(Boolean).join(" · ")}
             </p>
           </div>
           <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
@@ -255,7 +287,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           ) : (
             <span className="text-[10px] italic text-[var(--color-text-muted)]">not registered</span>
           )}
-          <Tooltip content="Edit model name">
+          <Tooltip content="Edit model details">
             <button
               onClick={handleEdit}
               aria-label={`Edit ${model.name}`}
@@ -291,7 +323,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       </div>
 
       {/* Edit Model Dialog */}
-      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)} title="Edit Model Name">
+      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)} title="Edit Model">
         <div className="p-5 space-y-4">
           {model.sourceRuntimeAgent && (
             <p className="text-xs text-[var(--color-text-muted)] mb-1">
@@ -309,6 +341,35 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               if (e.key === "Escape") setEditing(false);
             }}
           />
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label="Family"
+              value={editFamily}
+              onChange={(e) => setEditFamily(e.target.value)}
+              placeholder="e.g. Llama"
+            />
+            <Input
+              label="Parameter Size"
+              value={editParamSize}
+              onChange={(e) => setEditParamSize(e.target.value)}
+              placeholder="e.g. 8B"
+            />
+            <Input
+              label="Quantization"
+              value={editQuant}
+              onChange={(e) => setEditQuant(e.target.value)}
+              placeholder="e.g. Q4_K_M"
+            />
+            <Input
+              label="Context Window"
+              value={editCtxWindow}
+              onChange={(e) => setEditCtxWindow(e.target.value)}
+              placeholder="e.g. 128000"
+              type="number"
+              min={1}
+              max={10000000}
+            />
+          </div>
           {editError && (
             <p className="text-sm text-[var(--color-status-error)]">{editError}</p>
           )}

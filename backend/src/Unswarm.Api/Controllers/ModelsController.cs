@@ -130,6 +130,9 @@ public sealed class ModelsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ModelCreateRequest request, CancellationToken ct)
     {
+        if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
+            return BadRequest("contextWindow must be between 1 and 10,000,000");
+
         var definition = new ModelDefinition
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -149,6 +152,9 @@ public sealed class ModelsController : ControllerBase
     [HttpPut("{*id}")]
     public async Task<IActionResult> Update(string id, [FromBody] ModelUpdateRequest request, CancellationToken ct)
     {
+        if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
+            return BadRequest("contextWindow must be between 1 and 10,000,000");
+
         var existing = await _registry.GetAsync(id, ct);
         if (existing is null && !string.IsNullOrEmpty(id) && id[0] != '/')
             existing = await _registry.GetAsync("/" + id, ct).ConfigureAwait(false);

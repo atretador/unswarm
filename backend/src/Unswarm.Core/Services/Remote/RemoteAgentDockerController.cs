@@ -375,6 +375,18 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         var result = new List<DiscoveredModel>();
         var p = RequireResultData(response, "discover_models");
 
+        // Extract context window from inference server metadata (vLLM / Ollama).
+        // These properties may appear at the top-level of the raw response.
+        // Only check when p is an object — raw array shapes have no named properties.
+        int discoveryContextWindow = 0;
+        if (p.ValueKind == JsonValueKind.Object)
+        {
+            if (p.TryGetProperty("max_model_len", out var mml) && mml.ValueKind == JsonValueKind.Number)
+                discoveryContextWindow = mml.GetInt32();
+            else if (p.TryGetProperty("context_length", out var cl) && cl.ValueKind == JsonValueKind.Number)
+                discoveryContextWindow = cl.GetInt32();
+        }
+
         // Raw OpenAI shape: { data: [ { id, owned_by } ] }. Depending on agent
         // firmware the array is either the entire unwrapped result data or a
         // "data" property on it.
@@ -398,7 +410,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
                 result.Add(new DiscoveredModel
                 {
                     ModelId = modelId,
-                    OwnedBy = GetString(element, "owned_by") ?? GetString(element, "ownedBy")
+                    OwnedBy = GetString(element, "owned_by") ?? GetString(element, "ownedBy"),
+                    ContextWindow = discoveryContextWindow
                 });
             }
 
@@ -420,7 +433,8 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
                 result.Add(new DiscoveredModel
                 {
                     ModelId = modelId,
-                    OwnedBy = GetString(element, "ownedBy") ?? GetString(element, "owned_by")
+                    OwnedBy = GetString(element, "ownedBy") ?? GetString(element, "owned_by"),
+                    ContextWindow = discoveryContextWindow
                 });
             }
         }

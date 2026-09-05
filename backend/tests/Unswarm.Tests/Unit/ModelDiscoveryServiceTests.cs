@@ -107,6 +107,71 @@ public sealed class ModelDiscoveryServiceTests : IDisposable
         await Assert.ThrowsAsync<HttpRequestException>(() => service.DiscoverModelsAsync(1));
     }
 
+    [Fact]
+    public async Task DiscoverModelsAsync_MaxModelLen_PopulatesContextWindow()
+    {
+        var json = """{"max_model_len":4096,"data":[{"id":"llama3","owned_by":"ollama"}]}""";
+        var port = StartServer(json);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
+
+        var models = await service.DiscoverModelsAsync(port);
+
+        Assert.Single(models);
+        Assert.Equal(4096, models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task DiscoverModelsAsync_ContextLength_FallbackPopulatesContextWindow()
+    {
+        var json = """{"context_length":8192,"data":[{"id":"gemma","owned_by":"google"}]}""";
+        var port = StartServer(json);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
+
+        var models = await service.DiscoverModelsAsync(port);
+
+        Assert.Single(models);
+        Assert.Equal(8192, models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task DiscoverModelsAsync_NoContextInfo_ContextWindowZero()
+    {
+        var json = """{"data":[{"id":"llama3","owned_by":"ollama"}]}""";
+        var port = StartServer(json);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
+
+        var models = await service.DiscoverModelsAsync(port);
+
+        Assert.Single(models);
+        Assert.Equal(0, models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task DiscoverModelsAsync_MaxModelLenTakesPriority_OverContextLength()
+    {
+        var json = """{"max_model_len":4096,"context_length":8192,"data":[{"id":"model","owned_by":"test"}]}""";
+        var port = StartServer(json);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
+
+        var models = await service.DiscoverModelsAsync(port);
+
+        Assert.Single(models);
+        Assert.Equal(4096, models[0].ContextWindow);
+    }
+
+    [Fact]
+    public async Task DiscoverModelsAsync_MaxModelLen_PopulatesAllModels()
+    {
+        var json = """{"max_model_len":16384,"data":[{"id":"m1","owned_by":"a"},{"id":"m2","owned_by":"b"}]}""";
+        var port = StartServer(json);
+        var service = new ModelDiscoveryService(_logger, Options.Create(new ContainerHostOptions()));
+
+        var models = await service.DiscoverModelsAsync(port);
+
+        Assert.Equal(2, models.Count);
+        Assert.All(models, m => Assert.Equal(16384, m.ContextWindow));
+    }
+
     private int StartServer(string jsonResponse)
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

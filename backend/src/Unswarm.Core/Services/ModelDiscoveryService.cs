@@ -57,6 +57,13 @@ public sealed class ModelDiscoveryService
             throw;
         }
 
+        // Extract context window from inference server metadata (vLLM / Ollama).
+        int discoveryContextWindow = 0;
+        if (json.TryGetProperty("max_model_len", out var mml) && mml.ValueKind == JsonValueKind.Number)
+            discoveryContextWindow = mml.GetInt32();
+        else if (json.TryGetProperty("context_length", out var cl) && cl.ValueKind == JsonValueKind.Number)
+            discoveryContextWindow = cl.GetInt32();
+
         if (!json.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
         {
             _logger.LogWarning("No 'data' array in /v1/models response from port {Port}", port);
@@ -78,7 +85,8 @@ public sealed class ModelDiscoveryService
             models.Add(new DiscoveredModel
             {
                 ModelId = id,
-                OwnedBy = ownedBy
+                OwnedBy = ownedBy,
+                ContextWindow = discoveryContextWindow
             });
         }
 

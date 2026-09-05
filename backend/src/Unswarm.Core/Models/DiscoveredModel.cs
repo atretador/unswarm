@@ -4,4 +4,5 @@ public sealed record DiscoveredModel
 {
     public required string ModelId { get; init; }
     public string? OwnedBy { get; init; }
+    public int ContextWindow { get; init; }  // 0 = unknown
 }

@@ -880,12 +880,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             ContainerImage = string.Empty,
             SourceRuntimeId = registeredContainerId,
             Status = ModelStatus.Ready,
+            ContextWindow = discoveredModel.ContextWindow,
             CreatedAt = now,
             UpdatedAt = now
         };
 
         // Create or update the model, preserving existing metadata on update
         // (Family/ParameterSize/Quantization/ContextWindow are never clobbered).
+        // Discovery fills unfilled fields; admin overrides always win.
         var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
         if (existing is null)
         {
@@ -900,7 +902,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             ParameterSize = existing.ParameterSize,
             Quantization = existing.Quantization,
             Status = ModelStatus.Ready,
-            ContextWindow = existing.ContextWindow,
+            // Discovery fills unfilled fields; admin overrides always win.
+            ContextWindow = existing.ContextWindow != 0
+                ? existing.ContextWindow
+                : discoveredModel.ContextWindow,
             ContainerImage = existing.ContainerImage,
             SourceRuntimeId = registeredContainerId,
             CreatedAt = existing.CreatedAt,
