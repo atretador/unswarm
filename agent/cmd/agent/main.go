@@ -526,7 +526,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("listing containers")
 		ctx, cancel := commandContext()
 		defer cancel()
-		return gate.FilterListResult(protocol.CmdListContainers, dh.ListContainers(ctx))
+		return dh.ListContainers(ctx)
 	})
 
 	// get_container_logs

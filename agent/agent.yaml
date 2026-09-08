@@ -6,16 +6,16 @@
 #
 # Precedence: a non-empty value here wins. If this field is empty, the agent
 # falls back to the UNSWARM_AGENT_BACKEND_URL environment variable.
-backend_url: "ws://localhost:5014"
+backend_url: "ws://192.168.11.73:22301"
 
 # API key for authentication (empty = no auth)
 #
 # Precedence: a non-empty value here wins. If this field is empty, the agent
 # falls back to the UNSWARM_AGENT_API_KEY environment variable.
-api_key: ""
+api_key: "ak_zzoQHPuIQNfBHMQ38ykkjKCamAqBeww_vtW3mZx-Qd8"
 
 # Unique agent name — must be unique across all agents on the same backend
-agent_name: "machine-b"
+agent_name: "caf-agent"
 
 # Docker socket path
 docker_socket: "unix:///var/run/docker.sock"
@@ -24,7 +24,7 @@ docker_socket: "unix:///var/run/docker.sock"
 # Default false: the agent will refuse ws:// to a remote host to prevent
 # the API key from being sent in plaintext. Set to true only if you accept
 # the risk (e.g. a dedicated, isolated network with no MITM threat).
-allow_insecure_ws: false
+allow_insecure_ws: true
 
 # Optional: SHA-256 fingerprint (hex) of the backend's TLS certificate.
 # When set and backend_url uses wss://, the agent verifies the server
