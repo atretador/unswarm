@@ -468,9 +468,14 @@ public sealed class AgentController : ControllerBase
                 ? stVal
                 : 0;
 
+            string? registrationId = element.TryGetProperty("registrationId", out var regIdProp) && regIdProp.ValueKind == JsonValueKind.String
+                ? regIdProp.GetString()
+                : null;
+
             result.Add(new AgentScriptStatus
             {
                 Path = path,
+                RegistrationId = registrationId,
                 PID = pid,
                 Status = status,
                 Port = port,

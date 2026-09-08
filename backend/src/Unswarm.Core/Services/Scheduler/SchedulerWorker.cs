@@ -267,6 +267,60 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         return target.AgentName;
     }
 
+    /// <summary>
+    /// Waits for a container/port to become healthy. For host targets, uses the
+    /// direct HealthChecker. For remote agent targets, tunnels the check through
+    /// the agent's WebSocket (IRemoteDockerController.HealthCheckAsync).
+    /// </summary>
+    private async Task WaitForHealthAsync(string targetId, int port, CancellationToken ct)
+    {
+        var target = ExecutionTarget.FromId(targetId);
+        if (target.IsAgent && target.AgentName is not null)
+        {
+            // Remote agent: tunnel health check through the agent WebSocket
+            var controller = _router.GetController(targetId);
+            if (controller is IRemoteDockerController remote)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(_settings.HealthCheckTimeoutSeconds);
+                var pollInterval = TimeSpan.FromSeconds(2);
+
+                // Brief grace period before first probe (container may still be loading).
+                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+
+                while (DateTime.UtcNow < deadline)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (await remote.HealthCheckAsync(port, ct).ConfigureAwait(false))
+                            return;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        // Transient probe failure — keep polling until deadline.
+                    }
+
+                    var remaining = deadline - DateTime.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                        break;
+                    var delay = remaining < pollInterval ? remaining : pollInterval;
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                }
+
+                throw new TimeoutException(
+                    $"Health check timed out on agent '{target.AgentName}' port {port} after {_settings.HealthCheckTimeoutSeconds}s");
+            }
+        }
+
+        // Host target (or fallback): direct TCP+HTTP health check
+        var healthHost = ResolveHealthCheckHost(targetId);
+        await _healthChecker.WaitForReadyAsync(port, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+    }
+
     // ── Lane registry helpers ─────────────────────────────────────────────────
 
     private List<RuntimeLane> SnapshotLanes()
@@ -1519,7 +1573,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                         {
                             throw new InvalidOperationException($"Agent target '{lane.TargetId}' does not have a connected RemoteAgentDockerController");
                         }
-                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRuntime.ContainerPort, ct).ConfigureAwait(false);
+                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRuntime.ContainerPort, targetRuntime.Id, ct).ConfigureAwait(false);
                     }
                     else
                     {
@@ -1560,9 +1614,8 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 var scriptKey = $"script:{targetRuntime.Id}";
                 var scriptPort = targetRuntime.ContainerPort;
 
-                // Wait for health
-                var healthHost = ResolveHealthCheckHost(lane.TargetId);
-                await _healthChecker.WaitForReadyAsync(scriptPort, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                // Wait for health (tunnels through agent WebSocket for remote targets)
+                await WaitForHealthAsync(lane.TargetId, scriptPort, ct).ConfigureAwait(false);
 
                 lane.ResidentModel = targetModel;
                 lane.ResidentContainerId = scriptKey;
@@ -1651,11 +1704,10 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 return;
             }
 
-            // Wait for health
+            // Wait for health (tunnels through agent WebSocket for remote targets)
             if (startResult.MappedPort.HasValue)
             {
-                var healthHost = ResolveHealthCheckHost(lane.TargetId);
-                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                await WaitForHealthAsync(lane.TargetId, startResult.MappedPort.Value, ct).ConfigureAwait(false);
             }
 
             lane.ResidentModel = targetModel;

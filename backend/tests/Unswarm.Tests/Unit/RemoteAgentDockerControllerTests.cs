@@ -498,13 +498,14 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        var pid = await controller.StartScriptAsync("/opt/scripts/model-a.sh", 9000);
+        var pid = await controller.StartScriptAsync("/opt/scripts/model-a.sh", 9000, "test-reg-1");
 
         Assert.Equal(12345, pid);
         Assert.True(_registry.SentMessages.TryDequeue(out var sent));
         Assert.Equal("start_script", sent.Payload!.Value.GetProperty("command").GetString());
         Assert.Equal("/opt/scripts/model-a.sh", sent.Payload!.Value.GetProperty("scriptPath").GetString());
         Assert.Equal(9000, sent.Payload!.Value.GetProperty("scriptPort").GetInt32());
+        Assert.Equal("test-reg-1", sent.Payload!.Value.GetProperty("registrationId").GetString());
     }
 
     [Fact]
@@ -519,7 +520,7 @@ public sealed class RemoteAgentDockerControllerTests
         };
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => controller.StartScriptAsync("/etc/passwd", 9000));
+            () => controller.StartScriptAsync("/etc/passwd", 9000, "test-reg-2"));
         Assert.Contains("path outside scripts_dir", ex.Message);
     }
 

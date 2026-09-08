@@ -167,6 +167,7 @@ export interface AgentContainerStatus {
 
 export interface AgentScriptStatus {
   path: string;
+  registrationId?: string;
   pid: number;
   status: string; // "running" | "stopped"
   port: number;

@@ -946,7 +946,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 if (controller is not RemoteAgentDockerController remoteController)
                     return await FailAsync(container, $"Agent '{container.Agent}' does not have a connected RemoteAgentDockerController", ct).ConfigureAwait(false);
 
-                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, container.Id, ct).ConfigureAwait(false);
             }
             else
             {

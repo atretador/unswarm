@@ -451,11 +451,16 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     /// </summary>
     public async Task<string> InferAsync(int port, string requestJson, CancellationToken ct = default)
     {
+        // Embed requestJson as a JsonElement (not a string) to avoid double-encoding:
+        // a string property would be serialized as a JSON string value ("..."), causing
+        // the Go agent's json.RawMessage to store quotes and the model server to reject
+        // the body as a non-object. Parsing into JsonElement inlines it as a raw object.
+        using var requestDoc = JsonDocument.Parse(requestJson);
         var payload = JsonSerializer.SerializeToElement(new
         {
             command = "chat_completion",
             port,
-            json = requestJson
+            json = requestDoc.RootElement
         }, JsonOptions);
         var response = await SendCommandAsync(payload, _inferTimeout, ct).ConfigureAwait(false);
 
@@ -493,11 +498,12 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     /// </summary>
     public async Task<Stream> InferStreamAsync(int port, string requestJson, CancellationToken ct = default)
     {
+        using var requestDoc = JsonDocument.Parse(requestJson);
         var payload = JsonSerializer.SerializeToElement(new
         {
             command = "chat_completion_stream",
             port,
-            json = requestJson
+            json = requestDoc.RootElement
         }, JsonOptions);
 
         var commandId = Guid.NewGuid().ToString("N");
@@ -587,13 +593,14 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
     }
 
     /// <summary>Starts a launcher script on the remote agent. Returns the PID.</summary>
-    public async Task<int> StartScriptAsync(string path, int port, CancellationToken ct = default)
+    public async Task<int> StartScriptAsync(string path, int port, string registrationId, CancellationToken ct = default)
     {
         var payload = JsonSerializer.SerializeToElement(new
         {
             command = "start_script",
             scriptPath = path,
-            scriptPort = port
+            scriptPort = port,
+            registrationId = registrationId
         }, JsonOptions);
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 

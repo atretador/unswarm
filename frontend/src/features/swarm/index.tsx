@@ -128,15 +128,25 @@ function runtimeStatusFor(
   return match?.status ?? null;
 }
 
-/** Find the runtime telemetry status for a registered script on its agent (matched by path). */
+/** Find the runtime telemetry status for a registered script on its agent. */
 function runtimeStatusForScript(
   agentScripts: AgentScriptStatus[],
   rc: RegisteredRuntime,
 ): string | null {
+  // Primary match: registrationId (stable, set by backend when starting script)
+  if (rc.id) {
+    const byId = agentScripts.find((s) => s.registrationId === rc.id);
+    if (byId) return byId.status;
+  }
+  // Fallback: match by port (script runtimes have a unique port)
+  if (rc.mappedPort) {
+    const byPort = agentScripts.find((s) => s.port === rc.mappedPort);
+    if (byPort) return byPort.status;
+  }
+  // Last resort: path matching (original behavior, for backward compat)
   const path = rc.launcherPath?.toLowerCase();
   if (!path) return null;
-  const match = agentScripts.find((s) => s.path.toLowerCase() === path);
-  return match?.status ?? null;
+  return agentScripts.find((s) => s.path.toLowerCase() === path)?.status ?? null;
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────
@@ -1511,7 +1521,7 @@ function RegisteredContainerCard({
               {RUNTIME_LABEL[signal]}
             </span>
           )}
-          {(container.status === "error" || container.status === "starting" || container.status === "registered") && (
+          {signal !== "down" && signal !== "unknown" && (
             <Button
               variant="ghost"
               size="sm"

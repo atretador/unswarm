@@ -33,6 +33,8 @@ type scriptProcess struct {
 	Path string
 	PID  int
 	Port int
+	// RegistrationId is the backend-assigned ID for this script runtime.
+	RegistrationId string
 	// StartTime is the wall-clock time the agent registered the process
 	// (reported via telemetry).
 	StartTime time.Time
@@ -53,11 +55,12 @@ type ScriptInfo struct {
 
 // ScriptStatus is the runtime status of a tracked script process.
 type ScriptStatus struct {
-	Path      string `json:"path"`
-	PID       int    `json:"pid"`
-	Status    string `json:"status"` // "running" | "stopped"
-	Port      int    `json:"port"`
-	StartTime int64  `json:"startTime"` // unix ms
+	Path           string `json:"path"`
+	PID            int    `json:"pid"`
+	Status         string `json:"status"` // "running" | "stopped"
+	Port           int    `json:"port"`
+	RegistrationId string `json:"registrationId"`
+	StartTime      int64  `json:"startTime"` // unix ms
 }
 
 // NewManager creates a Manager. If scriptsDir is empty the manager is
@@ -232,7 +235,7 @@ func (m *Manager) resolveWithinScriptsDir(path string) (string, error) {
 // validated path and execution is refused. (bash re-opens the script by path,
 // so a full fd-based exec is not possible here; the re-validation shrinks the
 // swap window to the minimum this codebase allows.)
-func (m *Manager) StartScript(path string, port int) (int, error) {
+func (m *Manager) StartScript(path string, port int, registrationId string) (int, error) {
 	resolved, err := m.resolveWithinScriptsDir(path)
 	if err != nil {
 		return 0, err
@@ -307,13 +310,14 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	}
 
 	m.processes[resolved] = &scriptProcess{
-		Path:      resolved,
-		PID:       pid,
-		Port:      port,
-		StartTime: startTime,
-		ProcStart: procStart,
-		Cmd:       cmd,
-		LogFile:   logFile,
+		Path:           resolved,
+		PID:            pid,
+		Port:           port,
+		RegistrationId: registrationId,
+		StartTime:      startTime,
+		ProcStart:      procStart,
+		Cmd:            cmd,
+		LogFile:        logFile,
 	}
 
 	// Write PID file.
@@ -451,11 +455,12 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 			continue
 		}
 		out = append(out, ScriptStatus{
-			Path:      proc.Path,
-			PID:       proc.PID,
-			Status:    status,
-			Port:      proc.Port,
-			StartTime: proc.StartTime.UnixMilli(),
+			Path:           proc.Path,
+			PID:            proc.PID,
+			Status:         status,
+			Port:           proc.Port,
+			RegistrationId: proc.RegistrationId,
+			StartTime:      proc.StartTime.UnixMilli(),
 		})
 	}
 	return out
