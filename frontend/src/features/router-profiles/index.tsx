@@ -244,11 +244,68 @@ function ProfileRow({
   onDelete: (profile: RouterProfile) => void;
   onView: (profile: RouterProfile) => void;
 }) {
+  const sortedModels = useMemo(
+    () => [...profile.entries].sort((a, b) => a.priority - b.priority),
+    [profile.entries],
+  );
+
   return (
     <div
-      className="group flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)] cursor-pointer"
+      className="group relative flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)] cursor-pointer"
       onClick={() => onView(profile)}
+      aria-label={`${profile.name} — ${profile.entries.length} models`}
     >
+      {/* Model tooltip */}
+      <div className="
+        absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5
+        opacity-0 group-hover:opacity-100 scale-95 group-hover:scale-100
+        transition-all duration-[var(--duration-fast)]
+        pointer-events-none z-50
+      ">
+        <div className="
+          rounded-md bg-[var(--color-bg-elevated)] border border-[var(--color-border)]
+          shadow-xl min-w-[220px] max-w-[340px] max-h-64 overflow-y-auto
+        ">
+          {/* Arrow */}
+          <div className="absolute left-1/2 -translate-x-1/2 -bottom-1.5 w-3 h-3
+            bg-[var(--color-bg-elevated)] border-r border-b border-[var(--color-border)]
+            rotate-45" />
+
+          <div className="px-3 py-2">
+            <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">
+              Models
+            </div>
+            {sortedModels.length > 0 ? (
+              <div className="space-y-1">
+                {sortedModels.map((entry) => (
+                  <div key={entry.modelId} className="flex items-center gap-2">
+                    <span className={`text-xs font-medium truncate flex-1 min-w-0 ${
+                      entry.isEnabled
+                        ? "text-[var(--color-text)]"
+                        : "text-[var(--color-text-muted)] line-through"
+                    }`}>
+                      {entry.modelId}
+                    </span>
+                    <span className="text-[10px] text-[var(--color-text-muted)] shrink-0">
+                      P:{entry.priority}
+                    </span>
+                    <span className={`shrink-0 size-1.5 rounded-full ${
+                      entry.isEnabled
+                        ? "bg-[var(--color-status-success)]"
+                        : "bg-[var(--color-border)]"
+                    }`} />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-[var(--color-text-muted)]">
+                No models
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Name */}
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div className="flex items-center justify-center size-8 rounded-full bg-[var(--color-primary-soft)] text-[var(--color-primary)] shrink-0">
