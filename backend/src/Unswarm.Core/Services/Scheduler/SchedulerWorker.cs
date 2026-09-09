@@ -583,6 +583,47 @@ public sealed class SchedulerWorker : ISchedulerDrainer
     }
 
     /// <summary>
+    /// If a conversation with the given key was recently completed on a specific
+    /// runtime, returns that runtime's ID and target so the next request routes
+    /// to the same lane. This prevents cross-lane hopping when a model maps to
+    /// multiple runtimes. Returns null if no hot conversation exists or affinity
+    /// is disabled.
+    /// </summary>
+    private async Task<(string RuntimeId, string TargetId)?> FindHotConversationRuntime(
+        string? conversationKey, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(conversationKey))
+            return null;
+
+        try
+        {
+            var settings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+            if (!settings.EnableConversationAffinity)
+                return null;
+
+            var dwellSeconds = Math.Max(1, settings.ConversationDwellSeconds);
+            var dwell = TimeSpan.FromSeconds(dwellSeconds);
+            var now = DateTime.UtcNow;
+
+            foreach (var (targetId, group) in _targets)
+            {
+                if (group.RecentConversations.TryGetValue(conversationKey, out var activity)
+                    && !string.IsNullOrEmpty(activity.RuntimeId)
+                    && now - activity.LastSeenUtc <= dwell)
+                {
+                    return (activity.RuntimeId, targetId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve hot conversation runtime for {Key}", conversationKey);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Computes which runtime ids block <paramref name="item"/> under the
     /// scheduler's coexistence rules, and whether the item is held out by a hot
     /// conversation (a blocking runtime that hosts a recently-active conversation
@@ -787,6 +828,53 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         }
 
         var targetId = await _resolver.ResolveTargetAsync(request.ModelName, ct).ConfigureAwait(false);
+
+        // ── Conversation affinity routing ───────────────────────────────────
+        // If this conversation was recently completed on a specific runtime,
+        // route to the same runtime to prevent cross-lane hopping when a model
+        // maps to multiple runtimes.
+        var hotRoute = await FindHotConversationRuntime(request.ConversationKey, ct).ConfigureAwait(false);
+        if (hotRoute is { } hr)
+        {
+            // Bypass the runtime cache: the hot entry may reference a runtime that
+            // was deleted after the cache was populated. A fresh registry lookup
+            // ensures the affinity target still exists in the registry.
+            var hotRuntime = await _containerRegistry.GetAsync(hr.RuntimeId, ct).ConfigureAwait(false);
+            if (hotRuntime is null)
+            {
+                // The affinity runtime was deleted between the previous request and
+                // this one. Skip affinity and fall back to normal resolution.
+                _logger.LogWarning(
+                    "Conversation {Key} affinity runtime {Runtime} no longer exists — falling back to normal resolution",
+                    request.ConversationKey, hr.RuntimeId);
+            }
+            else
+            {
+                // Verify the hot runtime actually serves the requested model.
+                // For router profile requests the conversation key is bound to the
+                // profile, so the hot entry may reference a runtime that served a
+                // *different* model (e.g. after fallback from model A to B).
+                var hotModels = await _containerRegistry
+                    .GetModelIdsForContainerAsync(hr.RuntimeId, ct).ConfigureAwait(false);
+                if (!hotModels.Contains(request.ModelName))
+                {
+                    _logger.LogDebug(
+                        "Conversation {Key} affinity runtime {Runtime} does not serve model {Model} — falling back to normal resolution",
+                        request.ConversationKey, hr.RuntimeId, request.ModelName);
+                }
+                else
+                {
+                    _runtimeCache[hr.RuntimeId] = hotRuntime; // refresh cache
+                    _logger.LogDebug(
+                        "Conversation {Key} routed to affinity runtime {Runtime} on {Target} (resolved was {Resolved})",
+                        request.ConversationKey, hr.RuntimeId, hr.TargetId, runtimeId);
+                    runtimeId = hr.RuntimeId;
+                    runtime = hotRuntime;
+                    targetId = hr.TargetId;
+                }
+            }
+        }
+
         request.TargetId = targetId;
 
         // Carry the resolved runtime identity through to the inference proxy so it
