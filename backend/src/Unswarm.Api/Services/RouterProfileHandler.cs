@@ -98,12 +98,12 @@ public sealed class RouterProfileHandler
         var mode = resolved.Value.Mode;
         var maxAttempts = mode == RouterProfileMode.Manual ? 1 : entries.Count;
 
-        // ── Profile-bound affinity ──────────────────────────────────────────
-        // Bind the conversation key to the profile name so that conversation
-        // affinity tracks the profile (stable) rather than an individual model.
-        // When the active model changes due to fallback, the next request with
-        // the same profile key is dispatched to the new active model's runtime.
-        var effectiveKey = $"router:{profileName}";
+        // ── Profile + conversation affinity ────────────────────────────────
+        // Combine the profile name with the caller's conversation key so that
+        // per-session serialization is preserved (different sessions get
+        // different keys) while the profile prefix keeps the key stable across
+        // model-fallback within the same session.
+        var effectiveKey = $"router:{profileName}:{conversationKey}";
 
         for (var i = 0; i < maxAttempts; i++)
         {

@@ -81,6 +81,19 @@ public sealed class FakeContainerRegistry : IContainerRegistry
         }
     }
 
+    public Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName)
+    {
+        lock (_modelToContainer)
+        {
+            IReadOnlyList<string> ids = _modelToContainer
+                .Where(kv => kv.Key == modelName || kv.Key.EndsWith(":" + modelName))
+                .Select(kv => kv.Value)
+                .Distinct()
+                .ToList();
+            return Task.FromResult(ids);
+        }
+    }
+
     public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(
         string idA, IReadOnlyList<string> newCanRunAlongWithA,
         string idB, IReadOnlyList<string> newCanRunAlongWithB,

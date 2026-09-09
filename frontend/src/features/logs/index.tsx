@@ -71,7 +71,7 @@ export default function Logs() {
   useEffect(() => {
     if (history) {
       logIdSet.current.clear();
-      setLocalEntries(history);
+      setLocalEntries([...history].reverse());
       history.forEach((e) => logIdSet.current.add(e.id));
     }
   }, [history]);
@@ -162,12 +162,18 @@ export default function Logs() {
     return options;
   }, [localEntries]);
 
-  // Filter
-  const filtered = localEntries.filter((e) => {
-    if (filterLevel && e.level !== filterLevel) return false;
-    if (filterSource && e.source !== filterSource) return false;
-    return true;
-  });
+  // Filter and sort oldest→newest
+  const filtered = useMemo(
+    () =>
+      localEntries
+        .filter((e) => {
+          if (filterLevel && e.level !== filterLevel) return false;
+          if (filterSource && e.source !== filterSource) return false;
+          return true;
+        })
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+    [localEntries, filterLevel, filterSource],
+  );
 
   if (isLoading) {
     return (

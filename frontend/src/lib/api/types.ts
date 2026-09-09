@@ -80,6 +80,7 @@ export interface RegisterRuntimePayload {
   extraLabels?: Record<string, string>;
   runtimeKind?: 'container' | 'script';
   launcherPath?: string;
+  maxConcurrentInferences?: number;
 }
 
 /** Full-replacement payload for updating a runtime's concurrency list. */

@@ -334,21 +334,28 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         }
 
         var existingModelIds = await _registry.GetModelIdsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false);
-        var existingSet = new HashSet<string>(existingModelIds);
+
+        // Extract bare model IDs from composite IDs (composite format: {runtimeId}:{modelId})
+        // for comparison with discovered results which use bare model IDs.
+        var existingBareModelIds = existingModelIds
+            .Select(id => id.Contains(':') ? id[(id.LastIndexOf(':') + 1)..] : id)
+            .ToList();
+        var existingBareSet = new HashSet<string>(existingBareModelIds);
         var discoveredSet = new HashSet<string>(discovered.Select(d => d.ModelId));
 
         // Mark missing models as Deprecated
-        foreach (var oldModelId in existingModelIds)
+        foreach (var compositeId in existingModelIds)
         {
-            if (!discoveredSet.Contains(oldModelId))
+            var bareModelId = compositeId.Contains(':') ? compositeId[(compositeId.LastIndexOf(':') + 1)..] : compositeId;
+            if (!discoveredSet.Contains(bareModelId))
             {
-                _logger.LogInformation("Model {ModelId} no longer present on container {ContainerId}; marking Deprecated", oldModelId, registeredContainerId);
-                var oldModel = await _modelRegistry.GetAsync(oldModelId, ct).ConfigureAwait(false);
+                _logger.LogInformation("Model {ModelId} no longer present on container {ContainerId}; marking Deprecated", bareModelId, registeredContainerId);
+                var oldModel = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false);
                 if (oldModel is not null)
                 {
-                    await _modelRegistry.UpdateAsync(oldModelId, WithModelStatus(oldModel, ModelStatus.Deprecated), ct).ConfigureAwait(false);
+                    await _modelRegistry.UpdateAsync(compositeId, WithModelStatus(oldModel, ModelStatus.Deprecated), ct).ConfigureAwait(false);
                 }
-                await _registry.RemoveModelMappingAsync(registeredContainerId, oldModelId, ct).ConfigureAwait(false);
+                await _registry.RemoveModelMappingAsync(registeredContainerId, compositeId, ct).ConfigureAwait(false);
             }
         }
 
@@ -356,9 +363,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var models = new List<ModelDefinition>();
         foreach (var discoveredModel in discovered)
         {
-            if (existingSet.Contains(discoveredModel.ModelId))
+            if (existingBareSet.Contains(discoveredModel.ModelId))
             {
-                var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+                var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
+                var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false);
                 if (existing is not null)
                     models.Add(existing);
                 continue;
@@ -878,7 +886,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         // endpoint is Ready. No smoke inference runs during registration.
         var modelDef = new ModelDefinition
         {
-            Id = discoveredModel.ModelId,
+            Id = $"{registeredContainerId}:{discoveredModel.ModelId}",
             Name = discoveredModel.ModelId,
             ContainerImage = string.Empty,
             SourceRuntimeId = registeredContainerId,

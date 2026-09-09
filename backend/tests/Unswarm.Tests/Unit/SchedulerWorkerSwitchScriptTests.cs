@@ -436,6 +436,8 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
             => _inner.GetModelIdsForContainerAsync(registeredContainerId, ct);
         public Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default)
             => _inner.GetContainerIdForModelAsync(modelName, ct);
+        public Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName)
+            => _inner.GetAllContainerIdsForModelAsync(modelName);
         public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(
             string idA, IReadOnlyList<string> newCanRunAlongWithA,
             string idB, IReadOnlyList<string> newCanRunAlongWithB, CancellationToken ct = default)

@@ -327,7 +327,9 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
         <div className="p-5 space-y-4">
           {model.sourceRuntimeAgent && (
             <p className="text-xs text-[var(--color-text-muted)] mb-1">
-              managed/{model.sourceRuntimeAgent}/
+              {model.sourceRuntimeName
+                ? `${model.sourceRuntimeName} / managed/${model.sourceRuntimeAgent}/`
+                : `managed/${model.sourceRuntimeAgent}/`}
             </p>
           )}
           <Input

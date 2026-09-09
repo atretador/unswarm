@@ -5,13 +5,15 @@
  * @param _provider - Unused today; kept for call-site compatibility (badge text is rendered separately)
  * @param hideOriginPrefix - Whether to strip "cloud/" or "managed/" prefix
  * @param agentDisplayNames - Map of agent names to display names
- * @returns Formatted display name
+ * @param sourceRuntimeName - Optional runtime display name to prepend (e.g. "My Workstation")
+ * @returns Formatted display name, e.g. "RuntimeName / ModelName" when sourceRuntimeName is provided
  */
 export function formatModelName(
   modelId: string,
   _provider: string,
   hideOriginPrefix: boolean,
   agentDisplayNames: Record<string, string>,
+  sourceRuntimeName?: string,
 ): string {
   let name = modelId;
 
@@ -51,6 +53,11 @@ export function formatModelName(
         break;
       }
     }
+  }
+
+  // Prepend runtime display name when available (runtime-scoped context)
+  if (sourceRuntimeName) {
+    name = `${sourceRuntimeName} / ${name}`;
   }
 
   return name;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Core.Contracts;
@@ -13,6 +14,7 @@ public interface IContainerRegistry
     Task RemoveModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default);
     Task<IReadOnlyList<string>> GetModelIdsForContainerAsync(string registeredContainerId, CancellationToken ct = default);
     Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default);
+    Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName);
 
     /// <summary>
     /// Atomically update two runtimes' CanRunAlongWith lists in a single DB transaction.

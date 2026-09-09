@@ -724,6 +724,7 @@ function ManageContainersBody({
   const [displayName, setDisplayName] = useState("");
   const [port, setPort] = useState("8080");
   const [mappedPort, setMappedPort] = useState("");
+  const [maxConcurrentInferences, setMaxConcurrentInferences] = useState(1);
 
   const { data: containers, isLoading, error } = useQuery({
     queryKey: ["agent-containers", agentName],
@@ -732,13 +733,14 @@ function ManageContainersBody({
   });
 
   const registerMutation = useMutation({
-    mutationFn: (payload: { displayName: string; image: string; port: number; mappedPort?: number }) =>
+    mutationFn: (payload: { displayName: string; image: string; port: number; mappedPort?: number; maxConcurrentInferences?: number }) =>
       client.registerRuntime({
         displayName: payload.displayName,
         image: payload.image,
         containerPort: payload.port,
         mappedPort: payload.mappedPort,
         agent: agentName,
+        maxConcurrentInferences: payload.maxConcurrentInferences,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
@@ -785,6 +787,7 @@ function ManageContainersBody({
       image: selected.modelName || selected.id,
       port: parseInt(port, 10) || 8080,
       ...(mp > 0 ? { mappedPort: mp } : {}),
+      maxConcurrentInferences: maxConcurrentInferences,
     });
   };
 
@@ -1031,6 +1034,20 @@ function ManageContainersBody({
                 <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
                   Host port exposed by Docker. Leave empty to auto-resolve via Docker inspect.
                 </p>
+                <Input
+                  label="Parallel Lanes"
+                  type="number"
+                  value={String(maxConcurrentInferences)}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v)) setMaxConcurrentInferences(Math.max(1, Math.min(128, v)));
+                  }}
+                  placeholder="1"
+                  aria-label="Parallel Lanes"
+                />
+                <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
+                  Max concurrent inferences this runtime can handle in parallel.
+                </p>
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
@@ -1117,6 +1134,9 @@ function ModelChip({ model }: { model: Model }) {
         `}
       >
         <StatusDot status={model.status} size="sm" />
+        {model.sourceRuntimeName && (
+          <span className="opacity-60">{model.sourceRuntimeName} /</span>
+        )}
         <span className="truncate">{model.name}</span>
         {model.status !== "ready" && (
           <span className="uppercase tracking-wide opacity-80">

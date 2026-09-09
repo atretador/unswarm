@@ -812,9 +812,10 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             return;
         }
 
-        var runtimeId = await _containerRegistry
-            .GetContainerIdForModelAsync(request.ModelName, ct)
+        var allRuntimeIds = await _containerRegistry
+            .GetAllContainerIdsForModelAsync(request.ModelName)
             .ConfigureAwait(false);
+        var runtimeId = allRuntimeIds.Count > 0 ? allRuntimeIds[0] : null;
         var runtime = runtimeId is not null
             ? await GetRuntimeEntityAsync(runtimeId, ct).ConfigureAwait(false)
             : null;
@@ -856,7 +857,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 // *different* model (e.g. after fallback from model A to B).
                 var hotModels = await _containerRegistry
                     .GetModelIdsForContainerAsync(hr.RuntimeId, ct).ConfigureAwait(false);
-                if (!hotModels.Contains(request.ModelName))
+                if (!hotModels.Any(m => m == request.ModelName || m.EndsWith(":" + request.ModelName)))
                 {
                     _logger.LogDebug(
                         "Conversation {Key} affinity runtime {Runtime} does not serve model {Model} — falling back to normal resolution",

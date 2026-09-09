@@ -49,6 +49,16 @@ public sealed class RouterProfileControllerTests
             return Task.FromResult(_modelMap.TryGetValue(modelName, out var m) ? m.ContainerId : null);
         }
 
+        public Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName)
+        {
+            IReadOnlyList<string> ids = _modelMap
+                .Where(kv => kv.Key == modelName || kv.Key.EndsWith(":" + modelName))
+                .Select(kv => kv.Value.ContainerId)
+                .Distinct()
+                .ToList();
+            return Task.FromResult(ids);
+        }
+
         public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(string idA, IReadOnlyList<string> newCanRunAlongWithA, string idB, IReadOnlyList<string> newCanRunAlongWithB, CancellationToken ct = default) => Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
     }
 
