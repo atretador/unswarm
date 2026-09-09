@@ -392,7 +392,7 @@ public sealed class ModelsController : ControllerBase
     private void WriteInferenceHeaders(int statusCode, string contentType, bool isStream)
     {
         Response.StatusCode = statusCode;
-        Response.ContentType = contentType;
+        Response.ContentType = isStream ? "text/event-stream" : contentType;
         if (isStream)
         {
             Response.Headers["Cache-Control"] = "no-cache";

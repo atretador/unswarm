@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.IO;
 using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
@@ -456,11 +457,37 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         // the Go agent's json.RawMessage to store quotes and the model server to reject
         // the body as a non-object. Parsing into JsonElement inlines it as a raw object.
         using var requestDoc = JsonDocument.Parse(requestJson);
+
+        // Strip "stream" from the body — the buffered path must not tell the model
+        // server to stream SSE chunks; it expects a complete JSON response.
+        JsonElement bodyToSend;
+        if (requestDoc.RootElement.TryGetProperty("stream", out _))
+        {
+            using var ms = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(ms))
+            {
+                writer.WriteStartObject();
+                foreach (var prop in requestDoc.RootElement.EnumerateObject())
+                {
+                    if (prop.Name != "stream")
+                        prop.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+            ms.Position = 0;
+            using var strippedDoc = JsonDocument.Parse(ms);
+            bodyToSend = strippedDoc.RootElement.Clone();
+        }
+        else
+        {
+            bodyToSend = requestDoc.RootElement;
+        }
+
         var payload = JsonSerializer.SerializeToElement(new
         {
             command = "chat_completion",
             port,
-            json = requestDoc.RootElement
+            json = bodyToSend
         }, JsonOptions);
         var response = await SendCommandAsync(payload, _inferTimeout, ct).ConfigureAwait(false);
 
