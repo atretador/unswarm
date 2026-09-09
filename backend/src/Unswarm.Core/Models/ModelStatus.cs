@@ -5,5 +5,6 @@ public enum ModelStatus
     Ready,
     Validating,
     Invalid,
-    Deprecated
+    Deprecated,
+    Conflict
 }

@@ -1,6 +1,6 @@
 // ─── Model Registry ───────────────────────────────────────────────
 
-export type ModelStatus = "ready" | "validating" | "invalid" | "deprecated";
+export type ModelStatus = "ready" | "validating" | "invalid" | "deprecated" | "conflict";
 
 export type BenchmarkStatus = "completed" | "error";
 

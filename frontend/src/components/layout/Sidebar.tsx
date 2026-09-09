@@ -3,6 +3,7 @@ import { NavLink, useLocation } from "react-router-dom";
 import { Tooltip } from "../ui/Tooltip";
 import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
+import { useModelConflicts } from "../../lib/use-model-conflicts";
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -11,6 +12,7 @@ export interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
+  const hasConflicts = useModelConflicts();
 
   return (
     <aside
@@ -45,6 +47,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
           const isActive =
             to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
+          const showConflictDot = !collapsed && to === "/models" && hasConflicts;
 
           const link = (
             <NavLink
@@ -63,6 +66,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             >
               <Icon className="size-4 shrink-0" strokeWidth={isActive ? 2 : 1.5} />
               {!collapsed && <span>{label}</span>}
+              {showConflictDot && (
+                <span className="ml-auto size-2 rounded-full bg-red-500 shrink-0" />
+              )}
             </NavLink>
           );
 

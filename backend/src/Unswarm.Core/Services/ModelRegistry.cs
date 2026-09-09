@@ -32,6 +32,36 @@ public sealed class ModelRegistry : IModelRegistry
         var entities = await db.Models
             .OrderBy(m => m.Name)
             .ToListAsync(ct).ConfigureAwait(false);
+
+        // Resolve name conflicts on read: if multiple models share the same Name,
+        // flag all of them as Conflict. If only one remains with a conflict name,
+        // restore it to Ready. This covers boot-time detection and manual DB edits.
+        var changed = false;
+        var groups = entities.GroupBy(e => e.Name).ToList();
+        foreach (var group in groups)
+        {
+            var list = group.ToList();
+            if (list.Count > 1)
+            {
+                foreach (var e in list)
+                {
+                    if (e.Status != nameof(ModelStatus.Conflict))
+                    {
+                        e.Status = nameof(ModelStatus.Conflict);
+                        changed = true;
+                    }
+                }
+            }
+            else if (list.Count == 1 && list[0].Status == nameof(ModelStatus.Conflict))
+            {
+                list[0].Status = nameof(ModelStatus.Ready);
+                changed = true;
+            }
+        }
+
+        if (changed)
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
         return entities.Select(MapToDefinition).ToList();
     }
 
@@ -39,6 +69,13 @@ public sealed class ModelRegistry : IModelRegistry
     {
         await using var db = _dbFactory();
         var entity = await db.Models.FindAsync([id], ct).ConfigureAwait(false);
+        return entity is null ? null : MapToDefinition(entity);
+    }
+
+    public async Task<ModelDefinition?> GetByNameAsync(string name, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.Models.FirstOrDefaultAsync(m => m.Name == name, ct).ConfigureAwait(false);
         return entity is null ? null : MapToDefinition(entity);
     }
 

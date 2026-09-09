@@ -986,6 +986,9 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
 
         public override Task FlushAsync(CancellationToken ct) => Task.CompletedTask;
 
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
         public override int Read(byte[] buffer, int offset, int count)
             => throw new NotSupportedException("Synchronous reads are not supported on the agent tunnel stream");
 

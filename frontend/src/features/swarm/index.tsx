@@ -1106,6 +1106,7 @@ function ManageScriptsBody({
 
 function ModelChip({ model }: { model: Model }) {
   const validating = model.status === "validating";
+  const conflicted = model.status === "conflict";
   return (
     <Tooltip
       content={
@@ -1115,7 +1116,9 @@ function ModelChip({ model }: { model: Model }) {
             ? "Invalid — cannot be served"
             : model.status === "deprecated"
               ? "Deprecated — legacy model"
-              : "Ready for inference"
+              : conflicted
+                ? "Name conflicts with another model — rename to resolve"
+                : "Ready for inference"
       }
     >
       <span
@@ -1125,7 +1128,7 @@ function ModelChip({ model }: { model: Model }) {
           ${
             validating
               ? "border-[color-mix(in_srgb,var(--color-status-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-warning)_12%,transparent)] text-[var(--color-status-warning)]"
-              : model.status === "invalid"
+              : model.status === "invalid" || conflicted
                 ? "border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] text-[var(--color-status-error)]"
                 : model.status === "deprecated"
                   ? "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]"
@@ -1621,6 +1624,7 @@ function benchDisabledTooltip(firstModel: Model | undefined): string {
   if (firstModel.status === "validating") return `${firstModel.name} is still validating — not ready to benchmark`;
   if (firstModel.status === "invalid") return `${firstModel.name} is invalid — cannot benchmark`;
   if (firstModel.status === "deprecated") return `${firstModel.name} is deprecated — cannot benchmark`;
+  if (firstModel.status === "conflict") return `${firstModel.name} has a name conflict — rename to resolve`;
   return `${firstModel.name} is not ready to benchmark`;
 }
 

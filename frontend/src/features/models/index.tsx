@@ -41,6 +41,7 @@ const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" 
   validating: "warning",
   invalid: "error",
   deprecated: "default",
+  conflict: "error",
 };
 
 const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
@@ -48,6 +49,7 @@ const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
   validating: "validating…",
   invalid: "invalid",
   deprecated: "deprecated",
+  conflict: "conflict",
 };
 
 function formatTokensPerSec(v: number): string {
@@ -84,9 +86,10 @@ function formatRelativeTime(iso: string): string {
 
 function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model) => void }) {
   const invalid = model.status === "invalid";
+  const conflicted = model.status === "conflict";
   return (
     <Tooltip
-      content={invalid ? "Model invalid — fix registration first" : `Test chat with ${model.name}`}
+      content={invalid ? "Model invalid — fix registration first" : conflicted ? "Model name conflicts with another model — rename to resolve" : `Test chat with ${model.name}`}
     >
       <button
         type="button"
@@ -229,6 +232,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
             {MODEL_STATUS_LABEL[model.status]}
           </Badge>
+          {model.status === "conflict" && (
+            <span className="text-[10px] text-[var(--color-status-error)] leading-tight">
+              Name conflicts with another model — rename to resolve
+            </span>
+          )}
         </div>
 
         {/* Last benchmark */}

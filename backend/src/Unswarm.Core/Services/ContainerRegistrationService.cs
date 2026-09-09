@@ -899,30 +899,80 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         // Create or update the model, preserving existing metadata on update
         // (Family/ParameterSize/Quantization/ContextWindow are never clobbered).
         // Discovery fills unfilled fields; admin overrides always win.
-        var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+        // Look up by composite ID (runtime-scoped) first; fall back to name-based lookup
+        // for models registered before composite IDs were introduced.
+        var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
+        var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false)
+            ?? await _modelRegistry.GetByNameAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+        ModelDefinition result;
         if (existing is null)
         {
-            return await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
+            result = await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            modelDef = new ModelDefinition
+            {
+                Id = existing.Id,
+                Name = discoveredModel.ModelId,
+                Family = existing.Family,
+                ParameterSize = existing.ParameterSize,
+                Quantization = existing.Quantization,
+                Status = ModelStatus.Ready,
+                // Discovery fills unfilled fields; admin overrides always win.
+                ContextWindow = existing.ContextWindow != 0
+                    ? existing.ContextWindow
+                    : discoveredModel.ContextWindow,
+                ContainerImage = existing.ContainerImage,
+                SourceRuntimeId = registeredContainerId,
+                CreatedAt = existing.CreatedAt,
+                UpdatedAt = now
+            };
+            result = await _modelRegistry.UpdateAsync(existing.Id, modelDef, ct).ConfigureAwait(false);
         }
 
-        modelDef = new ModelDefinition
+        // Check for name conflicts: if multiple models share the same Name,
+        // flag all of them as Conflict so the user must rename before use.
+        await ResolveNameConflictAsync(result.Name, ct).ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
+    /// After a model is created or updated, check if any other model shares the
+    /// same Name. If so, set all models with that name to Conflict status. If
+    /// there is only one model with that name and it is currently in Conflict,
+    /// restore it to Ready (the conflict was resolved by a rename or deletion).
+    /// </summary>
+    private async Task ResolveNameConflictAsync(string modelName, CancellationToken ct)
+    {
+        var allModels = await _modelRegistry.ListAllAsync(ct).ConfigureAwait(false);
+        var sameName = allModels.Where(m => m.Name == modelName).ToList();
+
+        if (sameName.Count > 1)
         {
-            Id = existing.Id,
-            Name = discoveredModel.ModelId,
-            Family = existing.Family,
-            ParameterSize = existing.ParameterSize,
-            Quantization = existing.Quantization,
-            Status = ModelStatus.Ready,
-            // Discovery fills unfilled fields; admin overrides always win.
-            ContextWindow = existing.ContextWindow != 0
-                ? existing.ContextWindow
-                : discoveredModel.ContextWindow,
-            ContainerImage = existing.ContainerImage,
-            SourceRuntimeId = registeredContainerId,
-            CreatedAt = existing.CreatedAt,
-            UpdatedAt = now
-        };
-        return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
+            // Multiple models share this name — flag all as Conflict
+            foreach (var model in sameName)
+            {
+                if (model.Status != ModelStatus.Conflict)
+                {
+                    _logger.LogInformation(
+                        "Model name conflict detected: {Name} is served by multiple runtimes; marking {ModelId} as Conflict",
+                        modelName, model.Id);
+                    await _modelRegistry.UpdateAsync(model.Id,
+                        WithModelStatus(model, ModelStatus.Conflict), ct).ConfigureAwait(false);
+                }
+            }
+        }
+        else if (sameName.Count == 1 && sameName[0].Status == ModelStatus.Conflict)
+        {
+            // Only one model with this name and it was in Conflict — conflict resolved
+            _logger.LogInformation(
+                "Name conflict resolved for {Name} ({ModelId}); restoring to Ready",
+                modelName, sameName[0].Id);
+            await _modelRegistry.UpdateAsync(sameName[0].Id,
+                WithModelStatus(sameName[0], ModelStatus.Ready), ct).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

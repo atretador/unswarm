@@ -31,6 +31,7 @@ const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" 
   validating: "warning",
   invalid: "error",
   deprecated: "default",
+  conflict: "error",
 };
 
 const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
@@ -38,6 +39,7 @@ const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
   validating: "validating…",
   invalid: "invalid",
   deprecated: "deprecated",
+  conflict: "conflict",
 };
 
 // ─── Conversation types ─────────────────────────────────────────────

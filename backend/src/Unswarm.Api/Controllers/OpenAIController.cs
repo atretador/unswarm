@@ -73,7 +73,9 @@ public sealed class OpenAIController : ControllerBase
     {
         // Swarm models
         var models = await _registry.ListAllAsync(ct);
-        var data = models.Select(m => new OpenAiModelData
+        var data = models
+            .Where(m => m.Status != ModelStatus.Conflict)
+            .Select(m => new OpenAiModelData
         {
             Id = m.Name,
             Created = m.CreatedAt.ToUnixTimeSeconds(),
