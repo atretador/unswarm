@@ -1272,8 +1272,21 @@ function RegisteredContainerCard({
   const firstModel = container.discoveredModels[0];
   const canBenchmark = !!firstModel && firstModel.status === "ready";
   const transitional = REG_TRANSITIONAL.has(container.status);
-  const signal = runtimeSignal(runtimeStatus);
+  // For scripts, the backend DB status is the authoritative lifecycle signal.
+  // Agent telemetry is polled every 30s and may be stale during startup/shutdown.
   const isScript = container.runtimeKind === "script";
+  const signal = isScript
+    ? (() => {
+        const backendStatus = (container.status ?? "").toLowerCase();
+        if (backendStatus === "starting") return "transitional" as RuntimeSignal;
+        if (backendStatus === "error") return "down" as RuntimeSignal;
+        if (backendStatus === "registered") return "down" as RuntimeSignal;
+        // For "ready": prefer agent telemetry when available, fallback to "running"
+        const ts = runtimeSignal(runtimeStatus);
+        if (ts === "running" || ts === "down") return ts;
+        return "running" as RuntimeSignal;
+      })()
+    : runtimeSignal(runtimeStatus);
   const busy =
     startMutation.isPending ||
     stopMutation.isPending ||
