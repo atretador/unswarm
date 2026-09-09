@@ -31,6 +31,7 @@ public sealed class ModelResponse
     public string? SourceRuntimeId { get; set; }
     public string? SourceRuntimeName { get; set; }
     public string? SourceRuntimeAgent { get; set; }
+    public string? DisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string Origin { get; set; } = "swarm";
@@ -50,6 +51,7 @@ public sealed class ModelResponse
         ContextWindow = d.ContextWindow,
         ContainerImage = d.ContainerImage,
         SourceRuntimeId = d.SourceRuntimeId,
+        DisplayName = d.DisplayName,
         CreatedAt = d.CreatedAt,
         UpdatedAt = d.UpdatedAt,
         Origin = "swarm"
@@ -75,6 +77,7 @@ public sealed class ModelUpdateRequest
     public ModelStatus? Status { get; set; }
     public int? ContextWindow { get; set; }
     public string? ContainerImage { get; set; }
+    public string? DisplayName { get; set; }
 }
 
 /// <summary>

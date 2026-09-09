@@ -231,6 +231,8 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
       : model.sourceRuntimeAgent ?? "local",
     settings?.hideOriginPrefix ?? false,
     settings?.agentDisplayNames ?? {},
+    undefined,
+    model.displayName,
   );
   const subtitle =
     model.origin === "cloud"

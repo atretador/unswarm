@@ -170,6 +170,7 @@ public sealed class ModelsController : ControllerBase
             Status = request.Status ?? existing.Status,
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
+            DisplayName = request.DisplayName ?? existing.DisplayName,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = existing.UpdatedAt
         };
@@ -201,6 +202,7 @@ public sealed class ModelsController : ControllerBase
                             ContextWindow = model.ContextWindow,
                             ContainerImage = model.ContainerImage,
                             SourceRuntimeId = model.SourceRuntimeId,
+                            DisplayName = model.DisplayName,
                             CreatedAt = model.CreatedAt,
                             UpdatedAt = _clock.UtcNow
                         }, ct).ConfigureAwait(false);
@@ -224,6 +226,7 @@ public sealed class ModelsController : ControllerBase
                     ContextWindow = sameName[0].ContextWindow,
                     ContainerImage = sameName[0].ContainerImage,
                     SourceRuntimeId = sameName[0].SourceRuntimeId,
+                    DisplayName = sameName[0].DisplayName,
                     CreatedAt = sameName[0].CreatedAt,
                     UpdatedAt = _clock.UtcNow
                 }, ct).ConfigureAwait(false);

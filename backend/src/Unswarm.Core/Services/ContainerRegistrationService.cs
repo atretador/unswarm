@@ -431,6 +431,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                         ContextWindow = model.ContextWindow,
                         ContainerImage = model.ContainerImage,
                         SourceRuntimeId = null,
+                        DisplayName = model.DisplayName,
                         CreatedAt = model.CreatedAt,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -890,6 +891,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Name = discoveredModel.ModelId,
             ContainerImage = string.Empty,
             SourceRuntimeId = registeredContainerId,
+            DisplayName = Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
             Status = ModelStatus.Ready,
             ContextWindow = discoveredModel.ContextWindow,
             CreatedAt = now,
@@ -925,6 +927,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                     : discoveredModel.ContextWindow,
                 ContainerImage = existing.ContainerImage,
                 SourceRuntimeId = registeredContainerId,
+                DisplayName = existing.DisplayName ?? Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
                 CreatedAt = existing.CreatedAt,
                 UpdatedAt = now
             };
@@ -1405,6 +1408,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         ContextWindow = model.ContextWindow,
         ContainerImage = model.ContainerImage,
         SourceRuntimeId = model.SourceRuntimeId,
+        DisplayName = model.DisplayName,
         CreatedAt = model.CreatedAt,
         UpdatedAt = model.UpdatedAt
     };

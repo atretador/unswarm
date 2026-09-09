@@ -98,6 +98,7 @@ public sealed class ModelRegistry : IModelRegistry
             ContextWindow = definition.ContextWindow,
             ContainerImage = definition.ContainerImage,
             SourceRuntimeId = definition.SourceRuntimeId,
+            DisplayName = definition.DisplayName,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -125,6 +126,7 @@ public sealed class ModelRegistry : IModelRegistry
         entity.ContextWindow = definition.ContextWindow;
         entity.ContainerImage = definition.ContainerImage;
         entity.SourceRuntimeId = definition.SourceRuntimeId;
+        entity.DisplayName = definition.DisplayName;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -184,6 +186,7 @@ public sealed class ModelRegistry : IModelRegistry
         ContextWindow = e.ContextWindow,
         ContainerImage = e.ContainerImage,
         SourceRuntimeId = e.SourceRuntimeId,
+        DisplayName = e.DisplayName,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

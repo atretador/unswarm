@@ -58,6 +58,8 @@ export interface Model {
   origin?: string;
   /** Provider name for cloud models (e.g. "openai"). Null for swarm models. */
   providerName?: string | null;
+  /** User-editable display name (filename portion of name). Falls back to name. */
+  displayName?: string | null;
 }
 
 // ─── Container Registration ───────────────────────────────────────

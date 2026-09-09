@@ -140,6 +140,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   // Edit state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
   const [editFamily, setEditFamily] = useState("");
   const [editParamSize, setEditParamSize] = useState("");
   const [editQuant, setEditQuant] = useState("");
@@ -147,7 +148,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { name: string; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
+    mutationFn: (data: { name: string; displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
       client.updateModel(model.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -158,6 +159,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
 
   const handleEdit = () => {
     setEditName(model.name);
+    setEditDisplayName(model.displayName ?? "");
     setEditFamily(model.family ?? "");
     setEditParamSize(model.parameterSize ?? "");
     setEditQuant(model.quantization ?? "");
@@ -179,6 +181,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     setEditError(null);
     updateMutation.mutate({
       name: editName.trim(),
+      displayName: editDisplayName.trim() || null,
       family: editFamily.trim(),
       parameterSize: editParamSize.trim(),
       quantization: editQuant.trim(),
@@ -218,7 +221,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <StatusDot status={model.status} size="sm" />
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
-              {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
+              {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {}, undefined, model.displayName)}
             </p>
             <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
               {[
@@ -341,7 +344,13 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
             </p>
           )}
           <Input
-            label="Model Name"
+            label="Display Name"
+            value={editDisplayName}
+            onChange={(e) => setEditDisplayName(e.target.value)}
+            placeholder="Filename shown in UI (auto-filled from model name)"
+          />
+          <Input
+            label="Internal Name"
             value={editName}
             onChange={(e) => setEditName(e.target.value)}
             placeholder="e.g. llama-3.1-8b"

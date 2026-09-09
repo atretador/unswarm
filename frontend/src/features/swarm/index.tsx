@@ -1140,7 +1140,7 @@ function ModelChip({ model }: { model: Model }) {
         {model.sourceRuntimeName && (
           <span className="opacity-60">{model.sourceRuntimeName} /</span>
         )}
-        <span className="truncate">{model.name}</span>
+        <span className="truncate">{model.displayName || model.name}</span>
         {model.status !== "ready" && (
           <span className="uppercase tracking-wide opacity-80">
             {validating ? "validating…" : model.status}

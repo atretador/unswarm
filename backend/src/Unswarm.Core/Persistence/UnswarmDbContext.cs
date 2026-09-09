@@ -23,6 +23,7 @@ public sealed class ModelEntity
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = string.Empty;
     public string? SourceRuntimeId { get; set; }
+    public string? DisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
@@ -334,6 +335,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
              .WithMany()
              .HasForeignKey(m => m.SourceRuntimeId)
              .OnDelete(DeleteBehavior.SetNull);
+            e.Property(m => m.DisplayName).HasMaxLength(500);
         });
 
         modelBuilder.Entity<BenchmarkHistoryEntity>(e =>

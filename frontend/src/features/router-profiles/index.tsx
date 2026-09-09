@@ -39,7 +39,7 @@ import type {
 function displayModelName(modelId: string | null | undefined, models?: Model[]): string {
   if (!modelId) return "";
   const m = models?.find((x) => x.name === modelId);
-  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, m?.sourceRuntimeName ?? undefined);
+  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, m?.sourceRuntimeName ?? undefined, m?.displayName);
 }
 
 function formatRelativeTime(iso: string): string {

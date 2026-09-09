@@ -11,6 +11,7 @@ public sealed class ModelDefinition
     public int ContextWindow { get; init; }
     public string ContainerImage { get; init; } = string.Empty;
     public string? SourceRuntimeId { get; init; }
+    public string? DisplayName { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
 }
