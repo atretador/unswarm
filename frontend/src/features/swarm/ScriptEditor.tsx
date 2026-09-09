@@ -62,7 +62,7 @@ function displayNameFromScript(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 32) || "script";
+    || "script";
 }
 
 // ─── ScriptDropZone ───────────────────────────────────────────────

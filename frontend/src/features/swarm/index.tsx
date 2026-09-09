@@ -242,7 +242,7 @@ function displayNameFromContainer(c: Container): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 32) || "container"
+      || "container"
   );
 }
 
