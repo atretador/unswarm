@@ -631,19 +631,15 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         }, JsonOptions);
         var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
 
-        var p = response.Payload;
-        if (p is null || !p.HasValue)
-            throw new InvalidOperationException($"Agent '{_agentName}' returned an empty start_script result");
+        // Unwrap {"ok":true,"data":{"pid":...}} — RequireResultData extracts the
+        // inner "data" element so pid is found at the root of the returned element.
+        var data = RequireResultData(response, "start_script");
+        var pid = GetInt(data, "pid");
+        if (pid is null or <= 0)
+            throw new InvalidOperationException(
+                $"Agent '{_agentName}' start_script returned invalid pid {pid}");
 
-        var error = GetString(p.Value, "error");
-        if (error is not null)
-            throw new InvalidOperationException($"Agent '{_agentName}' start_script failed: {error}");
-
-        var ok = GetBool(p.Value, "ok");
-        if (ok == false)
-            throw new InvalidOperationException($"Agent '{_agentName}' start_script returned failure");
-
-        return GetInt(p.Value, "pid") ?? 0;
+        return pid.Value;
     }
 
     /// <summary>Stops a launcher script on the remote agent by PID.</summary>

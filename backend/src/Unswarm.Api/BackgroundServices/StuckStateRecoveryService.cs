@@ -38,6 +38,7 @@ public class StuckStateRecoveryService : BackgroundService
                 runtime.Id, runtime.Image);
             runtime.Status = nameof(Core.Models.ContainerRegistrationStatus.Registered);
             runtime.ErrorMessage = "Reset from stuck Starting state";
+            runtime.RuntimeProcessId = null;
             runtime.UpdatedAt = DateTimeOffset.UtcNow;
         }
 

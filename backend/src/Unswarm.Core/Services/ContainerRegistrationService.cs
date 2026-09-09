@@ -538,7 +538,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 else if (!isHost)
                 {
                     var controller = GetController(container);
-                    if (controller is RemoteAgentDockerController remoteController && container.RuntimeProcessId.HasValue)
+                    if (controller is RemoteAgentDockerController remoteController
+                        && container.RuntimeProcessId is > 0)
                     {
                         await remoteController.StopScriptAsync(container.RuntimeProcessId.Value, ct).ConfigureAwait(false);
                     }
