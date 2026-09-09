@@ -280,9 +280,9 @@ func (m *Manager) StartScript(path string, port int, registrationId string) (int
 	}
 
 	// Spawn the script.
-	// --login sources /etc/profile + ~/.profile so scripts inherit the user's
-	// PATH and environment (e.g. llama-server in ~/.local/bin).
-	cmd := exec.Command("bash", "--login", resolved)
+	// Use --noprofile to avoid sourcing ~/.bash_profile (breaks under systemd
+	// ProtectHome=true and scripts should use absolute paths anyway).
+	cmd := exec.Command("bash", "--noprofile", resolved)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	logPath := m.logPath(resolved)

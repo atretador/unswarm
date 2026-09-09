@@ -302,8 +302,10 @@ public sealed class AgentController : ControllerBase
                     break;
 
                 case "command_result":
+                case "command_chunk":
                     // Route to the agent's RemoteAgentDockerController so pending
-                    // commands can be correlated and completed.
+                    // commands can be correlated and completed, and streaming
+                    // chunks can be delivered to TunnelStreamOperation channels.
                     _router?.HandleIncomingMessage(agentName, msg);
                     break;
 
