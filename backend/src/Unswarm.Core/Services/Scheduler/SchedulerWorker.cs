@@ -1369,7 +1369,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
 
         try
         {
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token, request.CancellationToken);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token, request.CancellationToken, lane.ForceStopCts.Token);
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
 
@@ -1473,6 +1473,15 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             // Client disconnected — cancel the caller and free the slot.
             FailItem(queueItem, "Client disconnected");
             request.Tcs.TrySetCanceled(request.CancellationToken);
+        }
+        catch (OperationCanceledException) when (lane.ForceStopCts.IsCancellationRequested)
+        {
+            // Force-stopped by user deletion — surface as an error, not a cancellation,
+            // so callers see 500 "Runtime unavailable" instead of a silent cancel.
+            _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                $"Request {request.Id} force-stopped: runtime {lane.RuntimeId} deleted while in-flight");
+            FailItem(queueItem, "Runtime unavailable");
+            request.Tcs.TrySetException(new InvalidOperationException("Runtime unavailable"));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -2463,6 +2472,98 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
             $"Idle stop completed for runtime {runtimeId} on {targetId}");
         return IdleStopResult.Stopped;
+    }
+
+    /// <inheritdoc/>
+    public async Task ForceStopRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct)
+    {
+        // 1. Find all lanes and the target for this runtime
+        List<RuntimeLane> lanes = [];
+        string? targetId = null;
+        foreach (var group in _targets.Values)
+        {
+            if (group.Lanes.TryGetValue(runtimeId, out var lane))
+            {
+                lanes.Add(lane);
+                targetId ??= group.TargetId;
+            }
+        }
+
+        if (targetId is null)
+        {
+            _logStore.Enqueue(LogLevel.Debug, "Scheduler",
+                $"ForceStop: runtime {runtimeId} not managed by scheduler — skipping");
+            return;
+        }
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Force-stopping runtime {runtimeId} — cancelling {lanes.Count} lane(s)");
+
+        // 2. Cancel ForceStopCts on every lane for this runtime
+        foreach (var lane in lanes)
+        {
+            try
+            {
+                lane.ForceStopCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already cancelled and disposed — safe to ignore
+            }
+        }
+
+        // 3. Wait briefly for in-flight requests to surface "Runtime unavailable"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && HasPendingWork(runtimeId))
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct).ConfigureAwait(false);
+        }
+
+        if (HasPendingWork(runtimeId))
+        {
+            _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                $"ForceStop: runtime {runtimeId} still has pending work after 5s timeout — proceeding anyway");
+        }
+
+        // 4. Stop the container or script
+        if (!string.IsNullOrEmpty(containerId))
+        {
+            var isScript = containerId.StartsWith("script:", StringComparison.Ordinal);
+            try
+            {
+                if (isScript)
+                {
+                    await StopScriptRuntimeAsync(targetId, runtimeId, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    var controller = _router.GetController(targetId);
+                    await controller.StopContainerAsync(containerId, ct).ConfigureAwait(false);
+                }
+
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"ForceStop: stopped container/script {containerId} for runtime {runtimeId}");
+            }
+            catch (Exception ex)
+            {
+                _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                    $"ForceStop: failed to stop container/script {containerId} for runtime {runtimeId}: {ex.Message}");
+            }
+        }
+
+        // 5. Clear lane residency
+        foreach (var lane in lanes)
+        {
+            lane.ResidentModel = null;
+            lane.ResidentContainerId = null;
+        }
+
+        // 6. Remove from RunningContainers
+        if (_targets.TryGetValue(targetId, out var ownerGroup))
+        {
+            ownerGroup.RunningContainers.TryRemove(runtimeId, out _);
+        }
     }
 
     /// <inheritdoc/>

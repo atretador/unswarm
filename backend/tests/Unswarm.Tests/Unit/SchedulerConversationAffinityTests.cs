@@ -87,7 +87,7 @@ public sealed class SchedulerConversationAffinityTests : IDisposable
             Id = "reg-a",
             DisplayName = "image-a",
             Image = "image-a",
-            CanRunAlongWith = ["reg-b"],
+            CanRunAlongWith = ["image-b"],
             MaxConcurrentInferences = 1,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -99,7 +99,7 @@ public sealed class SchedulerConversationAffinityTests : IDisposable
             Id = "reg-b",
             DisplayName = "image-b",
             Image = "image-b",
-            CanRunAlongWith = ["reg-a"],
+            CanRunAlongWith = ["image-a"],
             MaxConcurrentInferences = 1,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
