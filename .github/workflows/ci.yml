@@ -72,5 +72,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build .
+      - run: docker build -f backend/Dockerfile .
       - run: docker build ./agent
