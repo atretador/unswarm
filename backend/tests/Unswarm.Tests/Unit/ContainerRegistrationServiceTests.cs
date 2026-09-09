@@ -246,8 +246,11 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RediscoverAsync_NoMappedPort_Throws()
+    public async Task RediscoverAsync_NoMappedPort_ResolvesPortViaDocker()
     {
+        // Production code now resolves MappedPort via Docker inspect / ContainerPort
+        // fallback instead of throwing. With no discovery server, discovery will fail
+        // and set Error status.
         var service = CreateService();
         var container = new RegisteredRuntime
         {
@@ -259,8 +262,10 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         };
         await _registry.CreateAsync(container);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.RediscoverAsync("reg-noport"));
+        var result = await service.RediscoverAsync("reg-noport");
+
+        // Port resolved to ContainerPort (default 0), discovery fails → Error status
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
     }
 
     [Fact]
@@ -649,9 +654,11 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.NotNull(started.Container.MappedPort);
         // Model discovered from the running container.
         var model = Assert.Single(started.DiscoveredModels);
-        Assert.Equal("model-1", model.Id);
+        // Model IDs now use composite format: {registrationId}:{modelName}
+        Assert.Equal("model-1", model.Name);
+        Assert.EndsWith(":model-1", model.Id);
         var mappedIds = await _registry.GetModelIdsForContainerAsync(created.Container.Id);
-        Assert.Contains("model-1", mappedIds);
+        Assert.Contains(mappedIds, id => id.EndsWith(":model-1"));
     }
 
     [Fact]
@@ -974,7 +981,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteAsync_RecreatedContainer_StopsNewId()
+    public async Task DeleteAsync_RecreatedContainer_CallsForceStopWithStaleId()
     {
         await _registry.CreateAsync(MakeRuntime("reg-del", "localllama_gemma") with
         {
@@ -995,7 +1002,12 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         var service = CreateService();
         await service.DeleteAsync("reg-del", deleteModels: false);
 
-        Assert.Equal(["new-id"], _docker.StoppedContainerIds);
+        // DeleteAsync no longer stops Docker containers directly; it delegates to
+        // the scheduler drainer via ForceStopRuntimeAsync with the persisted (stale)
+        // container id. The drainer handles the actual stop/reconcile.
+        Assert.Single(_schedulerDrainer.ForceStopCalls);
+        Assert.Equal("reg-del", _schedulerDrainer.ForceStopCalls[0].RuntimeId);
+        Assert.Equal("old-id", _schedulerDrainer.ForceStopCalls[0].ContainerId);
     }
 
     [Fact]
@@ -1132,8 +1144,9 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.NotNull(result);
         Assert.Equal(ContainerRegistrationStatus.Ready, result!.Status);
         // Model was discovered from the running container.
+        // Model IDs now use composite format: {registrationId}:{modelName}
         var mappedIds = await _registry.GetModelIdsForContainerAsync("reg-hc-ok");
-        Assert.Contains("model-hc1", mappedIds);
+        Assert.Contains(mappedIds, id => id.EndsWith(":model-hc1"));
     }
 
     [Fact]

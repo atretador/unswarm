@@ -158,7 +158,12 @@ public sealed class HostScriptRuntimeControllerTests : IAsyncLifetime
         var result = await _controller.StartScriptAsync("test-env", script, 9090);
         Assert.Null(result.ErrorMessage);
 
-        await Task.Delay(500);
+        // --login causes bash to source profile files first, which can add startup
+        // latency. Poll for the file instead of a fixed delay.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (!File.Exists(envFile) && DateTime.UtcNow < deadline)
+            await Task.Delay(100);
+        Assert.True(File.Exists(envFile), "Env file was not created by the script within timeout");
 
         var envContent = await File.ReadAllTextAsync(envFile);
         Assert.Contains("HAS_PORT=unset", envContent);

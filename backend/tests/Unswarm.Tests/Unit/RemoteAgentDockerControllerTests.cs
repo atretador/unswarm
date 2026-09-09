@@ -363,7 +363,9 @@ public sealed class RemoteAgentDockerControllerTests
         Assert.True(_registry.SentMessages.TryDequeue(out var sent));
         Assert.Equal("chat_completion", sent.Payload!.Value.GetProperty("command").GetString());
         Assert.Equal(8080, sent.Payload.Value.GetProperty("port").GetInt32());
-        Assert.Equal(body, sent.Payload.Value.GetProperty("json").GetString());
+        // json is inlined as a raw JsonElement (not a string) since the request
+        // body is parsed into JsonDocument and embedded directly.
+        Assert.Equal(body, sent.Payload.Value.GetProperty("json").GetRawText());
     }
 
     [Fact]
@@ -519,7 +521,7 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<AgentCommandException>(
             () => controller.StartScriptAsync("/etc/passwd", 9000, "test-reg-2"));
         Assert.Contains("path outside scripts_dir", ex.Message);
     }

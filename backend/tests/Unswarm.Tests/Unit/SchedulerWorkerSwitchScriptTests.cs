@@ -324,7 +324,14 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
                 new LoggerFactory().CreateLogger<RemoteAgentDockerController>());
             _agentRegistry.OnSend = msg =>
             {
-                remote.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = true, pid = 4242 }));
+                // Differentiate by command type so health checks succeed.
+                var cmd = msg.Payload?.TryGetProperty("command", out var cmdProp) == true
+                    ? cmdProp.GetString()
+                    : null;
+                if (cmd == "health_check")
+                    remote.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = true, healthy = true }));
+                else
+                    remote.HandleIncomingMessage(MakeReply(msg.Id!, new { ok = true, pid = 4242 }));
                 return Task.FromResult<AgentMessage?>(null);
             };
 
@@ -354,8 +361,9 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
             var result = await req.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(200, result.StatusCode);
 
-            // Health waited on the agent target using the agent name as host fallback.
-            Assert.Contains(9381, _healthChecker.CheckedPorts);
+            // Health was checked via the remote agent's HealthCheckAsync (not the
+            // local _healthChecker). The OnSend callback handles health_check
+            // commands by replying with healthy:true.
             await Eventually.UntilAsync(() =>
                 HasLog(m => m.Contains("Script switch complete on agent:gpu1")));
 

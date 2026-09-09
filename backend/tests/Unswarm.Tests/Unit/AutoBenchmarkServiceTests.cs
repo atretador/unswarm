@@ -253,8 +253,9 @@ public sealed class AutoBenchmarkServiceTests
         }, TimeSpan.FromSeconds(10));
 
         var modelIds = history.AddedModelIds.ToHashSet();
-        Assert.Contains("llama-3-8b", modelIds);
-        Assert.Contains("qwen-7b", modelIds);
+        // Model IDs now use composite format: {registrationId}:{modelName}
+        Assert.Contains(modelIds, id => id.EndsWith(":llama-3-8b"));
+        Assert.Contains(modelIds, id => id.EndsWith(":qwen-7b"));
         Assert.All(history.Entries, e => Assert.Equal("completed", e.Status));
         Assert.Equal(2, scheduler.EnqueuedRequests.Count);
     }
