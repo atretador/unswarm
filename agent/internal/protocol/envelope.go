@@ -102,6 +102,7 @@ type CommandPayload struct {
 	ScriptPort          int               `json:"scriptPort,omitempty"`
 	ScriptContent       string            `json:"scriptContent,omitempty"`
 	PID                 int               `json:"pid,omitempty"`
+	RegistrationId      string            `json:"registrationId,omitempty"`
 }
 
 // CommandResultPayload is sent by the agent in response to a command.
@@ -142,11 +143,12 @@ type ContainerTelemetry struct {
 
 // ScriptTelemetry is per-script process info inside a telemetry message.
 type ScriptTelemetry struct {
-	Path      string `json:"path"`
-	PID       int    `json:"pid"`
-	Status    string `json:"status"`
-	Port      int    `json:"port,omitempty"`
-	StartTime int64  `json:"startTime,omitempty"` // unix ms
+	Path           string `json:"path"`
+	PID            int    `json:"pid"`
+	Status         string `json:"status"`
+	Port           int    `json:"port,omitempty"`
+	RegistrationId string `json:"registrationId,omitempty"`
+	StartTime      int64  `json:"startTime,omitempty"` // unix ms
 }
 
 // HeartbeatPayload is a keep-alive message (can be empty).

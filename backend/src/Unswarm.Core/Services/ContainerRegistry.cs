@@ -185,7 +185,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         // First try via the mapping table (model id lookup)
         var mapping = await db.ContainerModelMappings
             .Include(cm => cm.Model)
-            .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.Model.Name == modelName, ct)
+            .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName, ct)
             .ConfigureAwait(false);
         string? runtimeId;
         if (mapping is not null)
@@ -203,6 +203,18 @@ public sealed class ContainerRegistry : IContainerRegistry
 
         _modelToRuntimeCache[modelName] = (runtimeId, DateTimeOffset.UtcNow);
         return runtimeId;
+    }
+
+    public async Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName)
+    {
+        await using var db = _dbFactory();
+        var mappings = await db.ContainerModelMappings
+            .Where(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName)
+            .Select(cm => cm.RegisteredRuntimeId)
+            .Distinct()
+            .ToListAsync()
+            .ConfigureAwait(false);
+        return mappings;
     }
 
     /// <summary>Drops the cached mapping for <paramref name="modelId"/> (write invalidation).</summary>

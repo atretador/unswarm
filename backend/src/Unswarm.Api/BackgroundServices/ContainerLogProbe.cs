@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
+using Unswarm.Core.Services.Remote;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Api.BackgroundServices;
@@ -128,19 +129,48 @@ public sealed class ContainerLogProbe : BackgroundService
         var registry = scope.ServiceProvider.GetRequiredService<IContainerRegistry>();
         var logStore = scope.ServiceProvider.GetRequiredService<ILogStore>();
         var scriptController = scope.ServiceProvider.GetRequiredService<HostScriptRuntimeController>();
+        var router = scope.ServiceProvider.GetRequiredService<IDockerControllerRouter>();
 
         var runtimes = await registry.ListAllAsync(ct).ConfigureAwait(false);
         var scriptRuntimes = runtimes.Where(r =>
             r.RuntimeKind == RuntimeKind.Script &&
-            r.RuntimeProcessId is not null &&
-            scriptController.IsScriptRunning(r.Id)).ToList();
+            r.RuntimeProcessId is not null).ToList();
 
         foreach (var runtime in scriptRuntimes)
         {
             try
             {
-                var lines = await scriptController.GetScriptLogsAsync(
-                    runtime.Id, ScriptTailLines, ct).ConfigureAwait(false);
+                var isHost = string.IsNullOrWhiteSpace(runtime.Agent)
+                    || string.Equals(runtime.Agent, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase);
+
+                IReadOnlyList<string> lines;
+
+                if (isHost)
+                {
+                    // Host scripts: only poll if the host script controller knows it's running
+                    if (!scriptController.IsScriptRunning(runtime.Id))
+                        continue;
+
+                    lines = await scriptController.GetScriptLogsAsync(
+                        runtime.Id, ScriptTailLines, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Agent scripts: route through the agent's remote controller using LauncherPath
+                    var targetId = ExecutionTarget.ForAgent(runtime.Agent!).Id;
+                    if (!router.IsTargetReachable(targetId))
+                        continue;
+
+                    if (string.IsNullOrWhiteSpace(runtime.LauncherPath))
+                        continue;
+
+                    var controller = router.GetController(targetId);
+                    if (controller is not RemoteAgentDockerController remoteController)
+                        continue;
+
+                    lines = await remoteController.GetScriptLogsAsync(
+                        runtime.LauncherPath!, ScriptTailLines, ct).ConfigureAwait(false);
+                }
 
                 var currentLines = lines.ToArray();
 

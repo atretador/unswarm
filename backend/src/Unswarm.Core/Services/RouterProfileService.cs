@@ -59,4 +59,11 @@ public sealed class RouterProfileService : IRouterProfileService
     {
         return await _store.ListAsync(ct);
     }
+
+    public async Task SetActiveModelIdAsync(string profileName, string? activeModelId, CancellationToken ct = default)
+    {
+        var profile = await _store.GetByNameAsync(profileName, ct)
+            ?? throw new KeyNotFoundException($"Router profile '{profileName}' not found.");
+        await _store.SetActiveModelIdAsync(profile.Id, activeModelId, ct);
+    }
 }

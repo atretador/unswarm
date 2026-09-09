@@ -292,6 +292,50 @@ public sealed class InferenceProxy : IInferenceProxy
 
                 // Bounded retry while the backend finishes warming up.
                 var holdDeadline = DateTime.UtcNow.AddSeconds(HoldSecondsOverride);
+
+                // Streaming requests tunnel through chat_completion_stream so tokens reach
+                // the client incrementally instead of being buffered until completion.
+                // Older agents reject the unknown command (NotSupportedException) — fall
+                // back to the buffered path below.
+                if (request.IsStreaming)
+                {
+                    try
+                    {
+                        var stream = await remote.InferStreamAsync(scriptPort, request.OriginalJson, ct).ConfigureAwait(false);
+                        var inferenceResponse = new InferenceResponse
+                        {
+                            StatusCode = 200,
+                            ContentType = "text/event-stream",
+                            Body = stream
+                        };
+
+                        // Tap the SSE stream to count tokens incrementally (same pattern as
+                        // the container streaming path): the tap writes final counts into inferenceResponse
+                        // on EOF/dispose, so return the same object it wraps.
+                        inferenceResponse.Body = new StreamingTokenTapStream(stream, inferenceResponse);
+                        inferenceResponse.BodyDrained = stream is RemoteAgentDockerController.AgentTunnelStream tunnel
+                            ? tunnel.Drained
+                            : Task.CompletedTask;
+
+                        return inferenceResponse;
+                    }
+                    catch (NotSupportedException ex)
+                    {
+                        _logger.LogInformation(ex,
+                            "Agent target {Target} does not support streaming inference for script runtime; falling back to buffered for model {Model}",
+                            targetId, request.ModelName);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException && DateTime.UtcNow < holdDeadline)
+                    {
+                        _logger.LogWarning(ex,
+                            "Remote script streaming inference failed for model {Model} on target {Target} port {Port}; runtime may still be warming up — retrying within hold window",
+                            request.ModelName, targetId, scriptPort);
+                        await Task.Delay(RetryDelayMs, ct).ConfigureAwait(false);
+                        return await InvokeRemoteAsync(request, targetId, controller, ct).ConfigureAwait(false);
+                    }
+                }
+
+                // Bounded retry while the backend finishes warming up (buffered path).
                 while (true)
                 {
                     string rawScriptBody;
@@ -864,6 +908,13 @@ public sealed class InferenceProxy : IInferenceProxy
             {
                 Content = httpContent
             };
+            if (request.ForwardedHeaders is not null)
+            {
+                foreach (var (key, value) in request.ForwardedHeaders)
+                {
+                    sendRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
             var response = await SharedHttp.SendAsync(
                 sendRequest,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -895,7 +946,21 @@ public sealed class InferenceProxy : IInferenceProxy
             return inferenceResponse;
         }
 
-        using var response2 = await SharedHttp.PostAsync(url, httpContent, ct)
+        var sendRequest2 = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = httpContent
+        };
+        if (request.ForwardedHeaders is not null)
+        {
+            foreach (var (key, value) in request.ForwardedHeaders)
+            {
+                sendRequest2.Headers.TryAddWithoutValidation(key, value);
+            }
+        }
+        using var response2 = await SharedHttp.SendAsync(
+            sendRequest2,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct)
             .ConfigureAwait(false);
 
         var contentType2 = response2.Content.Headers.ContentType?.MediaType ?? "application/json";

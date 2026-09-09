@@ -33,6 +33,8 @@ type scriptProcess struct {
 	Path string
 	PID  int
 	Port int
+	// RegistrationId is the backend-assigned ID for this script runtime.
+	RegistrationId string
 	// StartTime is the wall-clock time the agent registered the process
 	// (reported via telemetry).
 	StartTime time.Time
@@ -53,17 +55,21 @@ type ScriptInfo struct {
 
 // ScriptStatus is the runtime status of a tracked script process.
 type ScriptStatus struct {
-	Path      string `json:"path"`
-	PID       int    `json:"pid"`
-	Status    string `json:"status"` // "running" | "stopped"
-	Port      int    `json:"port"`
-	StartTime int64  `json:"startTime"` // unix ms
+	Path           string `json:"path"`
+	PID            int    `json:"pid"`
+	Status         string `json:"status"` // "running" | "stopped"
+	Port           int    `json:"port"`
+	RegistrationId string `json:"registrationId"`
+	StartTime      int64  `json:"startTime"` // unix ms
 }
 
 // NewManager creates a Manager. If scriptsDir is empty the manager is
 // disabled (IsEnabled returns false).
 func NewManager(scriptsDir string) *Manager {
-	logDir := filepath.Join(os.TempDir(), "unswarm-script-logs")
+	// Place script logs under the parent of scriptsDir (typically
+	// /var/lib/unswarm) so they live inside the agent's ReadWritePaths
+	// instead of /tmp which may be owned by another user.
+	logDir := filepath.Join(filepath.Dir(scriptsDir), "script-logs")
 	_ = os.MkdirAll(logDir, 0o700)
 	return &Manager{
 		scriptsDir: scriptsDir,
@@ -232,7 +238,7 @@ func (m *Manager) resolveWithinScriptsDir(path string) (string, error) {
 // validated path and execution is refused. (bash re-opens the script by path,
 // so a full fd-based exec is not possible here; the re-validation shrinks the
 // swap window to the minimum this codebase allows.)
-func (m *Manager) StartScript(path string, port int) (int, error) {
+func (m *Manager) StartScript(path string, port int, registrationId string) (int, error) {
 	resolved, err := m.resolveWithinScriptsDir(path)
 	if err != nil {
 		return 0, err
@@ -277,9 +283,9 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	}
 
 	// Spawn the script.
-	// --login sources /etc/profile + ~/.profile so scripts inherit the user's
-	// PATH and environment (e.g. llama-server in ~/.local/bin).
-	cmd := exec.Command("bash", "--login", resolved)
+	// Use --noprofile to avoid sourcing ~/.bash_profile (breaks under systemd
+	// ProtectHome=true and scripts should use absolute paths anyway).
+	cmd := exec.Command("bash", "--noprofile", resolved)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	logPath := m.logPath(resolved)
@@ -307,13 +313,14 @@ func (m *Manager) StartScript(path string, port int) (int, error) {
 	}
 
 	m.processes[resolved] = &scriptProcess{
-		Path:      resolved,
-		PID:       pid,
-		Port:      port,
-		StartTime: startTime,
-		ProcStart: procStart,
-		Cmd:       cmd,
-		LogFile:   logFile,
+		Path:           resolved,
+		PID:            pid,
+		Port:           port,
+		RegistrationId: registrationId,
+		StartTime:      startTime,
+		ProcStart:      procStart,
+		Cmd:            cmd,
+		LogFile:        logFile,
 	}
 
 	// Write PID file.
@@ -346,7 +353,9 @@ func (m *Manager) StopScript(pid int) error {
 	if found == "" {
 		return fmt.Errorf("no tracked script with pid %d", pid)
 	}
-	return m.stopAndClean(found, proc)
+	m.signalAndWait(proc)
+	m.cleanupAndDelete(found, proc)
+	return nil
 }
 
 // StopScriptByPath stops a script by its resolved path.
@@ -354,6 +363,11 @@ func (m *Manager) StopScriptByPath(path string) error {
 	resolved, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
+	}
+	// Resolve symlinks to match the key in the processes map, which is
+	// keyed by the fully-resolved path from StartScript.
+	if realPath, err := filepath.EvalSymlinks(resolved); err == nil {
+		resolved = realPath
 	}
 
 	m.mu.Lock()
@@ -363,7 +377,9 @@ func (m *Manager) StopScriptByPath(path string) error {
 	if !ok {
 		return fmt.Errorf("no tracked script at %q", resolved)
 	}
-	return m.stopAndClean(resolved, proc)
+	m.signalAndWait(proc)
+	m.cleanupAndDelete(resolved, proc)
+	return nil
 }
 
 const (
@@ -451,11 +467,12 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 			continue
 		}
 		out = append(out, ScriptStatus{
-			Path:      proc.Path,
-			PID:       proc.PID,
-			Status:    status,
-			Port:      proc.Port,
-			StartTime: proc.StartTime.UnixMilli(),
+			Path:           proc.Path,
+			PID:            proc.PID,
+			Status:         status,
+			Port:           proc.Port,
+			RegistrationId: proc.RegistrationId,
+			StartTime:      proc.StartTime.UnixMilli(),
 		})
 	}
 	return out
@@ -465,8 +482,7 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 //
 // Scripts are stopped concurrently: each stop can busy-wait up to 5s for a
 // graceful exit, so a sequential shutdown would block agent exit for up to
-// 5s × number of hung scripts. stopAndClean serializes its map mutation
-// under m.mu, so parallel calls are safe.
+// 5s × number of hung scripts.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	procs := make(map[string]*scriptProcess, len(m.processes))
@@ -480,14 +496,16 @@ func (m *Manager) Shutdown() {
 		wg.Add(1)
 		go func(path string, proc *scriptProcess) {
 			defer wg.Done()
-			_ = m.stopAndClean(path, proc)
+			m.signalAndWait(proc)
+			m.cleanupAndDelete(path, proc)
 		}(path, proc)
 	}
 	wg.Wait()
 }
 
-// stopAndClean kills a process group, waits, and cleans up resources.
-func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
+// signalAndWait sends SIGTERM, waits up to 5s for graceful exit, then SIGKILL.
+// It does not touch the processes map.
+func (m *Manager) signalAndWait(proc *scriptProcess) {
 	// Kill process group with SIGTERM. signalGroup refuses to signal when the
 	// PID's recorded start time no longer matches (PID reuse): an unrelated
 	// recycled process must never receive our signals.
@@ -501,13 +519,14 @@ func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
 			_ = signalGroup(proc, syscall.SIGKILL)
 		}
 	}
+}
 
+// cleanupAndDelete cleans up resources and removes the process from the map.
+func (m *Manager) cleanupAndDelete(path string, proc *scriptProcess) {
 	m.mu.Lock()
 	m.cleanupProcess(proc)
 	delete(m.processes, path)
 	m.mu.Unlock()
-
-	return nil
 }
 
 func (m *Manager) cleanupProcess(proc *scriptProcess) {

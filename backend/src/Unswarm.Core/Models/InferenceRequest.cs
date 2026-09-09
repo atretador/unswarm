@@ -38,4 +38,11 @@ public sealed class InferenceRequest
     /// eviction while its conversation is recently active.
     /// </summary>
     public string? ConversationKey { get; set; }
+
+    /// <summary>
+    /// Client HTTP headers to forward to the upstream engine. Excludes
+    /// structural headers (Authorization, Content-Type, Content-Length, Host)
+    /// that are either set by the request builder or recomputed per upstream URL.
+    /// </summary>
+    public Dictionary<string, string>? ForwardedHeaders { get; set; }
 }

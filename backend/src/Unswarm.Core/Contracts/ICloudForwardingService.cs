@@ -12,7 +12,8 @@ public interface ICloudForwardingService
         string requestBody,
         string requestPath,
         bool isStreaming,
-        CancellationToken ct);
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null);
 }
 
 public sealed class CloudForwardResponse

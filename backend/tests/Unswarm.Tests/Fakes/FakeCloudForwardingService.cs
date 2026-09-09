@@ -20,7 +20,8 @@ public sealed class FakeCloudForwardingService : ICloudForwardingService
         string requestBody,
         string requestPath,
         bool isStreaming,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null)
     {
         Forwarded.Add((modelId, requestBody, requestPath, isStreaming));
         return Task.FromResult(new CloudForwardResponse

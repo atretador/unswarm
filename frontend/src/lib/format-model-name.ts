@@ -5,15 +5,19 @@
  * @param _provider - Unused today; kept for call-site compatibility (badge text is rendered separately)
  * @param hideOriginPrefix - Whether to strip "cloud/" or "managed/" prefix
  * @param agentDisplayNames - Map of agent names to display names
- * @returns Formatted display name
+ * @param sourceRuntimeName - Optional runtime display name to prepend (e.g. "My Workstation")
+ * @param displayName - Optional user-editable display name; when provided, used instead of modelId as the base name
+ * @returns Formatted display name, e.g. "RuntimeName / ModelName" when sourceRuntimeName is provided
  */
 export function formatModelName(
   modelId: string,
   _provider: string,
   hideOriginPrefix: boolean,
   agentDisplayNames: Record<string, string>,
+  sourceRuntimeName?: string,
+  displayName?: string | null,
 ): string {
-  let name = modelId;
+  let name = displayName || modelId;
 
   if (hideOriginPrefix) {
     // Strip "cloud/" prefix: "cloud/openai/gpt-4o" → "openai/gpt-4o"
@@ -51,6 +55,11 @@ export function formatModelName(
         break;
       }
     }
+  }
+
+  // Prepend runtime display name when available (runtime-scoped context)
+  if (sourceRuntimeName) {
+    name = `${sourceRuntimeName} / ${name}`;
   }
 
   return name;

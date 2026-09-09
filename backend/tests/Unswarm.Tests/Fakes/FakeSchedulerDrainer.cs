@@ -52,4 +52,13 @@ public sealed class FakeSchedulerDrainer : ISchedulerDrainer
     }
 
     public void ForgetRuntime(string runtimeId) => _lastActivity.Remove(runtimeId);
+
+    /// <summary>Every ForceStopRuntimeAsync invocation: (runtimeId, containerId).</summary>
+    public List<(string RuntimeId, string? ContainerId)> ForceStopCalls { get; } = [];
+
+    public Task ForceStopRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct)
+    {
+        ForceStopCalls.Add((runtimeId, containerId));
+        return Task.CompletedTask;
+    }
 }

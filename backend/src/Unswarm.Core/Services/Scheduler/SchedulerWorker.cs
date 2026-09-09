@@ -267,6 +267,60 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         return target.AgentName;
     }
 
+    /// <summary>
+    /// Waits for a container/port to become healthy. For host targets, uses the
+    /// direct HealthChecker. For remote agent targets, tunnels the check through
+    /// the agent's WebSocket (IRemoteDockerController.HealthCheckAsync).
+    /// </summary>
+    private async Task WaitForHealthAsync(string targetId, int port, CancellationToken ct)
+    {
+        var target = ExecutionTarget.FromId(targetId);
+        if (target.IsAgent && target.AgentName is not null)
+        {
+            // Remote agent: tunnel health check through the agent WebSocket
+            var controller = _router.GetController(targetId);
+            if (controller is IRemoteDockerController remote)
+            {
+                var deadline = DateTime.UtcNow.AddSeconds(_settings.HealthCheckTimeoutSeconds);
+                var pollInterval = TimeSpan.FromSeconds(2);
+
+                // Brief grace period before first probe (container may still be loading).
+                await Task.Delay(pollInterval, ct).ConfigureAwait(false);
+
+                while (DateTime.UtcNow < deadline)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        if (await remote.HealthCheckAsync(port, ct).ConfigureAwait(false))
+                            return;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        // Transient probe failure — keep polling until deadline.
+                    }
+
+                    var remaining = deadline - DateTime.UtcNow;
+                    if (remaining <= TimeSpan.Zero)
+                        break;
+                    var delay = remaining < pollInterval ? remaining : pollInterval;
+                    await Task.Delay(delay, ct).ConfigureAwait(false);
+                }
+
+                throw new TimeoutException(
+                    $"Health check timed out on agent '{target.AgentName}' port {port} after {_settings.HealthCheckTimeoutSeconds}s");
+            }
+        }
+
+        // Host target (or fallback): direct TCP+HTTP health check
+        var healthHost = ResolveHealthCheckHost(targetId);
+        await _healthChecker.WaitForReadyAsync(port, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+    }
+
     // ── Lane registry helpers ─────────────────────────────────────────────────
 
     private List<RuntimeLane> SnapshotLanes()
@@ -529,6 +583,47 @@ public sealed class SchedulerWorker : ISchedulerDrainer
     }
 
     /// <summary>
+    /// If a conversation with the given key was recently completed on a specific
+    /// runtime, returns that runtime's ID and target so the next request routes
+    /// to the same lane. This prevents cross-lane hopping when a model maps to
+    /// multiple runtimes. Returns null if no hot conversation exists or affinity
+    /// is disabled.
+    /// </summary>
+    private async Task<(string RuntimeId, string TargetId)?> FindHotConversationRuntime(
+        string? conversationKey, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(conversationKey))
+            return null;
+
+        try
+        {
+            var settings = await GetCurrentSettingsAsync(ct).ConfigureAwait(false);
+            if (!settings.EnableConversationAffinity)
+                return null;
+
+            var dwellSeconds = Math.Max(1, settings.ConversationDwellSeconds);
+            var dwell = TimeSpan.FromSeconds(dwellSeconds);
+            var now = DateTime.UtcNow;
+
+            foreach (var (targetId, group) in _targets)
+            {
+                if (group.RecentConversations.TryGetValue(conversationKey, out var activity)
+                    && !string.IsNullOrEmpty(activity.RuntimeId)
+                    && now - activity.LastSeenUtc <= dwell)
+                {
+                    return (activity.RuntimeId, targetId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve hot conversation runtime for {Key}", conversationKey);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Computes which runtime ids block <paramref name="item"/> under the
     /// scheduler's coexistence rules, and whether the item is held out by a hot
     /// conversation (a blocking runtime that hosts a recently-active conversation
@@ -717,9 +812,10 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             return;
         }
 
-        var runtimeId = await _containerRegistry
-            .GetContainerIdForModelAsync(request.ModelName, ct)
+        var allRuntimeIds = await _containerRegistry
+            .GetAllContainerIdsForModelAsync(request.ModelName)
             .ConfigureAwait(false);
+        var runtimeId = allRuntimeIds.Count > 0 ? allRuntimeIds[0] : null;
         var runtime = runtimeId is not null
             ? await GetRuntimeEntityAsync(runtimeId, ct).ConfigureAwait(false)
             : null;
@@ -733,6 +829,53 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         }
 
         var targetId = await _resolver.ResolveTargetAsync(request.ModelName, ct).ConfigureAwait(false);
+
+        // ── Conversation affinity routing ───────────────────────────────────
+        // If this conversation was recently completed on a specific runtime,
+        // route to the same runtime to prevent cross-lane hopping when a model
+        // maps to multiple runtimes.
+        var hotRoute = await FindHotConversationRuntime(request.ConversationKey, ct).ConfigureAwait(false);
+        if (hotRoute is { } hr)
+        {
+            // Bypass the runtime cache: the hot entry may reference a runtime that
+            // was deleted after the cache was populated. A fresh registry lookup
+            // ensures the affinity target still exists in the registry.
+            var hotRuntime = await _containerRegistry.GetAsync(hr.RuntimeId, ct).ConfigureAwait(false);
+            if (hotRuntime is null)
+            {
+                // The affinity runtime was deleted between the previous request and
+                // this one. Skip affinity and fall back to normal resolution.
+                _logger.LogWarning(
+                    "Conversation {Key} affinity runtime {Runtime} no longer exists — falling back to normal resolution",
+                    request.ConversationKey, hr.RuntimeId);
+            }
+            else
+            {
+                // Verify the hot runtime actually serves the requested model.
+                // For router profile requests the conversation key is bound to the
+                // profile, so the hot entry may reference a runtime that served a
+                // *different* model (e.g. after fallback from model A to B).
+                var hotModels = await _containerRegistry
+                    .GetModelIdsForContainerAsync(hr.RuntimeId, ct).ConfigureAwait(false);
+                if (!hotModels.Any(m => m == request.ModelName || m.EndsWith(":" + request.ModelName)))
+                {
+                    _logger.LogDebug(
+                        "Conversation {Key} affinity runtime {Runtime} does not serve model {Model} — falling back to normal resolution",
+                        request.ConversationKey, hr.RuntimeId, request.ModelName);
+                }
+                else
+                {
+                    _runtimeCache[hr.RuntimeId] = hotRuntime; // refresh cache
+                    _logger.LogDebug(
+                        "Conversation {Key} routed to affinity runtime {Runtime} on {Target} (resolved was {Resolved})",
+                        request.ConversationKey, hr.RuntimeId, hr.TargetId, runtimeId);
+                    runtimeId = hr.RuntimeId;
+                    runtime = hotRuntime;
+                    targetId = hr.TargetId;
+                }
+            }
+        }
+
         request.TargetId = targetId;
 
         // Carry the resolved runtime identity through to the inference proxy so it
@@ -1227,7 +1370,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
 
         try
         {
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token, request.CancellationToken);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token, request.CancellationToken, lane.ForceStopCts.Token);
 
             var response = await _inference.InvokeAsync(request, linkedCts.Token).ConfigureAwait(false);
 
@@ -1331,6 +1474,15 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             // Client disconnected — cancel the caller and free the slot.
             FailItem(queueItem, "Client disconnected");
             request.Tcs.TrySetCanceled(request.CancellationToken);
+        }
+        catch (OperationCanceledException) when (lane.ForceStopCts.IsCancellationRequested)
+        {
+            // Force-stopped by user deletion — surface as an error, not a cancellation,
+            // so callers see 500 "Runtime unavailable" instead of a silent cancel.
+            _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                $"Request {request.Id} force-stopped: runtime {lane.RuntimeId} deleted while in-flight");
+            FailItem(queueItem, "Runtime unavailable");
+            request.Tcs.TrySetException(new InvalidOperationException("Runtime unavailable"));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1519,7 +1671,7 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                         {
                             throw new InvalidOperationException($"Agent target '{lane.TargetId}' does not have a connected RemoteAgentDockerController");
                         }
-                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRuntime.ContainerPort, ct).ConfigureAwait(false);
+                        scriptPid = await remoteScriptController.StartScriptAsync(launcherPath, targetRuntime.ContainerPort, targetRuntime.Id, ct).ConfigureAwait(false);
                     }
                     else
                     {
@@ -1560,9 +1712,8 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 var scriptKey = $"script:{targetRuntime.Id}";
                 var scriptPort = targetRuntime.ContainerPort;
 
-                // Wait for health
-                var healthHost = ResolveHealthCheckHost(lane.TargetId);
-                await _healthChecker.WaitForReadyAsync(scriptPort, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                // Wait for health (tunnels through agent WebSocket for remote targets)
+                await WaitForHealthAsync(lane.TargetId, scriptPort, ct).ConfigureAwait(false);
 
                 lane.ResidentModel = targetModel;
                 lane.ResidentContainerId = scriptKey;
@@ -1651,11 +1802,10 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 return;
             }
 
-            // Wait for health
+            // Wait for health (tunnels through agent WebSocket for remote targets)
             if (startResult.MappedPort.HasValue)
             {
-                var healthHost = ResolveHealthCheckHost(lane.TargetId);
-                await _healthChecker.WaitForReadyAsync(startResult.MappedPort.Value, healthHost, _settings.HealthCheckTimeoutSeconds, ct).ConfigureAwait(false);
+                await WaitForHealthAsync(lane.TargetId, startResult.MappedPort.Value, ct).ConfigureAwait(false);
             }
 
             lane.ResidentModel = targetModel;
@@ -2323,6 +2473,98 @@ public sealed class SchedulerWorker : ISchedulerDrainer
         _logStore.Enqueue(LogLevel.Info, "Scheduler",
             $"Idle stop completed for runtime {runtimeId} on {targetId}");
         return IdleStopResult.Stopped;
+    }
+
+    /// <inheritdoc/>
+    public async Task ForceStopRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct)
+    {
+        // 1. Find all lanes and the target for this runtime
+        List<RuntimeLane> lanes = [];
+        string? targetId = null;
+        foreach (var group in _targets.Values)
+        {
+            if (group.Lanes.TryGetValue(runtimeId, out var lane))
+            {
+                lanes.Add(lane);
+                targetId ??= group.TargetId;
+            }
+        }
+
+        if (targetId is null)
+        {
+            _logStore.Enqueue(LogLevel.Debug, "Scheduler",
+                $"ForceStop: runtime {runtimeId} not managed by scheduler — skipping");
+            return;
+        }
+
+        _logStore.Enqueue(LogLevel.Info, "Scheduler",
+            $"Force-stopping runtime {runtimeId} — cancelling {lanes.Count} lane(s)");
+
+        // 2. Cancel ForceStopCts on every lane for this runtime
+        foreach (var lane in lanes)
+        {
+            try
+            {
+                lane.ForceStopCts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already cancelled and disposed — safe to ignore
+            }
+        }
+
+        // 3. Wait briefly for in-flight requests to surface "Runtime unavailable"
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && HasPendingWork(runtimeId))
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(100, ct).ConfigureAwait(false);
+        }
+
+        if (HasPendingWork(runtimeId))
+        {
+            _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                $"ForceStop: runtime {runtimeId} still has pending work after 5s timeout — proceeding anyway");
+        }
+
+        // 4. Stop the container or script
+        if (!string.IsNullOrEmpty(containerId))
+        {
+            var isScript = containerId.StartsWith("script:", StringComparison.Ordinal);
+            try
+            {
+                if (isScript)
+                {
+                    await StopScriptRuntimeAsync(targetId, runtimeId, ct).ConfigureAwait(false);
+                }
+                else
+                {
+                    var controller = _router.GetController(targetId);
+                    await controller.StopContainerAsync(containerId, ct).ConfigureAwait(false);
+                }
+
+                _logStore.Enqueue(LogLevel.Info, "Scheduler",
+                    $"ForceStop: stopped container/script {containerId} for runtime {runtimeId}");
+            }
+            catch (Exception ex)
+            {
+                _logStore.Enqueue(LogLevel.Warn, "Scheduler",
+                    $"ForceStop: failed to stop container/script {containerId} for runtime {runtimeId}: {ex.Message}");
+            }
+        }
+
+        // 5. Clear lane residency
+        foreach (var lane in lanes)
+        {
+            lane.ResidentModel = null;
+            lane.ResidentContainerId = null;
+        }
+
+        // 6. Remove from RunningContainers
+        if (_targets.TryGetValue(targetId, out var ownerGroup))
+        {
+            ownerGroup.RunningContainers.TryRemove(runtimeId, out _);
+        }
     }
 
     /// <inheritdoc/>

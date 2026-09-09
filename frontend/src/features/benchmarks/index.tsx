@@ -83,6 +83,7 @@ function benchmarkDisabledReason(model: Model | undefined): string | null {
   if (model.status === "validating") return `${model.name} is still validating — not ready to benchmark`;
   if (model.status === "invalid") return `${model.name} is invalid — cannot benchmark`;
   if (model.status === "deprecated") return `${model.name} is deprecated — cannot benchmark`;
+  if (model.status === "conflict") return `${model.name} has a name conflict — rename to resolve`;
   return null;
 }
 

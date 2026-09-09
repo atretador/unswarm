@@ -334,21 +334,28 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         }
 
         var existingModelIds = await _registry.GetModelIdsForContainerAsync(registeredContainerId, ct).ConfigureAwait(false);
-        var existingSet = new HashSet<string>(existingModelIds);
+
+        // Extract bare model IDs from composite IDs (composite format: {runtimeId}:{modelId})
+        // for comparison with discovered results which use bare model IDs.
+        var existingBareModelIds = existingModelIds
+            .Select(id => id.Contains(':') ? id[(id.LastIndexOf(':') + 1)..] : id)
+            .ToList();
+        var existingBareSet = new HashSet<string>(existingBareModelIds);
         var discoveredSet = new HashSet<string>(discovered.Select(d => d.ModelId));
 
         // Mark missing models as Deprecated
-        foreach (var oldModelId in existingModelIds)
+        foreach (var compositeId in existingModelIds)
         {
-            if (!discoveredSet.Contains(oldModelId))
+            var bareModelId = compositeId.Contains(':') ? compositeId[(compositeId.LastIndexOf(':') + 1)..] : compositeId;
+            if (!discoveredSet.Contains(bareModelId))
             {
-                _logger.LogInformation("Model {ModelId} no longer present on container {ContainerId}; marking Deprecated", oldModelId, registeredContainerId);
-                var oldModel = await _modelRegistry.GetAsync(oldModelId, ct).ConfigureAwait(false);
+                _logger.LogInformation("Model {ModelId} no longer present on container {ContainerId}; marking Deprecated", bareModelId, registeredContainerId);
+                var oldModel = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false);
                 if (oldModel is not null)
                 {
-                    await _modelRegistry.UpdateAsync(oldModelId, WithModelStatus(oldModel, ModelStatus.Deprecated), ct).ConfigureAwait(false);
+                    await _modelRegistry.UpdateAsync(compositeId, WithModelStatus(oldModel, ModelStatus.Deprecated), ct).ConfigureAwait(false);
                 }
-                await _registry.RemoveModelMappingAsync(registeredContainerId, oldModelId, ct).ConfigureAwait(false);
+                await _registry.RemoveModelMappingAsync(registeredContainerId, compositeId, ct).ConfigureAwait(false);
             }
         }
 
@@ -356,9 +363,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var models = new List<ModelDefinition>();
         foreach (var discoveredModel in discovered)
         {
-            if (existingSet.Contains(discoveredModel.ModelId))
+            if (existingBareSet.Contains(discoveredModel.ModelId))
             {
-                var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+                var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
+                var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false);
                 if (existing is not null)
                     models.Add(existing);
                 continue;
@@ -387,10 +395,13 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var container = await _registry.GetAsync(id, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {id} not found");
 
-        // NOTE: Intentionally do NOT stop or remove the container/script here.
-        // Delete removes the runtime from the app (database only). The container
-        // itself keeps running on the host/agent. If the user wants to stop it,
-        // they use the separate stop endpoint.
+        // Force-stop in-flight requests and stop the serving container/script.
+        // Unlike idle-shutdown, this is immediate — any active inferences will
+        // receive a "Runtime unavailable" error.
+        if (_schedulerDrainer is not null)
+        {
+            await _schedulerDrainer.ForceStopRuntimeAsync(id, container.RuntimeContainerId, ct).ConfigureAwait(false);
+        }
 
         // Remove model mappings
         var modelIds = await _registry.GetModelIdsForContainerAsync(id, ct).ConfigureAwait(false);
@@ -420,6 +431,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                         ContextWindow = model.ContextWindow,
                         ContainerImage = model.ContainerImage,
                         SourceRuntimeId = null,
+                        DisplayName = model.DisplayName,
                         CreatedAt = model.CreatedAt,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -526,7 +538,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 else if (!isHost)
                 {
                     var controller = GetController(container);
-                    if (controller is RemoteAgentDockerController remoteController && container.RuntimeProcessId.HasValue)
+                    if (controller is RemoteAgentDockerController remoteController
+                        && container.RuntimeProcessId is > 0)
                     {
                         await remoteController.StopScriptAsync(container.RuntimeProcessId.Value, ct).ConfigureAwait(false);
                     }
@@ -732,7 +745,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     /// </summary>
     private async Task WaitForRemoteHealthAsync(IRemoteDockerController remote, int mappedPort, string agentName, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + _remoteHealthTimeout;
+        var settings = await _settings.GetAsync(ct).ConfigureAwait(false);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(settings.HealthCheckTimeoutSeconds);
 
         // Cold-container grace period before the first probe.
         await Task.Delay(_remoteHealthPollInterval, ct).ConfigureAwait(false);
@@ -875,10 +889,11 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         // endpoint is Ready. No smoke inference runs during registration.
         var modelDef = new ModelDefinition
         {
-            Id = discoveredModel.ModelId,
+            Id = $"{registeredContainerId}:{discoveredModel.ModelId}",
             Name = discoveredModel.ModelId,
             ContainerImage = string.Empty,
             SourceRuntimeId = registeredContainerId,
+            DisplayName = Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
             Status = ModelStatus.Ready,
             ContextWindow = discoveredModel.ContextWindow,
             CreatedAt = now,
@@ -888,30 +903,81 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         // Create or update the model, preserving existing metadata on update
         // (Family/ParameterSize/Quantization/ContextWindow are never clobbered).
         // Discovery fills unfilled fields; admin overrides always win.
-        var existing = await _modelRegistry.GetAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+        // Look up by composite ID (runtime-scoped) first; fall back to name-based lookup
+        // for models registered before composite IDs were introduced.
+        var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
+        var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false)
+            ?? await _modelRegistry.GetByNameAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+        ModelDefinition result;
         if (existing is null)
         {
-            return await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
+            result = await _modelRegistry.CreateAsync(modelDef, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            modelDef = new ModelDefinition
+            {
+                Id = existing.Id,
+                Name = discoveredModel.ModelId,
+                Family = existing.Family,
+                ParameterSize = existing.ParameterSize,
+                Quantization = existing.Quantization,
+                Status = ModelStatus.Ready,
+                // Discovery fills unfilled fields; admin overrides always win.
+                ContextWindow = existing.ContextWindow != 0
+                    ? existing.ContextWindow
+                    : discoveredModel.ContextWindow,
+                ContainerImage = existing.ContainerImage,
+                SourceRuntimeId = registeredContainerId,
+                DisplayName = existing.DisplayName ?? Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
+                CreatedAt = existing.CreatedAt,
+                UpdatedAt = now
+            };
+            result = await _modelRegistry.UpdateAsync(existing.Id, modelDef, ct).ConfigureAwait(false);
         }
 
-        modelDef = new ModelDefinition
+        // Check for name conflicts: if multiple models share the same Name,
+        // flag all of them as Conflict so the user must rename before use.
+        await ResolveNameConflictAsync(result.Name, ct).ConfigureAwait(false);
+
+        return result;
+    }
+
+    /// <summary>
+    /// After a model is created or updated, check if any other model shares the
+    /// same Name. If so, set all models with that name to Conflict status. If
+    /// there is only one model with that name and it is currently in Conflict,
+    /// restore it to Ready (the conflict was resolved by a rename or deletion).
+    /// </summary>
+    private async Task ResolveNameConflictAsync(string modelName, CancellationToken ct)
+    {
+        var allModels = await _modelRegistry.ListAllAsync(ct).ConfigureAwait(false);
+        var sameName = allModels.Where(m => m.Name == modelName).ToList();
+
+        if (sameName.Count > 1)
         {
-            Id = existing.Id,
-            Name = discoveredModel.ModelId,
-            Family = existing.Family,
-            ParameterSize = existing.ParameterSize,
-            Quantization = existing.Quantization,
-            Status = ModelStatus.Ready,
-            // Discovery fills unfilled fields; admin overrides always win.
-            ContextWindow = existing.ContextWindow != 0
-                ? existing.ContextWindow
-                : discoveredModel.ContextWindow,
-            ContainerImage = existing.ContainerImage,
-            SourceRuntimeId = registeredContainerId,
-            CreatedAt = existing.CreatedAt,
-            UpdatedAt = now
-        };
-        return await _modelRegistry.UpdateAsync(discoveredModel.ModelId, modelDef, ct).ConfigureAwait(false);
+            // Multiple models share this name — flag all as Conflict
+            foreach (var model in sameName)
+            {
+                if (model.Status != ModelStatus.Conflict)
+                {
+                    _logger.LogInformation(
+                        "Model name conflict detected: {Name} is served by multiple runtimes; marking {ModelId} as Conflict",
+                        modelName, model.Id);
+                    await _modelRegistry.UpdateAsync(model.Id,
+                        WithModelStatus(model, ModelStatus.Conflict), ct).ConfigureAwait(false);
+                }
+            }
+        }
+        else if (sameName.Count == 1 && sameName[0].Status == ModelStatus.Conflict)
+        {
+            // Only one model with this name and it was in Conflict — conflict resolved
+            _logger.LogInformation(
+                "Name conflict resolved for {Name} ({ModelId}); restoring to Ready",
+                modelName, sameName[0].Id);
+            await _modelRegistry.UpdateAsync(sameName[0].Id,
+                WithModelStatus(sameName[0], ModelStatus.Ready), ct).ConfigureAwait(false);
+        }
     }
 
     /// <summary>
@@ -946,7 +1012,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 if (controller is not RemoteAgentDockerController remoteController)
                     return await FailAsync(container, $"Agent '{container.Agent}' does not have a connected RemoteAgentDockerController", ct).ConfigureAwait(false);
 
-                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, ct).ConfigureAwait(false);
+                pid = await remoteController.StartScriptAsync(container.LauncherPath!, container.ContainerPort, container.Id, ct).ConfigureAwait(false);
             }
             else
             {
@@ -1344,6 +1410,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         ContextWindow = model.ContextWindow,
         ContainerImage = model.ContainerImage,
         SourceRuntimeId = model.SourceRuntimeId,
+        DisplayName = model.DisplayName,
         CreatedAt = model.CreatedAt,
         UpdatedAt = model.UpdatedAt
     };

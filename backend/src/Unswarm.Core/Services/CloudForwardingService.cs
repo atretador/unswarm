@@ -42,7 +42,8 @@ public sealed class CloudForwardingService : ICloudForwardingService
         string requestBody,
         string requestPath,
         bool isStreaming,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null)
     {
         var startTime = _clock.UtcNow;
 
@@ -189,6 +190,16 @@ public sealed class CloudForwardingService : ICloudForwardingService
                 Content = new StringContent(rewrittenBody, Encoding.UTF8, "application/json")
             };
             upstreamRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            // Forward client headers (excluding structural/security headers that
+            // are already set or recomputed: Authorization, Content-Type, Content-Length, Host).
+            if (forwardedHeaders is not null)
+            {
+                foreach (var (key, value) in forwardedHeaders)
+                {
+                    upstreamRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
 
             // ── 7. Send and relay response ──────────────────────────────
             var client = _httpClientFactory.CreateClient("cloud-provider");

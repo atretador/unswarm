@@ -70,13 +70,15 @@ public sealed class RouterProfileHandler
     /// <param name="isStreaming">Whether the client requested streaming.</param>
     /// <param name="conversationKey">Conversation affinity key.</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="forwardedHeaders">Optional headers to forward for routed requests.</param>
     public async Task<RouterResult> HandleAsync(
         string profileName,
         string rawBody,
         string requestPath,
         bool isStreaming,
         string? conversationKey,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null)
     {
         var resolved = await _routerProfile.ResolveAsync(profileName, ct);
         if (resolved is null || resolved.Value.Entries.Count == 0)
@@ -95,6 +97,13 @@ public sealed class RouterProfileHandler
         var entries = resolved.Value.Entries;
         var mode = resolved.Value.Mode;
         var maxAttempts = mode == RouterProfileMode.Manual ? 1 : entries.Count;
+
+        // ── Profile + conversation affinity ────────────────────────────────
+        // Combine the profile name with the caller's conversation key so that
+        // per-session serialization is preserved (different sessions get
+        // different keys) while the profile prefix keeps the key stable across
+        // model-fallback within the same session.
+        var effectiveKey = $"router:{profileName}:{conversationKey}";
 
         for (var i = 0; i < maxAttempts; i++)
         {
@@ -121,15 +130,34 @@ public sealed class RouterProfileHandler
 
                     if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
                     {
-                        (result, isRetryable) = await TryCloudModelAsync(modelId, rawBody, requestPath, isStreaming, ct);
+                        (result, isRetryable) = await TryCloudModelAsync(modelId, rawBody, requestPath, isStreaming, ct, forwardedHeaders);
                     }
                     else
                     {
-                        (result, isRetryable) = await TryLocalModelAsync(modelId, rawBody, isStreaming, conversationKey, ct);
+                        (result, isRetryable) = await TryLocalModelAsync(modelId, rawBody, isStreaming, effectiveKey, ct, forwardedHeaders);
                     }
 
                     if (result is not null)
+                    {
+                        // ── Persist active model on success ────────────────
+                        // Record which model served this profile so future
+                        // requests start there (warm container, no switch).
+                        if (i > 0)
+                        {
+                            try
+                            {
+                                await _routerProfile.SetActiveModelIdAsync(profileName, modelId, ct);
+                                _logStore.Enqueue(LogLevel.Info, "router",
+                                    $"Profile '{profileName}' active model set to '{modelId}' after fallback");
+                            }
+                            catch (Exception ex)
+                            {
+                                _logStore.Enqueue(LogLevel.Warn, "router",
+                                    $"Failed to persist active model for profile '{profileName}': {ex.Message}");
+                            }
+                        }
                         return result;
+                    }
 
                     lastWasRetryable = isRetryable;
 
@@ -179,9 +207,9 @@ public sealed class RouterProfileHandler
     }
 
     private async Task<(RouterResult? Result, bool IsRetryable)> TryCloudModelAsync(
-        string modelId, string rawBody, string requestPath, bool isStreaming, CancellationToken ct)
+        string modelId, string rawBody, string requestPath, bool isStreaming, CancellationToken ct, Dictionary<string, string>? forwardedHeaders = null)
     {
-        var response = await _cloudForwarding.ForwardAsync(modelId, rawBody, requestPath, isStreaming, ct);
+        var response = await _cloudForwarding.ForwardAsync(modelId, rawBody, requestPath, isStreaming, ct, forwardedHeaders);
 
         if (response.StatusCode >= 400)
         {
@@ -207,7 +235,7 @@ public sealed class RouterProfileHandler
     }
 
     private async Task<(RouterResult? Result, bool IsRetryable)> TryLocalModelAsync(
-        string modelId, string rawBody, bool isStreaming, string? conversationKey, CancellationToken ct)
+        string modelId, string rawBody, bool isStreaming, string? conversationKey, CancellationToken ct, Dictionary<string, string>? forwardedHeaders = null)
     {
         var request = new InferenceRequest
         {
@@ -220,7 +248,8 @@ public sealed class RouterProfileHandler
             Tcs = new TaskCompletionSource<InferenceResponse>(
                 TaskCreationOptions.RunContinuationsAsynchronously),
             CancellationToken = ct,
-            ConversationKey = conversationKey
+            ConversationKey = conversationKey,
+            ForwardedHeaders = forwardedHeaders
         };
 
         var response = await _scheduler.EnqueueAsync(request, ct);

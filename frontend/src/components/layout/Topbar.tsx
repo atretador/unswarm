@@ -6,6 +6,7 @@ import { StatusDot } from "../ui/StatusDot";
 import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
 import { useAuth } from "../../lib/auth-context";
+import { useModelConflicts } from "../../lib/use-model-conflicts";
 
 export interface TopbarProps {
   title: string;
@@ -192,6 +193,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const hasConflicts = useModelConflicts();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -301,6 +303,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
               to === "/"
                 ? location.pathname === "/"
                 : location.pathname.startsWith(to);
+            const showConflictDot = to === "/models" && hasConflicts;
 
             return (
               <NavLink
@@ -319,6 +322,9 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
               >
                 <Icon className="size-4 shrink-0" />
                 {label}
+                {showConflictDot && (
+                  <span className="ml-auto size-2 rounded-full bg-red-500 shrink-0" />
+                )}
               </NavLink>
             );
           })}

@@ -1,6 +1,6 @@
 // ─── Model Registry ───────────────────────────────────────────────
 
-export type ModelStatus = "ready" | "validating" | "invalid" | "deprecated";
+export type ModelStatus = "ready" | "validating" | "invalid" | "deprecated" | "conflict";
 
 export type BenchmarkStatus = "completed" | "error";
 
@@ -58,6 +58,8 @@ export interface Model {
   origin?: string;
   /** Provider name for cloud models (e.g. "openai"). Null for swarm models. */
   providerName?: string | null;
+  /** User-editable display name (filename portion of name). Falls back to name. */
+  displayName?: string | null;
 }
 
 // ─── Container Registration ───────────────────────────────────────
@@ -80,6 +82,7 @@ export interface RegisterRuntimePayload {
   extraLabels?: Record<string, string>;
   runtimeKind?: 'container' | 'script';
   launcherPath?: string;
+  maxConcurrentInferences?: number;
 }
 
 /** Full-replacement payload for updating a runtime's concurrency list. */
@@ -167,6 +170,7 @@ export interface AgentContainerStatus {
 
 export interface AgentScriptStatus {
   path: string;
+  registrationId?: string;
   pid: number;
   status: string; // "running" | "stopped"
   port: number;

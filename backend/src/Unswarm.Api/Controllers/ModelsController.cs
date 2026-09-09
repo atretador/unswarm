@@ -170,11 +170,70 @@ public sealed class ModelsController : ControllerBase
             Status = request.Status ?? existing.Status,
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
+            DisplayName = request.DisplayName ?? existing.DisplayName,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = existing.UpdatedAt
         };
 
         var result = await _registry.UpdateAsync(existing.Id, updated, ct);
+
+        // If the name changed, check for conflicts with the new name.
+        // A renamed model that was in Conflict may now be unique and should be Ready.
+        var newName = result.Name;
+        var allModels = await _registry.ListAllAsync(ct).ConfigureAwait(false);
+        var sameName = allModels.Where(m => m.Name == newName).ToList();
+
+        if (sameName.Count > 1)
+        {
+            // Multiple models share this name — flag all as Conflict
+            foreach (var model in sameName)
+            {
+                if (model.Status != ModelStatus.Conflict)
+                {
+                    await _registry.UpdateAsync(model.Id,
+                        new ModelDefinition
+                        {
+                            Id = model.Id,
+                            Name = model.Name,
+                            Family = model.Family,
+                            ParameterSize = model.ParameterSize,
+                            Quantization = model.Quantization,
+                            Status = ModelStatus.Conflict,
+                            ContextWindow = model.ContextWindow,
+                            ContainerImage = model.ContainerImage,
+                            SourceRuntimeId = model.SourceRuntimeId,
+                            DisplayName = model.DisplayName,
+                            CreatedAt = model.CreatedAt,
+                            UpdatedAt = _clock.UtcNow
+                        }, ct).ConfigureAwait(false);
+                }
+            }
+            // Re-read to reflect Conflict status
+            result = await _registry.GetAsync(existing.Id, ct).ConfigureAwait(false) ?? result;
+        }
+        else if (sameName.Count == 1 && sameName[0].Status == ModelStatus.Conflict)
+        {
+            // Only one model with this name and it was in Conflict — conflict resolved
+            await _registry.UpdateAsync(sameName[0].Id,
+                new ModelDefinition
+                {
+                    Id = sameName[0].Id,
+                    Name = sameName[0].Name,
+                    Family = sameName[0].Family,
+                    ParameterSize = sameName[0].ParameterSize,
+                    Quantization = sameName[0].Quantization,
+                    Status = ModelStatus.Ready,
+                    ContextWindow = sameName[0].ContextWindow,
+                    ContainerImage = sameName[0].ContainerImage,
+                    SourceRuntimeId = sameName[0].SourceRuntimeId,
+                    DisplayName = sameName[0].DisplayName,
+                    CreatedAt = sameName[0].CreatedAt,
+                    UpdatedAt = _clock.UtcNow
+                }, ct).ConfigureAwait(false);
+            // Re-read to reflect Ready status
+            result = await _registry.GetAsync(existing.Id, ct).ConfigureAwait(false) ?? result;
+        }
+
         return Ok(ModelResponse.FromDefinition(result));
     }
 
@@ -392,7 +451,7 @@ public sealed class ModelsController : ControllerBase
     private void WriteInferenceHeaders(int statusCode, string contentType, bool isStream)
     {
         Response.StatusCode = statusCode;
-        Response.ContentType = contentType;
+        Response.ContentType = isStream ? "text/event-stream" : contentType;
         if (isStream)
         {
             Response.Headers["Cache-Control"] = "no-cache";

@@ -49,6 +49,7 @@ public sealed class ApiKeyControllerTests
         public Task RemoveModelMappingAsync(string registeredContainerId, string modelId, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<string>> GetModelIdsForContainerAsync(string registeredContainerId, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<string?> GetContainerIdForModelAsync(string modelName, CancellationToken ct = default) => Task.FromResult<string?>(null);
+        public Task<IReadOnlyList<string>> GetAllContainerIdsForModelAsync(string modelName) => Task.FromResult<IReadOnlyList<string>>([]);
         public Task<(RegisteredRuntime A, RegisteredRuntime B)?> UpdateConcurrencyPairAsync(string idA, IReadOnlyList<string> newCanRunAlongWithA, string idB, IReadOnlyList<string> newCanRunAlongWithB, CancellationToken ct = default) => Task.FromResult<(RegisteredRuntime A, RegisteredRuntime B)?>(null);
     }
 

@@ -2,17 +2,20 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Unswarm.Core.Persistence;
 
 #nullable disable
 
-namespace Unswarm.Core.Migrations
+namespace Unswarm.Core.Persistence.Migrations
 {
     [DbContext(typeof(UnswarmDbContext))]
-    partial class UnswarmDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260909031812_MigrateModelIdsToComposite")]
+    partial class MigrateModelIdsToComposite
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -452,10 +455,6 @@ namespace Unswarm.Core.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("DisplayName")
-                        .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Family")

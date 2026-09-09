@@ -226,11 +226,12 @@ func runSession(
 		if scriptMgr != nil && scriptMgr.IsEnabled() {
 			for _, s := range scriptMgr.GetStatuses() {
 				payload.Scripts = append(payload.Scripts, protocol.ScriptTelemetry{
-					Path:      s.Path,
-					PID:       s.PID,
-					Status:    s.Status,
-					Port:      s.Port,
-					StartTime: s.StartTime,
+					Path:           s.Path,
+					PID:            s.PID,
+					Status:         s.Status,
+					Port:           s.Port,
+					RegistrationId: s.RegistrationId,
+					StartTime:      s.StartTime,
 				})
 			}
 		}
@@ -526,7 +527,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("listing containers")
 		ctx, cancel := commandContext()
 		defer cancel()
-		return gate.FilterListResult(protocol.CmdListContainers, dh.ListContainers(ctx))
+		return dh.ListContainers(ctx)
 	})
 
 	// get_container_logs
@@ -590,7 +591,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
 		}
-		pid, err := scriptMgr.StartScript(p.ScriptPath, p.ScriptPort)
+		pid, err := scriptMgr.StartScript(p.ScriptPath, p.ScriptPort, p.RegistrationId)
 		if err != nil {
 			return errorResult(err.Error())
 		}

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -376,6 +377,7 @@ builder.Services.AddHostedService<SchedulerHostedService>();
 builder.Services.AddHostedService<IdleShutdownService>();
 builder.Services.AddHostedService<LogRetentionService>();
 builder.Services.AddHostedService<ContainerLogProbe>();
+builder.Services.AddHostedService<StuckStateRecoveryService>();
 
 // ── Global exception handling ─────────────────────────────────────────────
 // Unhandled exceptions become RFC7807 ProblemDetails instead of an empty 500.
@@ -425,9 +427,14 @@ builder.Services.AddRateLimiter(options =>
                 });
         }
 
-        // Management endpoints: standard per-IP rate limit
+        // Management endpoints: per-user when authenticated, per-IP otherwise.
+        // An authenticated user browsing the dashboard should never trip the same
+        // shared-IP bucket as unauthenticated callers.
+        var mgmtKey = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } uid
+            ? $"user:{uid}"
+            : $"ip:{context.Connection.RemoteIpAddress}";
         return RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: $"ip:{context.Connection.RemoteIpAddress}",
+            partitionKey: mgmtKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 60,

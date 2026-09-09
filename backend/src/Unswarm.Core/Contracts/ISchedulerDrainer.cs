@@ -60,6 +60,20 @@ public interface ISchedulerDrainer
     Task<IdleStopResult> StopIdleRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct);
 
     /// <summary>
+    /// Force-stops a runtime: cancels all in-flight requests on its lanes via the
+    /// <c>ForceStopCts</c>, waits briefly for them to complete, then stops the
+    /// serving container/script and clears lane residency. Unlike
+    /// <see cref="StopIdleRuntimeAsync"/>, this does NOT refuse when the runtime
+    /// is busy — it terminates immediately.
+    /// </summary>
+    /// <param name="runtimeId">Registered runtime id.</param>
+    /// <param name="containerId">
+    /// The live docker container id (or <c>"script:..."</c>) serving the runtime;
+    /// may be null if the runtime is not tracked in RunningContainers.
+    /// </param>
+    Task ForceStopRuntimeAsync(string runtimeId, string? containerId, CancellationToken ct);
+
+    /// <summary>
     /// Drops all scheduler-side per-runtime bookkeeping for a DELETED runtime
     /// (activity anchors, cached runtime entities). Prevents unbounded growth of
     /// internal caches when runtimes are repeatedly registered and removed.

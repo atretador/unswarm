@@ -128,15 +128,25 @@ function runtimeStatusFor(
   return match?.status ?? null;
 }
 
-/** Find the runtime telemetry status for a registered script on its agent (matched by path). */
+/** Find the runtime telemetry status for a registered script on its agent. */
 function runtimeStatusForScript(
   agentScripts: AgentScriptStatus[],
   rc: RegisteredRuntime,
 ): string | null {
+  // Primary match: registrationId (stable, set by backend when starting script)
+  if (rc.id) {
+    const byId = agentScripts.find((s) => s.registrationId === rc.id);
+    if (byId) return byId.status;
+  }
+  // Fallback: match by port (script runtimes have a unique port)
+  if (rc.mappedPort) {
+    const byPort = agentScripts.find((s) => s.port === rc.mappedPort);
+    if (byPort) return byPort.status;
+  }
+  // Last resort: path matching (original behavior, for backward compat)
   const path = rc.launcherPath?.toLowerCase();
   if (!path) return null;
-  const match = agentScripts.find((s) => s.path.toLowerCase() === path);
-  return match?.status ?? null;
+  return agentScripts.find((s) => s.path.toLowerCase() === path)?.status ?? null;
 }
 
 // ─── Formatting helpers ───────────────────────────────────────────
@@ -232,7 +242,7 @@ function displayNameFromContainer(c: Container): string {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 32) || "container"
+      || "container"
   );
 }
 
@@ -714,6 +724,7 @@ function ManageContainersBody({
   const [displayName, setDisplayName] = useState("");
   const [port, setPort] = useState("8080");
   const [mappedPort, setMappedPort] = useState("");
+  const [maxConcurrentInferences, setMaxConcurrentInferences] = useState(1);
 
   const { data: containers, isLoading, error } = useQuery({
     queryKey: ["agent-containers", agentName],
@@ -722,13 +733,14 @@ function ManageContainersBody({
   });
 
   const registerMutation = useMutation({
-    mutationFn: (payload: { displayName: string; image: string; port: number; mappedPort?: number }) =>
+    mutationFn: (payload: { displayName: string; image: string; port: number; mappedPort?: number; maxConcurrentInferences?: number }) =>
       client.registerRuntime({
         displayName: payload.displayName,
         image: payload.image,
         containerPort: payload.port,
         mappedPort: payload.mappedPort,
         agent: agentName,
+        maxConcurrentInferences: payload.maxConcurrentInferences,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["registered-containers"] });
@@ -775,6 +787,7 @@ function ManageContainersBody({
       image: selected.modelName || selected.id,
       port: parseInt(port, 10) || 8080,
       ...(mp > 0 ? { mappedPort: mp } : {}),
+      maxConcurrentInferences: maxConcurrentInferences,
     });
   };
 
@@ -1021,6 +1034,20 @@ function ManageContainersBody({
                 <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
                   Host port exposed by Docker. Leave empty to auto-resolve via Docker inspect.
                 </p>
+                <Input
+                  label="Parallel Lanes"
+                  type="number"
+                  value={String(maxConcurrentInferences)}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    if (!isNaN(v)) setMaxConcurrentInferences(Math.max(1, Math.min(128, v)));
+                  }}
+                  placeholder="1"
+                  aria-label="Parallel Lanes"
+                />
+                <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
+                  Max concurrent inferences this runtime can handle in parallel.
+                </p>
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
@@ -1079,6 +1106,7 @@ function ManageScriptsBody({
 
 function ModelChip({ model }: { model: Model }) {
   const validating = model.status === "validating";
+  const conflicted = model.status === "conflict";
   return (
     <Tooltip
       content={
@@ -1088,7 +1116,9 @@ function ModelChip({ model }: { model: Model }) {
             ? "Invalid — cannot be served"
             : model.status === "deprecated"
               ? "Deprecated — legacy model"
-              : "Ready for inference"
+              : conflicted
+                ? "Name conflicts with another model — rename to resolve"
+                : "Ready for inference"
       }
     >
       <span
@@ -1098,7 +1128,7 @@ function ModelChip({ model }: { model: Model }) {
           ${
             validating
               ? "border-[color-mix(in_srgb,var(--color-status-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-warning)_12%,transparent)] text-[var(--color-status-warning)]"
-              : model.status === "invalid"
+              : model.status === "invalid" || conflicted
                 ? "border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] text-[var(--color-status-error)]"
                 : model.status === "deprecated"
                   ? "border-[var(--color-border)] bg-[var(--color-bg-muted)] text-[var(--color-text-muted)]"
@@ -1107,7 +1137,10 @@ function ModelChip({ model }: { model: Model }) {
         `}
       >
         <StatusDot status={model.status} size="sm" />
-        <span className="truncate">{model.name}</span>
+        {model.sourceRuntimeName && (
+          <span className="opacity-60">{model.sourceRuntimeName} /</span>
+        )}
+        <span className="truncate">{model.displayName || model.name}</span>
         {model.status !== "ready" && (
           <span className="uppercase tracking-wide opacity-80">
             {validating ? "validating…" : model.status}
@@ -1239,8 +1272,21 @@ function RegisteredContainerCard({
   const firstModel = container.discoveredModels[0];
   const canBenchmark = !!firstModel && firstModel.status === "ready";
   const transitional = REG_TRANSITIONAL.has(container.status);
-  const signal = runtimeSignal(runtimeStatus);
+  // For scripts, the backend DB status is the authoritative lifecycle signal.
+  // Agent telemetry is polled every 30s and may be stale during startup/shutdown.
   const isScript = container.runtimeKind === "script";
+  const signal = isScript
+    ? (() => {
+        const backendStatus = (container.status ?? "").toLowerCase();
+        if (backendStatus === "starting") return "transitional" as RuntimeSignal;
+        if (backendStatus === "error") return "down" as RuntimeSignal;
+        if (backendStatus === "registered") return "down" as RuntimeSignal;
+        // For "ready": prefer agent telemetry when available, fallback to "running"
+        const ts = runtimeSignal(runtimeStatus);
+        if (ts === "running" || ts === "down") return ts;
+        return "running" as RuntimeSignal;
+      })()
+    : runtimeSignal(runtimeStatus);
   const busy =
     startMutation.isPending ||
     stopMutation.isPending ||
@@ -1461,9 +1507,22 @@ function RegisteredContainerCard({
                 Start
               </Button>
             ) : signal === "transitional" ? (
-              <span className="text-[10px] italic text-[var(--color-text-muted)]">
-                {RUNTIME_LABEL[signal]}
-              </span>
+              <>
+                <span className="text-[10px] italic text-[var(--color-text-muted)]">
+                  {RUNTIME_LABEL[signal]}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  loading={stopScriptMutation.isPending}
+                  onClick={() => stopScriptMutation.mutate(container.id)}
+                  title="Stop script (stuck in Starting)"
+                >
+                  <Square className="size-3" />
+                  Stop
+                </Button>
+              </>
             ) : null
           ) : signal === "running" ? (
             <>
@@ -1511,7 +1570,7 @@ function RegisteredContainerCard({
               {RUNTIME_LABEL[signal]}
             </span>
           )}
-          {(container.status === "error" || container.status === "starting" || container.status === "registered") && (
+          {signal !== "down" && signal !== "unknown" && (
             <Button
               variant="ghost"
               size="sm"
@@ -1591,6 +1650,7 @@ function benchDisabledTooltip(firstModel: Model | undefined): string {
   if (firstModel.status === "validating") return `${firstModel.name} is still validating — not ready to benchmark`;
   if (firstModel.status === "invalid") return `${firstModel.name} is invalid — cannot benchmark`;
   if (firstModel.status === "deprecated") return `${firstModel.name} is deprecated — cannot benchmark`;
+  if (firstModel.status === "conflict") return `${firstModel.name} has a name conflict — rename to resolve`;
   return `${firstModel.name} is not ready to benchmark`;
 }
 

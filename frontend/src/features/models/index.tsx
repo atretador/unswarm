@@ -41,6 +41,7 @@ const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" 
   validating: "warning",
   invalid: "error",
   deprecated: "default",
+  conflict: "error",
 };
 
 const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
@@ -48,6 +49,7 @@ const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
   validating: "validating…",
   invalid: "invalid",
   deprecated: "deprecated",
+  conflict: "conflict",
 };
 
 function formatTokensPerSec(v: number): string {
@@ -84,9 +86,10 @@ function formatRelativeTime(iso: string): string {
 
 function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model) => void }) {
   const invalid = model.status === "invalid";
+  const conflicted = model.status === "conflict";
   return (
     <Tooltip
-      content={invalid ? "Model invalid — fix registration first" : `Test chat with ${model.name}`}
+      content={invalid ? "Model invalid — fix registration first" : conflicted ? "Model name conflicts with another model — rename to resolve" : `Test chat with ${model.name}`}
     >
       <button
         type="button"
@@ -137,6 +140,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   // Edit state
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [editDisplayName, setEditDisplayName] = useState("");
   const [editFamily, setEditFamily] = useState("");
   const [editParamSize, setEditParamSize] = useState("");
   const [editQuant, setEditQuant] = useState("");
@@ -144,7 +148,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { name: string; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
       client.updateModel(model.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -155,6 +159,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
 
   const handleEdit = () => {
     setEditName(model.name);
+    setEditDisplayName(model.displayName ?? "");
     setEditFamily(model.family ?? "");
     setEditParamSize(model.parameterSize ?? "");
     setEditQuant(model.quantization ?? "");
@@ -164,10 +169,6 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   };
 
   const handleSaveEdit = () => {
-    if (!editName.trim()) {
-      setEditError("Model name is required.");
-      return;
-    }
     const ctxWindow = editCtxWindow ? parseInt(editCtxWindow, 10) : 0;
     if (editCtxWindow && (isNaN(ctxWindow) || ctxWindow <= 0 || ctxWindow > 10_000_000)) {
       setEditError("Context window must be a positive number up to 10M");
@@ -175,7 +176,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     }
     setEditError(null);
     updateMutation.mutate({
-      name: editName.trim(),
+      displayName: editDisplayName.trim() || null,
       family: editFamily.trim(),
       parameterSize: editParamSize.trim(),
       quantization: editQuant.trim(),
@@ -215,7 +216,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <StatusDot status={model.status} size="sm" />
           <div className="min-w-0">
             <p className="truncate font-mono text-xs font-medium text-[var(--color-text-heading)]">
-              {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
+              {formatModelName(model.name, model.sourceRuntimeAgent ?? "local", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {}, undefined, model.displayName)}
             </p>
             <p className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
               {[
@@ -229,6 +230,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
             {MODEL_STATUS_LABEL[model.status]}
           </Badge>
+          {model.status === "conflict" && (
+            <span className="text-[10px] text-[var(--color-status-error)] leading-tight">
+              Name conflicts with another model — rename to resolve
+            </span>
+          )}
         </div>
 
         {/* Last benchmark */}
@@ -327,19 +333,22 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
         <div className="p-5 space-y-4">
           {model.sourceRuntimeAgent && (
             <p className="text-xs text-[var(--color-text-muted)] mb-1">
-              managed/{model.sourceRuntimeAgent}/
+              {model.sourceRuntimeName
+                ? `${model.sourceRuntimeName} / managed/${model.sourceRuntimeAgent}/`
+                : `managed/${model.sourceRuntimeAgent}/`}
             </p>
           )}
           <Input
-            label="Model Name"
+            label="Display Name"
+            value={editDisplayName}
+            onChange={(e) => setEditDisplayName(e.target.value)}
+            placeholder="Filename shown in UI (auto-filled from model name)"
+          />
+          <Input
+            label="Internal Name"
             value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            placeholder="e.g. llama-3.1-8b"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveEdit();
-              if (e.key === "Escape") setEditing(false);
-            }}
+            readOnly
+            className="opacity-60 cursor-not-allowed"
           />
           <div className="grid grid-cols-2 gap-3">
             <Input

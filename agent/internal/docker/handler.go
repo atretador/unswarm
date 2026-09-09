@@ -122,6 +122,7 @@ func (h *Handler) ListContainers(ctx context.Context) protocol.CommandResultPayl
 
 	// Fall back to all containers when no unswarm-labeled containers exist.
 	if len(containers) == 0 {
+		opts.All = true
 		opts.Filters = filters.NewArgs()
 		containers, err = h.client.ContainerList(ctx, opts)
 		if err != nil {
@@ -131,13 +132,17 @@ func (h *Handler) ListContainers(ctx context.Context) protocol.CommandResultPayl
 
 	result := make([]map[string]interface{}, 0, len(containers))
 	for _, c := range containers {
+		name := firstContainerName(c.Names)
 		result = append(result, map[string]interface{}{
-			"id":     shortID(c.ID),
-			"name":   firstContainerName(c.Names),
-			"image":  c.Image,
-			"status": c.Status,
-			"state":  c.State,
-			"ports":  formatPorts(c.Ports),
+			"id":        shortID(c.ID),
+			"name":      name,
+			"image":     c.Image,
+			"modelName": name,
+			"modelId":   shortID(c.ID),
+			"status":    c.State,
+			"state":     c.Status,
+			"port":      firstPort(c.Ports),
+			"ports":     formatPorts(c.Ports),
 		})
 	}
 	return okResult(map[string]interface{}{"containers": result})
@@ -300,6 +305,16 @@ func firstPublicPort(ports []types.Port) int {
 	}
 	if len(ports) > 0 {
 		return int(ports[0].PrivatePort)
+	}
+	return 0
+}
+
+// firstPort returns the first mapped host port, or 0 if none.
+func firstPort(ports []types.Port) int {
+	for _, p := range ports {
+		if p.PublicPort > 0 {
+			return int(p.PublicPort)
+		}
 	}
 	return 0
 }

@@ -302,8 +302,10 @@ public sealed class AgentController : ControllerBase
                     break;
 
                 case "command_result":
+                case "command_chunk":
                     // Route to the agent's RemoteAgentDockerController so pending
-                    // commands can be correlated and completed.
+                    // commands can be correlated and completed, and streaming
+                    // chunks can be delivered to TunnelStreamOperation channels.
                     _router?.HandleIncomingMessage(agentName, msg);
                     break;
 
@@ -468,9 +470,14 @@ public sealed class AgentController : ControllerBase
                 ? stVal
                 : 0;
 
+            string? registrationId = element.TryGetProperty("registrationId", out var regIdProp) && regIdProp.ValueKind == JsonValueKind.String
+                ? regIdProp.GetString()
+                : null;
+
             result.Add(new AgentScriptStatus
             {
                 Path = path,
+                RegistrationId = registrationId,
                 PID = pid,
                 Status = status,
                 Port = port,

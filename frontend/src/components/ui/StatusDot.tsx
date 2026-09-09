@@ -1,5 +1,5 @@
 export interface StatusDotProps {
-  status: "running" | "starting" | "stopped" | "created" | "restarting" | "dead" | "error" | "ready" | "validating" | "invalid" | "deprecated" | "waiting" | "processing" | "registered" | "healthy" | "discovering" | "connected" | "stale" | "disconnected";
+  status: "running" | "starting" | "stopped" | "created" | "restarting" | "dead" | "error" | "ready" | "validating" | "invalid" | "deprecated" | "conflict" | "waiting" | "processing" | "registered" | "healthy" | "discovering" | "connected" | "stale" | "disconnected";
   size?: "sm" | "md";
 }
 
@@ -15,6 +15,7 @@ const STATUS_COLOR: Record<string, string> = {
   validating: "bg-[var(--color-status-starting)]",
   invalid: "bg-[var(--color-status-error)]",
   deprecated: "bg-[var(--color-status-stopped)]",
+  conflict: "bg-[var(--color-status-error)]",
   waiting: "bg-[var(--color-status-warning)]",
   processing: "bg-[var(--color-status-running)]",
   registered: "bg-[var(--color-status-starting)]",

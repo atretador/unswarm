@@ -453,15 +453,17 @@ public sealed class AgentsControllerTests
     // ── ListAvailableScripts endpoint tests ────────────────────────
 
     [Fact]
-    public async Task ListAvailableScripts_Host_ReturnsBadRequest()
+    public async Task ListAvailableScripts_Host_ReturnsOkWithScripts()
     {
         var result = await CreateController().ListAvailableScripts("host", CancellationToken.None);
 
-        var bad = Assert.IsType<BadRequestObjectResult>(result);
-        var error = bad.Value!;
-        var errorProp = error.GetType().GetProperty("error");
-        Assert.NotNull(errorProp);
-        Assert.Contains("Host scripts", (string)errorProp!.GetValue(error)!);
+        // In non-Docker mode, host scripts are listed from the configured directory.
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(ok.Value);
+        // The value is a list of script infos from the host scripts directory.
+        // Verify it's an empty collection.
+        var scripts = Assert.IsAssignableFrom<IEnumerable<object>>(ok.Value);
+        Assert.Empty(scripts);
     }
 
     [Fact]

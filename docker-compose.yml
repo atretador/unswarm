@@ -57,6 +57,7 @@ services:
     restart: unless-stopped
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./agent/agent.yaml:/agent.yaml:ro
     group_add:
       - "${DOCKER_GID:-999}"   # GID of the host's docker.socket group; set DOCKER_GID in .env
     environment:

@@ -19,7 +19,8 @@ public sealed class ModelTargetResolver : IModelTargetResolver
 
     public async Task<string> ResolveTargetAsync(string modelName, CancellationToken ct = default)
     {
-        var registeredContainerId = await _registry.GetContainerIdForModelAsync(modelName, ct).ConfigureAwait(false);
+        var allRuntimeIds = await _registry.GetAllContainerIdsForModelAsync(modelName).ConfigureAwait(false);
+        var registeredContainerId = allRuntimeIds.Count > 0 ? allRuntimeIds[0] : null;
         if (registeredContainerId is null)
             return ExecutionTarget.HostId;
 

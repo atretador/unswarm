@@ -229,6 +229,7 @@ public sealed class AgentsController : ControllerBase
             result.Add(new AgentScriptStatus
             {
                 Path = script.LauncherPath ?? script.Image,
+                RegistrationId = script.Id,
                 PID = pid ?? 0,
                 Status = status,
                 Port = script.MappedPort ?? script.ContainerPort,

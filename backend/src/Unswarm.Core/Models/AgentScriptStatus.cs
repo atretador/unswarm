@@ -7,6 +7,7 @@ namespace Unswarm.Core.Models;
 public sealed class AgentScriptStatus
 {
     public required string Path { get; init; }
+    public string? RegistrationId { get; init; }
     public int PID { get; init; }
     public required string Status { get; init; } // "running" | "stopped"
     public int Port { get; init; }

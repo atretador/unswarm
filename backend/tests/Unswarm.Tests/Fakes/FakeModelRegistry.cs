@@ -19,6 +19,12 @@ public sealed class FakeModelRegistry : IModelRegistry
         return Task.FromResult(model);
     }
 
+    public Task<ModelDefinition?> GetByNameAsync(string name, CancellationToken ct = default)
+    {
+        var model = _models.Values.FirstOrDefault(m => m.Name == name);
+        return Task.FromResult(model);
+    }
+
     public Task<ModelDefinition> CreateAsync(ModelDefinition definition, CancellationToken ct = default)
     {
         _models[definition.Id] = definition;

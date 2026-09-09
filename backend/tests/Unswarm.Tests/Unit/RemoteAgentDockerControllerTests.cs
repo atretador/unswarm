@@ -363,7 +363,9 @@ public sealed class RemoteAgentDockerControllerTests
         Assert.True(_registry.SentMessages.TryDequeue(out var sent));
         Assert.Equal("chat_completion", sent.Payload!.Value.GetProperty("command").GetString());
         Assert.Equal(8080, sent.Payload.Value.GetProperty("port").GetInt32());
-        Assert.Equal(body, sent.Payload.Value.GetProperty("json").GetString());
+        // json is inlined as a raw JsonElement (not a string) since the request
+        // body is parsed into JsonDocument and embedded directly.
+        Assert.Equal(body, sent.Payload.Value.GetProperty("json").GetRawText());
     }
 
     [Fact]
@@ -498,13 +500,14 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        var pid = await controller.StartScriptAsync("/opt/scripts/model-a.sh", 9000);
+        var pid = await controller.StartScriptAsync("/opt/scripts/model-a.sh", 9000, "test-reg-1");
 
         Assert.Equal(12345, pid);
         Assert.True(_registry.SentMessages.TryDequeue(out var sent));
         Assert.Equal("start_script", sent.Payload!.Value.GetProperty("command").GetString());
         Assert.Equal("/opt/scripts/model-a.sh", sent.Payload!.Value.GetProperty("scriptPath").GetString());
         Assert.Equal(9000, sent.Payload!.Value.GetProperty("scriptPort").GetInt32());
+        Assert.Equal("test-reg-1", sent.Payload!.Value.GetProperty("registrationId").GetString());
     }
 
     [Fact]
@@ -518,8 +521,8 @@ public sealed class RemoteAgentDockerControllerTests
             return Task.FromResult<AgentMessage?>(null);
         };
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => controller.StartScriptAsync("/etc/passwd", 9000));
+        var ex = await Assert.ThrowsAsync<AgentCommandException>(
+            () => controller.StartScriptAsync("/etc/passwd", 9000, "test-reg-2"));
         Assert.Contains("path outside scripts_dir", ex.Message);
     }
 
