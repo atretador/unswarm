@@ -1494,9 +1494,22 @@ function RegisteredContainerCard({
                 Start
               </Button>
             ) : signal === "transitional" ? (
-              <span className="text-[10px] italic text-[var(--color-text-muted)]">
-                {RUNTIME_LABEL[signal]}
-              </span>
+              <>
+                <span className="text-[10px] italic text-[var(--color-text-muted)]">
+                  {RUNTIME_LABEL[signal]}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  loading={stopScriptMutation.isPending}
+                  onClick={() => stopScriptMutation.mutate(container.id)}
+                  title="Stop script (stuck in Starting)"
+                >
+                  <Square className="size-3" />
+                  Stop
+                </Button>
+              </>
             ) : null
           ) : signal === "running" ? (
             <>

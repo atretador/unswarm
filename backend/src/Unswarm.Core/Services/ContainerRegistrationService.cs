@@ -744,7 +744,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     /// </summary>
     private async Task WaitForRemoteHealthAsync(IRemoteDockerController remote, int mappedPort, string agentName, CancellationToken ct)
     {
-        var deadline = DateTime.UtcNow + _remoteHealthTimeout;
+        var settings = await _settings.GetAsync(ct).ConfigureAwait(false);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(settings.HealthCheckTimeoutSeconds);
 
         // Cold-container grace period before the first probe.
         await Task.Delay(_remoteHealthPollInterval, ct).ConfigureAwait(false);

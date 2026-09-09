@@ -376,6 +376,7 @@ builder.Services.AddHostedService<SchedulerHostedService>();
 builder.Services.AddHostedService<IdleShutdownService>();
 builder.Services.AddHostedService<LogRetentionService>();
 builder.Services.AddHostedService<ContainerLogProbe>();
+builder.Services.AddHostedService<StuckStateRecoveryService>();
 
 // ── Global exception handling ─────────────────────────────────────────────
 // Unhandled exceptions become RFC7807 ProblemDetails instead of an empty 500.

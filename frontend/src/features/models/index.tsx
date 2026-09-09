@@ -148,7 +148,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { name: string; displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
       client.updateModel(model.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -169,10 +169,6 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   };
 
   const handleSaveEdit = () => {
-    if (!editName.trim()) {
-      setEditError("Model name is required.");
-      return;
-    }
     const ctxWindow = editCtxWindow ? parseInt(editCtxWindow, 10) : 0;
     if (editCtxWindow && (isNaN(ctxWindow) || ctxWindow <= 0 || ctxWindow > 10_000_000)) {
       setEditError("Context window must be a positive number up to 10M");
@@ -180,7 +176,6 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     }
     setEditError(null);
     updateMutation.mutate({
-      name: editName.trim(),
       displayName: editDisplayName.trim() || null,
       family: editFamily.trim(),
       parameterSize: editParamSize.trim(),
@@ -352,13 +347,8 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <Input
             label="Internal Name"
             value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            placeholder="e.g. llama-3.1-8b"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSaveEdit();
-              if (e.key === "Escape") setEditing(false);
-            }}
+            readOnly
+            className="opacity-60 cursor-not-allowed"
           />
           <div className="grid grid-cols-2 gap-3">
             <Input

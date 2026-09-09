@@ -353,7 +353,9 @@ func (m *Manager) StopScript(pid int) error {
 	if found == "" {
 		return fmt.Errorf("no tracked script with pid %d", pid)
 	}
-	return m.stopAndClean(found, proc)
+	m.signalAndWait(proc)
+	m.cleanupAndDelete(found, proc)
+	return nil
 }
 
 // StopScriptByPath stops a script by its resolved path.
@@ -361,6 +363,11 @@ func (m *Manager) StopScriptByPath(path string) error {
 	resolved, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {
 		return fmt.Errorf("resolve path: %w", err)
+	}
+	// Resolve symlinks to match the key in the processes map, which is
+	// keyed by the fully-resolved path from StartScript.
+	if realPath, err := filepath.EvalSymlinks(resolved); err == nil {
+		resolved = realPath
 	}
 
 	m.mu.Lock()
@@ -370,7 +377,9 @@ func (m *Manager) StopScriptByPath(path string) error {
 	if !ok {
 		return fmt.Errorf("no tracked script at %q", resolved)
 	}
-	return m.stopAndClean(resolved, proc)
+	m.signalAndWait(proc)
+	m.cleanupAndDelete(resolved, proc)
+	return nil
 }
 
 const (
@@ -473,8 +482,7 @@ func (m *Manager) GetStatuses() []ScriptStatus {
 //
 // Scripts are stopped concurrently: each stop can busy-wait up to 5s for a
 // graceful exit, so a sequential shutdown would block agent exit for up to
-// 5s × number of hung scripts. stopAndClean serializes its map mutation
-// under m.mu, so parallel calls are safe.
+// 5s × number of hung scripts.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	procs := make(map[string]*scriptProcess, len(m.processes))
@@ -488,14 +496,16 @@ func (m *Manager) Shutdown() {
 		wg.Add(1)
 		go func(path string, proc *scriptProcess) {
 			defer wg.Done()
-			_ = m.stopAndClean(path, proc)
+			m.signalAndWait(proc)
+			m.cleanupAndDelete(path, proc)
 		}(path, proc)
 	}
 	wg.Wait()
 }
 
-// stopAndClean kills a process group, waits, and cleans up resources.
-func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
+// signalAndWait sends SIGTERM, waits up to 5s for graceful exit, then SIGKILL.
+// It does not touch the processes map.
+func (m *Manager) signalAndWait(proc *scriptProcess) {
 	// Kill process group with SIGTERM. signalGroup refuses to signal when the
 	// PID's recorded start time no longer matches (PID reuse): an unrelated
 	// recycled process must never receive our signals.
@@ -509,13 +519,14 @@ func (m *Manager) stopAndClean(path string, proc *scriptProcess) error {
 			_ = signalGroup(proc, syscall.SIGKILL)
 		}
 	}
+}
 
+// cleanupAndDelete cleans up resources and removes the process from the map.
+func (m *Manager) cleanupAndDelete(path string, proc *scriptProcess) {
 	m.mu.Lock()
 	m.cleanupProcess(proc)
 	delete(m.processes, path)
 	m.mu.Unlock()
-
-	return nil
 }
 
 func (m *Manager) cleanupProcess(proc *scriptProcess) {
