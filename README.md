@@ -281,6 +281,39 @@ docker_socket: "unix:///var/run/docker.sock"
 
 See [agent configuration](backend/docs/agent-config.md) for all options.
 
+#### Agent User Permissions
+
+The agent manages Docker containers and launcher scripts on the host machine. The `unswarm` user needs the following permissions:
+
+| Requirement | Why |
+|-------------|-----|
+| **Docker group membership** (`usermod -aG docker unswarm`) | The agent uses the Docker SDK to start, stop, restart, remove, and inspect containers. Without Docker socket access, all container lifecycle commands fail. |
+| **Scripts directory ownership** (if `scripts_dir` is configured) | The agent reads `.sh` launcher scripts from this directory, writes new/updated scripts via the API, and executes them as bash. The agent user must have read and write access to this directory. |
+| **Scripts directory security** | **The `scripts_dir` must NOT be world-writable.** Anything placed in this directory is executed as bash by the agent — a writable `scripts_dir` is equivalent to remote code execution. Set ownership to the `unswarm` user and permissions to `0750`. |
+| **Config file ownership** (`/etc/unswarm/agent.yaml`) | The agent reads its config at startup. The config contains the API key, so set permissions to `0600` (owner-only read). |
+| **Process management** | The agent sends `SIGTERM`/`SIGKILL` to script process groups to stop launcher scripts. The `unswarm` user must own the processes it spawns. |
+
+Example setup for a bare-metal agent with script support:
+
+```bash
+# Create the user and grant Docker access
+sudo useradd --system --home /var/lib/unswarm --create-home --shell /usr/sbin/nologin unswarm
+sudo usermod -aG docker unswarm
+
+# Prepare the scripts directory (owned by unswarm, not world-writable)
+sudo mkdir -p /opt/unswarm/scripts
+sudo chown unswarm:unswarm /opt/unswarm/scripts
+sudo chmod 0750 /opt/unswarm/scripts
+
+# Install config with restricted permissions
+sudo mkdir -p /etc/unswarm
+sudo cp agent.yaml /etc/unswarm/agent.yaml
+sudo chown unswarm:unswarm /etc/unswarm/agent.yaml
+sudo chmod 0600 /etc/unswarm/agent.yaml
+```
+
+If running inside Docker (e.g. `docker compose --profile agent`), the container handles permissions automatically — the agent runs as `nonroot` and Docker socket access is granted via `group_add` in the compose file.
+
 ## API Reference
 
 ### REST Endpoints
