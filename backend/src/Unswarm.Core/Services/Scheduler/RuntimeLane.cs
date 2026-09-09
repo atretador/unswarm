@@ -64,6 +64,13 @@ public sealed class RuntimeLane
     /// <see cref="SkipsUsed"/> are reset to zero.
     /// </summary>
     public int SequentialStepsProcessed;
+
+    /// <summary>
+    /// Externally-triggered cancellation source for force-stopping this lane's runtime.
+    /// When cancelled, all in-flight requests on this lane surface "Runtime unavailable"
+    /// to the caller instead of being silently canceled.
+    /// </summary>
+    public CancellationTokenSource ForceStopCts { get; } = new();
 }
 
 public sealed record RunningContainerInfo

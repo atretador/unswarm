@@ -21,6 +21,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     private readonly ILogger<ContainerRegistrationService> _logger =
         new LoggerFactory().CreateLogger<ContainerRegistrationService>();
     private readonly List<TcpListener> _listeners = [];
+    private readonly FakeSchedulerDrainer _schedulerDrainer = new();
 
     public ContainerRegistrationServiceTests()
     {
@@ -85,7 +86,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             _logger,
             settings,
             remoteHealthTimeout,
-            remoteHealthPollInterval);
+            remoteHealthPollInterval,
+            schedulerDrainer: _schedulerDrainer);
     }
 
     [Fact]
@@ -325,6 +327,30 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         // No container to stop
         Assert.Empty(_docker.StoppedContainerIds);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_CallsForceStopBeforeDeleting()
+    {
+        var service = CreateService();
+        // Register a container with a known RuntimeContainerId
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-fs",
+            DisplayName = "ForceStop",
+            Image = "test:latest",
+            RuntimeContainerId = "docker-abc-123",
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        await _registry.AddModelMappingAsync("reg-fs", "model-fs");
+
+        await service.DeleteAsync("reg-fs", deleteModels: false);
+
+        // ForceStopRuntimeAsync was called with the correct IDs
+        Assert.Single(_schedulerDrainer.ForceStopCalls);
+        Assert.Equal("reg-fs", _schedulerDrainer.ForceStopCalls[0].RuntimeId);
+        Assert.Equal("docker-abc-123", _schedulerDrainer.ForceStopCalls[0].ContainerId);
     }
 
     [Fact]

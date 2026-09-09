@@ -387,10 +387,13 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var container = await _registry.GetAsync(id, ct).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"Registered container {id} not found");
 
-        // NOTE: Intentionally do NOT stop or remove the container/script here.
-        // Delete removes the runtime from the app (database only). The container
-        // itself keeps running on the host/agent. If the user wants to stop it,
-        // they use the separate stop endpoint.
+        // Force-stop in-flight requests and stop the serving container/script.
+        // Unlike idle-shutdown, this is immediate — any active inferences will
+        // receive a "Runtime unavailable" error.
+        if (_schedulerDrainer is not null)
+        {
+            await _schedulerDrainer.ForceStopRuntimeAsync(id, container.RuntimeContainerId, ct).ConfigureAwait(false);
+        }
 
         // Remove model mappings
         var modelIds = await _registry.GetModelIdsForContainerAsync(id, ct).ConfigureAwait(false);
