@@ -67,7 +67,7 @@ func TestStartScript(t *testing.T) {
 	m := NewManager(dir)
 	defer m.Shutdown()
 
-	pid, err := m.StartScript(script, 9000)
+	pid, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestStartScript_WhitelistReject(t *testing.T) {
 
 	m := NewManager(dir)
 
-	_, err := m.StartScript(outside, 9000)
+	_, err := m.StartScript(outside, 9000, "")
 	if err == nil {
 		t.Fatal("expected whitelist rejection for path outside scripts_dir")
 	}
@@ -109,13 +109,13 @@ func TestStartScript_DuplicateGuard(t *testing.T) {
 	m := NewManager(dir)
 	defer m.Shutdown()
 
-	pid1, err := m.StartScript(script, 9000)
+	pid1, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("first StartScript: %v", err)
 	}
 
 	// Second start should return the same PID without error (idempotent).
-	pid2, err := m.StartScript(script, 9001)
+	pid2, err := m.StartScript(script, 9001, "")
 	if err != nil {
 		t.Fatalf("second StartScript (idempotent): %v", err)
 	}
@@ -135,7 +135,7 @@ func TestStopScript(t *testing.T) {
 
 	m := NewManager(dir)
 
-	pid, err := m.StartScript(script, 9000)
+	pid, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestStopScriptByPath(t *testing.T) {
 
 	m := NewManager(dir)
 
-	_, err := m.StartScript(script, 9000)
+	_, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -182,7 +182,7 @@ func TestGetScriptLogs(t *testing.T) {
 	m := NewManager(dir)
 	defer m.Shutdown()
 
-	_, err := m.StartScript(script, 0)
+	_, err := m.StartScript(script, 0, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestGetScriptLogs_TailLines(t *testing.T) {
 	m := NewManager(dir)
 	defer m.Shutdown()
 
-	_, err := m.StartScript(script, 0)
+	_, err := m.StartScript(script, 0, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestGetStatuses(t *testing.T) {
 	m := NewManager(dir)
 	defer m.Shutdown()
 
-	_, err := m.StartScript(script, 9000)
+	_, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestShutdown(t *testing.T) {
 
 	m := NewManager(dir)
 
-	pid, err := m.StartScript(script, 9000)
+	pid, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("StartScript: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestStartScript_StaleEntryCleanup(t *testing.T) {
 
 	m := NewManager(dir)
 
-	pid1, err := m.StartScript(script, 9000)
+	pid1, err := m.StartScript(script, 9000, "")
 	if err != nil {
 		t.Fatalf("first StartScript: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestStartScript_StaleEntryCleanup(t *testing.T) {
 	}
 
 	// Start should detect the stale entry, clean it up, and spawn a new process.
-	pid2, err := m.StartScript(script, 9001)
+	pid2, err := m.StartScript(script, 9001, "")
 	if err != nil {
 		t.Fatalf("second StartScript after stale cleanup: %v", err)
 	}

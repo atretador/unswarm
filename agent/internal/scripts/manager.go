@@ -66,7 +66,10 @@ type ScriptStatus struct {
 // NewManager creates a Manager. If scriptsDir is empty the manager is
 // disabled (IsEnabled returns false).
 func NewManager(scriptsDir string) *Manager {
-	logDir := filepath.Join(os.TempDir(), "unswarm-script-logs")
+	// Place script logs under the parent of scriptsDir (typically
+	// /var/lib/unswarm) so they live inside the agent's ReadWritePaths
+	// instead of /tmp which may be owned by another user.
+	logDir := filepath.Join(filepath.Dir(scriptsDir), "script-logs")
 	_ = os.MkdirAll(logDir, 0o700)
 	return &Manager{
 		scriptsDir: scriptsDir,
