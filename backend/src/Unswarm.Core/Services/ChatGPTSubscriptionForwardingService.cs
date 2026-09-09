@@ -60,7 +60,8 @@ public sealed class ChatGPTSubscriptionForwardingService : IChatGPTSubscriptionF
         string requestBody,
         string requestPath,
         bool isStreaming,
-        CancellationToken ct)
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null)
     {
         var startTime = _clock.UtcNow;
 
@@ -171,6 +172,16 @@ public sealed class ChatGPTSubscriptionForwardingService : IChatGPTSubscriptionF
             upstreamRequest.Headers.TryAddWithoutValidation("ChatGPT-Account-ID", chatgptAccountId);
             upstreamRequest.Headers.TryAddWithoutValidation("OpenAI-Beta", "responses=experimental");
             upstreamRequest.Headers.TryAddWithoutValidation("originator", "unswarm");
+
+            // Forward client headers (excluding structural/security headers that
+            // are already set or recomputed: Authorization, Content-Type, Content-Length, Host).
+            if (forwardedHeaders is not null)
+            {
+                foreach (var (key, value) in forwardedHeaders)
+                {
+                    upstreamRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
 
             // ── 7. Send and relay response ─────────────────────────────
             var client = _httpClientFactory.CreateClient("cloud-provider");

@@ -908,6 +908,13 @@ public sealed class InferenceProxy : IInferenceProxy
             {
                 Content = httpContent
             };
+            if (request.ForwardedHeaders is not null)
+            {
+                foreach (var (key, value) in request.ForwardedHeaders)
+                {
+                    sendRequest.Headers.TryAddWithoutValidation(key, value);
+                }
+            }
             var response = await SharedHttp.SendAsync(
                 sendRequest,
                 HttpCompletionOption.ResponseHeadersRead,
@@ -939,7 +946,21 @@ public sealed class InferenceProxy : IInferenceProxy
             return inferenceResponse;
         }
 
-        using var response2 = await SharedHttp.PostAsync(url, httpContent, ct)
+        var sendRequest2 = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = httpContent
+        };
+        if (request.ForwardedHeaders is not null)
+        {
+            foreach (var (key, value) in request.ForwardedHeaders)
+            {
+                sendRequest2.Headers.TryAddWithoutValidation(key, value);
+            }
+        }
+        using var response2 = await SharedHttp.SendAsync(
+            sendRequest2,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct)
             .ConfigureAwait(false);
 
         var contentType2 = response2.Content.Headers.ContentType?.MediaType ?? "application/json";

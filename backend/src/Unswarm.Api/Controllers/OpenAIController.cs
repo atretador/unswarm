@@ -187,6 +187,12 @@ public sealed class OpenAIController : ControllerBase
             return BadRequest(new { error = "Invalid JSON: 'model' field required" });
         }
 
+        // Extract client headers to forward to upstream engines.
+        // Excludes structural/security headers: Authorization (unswarm API key),
+        // Content-Type/Content-Length (recomputed by request builder), Host (recomputed per upstream URL).
+        // ASP.NET Core already strips hop-by-hop headers before they reach the controller.
+        var forwardedHeaders = ExtractForwardedHeaders(Request.Headers);
+
         // Per-key model access control: enforced here (not in the middleware)
         // because only this controller parses the requested model id. Key-less
         // callers (cookie-authenticated admin) are unrestricted.
@@ -233,13 +239,13 @@ public sealed class OpenAIController : ControllerBase
                 {
                     // ChatGPT subscription provider — returns raw SSE stream
                     subscriptionStream = await _chatGptSubscription.ForwardAsync(
-                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct, forwardedHeaders);
                 }
                 else
                 {
                     // API key provider — existing behavior
                     cloudResponse = await _cloudForwarding.ForwardAsync(
-                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct);
+                        modelName, rawBody, Request.Path.Value ?? "/v1/chat/completions", isStream, ct, forwardedHeaders);
                 }
             }
             catch (OperationCanceledException)
@@ -378,7 +384,7 @@ public sealed class OpenAIController : ControllerBase
             {
                 var routerResult = await _routerHandler.HandleAsync(
                     profileName, rawBody, Request.Path.Value ?? "/v1/chat/completions",
-                    isStream, conversationKey, ct);
+                    isStream, conversationKey, ct, forwardedHeaders);
 
                 if (routerResult.StatusCode >= 400 && routerResult.Body is null)
                 {
@@ -479,7 +485,8 @@ public sealed class OpenAIController : ControllerBase
             Tcs = new TaskCompletionSource<InferenceResponse>(
                 TaskCreationOptions.RunContinuationsAsynchronously),
             CancellationToken = ct,
-            ConversationKey = conversationKey
+            ConversationKey = conversationKey,
+            ForwardedHeaders = forwardedHeaders
         };
 
         var startTime = _clock.UtcNow;
@@ -627,5 +634,40 @@ public sealed class OpenAIController : ControllerBase
 
         var hash = System.Security.Cryptography.SHA256.HashData(buffer.ToArray());
         return "conv:" + Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Extracts client HTTP headers to forward to upstream engines.
+    /// Excludes structural/security headers that are either set by the request
+    /// builder (Content-Type, Content-Length), recomputed per upstream URL (Host),
+    /// or are the unswarm API key (Authorization).
+    /// ASP.NET Core already strips hop-by-hop headers before the controller.
+    /// </summary>
+    public static Dictionary<string, string> ExtractForwardedHeaders(IHeaderDictionary headers)
+    {
+        const string excludePrefix = "X-Forwarded-";
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var header in headers)
+        {
+            // Skip structural/security headers
+            if (header.Key.Equals("Authorization", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+                header.Key.StartsWith(excludePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Take the first value (most headers are single-valued)
+            var value = header.Value.FirstOrDefault();
+            if (!string.IsNullOrEmpty(value))
+            {
+                result[header.Key] = value;
+            }
+        }
+
+        return result;
     }
 }
