@@ -185,7 +185,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         // First try via the mapping table (model id lookup)
         var mapping = await db.ContainerModelMappings
             .Include(cm => cm.Model)
-            .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName, ct)
+            .FirstOrDefaultAsync(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName || cm.Model.DisplayName == modelName, ct)
             .ConfigureAwait(false);
         string? runtimeId;
         if (mapping is not null)
@@ -196,7 +196,7 @@ public sealed class ContainerRegistry : IContainerRegistry
         {
             // Fallback: check ModelEntity.SourceRuntimeId directly
             var model = await db.Models
-                .FirstOrDefaultAsync(m => m.Name == modelName || m.Id == modelName, ct)
+                .FirstOrDefaultAsync(m => m.Name == modelName || m.Id == modelName || m.DisplayName == modelName, ct)
                 .ConfigureAwait(false);
             runtimeId = model?.SourceRuntimeId;
         }
@@ -209,7 +209,7 @@ public sealed class ContainerRegistry : IContainerRegistry
     {
         await using var db = _dbFactory();
         var mappings = await db.ContainerModelMappings
-            .Where(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName)
+            .Where(cm => cm.ModelId == modelName || cm.ModelId.EndsWith(":" + modelName) || cm.Model.Name == modelName || cm.Model.DisplayName == modelName)
             .Select(cm => cm.RegisteredRuntimeId)
             .Distinct()
             .ToListAsync()
