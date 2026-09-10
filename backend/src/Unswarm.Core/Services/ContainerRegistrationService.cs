@@ -908,6 +908,17 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
         var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false)
             ?? await _modelRegistry.GetByNameAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+
+        // The name-based fallback is only for backward compatibility with models
+        // registered before composite IDs. If it finds a model belonging to a
+        // DIFFERENT runtime, we must NOT hijack it — create a new entry instead so
+        // that both runtimes register their own model and a Conflict is flagged.
+        if (existing is not null && existing.SourceRuntimeId != registeredContainerId
+            && existing.Id != compositeId)
+        {
+            existing = null;
+        }
+
         ModelDefinition result;
         if (existing is null)
         {
