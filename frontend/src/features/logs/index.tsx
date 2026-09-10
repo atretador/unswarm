@@ -171,7 +171,10 @@ export default function Logs() {
           if (filterSource && e.source !== filterSource) return false;
           return true;
         })
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()),
+        .sort((a, b) => {
+          const d = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+          return d !== 0 ? d : a.id.localeCompare(b.id);
+        }),
     [localEntries, filterLevel, filterSource],
   );
 
@@ -251,7 +254,7 @@ export default function Logs() {
       </div>
 
       {/* Log viewer */}
-      <Card padding="none" className="flex-1 min-h-0">
+      <Card padding="none" className="flex-1 min-h-0 flex flex-col">
         <div className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
           <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider font-medium">
             {filtered.length} entries
@@ -273,7 +276,7 @@ export default function Logs() {
         </div>
         <div
           ref={scrollRef}
-          className="overflow-y-auto max-h-[60vh] font-mono text-xs divide-y divide-[var(--color-border-subtle)]"
+          className="flex-1 min-h-0 overflow-y-auto font-mono text-xs divide-y divide-[var(--color-border-subtle)]"
           role="log"
           aria-label="Log entries"
         >
