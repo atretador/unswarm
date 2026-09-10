@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { motion } from "motion/react";
 import { AlertTriangle } from "lucide-react";
 import { Sidebar } from "./Sidebar";
@@ -18,7 +18,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/profile": "Profile",
 };
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell() {
   const location = useLocation();
   const { user } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -86,7 +86,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }}
             className="h-full"
           >
-            {children}
+            <Outlet />
           </motion.div>
         </main>
       </div>

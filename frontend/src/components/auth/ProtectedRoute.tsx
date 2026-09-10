@@ -1,8 +1,8 @@
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../../lib/auth-context";
 import { Spinner } from "../ui/Spinner";
 
-export function ProtectedRoute({ children }: { children: React.ReactNode }) {
+export function ProtectedRoute() {
   const { user, isPending } = useAuth();
   const location = useLocation();
 
@@ -18,5 +18,5 @@ export function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
   }
 
-  return <>{children}</>;
+  return <Outlet />;
 }

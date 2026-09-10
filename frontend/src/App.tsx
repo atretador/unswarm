@@ -34,31 +34,24 @@ export default function App() {
     <Suspense fallback={<PageFallback />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="*"
-          element={
-            <ProtectedRoute>
-              <AppShell>
-                <Routes>
-                  <Route path="/" element={<Dashboard />} />
-                  <Route path="/models" element={<Models />} />
-                  <Route path="/swarm" element={<Swarm />} />
-                  <Route path="/fleet" element={<Navigate to="/swarm" replace />} />
-                  <Route path="/providers" element={<Providers />} />
-                  <Route path="/benchmarks" element={<Benchmarks />} />
-                  <Route path="/metrics" element={<Metrics />} />
-                  <Route path="/queue" element={<Queue />} />
-                  <Route path="/logs" element={<Logs />} />
-                  <Route path="/api-keys" element={<ApiKeys />} />
-                  <Route path="/router-profiles" element={<RouterProfiles />} />
-                  <Route path="/settings" element={<Settings />} />
-                  <Route path="/profile" element={<Profile />} />
-                  <Route path="*" element={<NotFound />} />
-                </Routes>
-              </AppShell>
-            </ProtectedRoute>
-          }
-        />
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppShell />}>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/models" element={<Models />} />
+            <Route path="/swarm" element={<Swarm />} />
+            <Route path="/fleet" element={<Navigate to="/swarm" replace />} />
+            <Route path="/providers" element={<Providers />} />
+            <Route path="/benchmarks" element={<Benchmarks />} />
+            <Route path="/metrics" element={<Metrics />} />
+            <Route path="/queue" element={<Queue />} />
+            <Route path="/logs" element={<Logs />} />
+            <Route path="/api-keys" element={<ApiKeys />} />
+            <Route path="/router-profiles" element={<RouterProfiles />} />
+            <Route path="/settings" element={<Settings />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="*" element={<NotFound />} />
+          </Route>
+        </Route>
       </Routes>
     </Suspense>
   );

@@ -122,4 +122,7 @@ public sealed class FakeApiKeyStore : IApiKeyStore
 
     public Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default)
         => Task.FromResult(_bySecret.Values.Any(e => e.Id == keyId) ? access : null);
+
+    public Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default)
+        => Task.FromResult(0);
 }

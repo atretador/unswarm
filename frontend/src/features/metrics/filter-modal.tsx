@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Search } from "lucide-react";
 import { Badge, Button, Dialog } from "../../components/ui";
 import { formatModelName } from "../../lib/format-model-name";
-import type { ProviderCatalogEntry } from "../../lib/api/types";
+import type { Model, ProviderCatalogEntry } from "../../lib/api/types";
 
 /** One selectable model entry: the model id plus the providers serving it. */
 export interface ModelFilterOption {
@@ -31,6 +31,8 @@ export interface FiltersModalProps {
   selectedModels: string[];
   hideOriginPrefix?: boolean;
   agentDisplayNames?: Record<string, string>;
+  /** Model registry lookup for resolving display names. */
+  modelDisplayNames?: Map<string, Pick<Model, "displayName" | "sourceRuntimeName">>;
   /** Called with the final selection when Apply is pressed. */
   onApply: (providers: string[], models: string[]) => void;
 }
@@ -135,6 +137,7 @@ export function FiltersModal({
   selectedModels,
   hideOriginPrefix = false,
   agentDisplayNames = {},
+  modelDisplayNames,
   onApply,
 }: FiltersModalProps) {
   // Draft state — seeded from the live selection each time the modal opens.
@@ -183,27 +186,35 @@ export function FiltersModal({
             : m.providers.some((p) => draftProviders.includes(p)),
         )
         .filter((m) => {
+          const reg = modelDisplayNames?.get(m.model);
           const label = formatModelName(
             m.model,
             m.providers[0] ?? "",
             hideOriginPrefix,
             agentDisplayNames,
+            reg?.sourceRuntimeName ?? undefined,
+            reg?.displayName ?? undefined,
           );
           return (
             matchSearch(m.model, modelSearch) || matchSearch(label, modelSearch)
           );
         })
-        .map((m) => ({
-          value: m.model,
-          label: formatModelName(
-            m.model,
-            m.providers[0] ?? "",
-            hideOriginPrefix,
-            agentDisplayNames,
-          ),
-          badge: m.providers.length > 1 ? `${m.providers.length} providers` : undefined,
-        })),
-    [modelOptions, draftProviders, modelSearch, hideOriginPrefix, agentDisplayNames],
+        .map((m) => {
+          const reg = modelDisplayNames?.get(m.model);
+          return {
+            value: m.model,
+            label: formatModelName(
+              m.model,
+              m.providers[0] ?? "",
+              hideOriginPrefix,
+              agentDisplayNames,
+              reg?.sourceRuntimeName ?? undefined,
+              reg?.displayName ?? undefined,
+            ),
+            badge: m.providers.length > 1 ? `${m.providers.length} providers` : undefined,
+          };
+        }),
+    [modelOptions, draftProviders, modelSearch, hideOriginPrefix, agentDisplayNames, modelDisplayNames],
   );
 
   const totalSelected = draftProviders.length + draftModels.length;

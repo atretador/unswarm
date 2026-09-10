@@ -42,6 +42,7 @@ import {
 import { formatModelName } from "../../lib/format-model-name";
 import type {
   MetricsAnalyticsParams,
+  Model,
   ProviderCatalogEntry,
   ProviderUsageSummary,
   UsageTotalsResponse,
@@ -400,6 +401,23 @@ export default function Metrics() {
     refetchInterval: false,
   });
 
+  // Model registry — for resolving user-managed display names and runtime names.
+  const { data: registryModels } = useQuery({
+    queryKey: ["models"],
+    queryFn: () => client.listModels(),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: false,
+  });
+
+  // Lookup map: model name → {displayName, sourceRuntimeName}
+  const registryByName = useMemo(() => {
+    const map = new Map<string, Pick<Model, "displayName" | "sourceRuntimeName">>();
+    for (const m of registryModels ?? []) {
+      map.set(m.name, m);
+    }
+    return map;
+  }, [registryModels]);
+
   // ── Derived: filter-modal option lists ──────────────────────
 
   const providerOptions = useMemo<ProviderCatalogEntry[]>(() => {
@@ -428,14 +446,18 @@ export default function Metrics() {
   }, [allModels]);
 
   const modelLabel = useCallback(
-    (model: string) =>
-      formatModelName(
+    (model: string) => {
+      const reg = registryByName.get(model);
+      return formatModelName(
         model,
         allModels?.find((m) => m.model === model)?.provider ?? "",
         settings?.hideOriginPrefix ?? false,
         settings?.agentDisplayNames ?? {},
-      ),
-    [allModels, settings],
+        reg?.sourceRuntimeName ?? undefined,
+        reg?.displayName ?? undefined,
+      );
+    },
+    [allModels, settings, registryByName],
   );
 
   const hasActiveFilters =
@@ -1620,6 +1642,8 @@ export default function Metrics() {
                                     m.provider,
                                     settings?.hideOriginPrefix ?? false,
                                     settings?.agentDisplayNames ?? {},
+                                    registryByName.get(m.model)?.sourceRuntimeName ?? undefined,
+                                    registryByName.get(m.model)?.displayName ?? undefined,
                                   )}
                                 </Link>
                                 <Badge variant="info" size="sm" className="ml-2">
@@ -1863,6 +1887,7 @@ export default function Metrics() {
         selectedModels={selectedModels}
         hideOriginPrefix={settings?.hideOriginPrefix ?? false}
         agentDisplayNames={settings?.agentDisplayNames ?? {}}
+        modelDisplayNames={registryByName}
         onApply={(nextProviders, nextModels) => {
           setSelectedProviders(nextProviders);
           setSelectedModels(nextModels);

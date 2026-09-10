@@ -29,9 +29,11 @@ import {
 } from "lucide-react";
 import { ApiError } from "../../lib/api/httpClient";
 import { Badge, Button, ConfirmDialog, Dialog, Select, Switch, TriCheckbox } from "../../components/ui";
+import { client } from "../../lib/query-client";
 import type {
   ApiKeyAccess,
   ApiKeyItem,
+  Model,
   ProviderModelCatalogEntry,
 } from "../../lib/api/types";
 import {
@@ -92,9 +94,9 @@ function parseAccess(
   if (isEmpty) return { ...draft, fullAccess: true };
 
   for (const name of access.providers ?? []) {
-    const sel = draft.providers.get(name) ?? { all: false, models: new Set<string>() };
+    const sel = draft.providers.get(name);
+    if (!sel) continue; // provider no longer in catalog — stale reference, skip
     sel.all = true;
-    draft.providers.set(name, sel);
   }
 
   const ownersByModel = new Map<string, string[]>();
@@ -176,7 +178,7 @@ const USAGE_RANGE_MS: Record<UsageRange, number> = {
   "90d": 90 * 86_400_000,
 };
 
-function UsageSection({ keyId }: { keyId: string }) {
+function UsageSection({ keyId, registryByName }: { keyId: string; registryByName: Map<string, Pick<Model, "displayName" | "sourceRuntimeName">> }) {
   const [range, setRange] = useState<UsageRange>("30d");
 
   const window = useMemo(() => {
@@ -246,7 +248,8 @@ function UsageSection({ keyId }: { keyId: string }) {
 
           {/* Per-model breakdown */}
           {(data.models?.length ?? 0) > 0 ? (
-            <table className="w-full text-sm">
+            <div className="overflow-x-auto -mx-1 px-1">
+            <table className="w-full text-sm min-w-[480px]">
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="text-left py-1.5 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
@@ -272,9 +275,9 @@ function UsageSection({ keyId }: { keyId: string }) {
                     key={`${m.provider ?? ""}-${m.model}`}
                     className="border-b border-[var(--color-border)] last:border-0"
                   >
-                    <td className="py-2 pr-4 max-w-[200px] truncate" title={m.model}>
+                    <td className="py-2 pr-4 truncate" title={registryByName.get(m.model)?.displayName || m.model}>
                       <span className="font-medium text-[var(--color-text)]">
-                        {m.model}
+                        {registryByName.get(m.model)?.displayName || m.model}
                       </span>
                       {m.provider && (
                         <Badge variant="outline" size="sm" className="ml-2">
@@ -298,6 +301,7 @@ function UsageSection({ keyId }: { keyId: string }) {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : (
             !isLoading && (
               <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">
@@ -354,6 +358,22 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
     queryFn: () => getApiKeyAccess(apiKey.id),
     enabled: open && !isAgentKey,
   });
+
+  // Model registry — for resolving user-managed display names.
+  const { data: registryModels } = useQuery({
+    queryKey: ["models"],
+    queryFn: () => client.listModels(),
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const registryByName = useMemo(() => {
+    const map = new Map<string, Pick<Model, "displayName" | "sourceRuntimeName">>();
+    for (const m of registryModels ?? []) {
+      map.set(m.name, m);
+    }
+    return map;
+  }, [registryModels]);
 
   const catalog = catalogQuery.data;
   const access = accessQuery.data;
@@ -636,9 +656,9 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                               }
                                               className="size-3 rounded accent-[var(--color-primary)] cursor-pointer disabled:cursor-not-allowed"
                                             />
-                                            <span className="max-w-[220px] truncate" title={model}>
-                                              {model}
-                                            </span>
+                                             <span className="truncate" title={entry.modelDisplayNames?.[model] || registryByName.get(model)?.displayName || model}>
+                                               {entry.modelDisplayNames?.[model] || registryByName.get(model)?.displayName || model}
+                                             </span>
                                           </label>
                                         );
                                       })}
@@ -687,33 +707,34 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                         <p className="text-xs text-[var(--color-status-error)]">{saveError}</p>
                       </div>
                     )}
-                    <div className="flex items-center justify-end gap-3 pt-1">
-                      {dirty && (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-status-warning)]">
-                          <span className="size-1.5 rounded-full bg-[var(--color-status-warning)]" />
-                          Unsaved changes
-                        </span>
-                      )}
-                      {!dirty && savedTick && (
-                        <span className="inline-flex items-center gap-1 text-xs text-[var(--color-status-running)]">
-                          <Check className="size-3.5" />
-                          Saved
-                        </span>
-                      )}
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        disabled={!dirty || nothingGranted}
-                        loading={saveMutation.isPending}
-                        onClick={() => saveMutation.mutate(serializeDraft(draft))}
-                        className="gap-1.5"
-                      >
-                        <SlidersHorizontal className="size-3.5" />
-                        {saveMutation.isPending ? "Saving…" : "Save access"}
-                      </Button>
-                    </div>
                   </>
                 )}
+
+                <div className="flex items-center justify-end gap-3 pt-1">
+                  {dirty && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-status-warning)]">
+                      <span className="size-1.5 rounded-full bg-[var(--color-status-warning)]" />
+                      Unsaved changes
+                    </span>
+                  )}
+                  {!dirty && savedTick && (
+                    <span className="inline-flex items-center gap-1 text-xs text-[var(--color-status-running)]">
+                      <Check className="size-3.5" />
+                      Saved
+                    </span>
+                  )}
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    disabled={!dirty || nothingGranted}
+                    loading={saveMutation.isPending}
+                    onClick={() => saveMutation.mutate(serializeDraft(draft))}
+                    className="gap-1.5"
+                  >
+                    <SlidersHorizontal className="size-3.5" />
+                    {saveMutation.isPending ? "Saving…" : "Save access"}
+                  </Button>
+                </div>
               </>
             )}
           </section>
@@ -721,7 +742,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
 
           {/* ── Usage ────────────────────────────────────────── */}
           <section className="pt-5 border-t border-[var(--color-border-subtle)]">
-            <UsageSection keyId={apiKey.id} />
+            <UsageSection keyId={apiKey.id} registryByName={registryByName} />
           </section>
         </div>
       </Dialog>

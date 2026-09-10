@@ -74,6 +74,11 @@ public sealed class ProviderModelCatalogItem
 
     /// <summary>Model ids this provider/runtime can serve.</summary>
     public List<string> Models { get; set; } = [];
+
+    /// <summary>Parallel map of model id → user-facing display name. Keys are a
+    /// subset of <see cref="Models"/>. For cloud models the display name equals
+    /// the id; for local models it comes from <c>ModelDefinition.DisplayName</c>.</summary>
+    public Dictionary<string, string> ModelDisplayNames { get; set; } = [];
 }
 
 // ── Router Profile DTOs ────────────────────────────────────────────────

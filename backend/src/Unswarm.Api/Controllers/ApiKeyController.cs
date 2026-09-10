@@ -31,13 +31,15 @@ public sealed class ApiKeyController : ControllerBase
     private readonly ICloudProviderStore _cloudProviders;
     private readonly IContainerRegistry _containers;
     private readonly IRouterProfileStore _routerProfiles;
+    private readonly ILogger<ApiKeyController> _logger;
 
-    public ApiKeyController(IApiKeyStore keys, ICloudProviderStore cloudProviders, IContainerRegistry containers, IRouterProfileStore routerProfiles)
+    public ApiKeyController(IApiKeyStore keys, ICloudProviderStore cloudProviders, IContainerRegistry containers, IRouterProfileStore routerProfiles, ILogger<ApiKeyController> logger)
     {
         _keys = keys;
         _cloudProviders = cloudProviders;
         _containers = containers;
         _routerProfiles = routerProfiles;
+        _logger = logger;
     }
 
     [HttpPost]
@@ -152,7 +154,10 @@ public sealed class ApiKeyController : ControllerBase
         var routerNames = (await _routerProfiles.ListAsync(ct)).Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var unknown = providers.Where(p => !configuredProviders.Contains(p) && !runtimeNames.Contains(p) && !routerNames.Contains(p)).ToList();
         if (unknown.Count > 0)
-            return BadRequest(new { error = $"Unknown provider(s): {string.Join(", ", unknown)}" });
+        {
+            _logger.LogWarning("Stripping unknown provider(s) from API key access: {Providers}", string.Join(", ", unknown));
+            providers = providers.Where(p => !unknown.Contains(p)).ToList();
+        }
 
         var saved = await _keys.SaveAccessAsync(id, new KeyAccess { Providers = providers, Models = models }, ct);
         if (saved is null)

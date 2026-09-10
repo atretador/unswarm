@@ -8,6 +8,7 @@ public sealed class ContainerResponse
     public string Id { get; set; } = "";
     public string ModelId { get; set; } = "";
     public string ModelName { get; set; } = "";
+    public string ModelDisplayName { get; set; } = "";
     public ContainerStatus Status { get; set; }
     public int? Port { get; set; }
     public int? Pid { get; set; }

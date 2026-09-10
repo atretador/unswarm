@@ -80,10 +80,11 @@ function formatRelativeTime(iso: string): string {
 /** Model statuses that are safe to benchmark — matches the swarm card semantics. */
 function benchmarkDisabledReason(model: Model | undefined): string | null {
   if (!model) return "No models available yet";
-  if (model.status === "validating") return `${model.name} is still validating — not ready to benchmark`;
-  if (model.status === "invalid") return `${model.name} is invalid — cannot benchmark`;
-  if (model.status === "deprecated") return `${model.name} is deprecated — cannot benchmark`;
-  if (model.status === "conflict") return `${model.name} has a name conflict — rename to resolve`;
+  const displayName = model.displayName || model.name;
+  if (model.status === "validating") return `${displayName} is still validating — not ready to benchmark`;
+  if (model.status === "invalid") return `${displayName} is invalid — cannot benchmark`;
+  if (model.status === "deprecated") return `${displayName} is deprecated — cannot benchmark`;
+  if (model.status === "conflict") return `${displayName} has a name conflict — rename to resolve`;
   return null;
 }
 
@@ -994,10 +995,10 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
   const modelOptions = (models ?? []).map((m) => ({
     value: m.id,
     label: m.origin === "cloud"
-      ? `[Cloud] ${m.name} (${m.providerName})`
+      ? `[Cloud] ${m.displayName || m.name} (${m.providerName})`
       : m.status === "ready"
-        ? m.name
-        : `${m.name} (${m.status})`,
+        ? m.displayName || m.name
+        : `${m.displayName || m.name} (${m.status})`,
   }));
 
   const promptOptions = (prompts ?? []).map((p) => ({
@@ -1060,7 +1061,7 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
         disabled={!modelId}
         onClick={() => {
           if (modelId && selected) {
-            onShowResults(modelId, selected.name);
+            onShowResults(modelId, selected.displayName || selected.name);
           }
         }}
         className="lg:self-end"

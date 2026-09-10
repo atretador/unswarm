@@ -81,6 +81,7 @@ public sealed class ContainersController : ControllerBase
             Id = startResult.ContainerId,
             ModelId = model.Id,
             ModelName = model.Name,
+            ModelDisplayName = model.DisplayName ?? model.Name,
             Status = ContainerStatus.Running,
             Port = startResult.MappedPort,
             Pid = inspect?.Pid,

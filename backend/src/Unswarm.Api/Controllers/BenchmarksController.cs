@@ -117,6 +117,7 @@ public sealed class BenchmarksController : ControllerBase
 
             var failedResponse = BenchmarkResponse.FromEntry(failedEntry);
             failedResponse.ModelName = model.Name;
+            failedResponse.ModelDisplayName = model.DisplayName ?? model.Name;
             return StatusCode(502, failedResponse);
         }
 
@@ -153,6 +154,7 @@ public sealed class BenchmarksController : ControllerBase
 
         var responseItem = BenchmarkResponse.FromEntry(entry);
         responseItem.ModelName = model.Name;
+        responseItem.ModelDisplayName = model.DisplayName ?? model.Name;
         return Ok(responseItem);
     }
 
@@ -202,6 +204,7 @@ public sealed class BenchmarksController : ControllerBase
 
             var failedResponse = BenchmarkResponse.FromEntry(failedEntry);
             failedResponse.ModelName = FormatCloudModelName(modelId);
+            failedResponse.ModelDisplayName = FormatCloudModelName(modelId);
             return StatusCode(502, failedResponse);
         }
 
@@ -224,6 +227,7 @@ public sealed class BenchmarksController : ControllerBase
 
             var errorResponse = BenchmarkResponse.FromEntry(errorEntry);
             errorResponse.ModelName = FormatCloudModelName(modelId);
+            errorResponse.ModelDisplayName = FormatCloudModelName(modelId);
             return StatusCode(cloudResponse.StatusCode, errorResponse);
         }
 
@@ -253,6 +257,7 @@ public sealed class BenchmarksController : ControllerBase
 
         var responseItem = BenchmarkResponse.FromEntry(entry);
         responseItem.ModelName = FormatCloudModelName(modelId);
+        responseItem.ModelDisplayName = FormatCloudModelName(modelId);
         return Ok(responseItem);
     }
 
@@ -408,11 +413,13 @@ public sealed class BenchmarksController : ControllerBase
             if (entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal))
             {
                 item.ModelName = FormatCloudModelName(entry.ModelId);
+                item.ModelDisplayName = FormatCloudModelName(entry.ModelId);
             }
             else
             {
                 var model = await _registry.GetAsync(entry.ModelId, ct).ConfigureAwait(false);
                 item.ModelName = model?.Name ?? entry.ModelId;
+                item.ModelDisplayName = model?.DisplayName ?? model?.Name ?? entry.ModelId;
             }
 
             items.Add(item);

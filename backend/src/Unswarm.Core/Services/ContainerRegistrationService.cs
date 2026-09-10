@@ -32,6 +32,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly HostScriptRuntimeController? _scriptController;
     private readonly AutoBenchmarkService? _autoBenchmark;
     private readonly ISchedulerDrainer? _schedulerDrainer;
+    private readonly IApiKeyStore? _apiKeyStore;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -46,7 +47,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         TimeSpan? remoteHealthPollInterval = null,
         HostScriptRuntimeController? scriptController = null,
         AutoBenchmarkService? autoBenchmark = null,
-        ISchedulerDrainer? schedulerDrainer = null)
+        ISchedulerDrainer? schedulerDrainer = null,
+        IApiKeyStore? apiKeyStore = null)
     {
         _registry = registry;
         _router = router;
@@ -61,6 +63,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _scriptController = scriptController;
         _autoBenchmark = autoBenchmark;
         _schedulerDrainer = schedulerDrainer;
+        _apiKeyStore = apiKeyStore;
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -442,6 +445,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         await _registry.DeleteAsync(id, ct).ConfigureAwait(false);
         _logger.LogInformation("Deleted registered container {Id}", id);
+
+        // Clean up API key access records that reference the deleted runtime's display name.
+        if (_apiKeyStore is not null)
+            await _apiKeyStore.RemoveProviderFromAllKeysAsync(container.DisplayName, ct).ConfigureAwait(false);
 
         // Drop scheduler-side bookkeeping (activity anchors, cached runtime
         // entities) for the deleted runtime so internal caches don't grow forever.

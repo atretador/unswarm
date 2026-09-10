@@ -23,12 +23,14 @@ public sealed class ProviderModelCatalogController : ControllerBase
     private readonly ICloudProviderStore _cloudProviders;
     private readonly IContainerRegistry _containers;
     private readonly IRouterProfileStore _routerProfiles;
+    private readonly IModelRegistry _modelRegistry;
 
-    public ProviderModelCatalogController(ICloudProviderStore cloudProviders, IContainerRegistry containers, IRouterProfileStore routerProfiles)
+    public ProviderModelCatalogController(ICloudProviderStore cloudProviders, IContainerRegistry containers, IRouterProfileStore routerProfiles, IModelRegistry modelRegistry)
     {
         _cloudProviders = cloudProviders;
         _containers = containers;
         _routerProfiles = routerProfiles;
+        _modelRegistry = modelRegistry;
     }
 
     [HttpGet]
@@ -39,22 +41,32 @@ public sealed class ProviderModelCatalogController : ControllerBase
         foreach (var provider in await _cloudProviders.ListAsync(ct))
         {
             var models = await _cloudProviders.GetModelIdsAsync(provider.Id, ct);
+            // Cloud model IDs are already human-readable display names (e.g. "gpt-4o").
             catalog.Add(new ProviderModelCatalogItem
             {
                 Name = provider.Name,
                 Kind = "cloud",
-                Models = [.. models]
+                Models = [.. models],
+                ModelDisplayNames = models.ToDictionary(m => m, m => m)
             });
         }
 
         foreach (var runtime in await _containers.ListAllAsync(ct))
         {
-            var models = await _containers.GetModelIdsForContainerAsync(runtime.Id, ct);
+            var modelIds = await _containers.GetModelIdsForContainerAsync(runtime.Id, ct);
+            var displayNames = new Dictionary<string, string>();
+            foreach (var modelId in modelIds)
+            {
+                var def = await _modelRegistry.GetAsync(modelId, ct);
+                displayNames[modelId] = def?.DisplayName ?? def?.Name ?? modelId;
+            }
+
             catalog.Add(new ProviderModelCatalogItem
             {
                 Name = runtime.DisplayName,
                 Kind = "local",
-                Models = [.. models]
+                Models = [.. modelIds],
+                ModelDisplayNames = displayNames
             });
         }
 
@@ -66,11 +78,28 @@ public sealed class ProviderModelCatalogController : ControllerBase
                 .Select(e => e.ModelId)
                 .ToList();
 
+            // Router profiles reference model IDs directly; resolve display names
+            // from the registry for local models, use the ID as-is for cloud models.
+            var displayNames = new Dictionary<string, string>();
+            foreach (var modelId in modelIds)
+            {
+                if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
+                {
+                    displayNames[modelId] = modelId;
+                }
+                else
+                {
+                    var def = await _modelRegistry.GetAsync(modelId, ct);
+                    displayNames[modelId] = def?.DisplayName ?? def?.Name ?? modelId;
+                }
+            }
+
             catalog.Add(new ProviderModelCatalogItem
             {
                 Name = profile.Name,
                 Kind = "router",
-                Models = modelIds
+                Models = modelIds,
+                ModelDisplayNames = displayNames
             });
         }
 

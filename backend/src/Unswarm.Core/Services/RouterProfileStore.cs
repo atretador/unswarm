@@ -10,6 +10,7 @@ namespace Unswarm.Core.Services;
 public sealed class RouterProfileStore : IRouterProfileStore
 {
     private readonly Func<UnswarmDbContext> _dbFactory;
+    private readonly IApiKeyStore? _apiKeyStore;
 
     private static readonly JsonSerializerOptions s_json = new()
     {
@@ -21,9 +22,10 @@ public sealed class RouterProfileStore : IRouterProfileStore
     private readonly ConcurrentDictionary<string, (RouterProfile Profile, DateTimeOffset LoadedAt)> _nameCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public RouterProfileStore(Func<UnswarmDbContext> dbFactory)
+    public RouterProfileStore(Func<UnswarmDbContext> dbFactory, IApiKeyStore? apiKeyStore = null)
     {
         _dbFactory = dbFactory;
+        _apiKeyStore = apiKeyStore;
     }
 
     public async Task<IReadOnlyList<RouterProfile>> ListAsync(CancellationToken ct = default)
@@ -152,10 +154,15 @@ public sealed class RouterProfileStore : IRouterProfileStore
         if (entity is null)
             throw new KeyNotFoundException($"Router profile '{id}' not found.");
 
+        var name = entity.Name;
         db.RouterProfiles.Remove(entity);
         await db.SaveChangesAsync(ct);
         _cache.TryRemove(id, out _);
         _nameCache.TryRemove(entity.Name, out _);
+
+        // Clean up API key access records that reference the deleted router profile name.
+        if (_apiKeyStore is not null)
+            await _apiKeyStore.RemoveProviderFromAllKeysAsync(name, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> NameExistsAsync(string name, CancellationToken ct)
