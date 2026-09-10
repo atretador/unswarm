@@ -545,7 +545,7 @@ export function RegisteredContainerCard({
               title="Last benchmark"
             >
               <Zap className="size-2.5" />
-              {benchmark.tokensPerSec} tok/s · {benchmark.latencyMs}ms
+              {Number(benchmark.tokensPerSec).toFixed(2)} tok/s · {Number(benchmark.latencyMs).toFixed(2)}ms
               {benchmark.promptName && (
                 <span className="truncate text-[var(--color-text-muted)]">
                   {" "}· {benchmark.promptName}{benchmark.promptVersion != null ? ` v${benchmark.promptVersion}` : ""}

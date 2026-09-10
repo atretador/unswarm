@@ -59,7 +59,7 @@ function formatTokensPerSec(v: number): string {
 
 function formatLatency(v: number): string {
   if (!v || v <= 0) return "n/a";
-  return `${v}ms`;
+  return `${Number(v).toFixed(2)}ms`;
 }
 
 function formatTokens(v: number | undefined): string {
@@ -89,13 +89,13 @@ function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model
   const conflicted = model.status === "conflict";
   return (
     <Tooltip
-      content={invalid ? "Model invalid — fix registration first" : conflicted ? "Model name conflicts with another model — rename to resolve" : `Test chat with ${model.name}`}
+      content={invalid ? "Model invalid — fix registration first" : conflicted ? "Model name conflicts with another model — rename to resolve" : `Test chat with ${model.displayName || model.name}`}
     >
       <button
         type="button"
         onClick={() => !invalid && onChat(model)}
         disabled={invalid}
-        aria-label={`Test chat with ${model.name}`}
+        aria-label={`Test chat with ${model.displayName || model.name}`}
         className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:pointer-events-none disabled:opacity-40"
       >
         <MessageSquare className="size-3.5" />
@@ -296,7 +296,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           <Tooltip content="Edit model details">
             <button
               onClick={handleEdit}
-              aria-label={`Edit ${model.name}`}
+              aria-label={`Edit ${model.displayName || model.name}`}
               className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
             >
               <Pencil className="size-3.5" />
@@ -308,7 +308,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
                 <button
                   onClick={() => setShowConfirm(true)}
                   disabled={deleting}
-                  aria-label={`Delete ${model.name}`}
+                  aria-label={`Delete ${model.displayName || model.name}`}
                   className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
                 >
                   <Trash2 className="size-3.5" />
@@ -316,7 +316,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               </Tooltip>
               <ConfirmDialog
                 open={showConfirm}
-                title={`Delete ${model.name}?`}
+                title={`Delete ${model.displayName || model.name}?`}
                 description="This will permanently remove the deprecated model from the registry."
                 confirmLabel="Delete"
                 loading={deleting}
