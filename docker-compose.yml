@@ -19,6 +19,11 @@ services:
       # Host scripts directory: launcher scripts (.sh) managed via the API.
       # Maps the host's script directory into the container at /data/scripts.
       - ${HOST_SCRIPTS_DIR:-~/.config/unswarm/scripts}:/data/scripts
+      # Host /proc and cgroup: read real host CPU/RAM metrics (not container limits).
+      # Industry-standard pattern used by Datadog, Prometheus node-exporter, Netdata.
+      # Without these, host metrics show container cgroup limits, not actual host stats.
+      - /proc:/host/proc:ro
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
     group_add:
       - "${DOCKER_GID:-999}"
     extra_hosts:

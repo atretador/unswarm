@@ -77,7 +77,7 @@ public sealed class OpenAIController : ControllerBase
             .Where(m => m.Status != ModelStatus.Conflict)
             .Select(m => new OpenAiModelData
         {
-            Id = m.Name,
+            Id = m.DisplayName ?? m.Name,
             Created = m.CreatedAt.ToUnixTimeSeconds(),
             Unswarm = new OpenAiModelUnswarmInfo
             {

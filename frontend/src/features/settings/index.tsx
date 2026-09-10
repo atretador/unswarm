@@ -730,11 +730,13 @@ function GeneralTab() {
 
   const [draftRetention, setDraftRetention] = useState<string>("");
   const [draftHideOriginPrefix, setDraftHideOriginPrefix] = useState(false);
+  const [draftPollInterval, setDraftPollInterval] = useState<string>("");
 
   useEffect(() => {
     if (settings) {
       setDraftRetention(String(settings.logRetention));
       setDraftHideOriginPrefix(settings.hideOriginPrefix);
+      setDraftPollInterval(String(settings.telemetryPollInterval ?? 10));
     }
   }, [settings]);
 
@@ -758,16 +760,20 @@ function GeneralTab() {
   }
 
   const num = Number(draftRetention);
-  const hasInvalidInput = !Number.isFinite(num);
+  const pollNum = Number(draftPollInterval);
+  const hasInvalidInput = !Number.isFinite(num) || !Number.isFinite(pollNum);
   const clampedRetention = hasInvalidInput ? settings.logRetention : Math.max(1, num);
+  const clampedPollInterval = hasInvalidInput ? (settings.telemetryPollInterval ?? 10) : Math.max(5, Math.min(60, pollNum));
   const isDirty =
     (!hasInvalidInput && clampedRetention !== settings.logRetention) ||
-    draftHideOriginPrefix !== settings.hideOriginPrefix;
+    draftHideOriginPrefix !== settings.hideOriginPrefix ||
+    (!hasInvalidInput && clampedPollInterval !== (settings.telemetryPollInterval ?? 10));
   const canSave = isDirty && !hasInvalidInput;
 
   const handleCancel = () => {
     setDraftRetention(String(settings.logRetention));
     setDraftHideOriginPrefix(settings.hideOriginPrefix);
+    setDraftPollInterval(String(settings.telemetryPollInterval ?? 10));
   };
 
   return (
@@ -786,6 +792,21 @@ function GeneralTab() {
           value={draftRetention}
           onChange={(e) => setDraftRetention(e.target.value)}
         />
+
+        <div>
+          <label className="text-sm font-medium">Metrics poll interval (seconds)</label>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            How often to fetch live GPU/CPU/RAM metrics when agents are expanded
+          </p>
+          <Input
+            type="number"
+            min={5}
+            max={60}
+            step={1}
+            value={draftPollInterval}
+            onChange={(e) => setDraftPollInterval(e.target.value)}
+          />
+        </div>
 
         <div className="flex items-center justify-between">
           <div>
@@ -819,6 +840,7 @@ function GeneralTab() {
                 ...(draftHideOriginPrefix !== settings.hideOriginPrefix
                   ? { hideOriginPrefix: draftHideOriginPrefix }
                   : {}),
+                ...(clampedPollInterval !== (settings.telemetryPollInterval ?? 10) ? { telemetryPollInterval: clampedPollInterval } : {}),
               })
             }
             disabled={!canSave}

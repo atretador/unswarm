@@ -367,6 +367,54 @@ public sealed class AgentController : ControllerBase
 
         if (root.TryGetProperty("scripts", out var scripts) && scripts.ValueKind == JsonValueKind.Array)
             connection.Scripts = ParseScripts(scripts);
+
+        // ── Live metrics (new in Go agent telemetry) ────────────────────
+        if (root.TryGetProperty("hostMetrics", out var hostMetrics) && hostMetrics.ValueKind == JsonValueKind.Object)
+        {
+            connection.Telemetry ??= new AgentTelemetryData { CollectedAt = DateTimeOffset.UtcNow };
+            connection.Telemetry.Host = new HostMetrics
+            {
+                CpuPercent = hostMetrics.TryGetProperty("cpuPercent", out var cpu) && cpu.TryGetDouble(out var cpuVal) ? cpuVal : 0,
+                RamPercent = hostMetrics.TryGetProperty("ramPercent", out var ram) && ram.TryGetDouble(out var ramVal) ? ramVal : 0,
+                RamUsedMb = hostMetrics.TryGetProperty("ramUsedMb", out var ru) && ru.TryGetInt64(out var ruVal) ? ruVal : 0,
+                RamTotalMb = hostMetrics.TryGetProperty("ramTotalMb", out var rt) && rt.TryGetInt64(out var rtVal) ? rtVal : 0,
+            };
+        }
+
+        if (root.TryGetProperty("gpuMetrics", out var gpuMetrics) && gpuMetrics.ValueKind == JsonValueKind.Array)
+        {
+            connection.Telemetry ??= new AgentTelemetryData { CollectedAt = DateTimeOffset.UtcNow };
+            foreach (var gpu in gpuMetrics.EnumerateArray())
+            {
+                connection.Telemetry.Gpus.Add(new GPUMetrics
+                {
+                    Index = gpu.TryGetProperty("index", out var idx) && idx.TryGetInt32(out var idxVal) ? idxVal : 0,
+                    Name = gpu.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() ?? "" : "",
+                    Vendor = gpu.TryGetProperty("vendor", out var vend) && vend.ValueKind == JsonValueKind.String ? vend.GetString() ?? "" : "",
+                    CorePercent = gpu.TryGetProperty("corePercent", out var core) && core.TryGetDouble(out var coreVal) ? coreVal : -1,
+                    MemoryPercent = gpu.TryGetProperty("memoryPercent", out var gpmem) && gpmem.TryGetDouble(out var gpmemVal) ? gpmemVal : -1,
+                    MemoryUsedMb = gpu.TryGetProperty("memoryUsedMb", out var mu) && mu.TryGetInt64(out var muVal) ? muVal : -1,
+                    MemoryTotalMb = gpu.TryGetProperty("memoryTotalMb", out var mt) && mt.TryGetInt64(out var mtVal) ? mtVal : -1,
+                });
+            }
+        }
+
+        if (root.TryGetProperty("containerMetrics", out var containerMetrics) && containerMetrics.ValueKind == JsonValueKind.Object)
+        {
+            connection.Telemetry ??= new AgentTelemetryData { CollectedAt = DateTimeOffset.UtcNow };
+            foreach (var prop in containerMetrics.EnumerateObject())
+            {
+                var cm = prop.Value;
+                connection.Telemetry.Containers[prop.Name] = new ContainerMetrics
+                {
+                    ContainerId = prop.Name,
+                    CpuPercent = cm.TryGetProperty("cpuPercent", out var ccpu) && ccpu.TryGetDouble(out var ccpuVal) ? ccpuVal : 0,
+                    RamPercent = cm.TryGetProperty("ramPercent", out var cram) && cram.TryGetDouble(out var cramVal) ? cramVal : 0,
+                    RamUsedMb = cm.TryGetProperty("ramUsedMb", out var cru) && cru.TryGetInt64(out var cruVal) ? cruVal : 0,
+                    RamTotalMb = cm.TryGetProperty("ramTotalMb", out var crt) && crt.TryGetInt64(out var crtVal) ? crtVal : 0,
+                };
+            }
+        }
     }
 
     private static string? FormatGpuSummary(JsonElement gpuArray)

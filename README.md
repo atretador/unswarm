@@ -134,6 +134,7 @@ API clients send OpenAI-compatible requests to the backend. The scheduler queue 
 <img width="983" height="614" alt="image" src="https://github.com/user-attachments/assets/b6394fa3-0f07-42c7-badf-41d1cb86f087" />
 
 
+- **Live Metrics (KPI Cards)** — Real-time host GPU utilization (NVIDIA, AMD, Intel), CPU usage, and RAM on the Swarm page. Per-container CPU and memory badges update on a configurable poll interval. Stale-data indicators show when an agent goes offline. The backend reads real host metrics via `/host/proc` when running inside Docker.
 - **Telemetry** — Agents stream host info (CPU, memory, GPU), container statuses, and script process info to the backend over WebSocket; the dashboard picks it up via polling.
 - **Saved Prompts** — Prompt library for reusing benchmark and inference prompts.
 - **Cloud Providers** — Register external cloud inference providers (any OpenAI-compatible endpoint, e.g. OpenAI or OpenRouter) alongside self-hosted runtimes. Their models merge into the same `/v1` endpoint; requests route to the cloud when the model id targets `cloud/<provider>/<model>`.
@@ -497,6 +498,13 @@ docker compose up -d --build
 The dashboard and API are served at `http://localhost:22301`. The backend
 serves the React SPA static files directly — no separate frontend container.
 SQLite persists in the `unswarm-data` named volume.
+
+The compose file mounts `/proc` and `/sys/fs/cgroup` from the host into the
+backend container (`/host/proc`, `/host/sys/fs/cgroup`) so that live metrics
+report **real host CPU and RAM** rather than the container's cgroup limits.
+This follows the industry-standard pattern used by Datadog and Prometheus
+node-exporter. The backend falls back to `/proc` automatically when running
+bare-metal (outside Docker).
 
 To also run an agent inside the compose network (local testing only — agents
 normally run on remote hosts):

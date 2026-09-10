@@ -159,6 +159,40 @@ export interface Container {
   createdAt: string;
 }
 
+// ─── Live Telemetry ─────────────────────────────────────────────
+
+export interface HostMetrics {
+  cpuPercent: number;
+  ramPercent: number;
+  ramUsedMb: number;
+  ramTotalMb: number;
+}
+
+export interface GPUMetrics {
+  index: number;
+  name: string;
+  vendor: "nvidia" | "amd" | "intel";
+  corePercent: number;       // -1 if unavailable
+  memoryPercent: number;     // -1 if unavailable (Intel iGPU)
+  memoryUsedMb: number;      // -1 if unavailable
+  memoryTotalMb: number;     // -1 if unavailable
+}
+
+export interface ContainerMetrics {
+  containerId: string;
+  cpuPercent: number;
+  ramPercent: number;
+  ramUsedMb: number;
+  ramTotalMb: number;
+}
+
+export interface AgentTelemetry {
+  host?: HostMetrics;
+  gpus: GPUMetrics[];
+  containers: Record<string, ContainerMetrics>; // keyed by containerId
+  collectedAt: string; // ISO timestamp
+}
+
 // ─── Agents ──────────────────────────────────────────────────────
 
 export interface AgentContainerStatus {
@@ -204,6 +238,7 @@ export interface Agent {
   cpuCores: number;
   containers: AgentContainerStatus[];
   scripts: AgentScriptStatus[];
+  telemetry?: AgentTelemetry;
 }
 
 // ─── Queue ────────────────────────────────────────────────────────
@@ -366,6 +401,8 @@ export interface Settings {
   routerRetryAttempts: number;
   /** Delay between retry attempts in milliseconds. */
   routerRetryDelayMs: number;
+  /** How often to fetch live GPU/CPU/RAM metrics when agents are expanded (seconds, 5-60, default 10). */
+  telemetryPollInterval: number;
 }
 
 // ─── Prompt Library ────────────────────────────────────────────────
@@ -436,6 +473,8 @@ export interface ProviderModelCatalogEntry {
   name: string;
   kind: "cloud" | "local" | "router";
   models: string[];
+  /** Parallel map of model id → user-facing display name. */
+  modelDisplayNames?: Record<string, string>;
 }
 
 /**

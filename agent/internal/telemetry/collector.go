@@ -43,6 +43,11 @@ func (c *Collector) Collect(containerStatusesFn func(ctx context.Context) []prot
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Collect live metrics (best-effort, don't fail telemetry on metric errors)
+	hostMetrics := collectHostMetrics()
+	gpuMetrics := collectGPUMetrics(c.logger)
+	containerMetrics := collectContainerMetrics(ctx)
+
 	return protocol.TelemetryPayload{
 		Hostname:      c.hostname,
 		OsPlatform:    runtime.GOOS,
@@ -50,6 +55,9 @@ func (c *Collector) Collect(containerStatusesFn func(ctx context.Context) []prot
 		TotalMemoryMb: getMemoryMb(),
 		CPUCores:      runtime.NumCPU(),
 		Containers:    containerStatusesFn(ctx),
+		HostMetrics:   hostMetrics,
+		GPUList:       gpuMetrics,
+		ContainerLive: containerMetrics,
 	}
 }
 

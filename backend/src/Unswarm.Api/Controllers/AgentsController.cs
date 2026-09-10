@@ -179,7 +179,8 @@ public sealed class AgentsController : ControllerBase
             TotalMemoryMb = GetHostMemoryMb(),
             CpuCores = Environment.ProcessorCount,
             Containers = FilterRegisteredRuntimes(containers, allRegistered, ExecutionTarget.HostId).Select(ToContainerStatus).ToList(),
-            Scripts = scripts
+            Scripts = scripts,
+            Telemetry = CollectHostTelemetry(),
         };
     }
 
@@ -299,7 +300,8 @@ public sealed class AgentsController : ControllerBase
             Containers = info.Containers
                 .Where(c => registry.IsRegistered(c.ContainerId, c.ModelName))
                 .ToList(),
-            Scripts = filteredScripts
+            Scripts = filteredScripts,
+            Telemetry = info.Telemetry,
         };
     }
 
@@ -729,13 +731,36 @@ public sealed class AgentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Returns the best available /proc path. When running inside Docker with
+    /// the standard host-mount (volumes: /proc:/host/proc:ro), reads from
+    /// /host/proc to get real host metrics. Falls back to /proc (native mode).
+    /// This is the industry-standard pattern used by Datadog, Prometheus
+    /// node-exporter, and Netdata.
+    /// </summary>
+    private static string HostProcPath()
+    {
+        const string hostProc = "/host/proc";
+        const string containerProc = "/proc";
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            // /host/proc is the standard Docker host mount convention
+            if (System.IO.Directory.Exists(hostProc) &&
+                System.IO.File.Exists(System.IO.Path.Combine(hostProc, "meminfo")))
+                return hostProc;
+        }
+        return containerProc;
+    }
+
     private static long GetHostMemoryMb()
     {
         try
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && System.IO.File.Exists("/proc/meminfo"))
+            var procPath = HostProcPath();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && System.IO.File.Exists(System.IO.Path.Combine(procPath, "meminfo")))
             {
-                foreach (var line in System.IO.File.ReadLines("/proc/meminfo"))
+                foreach (var line in System.IO.File.ReadLines(System.IO.Path.Combine(procPath, "meminfo")))
                 {
                     if (line.StartsWith("MemTotal:"))
                     {
@@ -751,6 +776,283 @@ public sealed class AgentsController : ControllerBase
         catch
         {
             return 0;
+        }
+    }
+
+    // ── Live host telemetry collection (best-effort, Linux-only) ────────
+
+    private static AgentTelemetryData? CollectHostTelemetry()
+    {
+        try
+        {
+            var host = CollectHostMetrics();
+            var gpus = CollectHostGpuMetrics();
+            if (host is null && gpus.Count == 0)
+                return null;
+
+            return new AgentTelemetryData
+            {
+                CollectedAt = DateTimeOffset.UtcNow,
+                Host = host,
+                Gpus = gpus,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static HostMetrics? CollectHostMetrics()
+    {
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return null;
+
+            // ── RAM from /proc/meminfo ──────────────────────────────
+            long memTotalMb = 0, memUsedMb = 0;
+            double ramPercent = 0;
+
+            var procPath = HostProcPath();
+            if (System.IO.File.Exists(System.IO.Path.Combine(procPath, "meminfo")))
+            {
+                foreach (var line in System.IO.File.ReadLines(System.IO.Path.Combine(procPath, "meminfo")))
+                {
+                    if (line.StartsWith("MemTotal:"))
+                    {
+                        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2 && long.TryParse(parts[1], out var kb))
+                            memTotalMb = kb / 1024;
+                    }
+                    else if (line.StartsWith("MemAvailable:"))
+                    {
+                        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (parts.Length >= 2 && long.TryParse(parts[1], out var availKb) && memTotalMb > 0)
+                        {
+                            var availMb = availKb / 1024;
+                            memUsedMb = memTotalMb - availMb;
+                            ramPercent = Math.Round((double)memUsedMb / memTotalMb * 100, 1);
+                        }
+                    }
+                }
+            }
+
+            // ── CPU from /proc/stat (two samples 100 ms apart) ──────
+            var cpuPercent = ReadCpuPercent();
+
+            return new HostMetrics
+            {
+                CpuPercent = cpuPercent,
+                RamPercent = ramPercent,
+                RamUsedMb = memUsedMb,
+                RamTotalMb = memTotalMb,
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static double ReadCpuPercent()
+    {
+        try
+        {
+            var snap1 = ReadCpuTimes();
+            Thread.Sleep(100);
+            var snap2 = ReadCpuTimes();
+
+            if (snap1 is null || snap2 is null)
+                return 0;
+
+            var totalDelta = snap2.Total - snap1.Total;
+            if (totalDelta <= 0)
+                return 0;
+
+            var idleDelta = snap2.Idle - snap1.Idle;
+            return Math.Round((1.0 - (double)idleDelta / totalDelta) * 100, 1);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static CpuTimes? ReadCpuTimes()
+    {
+        try
+        {
+            var procPath = HostProcPath();
+            if (!System.IO.File.Exists(System.IO.Path.Combine(procPath, "stat")))
+                return null;
+
+            // First line: "cpu  user nice system idle iowait irq softirq steal"
+            var line = System.IO.File.ReadLines(System.IO.Path.Combine(procPath, "stat")).FirstOrDefault();
+            if (string.IsNullOrEmpty(line) || !line.StartsWith("cpu "))
+                return null;
+
+            var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // parts[0] is "cpu", parts[1..8] are the counters
+            if (parts.Length < 5)
+                return null;
+
+            long user = long.TryParse(parts[1], out var u) ? u : 0;
+            long nice = long.TryParse(parts[2], out var n) ? n : 0;
+            long system = long.TryParse(parts[3], out var s) ? s : 0;
+            long idle = long.TryParse(parts[4], out var i) ? i : 0;
+            long iowait = parts.Length > 5 && long.TryParse(parts[5], out var w) ? w : 0;
+            long irq = parts.Length > 6 && long.TryParse(parts[6], out var ir) ? ir : 0;
+            long softirq = parts.Length > 7 && long.TryParse(parts[7], out var si) ? si : 0;
+            long steal = parts.Length > 8 && long.TryParse(parts[8], out var st) ? st : 0;
+
+            var total = user + nice + system + idle + iowait + irq + softirq + steal;
+            // idle includes iowait
+            var idleTotal = idle + iowait;
+
+            return new CpuTimes { Idle = idleTotal, Total = total };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class CpuTimes
+    {
+        public long Idle { get; init; }
+        public long Total { get; init; }
+    }
+
+    private static List<GPUMetrics> CollectHostGpuMetrics()
+    {
+        var result = new List<GPUMetrics>();
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return result;
+
+            // ── NVIDIA: nvidia-smi ─────────────────────────────────
+            CollectNvidiaMetrics(result);
+
+            // ── AMD: amdsmi / sysfs ────────────────────────────────
+            CollectAmdMetrics(result);
+
+            // ── Intel: intel_gpu_top (snapshot) ─────────────────────
+            // intel_gpu_top doesn't have a simple one-shot query mode, skip for now
+        }
+        catch
+        {
+            // best-effort
+        }
+        return result;
+    }
+
+    private static void CollectNvidiaMetrics(List<GPUMetrics> result)
+    {
+        try
+        {
+            var output = RunToolWithTimeout("nvidia-smi",
+                "--query-gpu=index,name,gpu_utilization,memory.used,memory.total --format=csv,noheader,nounits",
+                TimeSpan.FromSeconds(3));
+            if (string.IsNullOrEmpty(output))
+                return;
+
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                // "0, NVIDIA GeForce RTX 4090, 78, 12345, 24564"
+                var parts = line.Split(',', StringSplitOptions.TrimEntries);
+                if (parts.Length < 5)
+                    continue;
+
+                if (!int.TryParse(parts[0], out var idx)) continue;
+                var name = parts[1];
+                var corePercent = double.TryParse(parts[2], out var c) ? c : -1;
+                var memUsed = long.TryParse(parts[3], out var mu) ? mu : -1;
+                var memTotal = long.TryParse(parts[4], out var mt) ? mt : -1;
+                var memPercent = memTotal > 0 ? Math.Round((double)memUsed / memTotal * 100, 1) : -1;
+
+                result.Add(new GPUMetrics
+                {
+                    Index = idx,
+                    Name = name,
+                    Vendor = "nvidia",
+                    CorePercent = corePercent,
+                    MemoryPercent = memPercent,
+                    MemoryUsedMb = memUsed,
+                    MemoryTotalMb = memTotal,
+                });
+            }
+        }
+        catch { /* nvidia-smi unavailable */ }
+    }
+
+    private static void CollectAmdMetrics(List<GPUMetrics> result)
+    {
+        // Try amdsmi if available (AMD ROCm stack)
+        try
+        {
+            var output = RunToolWithTimeout("amdsmi",
+                "gpu-metrics",
+                TimeSpan.FromSeconds(3));
+            if (string.IsNullOrEmpty(output))
+                return;
+
+            // amdsmi gpu-metrics output is JSON; parse basic fields
+            using var doc = System.Text.Json.JsonDocument.Parse(output);
+            var root = doc.RootElement;
+            if (root.ValueKind != System.Text.Json.JsonValueKind.Array)
+                return;
+
+            int idx = 0;
+            foreach (var gpu in root.EnumerateArray())
+            {
+                var name = gpu.TryGetProperty("card_name", out var cn) && cn.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? cn.GetString() ?? $"AMD GPU {idx}" : $"AMD GPU {idx}";
+                var corePercent = gpu.TryGetProperty("gfx_activity", out var ga) && ga.TryGetDouble(out var gaVal) ? gaVal : -1;
+                var memUsed = gpu.TryGetProperty("vram_used", out var vu) && vu.TryGetInt64(out var vuVal) ? vuVal / (1024 * 1024) : -1L;
+                var memTotal = gpu.TryGetProperty("vram_total", out var vt) && vt.TryGetInt64(out var vtVal) ? vtVal / (1024 * 1024) : -1L;
+                var memPercent = memTotal > 0 ? Math.Round((double)memUsed / memTotal * 100, 1) : -1;
+
+                result.Add(new GPUMetrics
+                {
+                    Index = idx,
+                    Name = name,
+                    Vendor = "amd",
+                    CorePercent = corePercent,
+                    MemoryPercent = memPercent,
+                    MemoryUsedMb = memUsed,
+                    MemoryTotalMb = memTotal,
+                });
+                idx++;
+            }
+        }
+        catch { /* amdsmi unavailable */ }
+    }
+
+    private static string? RunToolWithTimeout(string command, string args, TimeSpan timeout)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(command, args)
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            if (proc is null) return null;
+            var output = proc.StandardOutput.ReadToEnd();
+            if (!proc.WaitForExit(timeout))
+            {
+                try { proc.Kill(); } catch { /* best effort */ }
+                return null;
+            }
+            return output;
+        }
+        catch
+        {
+            return null;
         }
     }
 }
