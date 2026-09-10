@@ -16,4 +16,5 @@ public sealed class AgentInfo
     public int CpuCores { get; init; }
     public IReadOnlyList<AgentContainerStatus> Containers { get; init; } = [];
     public IReadOnlyList<AgentScriptStatus> Scripts { get; init; } = [];
+    public AgentTelemetryData? Telemetry { get; init; }
 }

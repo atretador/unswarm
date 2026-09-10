@@ -625,6 +625,12 @@ const AGENTS: Agent[] = [
       { containerId: "c3", modelName: "gemma-2-27b", status: "stopped", port: null },
     ],
     scripts: [],
+    telemetry: {
+      host: { cpuPercent: 45.2, ramPercent: 68.5, ramUsedMb: 11040, ramTotalMb: 16128 },
+      gpus: [{ index: 0, name: "GeForce RTX 4090", vendor: "nvidia", corePercent: 72.0, memoryPercent: 27.5, memoryUsedMb: 6656, memoryTotalMb: 24576 }],
+      containers: {},
+      collectedAt: new Date().toISOString(),
+    },
   },
   {
     name: "edge-node-1",
@@ -643,6 +649,12 @@ const AGENTS: Agent[] = [
     scripts: [
       { path: "/opt/scripts/run_vllm.sh", pid: 0, status: "stopped", port: 0, startTime: 0 },
     ],
+    telemetry: {
+      host: { cpuPercent: 12.1, ramPercent: 42.3, ramUsedMb: 6931, ramTotalMb: 16384 },
+      gpus: [],
+      containers: {},
+      collectedAt: new Date().toISOString(),
+    },
   },
 ];
 
@@ -871,6 +883,7 @@ const SETTINGS: Settings = {
   agentDisplayNames: {},
   routerRetryAttempts: 2,
   routerRetryDelayMs: 500,
+  telemetryPollInterval: 10,
 };
 
 // ─── Log Streaming ────────────────────────────────────────────────

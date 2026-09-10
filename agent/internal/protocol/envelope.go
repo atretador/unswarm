@@ -119,15 +119,46 @@ type CommandChunkPayload struct {
 	Data string `json:"data"`
 }
 
+// HostMetrics represents live CPU and RAM utilization of the host.
+type HostMetrics struct {
+	CpuPercent float64 `json:"cpuPercent"`
+	RamPercent float64 `json:"ramPercent"`
+	RamUsedMb  int64   `json:"ramUsedMb"`
+	RamTotalMb int64   `json:"ramTotalMb"`
+}
+
+// GPUMetrics represents live GPU utilization data for one GPU.
+type GPUMetrics struct {
+	Index         int     `json:"index"`
+	Name          string  `json:"name"`
+	Vendor        string  `json:"vendor"`        // "nvidia" | "amd" | "intel"
+	CorePercent   float64 `json:"corePercent"`   // -1 if unavailable
+	MemoryPercent float64 `json:"memoryPercent"` // -1 if unavailable (e.g. Intel iGPU)
+	MemoryUsedMb  int64   `json:"memoryUsedMb"`  // -1 if unavailable
+	MemoryTotalMb int64   `json:"memoryTotalMb"` // -1 if unavailable
+}
+
+// ContainerMetrics represents live CPU and RAM utilization for a single container.
+type ContainerMetrics struct {
+	ContainerId string  `json:"containerId"`
+	CpuPercent  float64 `json:"cpuPercent"`
+	RamPercent  float64 `json:"ramPercent"`
+	RamUsedMb   int64   `json:"ramUsedMb"`
+	RamTotalMb  int64   `json:"ramTotalMb"`
+}
+
 // TelemetryPayload carries host/container status info.
 type TelemetryPayload struct {
-	Hostname      string               `json:"hostname"`
-	OsPlatform    string               `json:"osPlatform"`
-	GPUInfo       string               `json:"gpuInfo,omitempty"`
-	TotalMemoryMb int64                `json:"totalMemoryMb"`
-	CPUCores      int                  `json:"cpuCores"`
-	Containers    []ContainerTelemetry `json:"containers"`
-	Scripts       []ScriptTelemetry    `json:"scripts,omitempty"`
+	Hostname      string                           `json:"hostname"`
+	OsPlatform    string                           `json:"osPlatform"`
+	GPUInfo       string                           `json:"gpuInfo,omitempty"`
+	TotalMemoryMb int64                            `json:"totalMemoryMb"`
+	CPUCores      int                              `json:"cpuCores"`
+	Containers    []ContainerTelemetry             `json:"containers"`
+	Scripts       []ScriptTelemetry                `json:"scripts,omitempty"`
+	HostMetrics   *HostMetrics                     `json:"hostMetrics,omitempty"`
+	GPUList       []GPUMetrics                     `json:"gpuList,omitempty"`
+	ContainerLive map[string]ContainerMetrics      `json:"containerLive,omitempty"`
 }
 
 // ContainerTelemetry is per-container info inside a telemetry message.
