@@ -1,0 +1,22 @@
+{
+  "title": "Panel",
+  "failedToLoad": "Error al cargar el panel",
+  "noData": "Sin datos aún",
+  "copied": "Copiado",
+  "copy": "Copiar",
+  "retry": "Reintentar",
+  "totalRequests": "Solicitudes totales",
+  "tokensProcessed": "Tokens procesados",
+  "avgLatency": "Latencia promedio",
+  "queueDepth": "Profundidad de cola",
+  "avgSwitch": "Cambio promedio",
+  "apiEndpoint": "Endpoint de API",
+  "apiEndpointDescription": "Proxy compatible con OpenAI — apunte cualquier cliente SDK de OpenAI o harness a esta URL base. No requiere autenticación.",
+  "requestsPerMinute": "Solicitudes por minuto",
+  "tokensPerSecond": "Tokens por segundo",
+  "activeRequests": "Solicitudes activas",
+  "cachedPromptTokens": "Tokens de prompt en caché",
+  "modelsLoaded": "Modelos cargados",
+  "uptime": "Tiempo de actividad",
+  "errorsLast24h": "Errores (últimas 24h)"
+}

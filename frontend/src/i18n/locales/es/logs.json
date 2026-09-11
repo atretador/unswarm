@@ -1,0 +1,27 @@
+{
+  "title": "Registros",
+  "subtitle": "Registros de contenedores y programador en transmisión.",
+  "failedToLoad": "Error al cargar registros",
+  "noLogs": "No hay registros aún — esperando eventos...",
+  "noLogsFiltered": "Ningún registro coincide con el filtro actual",
+  "resume": "Reanudar",
+  "pause": "Pausar",
+  "follow": "Seguir",
+  "clear": "Limpiar",
+  "streaming": "transmitiendo",
+  "streamDisconnected": "transmisión desconectada",
+  "paused": "pausado",
+  "allLevels": "Todos los niveles",
+  "allSources": "Todas las fuentes",
+  "filterByLevel": "Filtrar por nivel",
+  "filterBySource": "Filtrar por fuente",
+  "entries": "{{count}} entradas",
+  "srLogEntries": "{{count}} entradas de registro",
+  "srStreaming": " — transmitiendo",
+  "levels": {
+    "info": "Info",
+    "warn": "Advertencia",
+    "error": "Error",
+    "debug": "Depuración"
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "title": "Modelos",
+  "subtitle": "Modelos descubiertos: endpoints de inferencia registrados en agentes y proveedores en la nube.",
+  "tabAriaLabel": "Origen del modelo",
+  "searchManaged": "Buscar modelos por nombre, familia o runtime...",
+  "searchCloud": "Buscar modelos en la nube por nombre o proveedor...",
+  "searchAriaLabel": "Buscar modelos",
+  "agentFilterLabel": "Agente:",
+  "retry": "Reintentar",
+  "editDetails": "Editar detalles del modelo",
+  "conflictHint": "El nombre entra en conflicto con otro modelo — renómbralo para resolver",
+  "deprecatedHint": "Sin runtime de origen — redescubrir o eliminar",
+  "viewRuntime": "Ver runtime de origen en la página de Swarm",
+  "notRegistered": "no registrado",
+  "deleteTitle": "¿Eliminar {{name}}?",
+  "removeTitle": "¿Remover {{name}}?",
+  "editModelAria": "Editar {{name}}",
+  "deleteModelAria": "Eliminar {{name}}",
+  "tabs": {
+    "managed": "Gestionado",
+    "cloud": "Nube"
+  },
+  "status": {
+    "ready": "listo",
+    "validating": "validando…",
+    "invalid": "inválido",
+    "deprecated": "obsoleto",
+    "conflict": "conflicto"
+  },
+  "empty": {
+    "noModels": "No se han descubierto modelos aún",
+    "noModelsDesc": "Registre contenedores en la página de Swarm para descubrir sus modelos automáticamente, o agregue proveedores en la nube para acceder a modelos alojados.",
+    "noMatch": "Ningún modelo coincide con su búsqueda",
+    "noMatchDesc": "Intente con un término de búsqueda diferente."
+  },
+  "failedToLoad": "Error al cargar modelos",
+  "editModel": "Editar modelo",
+  "deleteModel": "Eliminar modelo",
+  "deleteModelDesc": "Esto eliminará permanentemente el modelo del registro.",
+  "removeFromRegistry": "Remover del registro",
+  "removeFromRegistryDesc": "Este modelo está vinculado a un runtime en ejecución. Eliminarlo solo lo remueve del registro — el runtime lo redescubrirá en la próxima sincronización.",
+  "allAgents": "Todos los agentes",
+  "form": {
+    "displayName": "Nombre para mostrar",
+    "internalName": "Nombre interno",
+    "family": "Familia",
+    "parameterSize": "Tamaño de parámetro",
+    "quantization": "Cuantización",
+    "contextWindow": "Ventana de contexto"
+  },
+  "errors": {
+    "contextWindowInvalid": "La ventana de contexto debe ser un número positivo hasta 10M"
+  },
+  "placeholders": {
+    "displayName": "Nombre de archivo mostrado en la interfaz (auto-completado desde el nombre del modelo)",
+    "family": "ej. Llama",
+    "parameterSize": "ej. 8B",
+    "quantization": "ej. Q4_K_M",
+    "contextWindow": "ej. 128000"
+  },
+  "tooltips": {
+    "tokensPerSecond": "Velocidad: tokens por segundo",
+    "timeToFirstToken": "Procesamiento: tiempo hasta el primer token",
+    "tokensGenerated": "Tokens generados",
+    "modelInvalid": "Modelo inválido — corrija el registro primero",
+    "modelConflict": "El nombre del modelo entra en conflicto con otro — renómbralo para resolver",
+    "testChat": "Probar chat con {{name}}"
+  },
+  "benchmarks": {
+    "notBenchmarked": "Sin benchmark aún",
+    "ran": "ejecutado",
+    "lastRun": "Última ejecución {{date}}",
+    "speedLabel": "velocidad",
+    "processingLabel": "procesamiento",
+    "tokensLabel": "tokens"
+  },
+  "time": {
+    "justNow": "ahora mismo",
+    "minutesAgo": "hace {{count}}m",
+    "hoursAgo": "hace {{count}}h",
+    "daysAgo": "hace {{count}}d"
+  },
+  "cloud": {
+    "fetching": "Obteniendo…",
+    "refresh": "Actualizar",
+    "collapse": "Contraer",
+    "expand": "Expandir",
+    "checkAllProviders": "Seleccionar todos los proveedores",
+    "error": "Error",
+    "selectProviderModels": "Seleccionar todos los modelos de {{provider}}",
+    "warningBanner": "Los modelos seleccionados aquí determinan lo que está disponible vía API. Para usar un modelo, también debe otorgársele a una clave API en la página de <1>Claves API</1>.",
+    "warningBannerPageSuffix": "página."
+  },
+  "chat": {
+    "send": "Enviar",
+    "systemPrompt": "Instrucciones opcionales para el modelo…",
+    "default": "predeterminado",
+    "roundTripLatency": "Latencia de ida y vuelta",
+    "generationSpeed": "Velocidad de generación (estimada)",
+    "promptTokens": "Tokens de prompt",
+    "completionTokens": "Tokens de finalización",
+    "stop": "Detener",
+    "stopGenerating": "Detener generación",
+    "sendAriaLabel": "Enviar mensaje",
+    "composerHint": "Enter para enviar · Shift+Enter para nueva línea · las solicitudes pasan por el proxy como tráfico real /v1",
+    "parameters": "Parámetros",
+    "clearConversation": "Limpiar esta conversación",
+    "clearConversationAria": "Limpiar conversación",
+    "systemPromptLabel": "Prompt del sistema",
+    "maxTokens": "Máximo de tokens",
+    "testModel": "Probar este modelo",
+    "testModelDesc": "Los mensajes se envían a través del proxy exactamente como clientes /v1 externos — una respuesta demuestra que el modelo y la conexión funcionan.",
+    "thinking": "Pensando",
+    "requestFailed": "Solicitud fallida",
+    "stopped": "(detenido)",
+    "generating": "generando…",
+    "messagePlaceholder": "Mensaje a {{name}}…",
+    "quickPrompts": [
+      "Responde exactamente: hola",
+      "¿Qué modelo eres?",
+      "Escribe una oración corta sobre el mar."
+    ],
+    "contextUnit": "contexto",
+    "messageAriaLabel": "Mensaje",
+    "promptUnit": "prompt",
+    "outUnit": "salida"
+  }
+}

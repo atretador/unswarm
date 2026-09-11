@@ -1,0 +1,14 @@
+{
+  "dashboard": "Panel",
+  "models": "Modelos",
+  "swarm": "Swarm",
+  "providers": "Proveedores",
+  "benchmarks": "Benchmarks",
+  "metrics": "Métricas",
+  "queue": "Cola",
+  "logs": "Registros",
+  "apiKeys": "Claves API",
+  "routerProfiles": "Perfiles de enrutamiento",
+  "settings": "Configuración",
+  "profile": "Perfil"
+}

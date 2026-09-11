@@ -1,0 +1,22 @@
+{
+  "title": "仪表盘",
+  "failedToLoad": "加载仪表盘失败",
+  "noData": "暂无数据",
+  "copied": "已复制",
+  "copy": "复制",
+  "retry": "重试",
+  "totalRequests": "总请求数",
+  "tokensProcessed": "已处理 Token 数",
+  "avgLatency": "平均延迟",
+  "queueDepth": "队列深度",
+  "avgSwitch": "平均切换",
+  "apiEndpoint": "API 端点",
+  "apiEndpointDescription": "兼容 OpenAI 的代理——将任何 OpenAI SDK 客户端或测试工具指向此基础 URL。无需认证。",
+  "requestsPerMinute": "每分钟请求数",
+  "tokensPerSecond": "每秒 Token 数",
+  "activeRequests": "活跃请求数",
+  "cachedPromptTokens": "已缓存的 Prompt Token",
+  "modelsLoaded": "已加载模型数",
+  "uptime": "运行时间",
+  "errorsLast24h": "错误数（24小时）"
+}

@@ -1,0 +1,26 @@
+{
+  "title": "Perfil",
+  "subtitle": "Detalles de cuenta y seguridad.",
+  "account": "Cuenta",
+  "changePassword": "Cambiar contraseña",
+  "editProfile": "Editar perfil",
+  "passwordChanged": "Contraseña cambiada exitosamente.",
+  "passwordFailed": "Error al cambiar la contraseña.",
+  "tempPasswordBanner": "Está usando una contraseña temporal. Cámbiela ahora.",
+  "tempPasswordBadge": "Contraseña temporal",
+  "accountActive": "Cuenta activa",
+  "tempPasswordModal": "Contraseña temporal — cámbiela ahora",
+  "tempPasswordModalDesc": "Está usando una contraseña temporal. Cambie a la pestaña de Contraseña para cambiarla.",
+  "detailsTab": "Detalles",
+  "passwordTab": "Contraseña",
+  "validation": {
+    "passwordMinLength": "La nueva contraseña debe tener al menos 6 caracteres.",
+    "passwordsNoMatch": "Las nuevas contraseñas no coinciden."
+  },
+  "fields": {
+    "username": "Nombre de usuario",
+    "currentPassword": "Contraseña actual",
+    "newPassword": "Nueva contraseña",
+    "confirmPassword": "Confirmar nueva contraseña"
+  }
+}

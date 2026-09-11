@@ -1,0 +1,128 @@
+{
+  "title": "模型",
+  "subtitle": "已发现的模型：跨 Agent 和云提供方注册的推理端点。",
+  "tabAriaLabel": "模型来源",
+  "searchManaged": "按名称、系列或运行时搜索模型…",
+  "searchCloud": "按名称或提供方搜索云模型…",
+  "searchAriaLabel": "搜索模型",
+  "agentFilterLabel": "Agent：",
+  "retry": "重试",
+  "editDetails": "编辑模型详情",
+  "conflictHint": "名称与另一个模型冲突——请重命名以解决",
+  "deprecatedHint": "无源运行时——请重新发现或删除",
+  "viewRuntime": "在 Swarm 页面查看源运行时",
+  "notRegistered": "未注册",
+  "deleteTitle": "删除 {{name}}？",
+  "removeTitle": "移除 {{name}}？",
+  "editModelAria": "编辑 {{name}}",
+  "deleteModelAria": "删除 {{name}}",
+  "tabs": {
+    "managed": "托管",
+    "cloud": "云端"
+  },
+  "status": {
+    "ready": "就绪",
+    "validating": "验证中…",
+    "invalid": "无效",
+    "deprecated": "已弃用",
+    "conflict": "冲突"
+  },
+  "empty": {
+    "noModels": "尚未发现模型",
+    "noModelsDesc": "在 Swarm 页面注册容器以自动发现其模型，或添加云提供方以访问托管模型。",
+    "noMatch": "没有匹配的模型",
+    "noMatchDesc": "请尝试其他搜索词。"
+  },
+  "failedToLoad": "加载模型失败",
+  "editModel": "编辑模型",
+  "deleteModel": "删除模型",
+  "deleteModelDesc": "这将从注册表中永久移除此模型。",
+  "removeFromRegistry": "从注册表移除",
+  "removeFromRegistryDesc": "此模型关联了一个运行中的运行时。删除仅会将其从注册表中移除——运行时将在下次同步时重新发现它。",
+  "allAgents": "所有 Agent",
+  "form": {
+    "displayName": "显示名称",
+    "internalName": "内部名称",
+    "family": "系列",
+    "parameterSize": "参数大小",
+    "quantization": "量化",
+    "contextWindow": "上下文窗口"
+  },
+  "errors": {
+    "contextWindowInvalid": "上下文窗口必须是不超过 1000 万的正整数"
+  },
+  "placeholders": {
+    "displayName": "UI 中显示的文件名（根据模型名称自动填充）",
+    "family": "例如 Llama",
+    "parameterSize": "例如 8B",
+    "quantization": "例如 Q4_K_M",
+    "contextWindow": "例如 128000"
+  },
+  "tooltips": {
+    "tokensPerSecond": "速度：每秒 Token 数",
+    "timeToFirstToken": "处理时间：首个 Token 延迟",
+    "tokensGenerated": "已生成的 Token 数",
+    "modelInvalid": "模型无效——请先修复注册信息",
+    "modelConflict": "模型名称与另一个模型冲突——请重命名以解决",
+    "testChat": "与 {{name}} 进行测试对话"
+  },
+  "benchmarks": {
+    "notBenchmarked": "尚未进行基准测试",
+    "ran": "已运行",
+    "lastRun": "上次运行 {{date}}",
+    "speedLabel": "速度",
+    "processingLabel": "处理",
+    "tokensLabel": "Token"
+  },
+  "time": {
+    "justNow": "刚刚",
+    "minutesAgo": "{{count}}分钟前",
+    "hoursAgo": "{{count}}小时前",
+    "daysAgo": "{{count}}天前"
+  },
+  "cloud": {
+    "fetching": "获取中…",
+    "refresh": "刷新",
+    "collapse": "收起",
+    "expand": "展开",
+    "checkAllProviders": "检查所有提供方",
+    "error": "错误",
+    "selectProviderModels": "选择所有 {{provider}} 模型",
+    "warningBanner": "此处选择的模型决定了 API 可用的模型。要使用某个模型，还必须在 <1>API 密钥</1> 页面为其授权。",
+    "warningBannerPageSuffix": "页面。"
+  },
+  "chat": {
+    "send": "发送",
+    "systemPrompt": "可选的模型指令…",
+    "default": "默认",
+    "roundTripLatency": "往返延迟",
+    "generationSpeed": "生成速度（预估）",
+    "promptTokens": "Prompt Token",
+    "completionTokens": "补全 Token",
+    "stop": "停止",
+    "stopGenerating": "停止生成",
+    "sendAriaLabel": "发送消息",
+    "composerHint": "按 Enter 发送 · Shift+Enter 换行 · 请求通过代理处理，与真实 /v1 流量一致",
+    "parameters": "参数",
+    "clearConversation": "清除此对话",
+    "clearConversationAria": "清空对话",
+    "systemPromptLabel": "系统提示词",
+    "maxTokens": "最大 Token 数",
+    "testModel": "测试此模型",
+    "testModelDesc": "消息通过代理发送，与外部 /v1 客户端完全一致——回复证明模型和连接正常工作。",
+    "thinking": "思考中",
+    "requestFailed": "请求失败",
+    "stopped": "（已停止）",
+    "generating": "生成中…",
+    "messagePlaceholder": "给 {{name}} 发消息…",
+    "quickPrompts": [
+      "请回复：hello",
+      "你是什么模型？",
+      "用一句话描述大海。"
+    ],
+    "contextUnit": "上下文",
+    "messageAriaLabel": "消息",
+    "promptUnit": "提示",
+    "outUnit": "输出"
+  }
+}

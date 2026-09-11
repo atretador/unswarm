@@ -1,0 +1,14 @@
+{
+  "dashboard": "仪表盘",
+  "models": "模型",
+  "swarm": "Swarm",
+  "providers": "提供方",
+  "benchmarks": "基准测试",
+  "metrics": "指标",
+  "queue": "队列",
+  "logs": "日志",
+  "apiKeys": "API 密钥",
+  "routerProfiles": "路由配置",
+  "settings": "设置",
+  "profile": "个人资料"
+}

@@ -6,6 +6,8 @@ import { Globe } from 'lucide-react';
 const LOCALES = [
   { code: 'en', label: 'English' },
   { code: 'pt-BR', label: 'Português Brasileiro' },
+  { code: 'es', label: 'Español' },
+  { code: 'zh-CN', label: '简体中文' },
 ] as const;
 
 export function LocaleSwitcher() {
@@ -50,7 +52,7 @@ export function LocaleSwitcher() {
       {open && (
         <div
           className="
-            absolute right-0 top-full mt-1.5 z-50 w-40
+            absolute right-0 top-full mt-1.5 z-50 w-48
             rounded-[var(--radius-lg)] border border-[var(--color-border)]
             bg-[var(--color-bg-surface)] shadow-lg
             py-1
