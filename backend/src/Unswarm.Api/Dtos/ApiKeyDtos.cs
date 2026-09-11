@@ -100,6 +100,7 @@ public sealed class RouterProfileEntryDto
     public string ModelId { get; set; } = string.Empty;
     public int Priority { get; set; }
     public bool IsEnabled { get; set; } = true;
+    public string? ThinkingEffortOverride { get; set; }
 }
 
 public record CreateRouterProfileRequest(

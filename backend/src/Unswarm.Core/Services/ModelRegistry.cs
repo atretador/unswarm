@@ -101,6 +101,7 @@ public sealed class ModelRegistry : IModelRegistry
             ContainerImage = definition.ContainerImage,
             SourceRuntimeId = definition.SourceRuntimeId,
             DisplayName = definition.DisplayName,
+            SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -129,6 +130,7 @@ public sealed class ModelRegistry : IModelRegistry
         entity.ContainerImage = definition.ContainerImage;
         entity.SourceRuntimeId = definition.SourceRuntimeId;
         entity.DisplayName = definition.DisplayName;
+        entity.SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -189,6 +191,7 @@ public sealed class ModelRegistry : IModelRegistry
         ContainerImage = e.ContainerImage,
         SourceRuntimeId = e.SourceRuntimeId,
         DisplayName = e.DisplayName,
+        SupportedThinkingEffortsJson = e.SupportedThinkingEffortsJson,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Unswarm.Api.Dtos;
 
 public sealed class OpenAiModelListResponse
@@ -23,6 +25,8 @@ public sealed class OpenAiModelUnswarmInfo
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = "";
     public string Status { get; set; } = "";
+    [JsonPropertyName("supportedThinkingEfforts")]
+    public string[]? SupportedThinkingEfforts { get; set; }
 }
 
 /// <summary>

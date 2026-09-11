@@ -139,7 +139,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; supportedThinkingEfforts: string | null }) =>
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; supportedThinkingEffortsJson: string | null }) =>
       client.updateModel(model.id, data as unknown as Partial<Model>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -173,7 +173,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       parameterSize: editParamSize.trim(),
       quantization: editQuant.trim(),
       contextWindow: ctxWindow,
-      supportedThinkingEfforts: editThinkingEfforts.trim()
+      supportedThinkingEffortsJson: editThinkingEfforts.trim()
         ? JSON.stringify(editThinkingEfforts.split(",").map(s => s.trim()).filter(Boolean))
         : null,
     });

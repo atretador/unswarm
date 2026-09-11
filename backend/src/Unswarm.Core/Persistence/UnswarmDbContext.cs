@@ -24,6 +24,7 @@ public sealed class ModelEntity
     public string ContainerImage { get; set; } = string.Empty;
     public string? SourceRuntimeId { get; set; }
     public string? DisplayName { get; set; }
+    public string? SupportedThinkingEffortsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

@@ -28,4 +28,10 @@ public sealed class RouterProfileEntry
     public required string ModelId { get; init; }  // "cloud/openai/gpt-4o" or local model name
     public int Priority { get; init; }              // lower = tried first
     public bool IsEnabled { get; init; } = true;    // can temporarily disable without removing
+    /// <summary>
+    /// Optional override for the reasoning_effort parameter.
+    /// When non-null, this value is injected into the request body before dispatch.
+    /// Null means use whatever the client sent (pure passthrough).
+    /// </summary>
+    public string? ThinkingEffortOverride { get; init; }
 }

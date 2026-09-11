@@ -72,11 +72,13 @@ function ModelSearchInput({
   onChange,
   models,
   modelsLoading,
+  title,
 }: {
   value: string;
   onChange: (value: string) => void;
   models: Model[];
   modelsLoading: boolean;
+  title?: string;
 }) {
   const { t } = useTranslation('router-profiles');
   const [query, setQuery] = useState(value);
@@ -198,6 +200,7 @@ function ModelSearchInput({
         ref={inputRef}
         type="text"
         value={query}
+        title={title}
         onChange={(e) => {
           setQuery(e.target.value);
           setHighlightedIndex(-1);
@@ -498,7 +501,7 @@ function EntryRow({
       <select
         value={sourceKey}
         onChange={(e) => setSourceKey(e.target.value)}
-        className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] shrink-0 w-32 focus:outline-none focus:border-[var(--color-primary)]"
+        className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] shrink-0 w-24 focus:outline-none focus:border-[var(--color-primary)]"
       >
         <option value="all">{t('noModelsAllSources')}</option>
         {sourceOptions.map((s) => (
@@ -512,6 +515,7 @@ function EntryRow({
         onChange={handleModelChange}
         models={filteredModels}
         modelsLoading={modelsLoading}
+        title={entry.modelId ? displayModelName(entry.modelId, models) : undefined}
       />
       <div className="w-20 shrink-0">
         <Input
@@ -536,6 +540,7 @@ function EntryRow({
             return (
               <select
                 value={entry.thinkingEffortOverride ?? ""}
+                title={t('fields.effortTooltip')}
                 onChange={(e) =>
                   onUpdate(index, {
                     thinkingEffortOverride: e.target.value || null,
@@ -543,9 +548,9 @@ function EntryRow({
                 }
                 className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] w-full focus:outline-none focus:border-[var(--color-primary)]"
               >
-                <option value="">{t('fields.defaultEffort')}</option>
+                <option value="" title={t('placeholders.defaultEffort')}>{t('placeholders.defaultEffort')}</option>
                 {supportedEfforts.map((effort) => (
-                  <option key={effort} value={effort}>
+                  <option key={effort} value={effort} title={effort}>
                     {effort}
                   </option>
                 ))}
@@ -605,6 +610,26 @@ function ProfileDetailPanel({
   const setActiveMutation = useMutation({
     mutationFn: ({ activeModelId }: { activeModelId: string | null }) =>
       client.setActiveEntry(profile!.id, activeModelId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
+    },
+  });
+
+  const updateThinkingEffortMutation = useMutation({
+    mutationFn: ({
+      modelId,
+      thinkingEffortOverride,
+    }: {
+      modelId: string;
+      thinkingEffortOverride: string | null;
+    }) =>
+      client.updateRouterProfile(profile!.id, {
+        name: profile!.name,
+        mode: profile!.mode,
+        entries: profile!.entries.map((e) =>
+          e.modelId === modelId ? { ...e, thinkingEffortOverride } : e,
+        ),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
     },
@@ -724,6 +749,63 @@ function ProfileDetailPanel({
                     <span className="text-[10px] text-[var(--color-text-muted)]">
                       {t('priorityBadge', { priority: entry.priority })}
                     </span>
+                  </div>
+
+                  {/* Thinking effort override */}
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={entry.thinkingEffortOverride != null}
+                      onClick={() => {
+                        const hasOverride = entry.thinkingEffortOverride != null;
+                        updateThinkingEffortMutation.mutate({
+                          modelId: entry.modelId,
+                          thinkingEffortOverride: hasOverride ? null : "",
+                        });
+                      }}
+                      className={`
+                        relative inline-flex h-4 w-7 shrink-0 rounded-full
+                        transition-colors duration-[var(--duration-fast)]
+                        ${
+                          entry.thinkingEffortOverride != null
+                            ? "bg-[var(--color-primary)]"
+                            : "bg-[var(--color-border-strong)]"
+                        }
+                        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
+                        cursor-pointer
+                      `}
+                    >
+                      <span
+                        className={`
+                          pointer-events-none inline-block size-3 rounded-full bg-white shadow-sm
+                          transition-transform duration-[var(--duration-fast)] ease-[var(--ease-spring)]
+                          ${entry.thinkingEffortOverride != null ? "translate-x-3.5" : "translate-x-0.5"}
+                        `}
+                      />
+                    </button>
+                    {entry.thinkingEffortOverride != null && (
+                      <select
+                        value={entry.thinkingEffortOverride}
+                        onChange={(e) => {
+                          updateThinkingEffortMutation.mutate({
+                            modelId: entry.modelId,
+                            thinkingEffortOverride: e.target.value || null,
+                          });
+                        }}
+                        title={t('fields.effortTooltip')}
+                        className="h-6 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-1.5 text-[10px] text-[var(--color-text)] border-[var(--color-border)] w-20 focus:outline-none focus:border-[var(--color-primary)]"
+                      >
+                        <option value="">{t('placeholders.defaultEffort')}</option>
+                        {(models?.find(
+                          (m) => m.id === entry.modelId || m.name === entry.modelId,
+                        )?.supportedThinkingEfforts ?? []).map((effort) => (
+                          <option key={effort} value={effort}>
+                            {effort}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   {/* Actions */}
@@ -897,6 +979,7 @@ function ProfileDialog({
       open={open}
       onOpenChange={(o) => !o && onClose()}
       title={isEdit ? t('editProfile') : t('addProfile')}
+      className="sm:max-w-4xl"
     >
       <form onSubmit={handleSubmit} className="p-5 space-y-4">
         <Input
