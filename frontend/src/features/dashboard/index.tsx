@@ -1,10 +1,11 @@
-import { Suspense, lazy, useState, useCallback } from "react";
+import { Suspense, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { Activity, Zap, Clock, AlertTriangle, RefreshCw, ArrowLeftRight, Copy, Check } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { BASE_URL } from "../../lib/api/httpClient";
+import { lazyWithRetry } from "../../lib/lazy-with-retry";
 import { formatUptime, formatMs, formatCompact } from "../../i18n/format";
 import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../components/ui";
 
@@ -13,10 +14,10 @@ import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../compon
 // do NOT lazy-load individual recharts components behind nested <Suspense>:
 // recharts 3.x + React 19 hits an infinite setState loop in RechartsWrapper's
 // ref callback when the chart subtree suspends/reappears (recharts#7463).
-const LazyRequestsPerMinuteChart = lazy(() =>
+const LazyRequestsPerMinuteChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.RequestsPerMinuteChart })),
 );
-const LazyTokensPerSecondChart = lazy(() =>
+const LazyTokensPerSecondChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.TokensPerSecondChart })),
 );
 

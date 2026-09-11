@@ -19,6 +19,11 @@
   "created": "已创建",
   "failedToLoad": "加载失败",
   "retry": "重试",
+  "errorBoundary": {
+    "title": "出现问题",
+    "description": "此页面加载失败。请重试，或刷新页面。",
+    "reload": "刷新页面"
+  },
   "noResults": "未找到结果",
   "active": "活跃",
   "disabled": "已禁用",

@@ -19,6 +19,11 @@
   "created": "Criado",
   "failedToLoad": "Falha ao carregar",
   "retry": "Tentar novamente",
+  "errorBoundary": {
+    "title": "Algo deu errado",
+    "description": "Falha ao carregar esta página. Tente novamente ou recarregue a página.",
+    "reload": "Recarregar página"
+  },
   "noResults": "Nenhum resultado encontrado",
   "active": "Ativo",
   "disabled": "Desativado",

@@ -19,6 +19,11 @@
   "created": "Created",
   "failedToLoad": "Failed to load",
   "retry": "Retry",
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "description": "This page failed to load. Try again, or reload the page.",
+    "reload": "Reload page"
+  },
   "noResults": "No results found",
   "active": "Active",
   "disabled": "Disabled",

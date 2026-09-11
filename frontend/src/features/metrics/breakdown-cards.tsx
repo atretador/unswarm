@@ -6,14 +6,15 @@
 // via a lazy boundary so the metrics entry chunk stays recharts-free — same
 // strategy as index.tsx's chart lazy-loads.
 
-import { Suspense, lazy } from "react";
+import { Suspense } from "react";
+import { lazyWithRetry } from "../../lib/lazy-with-retry";
 import { useTranslation } from "react-i18next";
 import { Activity, KeyRound } from "lucide-react";
 import { Card, Spinner } from "../../components/ui";
 import type { ApiKeyUsageRow, MetricsLatencyBand } from "../../lib/api/types";
 import { formatTokens } from "./format";
 
-const LazyLatencyBandsChart = lazy(() =>
+const LazyLatencyBandsChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.LatencyBandsChart })),
 );
 

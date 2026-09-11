@@ -19,6 +19,11 @@
   "created": "Creado",
   "failedToLoad": "Error al cargar",
   "retry": "Reintentar",
+  "errorBoundary": {
+    "title": "Algo salió mal",
+    "description": "No se pudo cargar esta página. Inténtalo de nuevo o recarga la página.",
+    "reload": "Recargar página"
+  },
   "noResults": "No se encontraron resultados",
   "active": "Activo",
   "disabled": "Desactivado",

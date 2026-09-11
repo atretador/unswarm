@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Sidebar } from "./Sidebar";
 import { Topbar, MobileDrawer } from "./Topbar";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { useAuth } from "../../lib/auth-context";
 
 /** Maps route base paths to translation keys in the 'settings' namespace. */
@@ -91,7 +92,9 @@ export function AppShell() {
             }}
             className="h-full"
           >
-            <Outlet />
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
           </motion.div>
         </main>
       </div>

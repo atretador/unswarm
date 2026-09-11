@@ -1,4 +1,5 @@
-import { Suspense, lazy, useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { Suspense, useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { lazyWithRetry } from "../../lib/lazy-with-retry";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -86,13 +87,13 @@ import { FiltersModal } from "./filter-modal";
 // nested <Suspense>: recharts 3.x + React 19 hits an infinite setState loop in
 // RechartsWrapper's ref callback when the chart subtree suspends/reappears
 // (recharts#7463) — "Maximum update depth exceeded" on page load.
-const LazyTokenUsageChart = lazy(() =>
+const LazyTokenUsageChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.TokenUsageChart })),
 );
-const LazyProviderBreakdownChart = lazy(() =>
+const LazyProviderBreakdownChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.ProviderBreakdownChart })),
 );
-const LazyMultiSeriesChart = lazy(() =>
+const LazyMultiSeriesChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.MultiSeriesChart })),
 );
 
