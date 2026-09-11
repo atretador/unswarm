@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
 using Unswarm.Core.Services.Remote;
@@ -56,7 +57,7 @@ public sealed class ScriptsController : ControllerBase
     public IActionResult List()
     {
         if (HostEnvironment.IsRunningInDocker)
-            return BadRequest(new { error = "Host script management is not available in Docker mode." });
+            return BadRequest(LocalizedError.Create("scripts.dockerNotAvailable"));
 
         var scripts = _scriptDir.ListScripts();
         return Ok(scripts);
@@ -70,10 +71,10 @@ public sealed class ScriptsController : ControllerBase
     public async Task<IActionResult> Upload(IFormFile file, CancellationToken ct)
     {
         if (HostEnvironment.IsRunningInDocker)
-            return BadRequest(new { error = "Host script management is not available in Docker mode." });
+            return BadRequest(LocalizedError.Create("scripts.dockerNotAvailable"));
 
         if (file is null || file.Length == 0)
-            return BadRequest(new { error = "No file provided" });
+            return BadRequest(LocalizedError.Create("scripts.noFileProvided"));
 
         try
         {
@@ -88,7 +89,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (UnauthorizedAccessException)
         {
-            return StatusCode(503, new { error = "Cannot write to scripts directory. Check directory permissions." });
+            return StatusCode(503, LocalizedError.Create("scripts.permissionsError"));
         }
     }
 
@@ -100,10 +101,10 @@ public sealed class ScriptsController : ControllerBase
     public async Task<IActionResult> Update(string fileName, IFormFile file, CancellationToken ct)
     {
         if (HostEnvironment.IsRunningInDocker)
-            return BadRequest(new { error = "Host script management is not available in Docker mode." });
+            return BadRequest(LocalizedError.Create("scripts.dockerNotAvailable"));
 
         if (file is null || file.Length == 0)
-            return BadRequest(new { error = "No file provided" });
+            return BadRequest(LocalizedError.Create("scripts.noFileProvided"));
 
         try
         {
@@ -114,7 +115,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (FileNotFoundException)
         {
-            return NotFound(new { error = $"Script not found: {fileName}" });
+            return NotFound(LocalizedError.Create("scripts.notFound", new { fileName }));
         }
         catch (ArgumentException ex)
         {
@@ -122,7 +123,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (UnauthorizedAccessException)
         {
-            return StatusCode(503, new { error = "Cannot write to scripts directory. Check directory permissions." });
+            return StatusCode(503, LocalizedError.Create("scripts.permissionsError"));
         }
     }
 
@@ -133,7 +134,7 @@ public sealed class ScriptsController : ControllerBase
     public async Task<IActionResult> GetContent(string fileName, CancellationToken ct)
     {
         if (HostEnvironment.IsRunningInDocker)
-            return BadRequest(new { error = "Host script management is not available in Docker mode." });
+            return BadRequest(LocalizedError.Create("scripts.dockerNotAvailable"));
 
         try
         {
@@ -142,7 +143,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (FileNotFoundException)
         {
-            return NotFound(new { error = $"Script not found: {fileName}" });
+            return NotFound(LocalizedError.Create("scripts.notFound", new { fileName }));
         }
         catch (ArgumentException ex)
         {
@@ -158,7 +159,7 @@ public sealed class ScriptsController : ControllerBase
     public async Task<IActionResult> Delete(string fileName, CancellationToken ct)
     {
         if (HostEnvironment.IsRunningInDocker)
-            return BadRequest(new { error = "Host script management is not available in Docker mode." });
+            return BadRequest(LocalizedError.Create("scripts.dockerNotAvailable"));
 
         try
         {
@@ -171,7 +172,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (FileNotFoundException)
         {
-            return NotFound(new { error = $"Script not found: {fileName}" });
+            return NotFound(LocalizedError.Create("scripts.notFound", new { fileName }));
         }
         catch (InvalidOperationException ex)
         {
@@ -197,7 +198,7 @@ public sealed class ScriptsController : ControllerBase
             return remoteError!;
 
         if (file is null || file.Length == 0)
-            return BadRequest(new { error = "No file provided" });
+            return BadRequest(LocalizedError.Create("scripts.noFileProvided"));
 
         try
         {
@@ -210,11 +211,11 @@ public sealed class ScriptsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{Agent}' rejected script upload", agentName);
-            return StatusCode(502, new { error = $"Agent '{agentName}' rejected upload: {ex.Message}" });
+            return StatusCode(502, LocalizedError.Create("scripts.agentRejected", new { name = agentName, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
-            return StatusCode(503, new { error = $"Failed to upload script to agent '{agentName}': {ex.Message}" });
+            return StatusCode(503, LocalizedError.Create("scripts.agentFailed", new { name = agentName, detail = ex.Message }));
         }
     }
 
@@ -230,7 +231,7 @@ public sealed class ScriptsController : ControllerBase
             return remoteError!;
 
         if (file is null || file.Length == 0)
-            return BadRequest(new { error = "No file provided" });
+            return BadRequest(LocalizedError.Create("scripts.noFileProvided"));
 
         try
         {
@@ -243,11 +244,11 @@ public sealed class ScriptsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{Agent}' rejected script update", agentName);
-            return StatusCode(502, new { error = $"Agent '{agentName}' rejected update: {ex.Message}" });
+            return StatusCode(502, LocalizedError.Create("scripts.agentRejected", new { name = agentName, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
-            return StatusCode(503, new { error = $"Failed to update script on agent '{agentName}': {ex.Message}" });
+            return StatusCode(503, LocalizedError.Create("scripts.agentFailed", new { name = agentName, detail = ex.Message }));
         }
     }
 
@@ -269,11 +270,11 @@ public sealed class ScriptsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{Agent}' failed to read script content", agentName);
-            return StatusCode(502, new { error = $"Agent '{agentName}' failed to read script: {ex.Message}" });
+            return StatusCode(502, LocalizedError.Create("scripts.agentRejected", new { name = agentName, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
-            return StatusCode(503, new { error = $"Failed to read script from agent '{agentName}': {ex.Message}" });
+            return StatusCode(503, LocalizedError.Create("scripts.agentFailed", new { name = agentName, detail = ex.Message }));
         }
     }
 
@@ -285,15 +286,15 @@ public sealed class ScriptsController : ControllerBase
     private (IRemoteDockerController? controller, IActionResult? error) ResolveRemoteAgent(string agentName)
     {
         if (string.Equals(agentName, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
-            return (null, BadRequest(new { error = "Use the host endpoints for host scripts." }));
+            return (null, BadRequest(LocalizedError.Create("scripts.useHostEndpoints")));
 
         var info = _agentRegistry.GetInfo(agentName);
         if (info is null)
-            return (null, NotFound(new { error = $"Agent '{agentName}' not found" }));
+            return (null, NotFound(LocalizedError.Create("agents.notFound", new { name = agentName })));
 
         var targetId = ExecutionTarget.ForAgent(agentName).Id;
         if (!_router.IsTargetReachable(targetId))
-            return (null, StatusCode(503, new { error = $"Agent '{agentName}' is not reachable" }));
+            return (null, StatusCode(503, LocalizedError.Create("agents.notReachable", new { name = agentName })));
 
         try
         {
@@ -302,7 +303,7 @@ public sealed class ScriptsController : ControllerBase
         }
         catch (Exception ex)
         {
-            return (null, StatusCode(502, new { error = $"Failed to reach agent '{agentName}': {ex.Message}" }));
+            return (null, StatusCode(502, LocalizedError.Create("scripts.agentFailed", new { name = agentName, detail = ex.Message })));
         }
     }
 }

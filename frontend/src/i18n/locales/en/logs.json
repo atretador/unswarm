@@ -1,0 +1,27 @@
+{
+  "title": "Logs",
+  "subtitle": "Streaming container and scheduler logs.",
+  "failedToLoad": "Failed to load logs",
+  "noLogs": "No logs yet — waiting for events...",
+  "noLogsFiltered": "No logs match the current filter",
+  "resume": "Resume",
+  "pause": "Pause",
+  "follow": "Follow",
+  "clear": "Clear",
+  "streaming": "streaming",
+  "streamDisconnected": "stream disconnected",
+  "paused": "paused",
+  "allLevels": "All levels",
+  "allSources": "All sources",
+  "filterByLevel": "Filter by level",
+  "filterBySource": "Filter by source",
+  "entries": "{{count}} entries",
+  "srLogEntries": "{{count}} log entries",
+  "srStreaming": " — streaming",
+  "levels": {
+    "info": "Info",
+    "warn": "Warn",
+    "error": "Error",
+    "debug": "Debug"
+  }
+}

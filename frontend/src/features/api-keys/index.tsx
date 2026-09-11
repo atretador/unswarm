@@ -1,15 +1,18 @@
 import { useState } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot, SlidersHorizontal } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { Card, Skeleton, Button, Badge, EmptyState, Input, ConfirmDialog } from "../../components/ui";
 import type { ApiKeyCreateResponse, ApiKeyItem } from "../../lib/api/types";
 import { ManageKeyModal } from "./manage-key-modal";
+import { formatRelativeTime } from "../../i18n/format";
 
 // ─── Copy-to-clipboard helper ──────────────────────────────────────────
 
 function CopyButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useTranslation("api-keys");
 
   const handleCopy = async () => {
     try {
@@ -27,29 +30,23 @@ function CopyButton({ value }: { value: string }) {
       variant="ghost"
       size="sm"
       onClick={handleCopy}
-      aria-label="Copy"
+      aria-label={t("copy")}
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : "Copy"}
+      {copied ? t("copied") : t("copy")}
     </Button>
   );
 }
 
 function formatRelative(ts: string | null): string {
-  if (!ts) return "Never used";
-  const diff = Date.now() - new Date(ts).getTime();
-  const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "just now";
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  if (!ts) return "—";
+  return formatRelativeTime(ts);
 }
 
-function scopeLabel(scope: "inference" | "agent") {
+function scopeLabel(scope: "inference" | "agent", t: (key: string) => string) {
   return scope === "inference"
-    ? { text: "Inference", variant: "info" as const }
-    : { text: "Agent", variant: "outline" as const };
+    ? { text: t("tabs.inference"), variant: "info" as const }
+    : { text: t("tabs.agent"), variant: "outline" as const };
 }
 
 // ─── Create Key form ────────────────────────────────────────────────────
@@ -61,6 +58,7 @@ function CreateKeySection({
   queryClient: ReturnType<typeof useQueryClient>;
   scope: "inference" | "agent";
 }) {
+  const { t } = useTranslation("api-keys");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ApiKeyCreateResponse | null>(null);
@@ -81,7 +79,7 @@ function CreateKeySection({
     e.preventDefault();
     setError(null);
     if (!name.trim()) {
-      setError("Name is required.");
+      setError(t("validate.nameRequired"));
       return;
     }
     createMutation.mutate(name.trim());
@@ -92,51 +90,57 @@ function CreateKeySection({
       <div className="flex items-center gap-2 mb-3">
         <Key className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          {scope === "agent" ? "New Agent Key" : "New Inference Key"}
+          {scope === "agent" ? t("newAgentKey") : t("newInferenceKey")}
         </p>
       </div>
 
       <p className="text-sm text-[var(--color-text)] mb-4">
-        {scope === "agent"
-          ? (
-            <>
-              Create a key to authenticate to the agent channel (
-              <span className="font-mono">/api/agents</span>,{" "}
-              <span className="font-mono">/ws/agent</span>).
-              These keys are <strong>not</strong> login credentials.
-            </>
-          )
-          : (
-            <>
-              Create a key to authenticate to the inference proxy (<span className="font-mono">/v1</span>).
-              These keys are <strong>not</strong> login credentials.
-            </>
-          )
-        }
+        {scope === "agent" ? (
+          <Trans
+            i18nKey="createDescAgent"
+            ns="api-keys"
+            values={{ channel1: "/api/agents", channel2: "/ws/agent" }}
+            components={[
+              <span className="font-mono" />,
+              <span className="font-mono" />,
+              <strong />,
+            ]}
+          />
+        ) : (
+          <Trans
+            i18nKey="createDescInference"
+            ns="api-keys"
+            values={{ proxy: "/v1" }}
+            components={[
+              <span className="font-mono" />,
+              <strong />,
+            ]}
+          />
+        )}
       </p>
 
       {!created ? (
         <form onSubmit={handleSubmit} className="space-y-3">
           <Input
-            label="Key name"
+            label={t("keyName")}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={scope === "agent" ? "e.g. Remote worker" : "e.g. CI runner"}
+            placeholder={scope === "agent" ? t("placeholders.keyName") : t("placeholders.keyNameAgent")}
             disabled={createMutation.isPending}
           />
           {error && <p className="text-sm text-[var(--color-status-error)]">{error}</p>}
           <Button type="submit" variant="primary" size="md" loading={createMutation.isPending}>
-            Create Key
+            {t("createKey")}
           </Button>
         </form>
       ) : (
         <div className="space-y-3">
           <div className="rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-running)_15%,transparent)] border border-[color-mix(in_srgb,var(--color-status-running)_30%,transparent)] px-4 py-3">
             <p className="text-sm font-medium text-[var(--color-status-running)] mb-2">
-              Key created — copy your secret now.
+              {t("keyCreated")}
             </p>
             <p className="text-[10px] text-[var(--color-text-muted)] mb-2">
-              This is the only time the full secret is shown. Store it somewhere safe.
+              {t("keyCreatedDesc")}
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 bg-[var(--color-bg-muted)] rounded px-2 py-1 text-xs font-mono text-[var(--color-text)] truncate">
@@ -151,7 +155,7 @@ function CreateKeySection({
             size="sm"
             onClick={() => setCreated(null)}
           >
-            Create another
+            {t("createAnother")}
           </Button>
         </div>
       )}
@@ -180,6 +184,7 @@ function KeyRow({
   createdAt: string;
   queryClient: ReturnType<typeof useQueryClient>;
 }) {
+  const { t } = useTranslation("api-keys");
   const [rotating, setRotating] = useState(false);
   const [rotated, setRotated] = useState<ApiKeyCreateResponse | null>(null);
   const [rotateError, setRotateError] = useState<string | null>(null);
@@ -196,7 +201,7 @@ function KeyRow({
     },
     onError: (err: Error) => {
       setConfirmRevoke(null);
-      setRevokeError(err.message || "Revocation failed");
+      setRevokeError(err.message);
     },
   });
 
@@ -210,11 +215,11 @@ function KeyRow({
     },
     onError: (err: Error) => {
       setRotating(false);
-      setRotateError(err.message || "Rotation failed");
+      setRotateError(err.message);
     },
   });
 
-  const scopeStyle = scopeLabel(scope);
+  const scopeStyle = scopeLabel(scope, t);
 
   const handleRotate = () => {
     setRotated(null);
@@ -239,7 +244,7 @@ function KeyRow({
             </Badge>
             {!isActive && (
               <Badge variant="error" size="sm">
-                revoked
+                {t("revoked")}
               </Badge>
             )}
           </div>
@@ -247,7 +252,7 @@ function KeyRow({
             {keyPrefix}…
           </p>
           <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
-            Created {formatRelative(createdAt)} · {formatRelative(lastUsedAt)}
+            {t("createdPrefix")} {formatRelative(createdAt)} · {formatRelative(lastUsedAt)}
           </p>
         </div>
 
@@ -257,9 +262,9 @@ function KeyRow({
             variant="ghost"
             size="sm"
             onClick={() => setManageOpen(true)}
-            aria-label={`Manage ${name}`}
+            aria-label={t("aria.manageKey", { name })}
           >
-            <SlidersHorizontal className="size-3.5" /> Manage
+            <SlidersHorizontal className="size-3.5" /> {t("aria.manage")}
           </Button>
           <Button
             type="button"
@@ -267,9 +272,9 @@ function KeyRow({
             size="sm"
             onClick={handleRotate}
             loading={rotating}
-            aria-label={`Rotate ${name}`}
+            aria-label={t("aria.rotateKey", { name })}
           >
-            <RefreshCw className="size-3.5" /> Rotate
+            <RefreshCw className="size-3.5" /> {t("aria.rotate")}
           </Button>
           <Button
             type="button"
@@ -277,9 +282,9 @@ function KeyRow({
             size="sm"
             onClick={handleRevoke}
             disabled={!isActive}
-            aria-label={`Revoke ${name}`}
+            aria-label={t("aria.revokeKey", { name })}
           >
-            <Trash2 className="size-3.5" /> Revoke
+            <Trash2 className="size-3.5" /> {t("aria.revoke")}
           </Button>
         </div>
       </div>
@@ -295,8 +300,7 @@ function KeyRow({
       {rotating && (
         <div className="mb-3 pl-4 border-l-2 border-[var(--color-border)] space-y-2">
           <p className="text-xs text-[var(--color-text-muted)]">
-            Rotating the key invalidates the previous secret. Deployers of this key must
-            replace their credentials now.
+            {t("rotateWarningComplete")}
           </p>
         </div>
       )}
@@ -304,7 +308,7 @@ function KeyRow({
       {rotated && (
         <div className="mb-3 pl-4 border-l-2 border-[var(--color-status-running)] rounded-r bg-[color-mix(in_srgb,var(--color-status-running)_10%,transparent)] px-4 py-3">
           <p className="text-xs font-medium text-[var(--color-status-running)] mb-2">
-            Key rotated — copy your new secret now.
+            {t("rotated")}
           </p>
           <div className="flex items-center gap-2">
             <code className="flex-1 bg-[var(--color-bg-muted)] rounded px-2 py-1 text-xs font-mono text-[var(--color-text)] truncate">
@@ -317,9 +321,9 @@ function KeyRow({
 
       <ConfirmDialog
         open={confirmRevoke !== null}
-        title={`Revoke "${confirmRevoke?.name ?? name}"?`}
-        description="Existing clients will lose access immediately."
-        confirmLabel="Revoke"
+        title={t("revoke.confirm", { name: confirmRevoke?.name ?? name })}
+        description={t("revoke.desc")}
+        confirmLabel={t("aria.revoke")}
         variant="danger"
         loading={revokeMutation.isPending}
         onConfirm={() => {
@@ -344,6 +348,7 @@ function KeyList({
   queryClient: ReturnType<typeof useQueryClient>;
   scope: "inference" | "agent";
 }) {
+  const { t } = useTranslation("api-keys");
   const { data, isLoading, error } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => client.listApiKeys(),
@@ -371,7 +376,7 @@ function KeyList({
       <div className="flex items-center gap-2 mb-3">
         <ShieldAlert className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          {scope === "agent" ? "Agent Keys" : "Inference Keys"}
+          {scope === "agent" ? t("agentKeys") : t("inferenceKeys")}
         </p>
       </div>
 
@@ -384,11 +389,11 @@ function KeyList({
       {keys.length === 0 ? (
         <EmptyState
           icon={<KeySquare className="size-8" />}
-          title={`No ${scope} keys yet`}
+          title={t("noKeys", { scope })}
           description={
             scope === "agent"
-              ? "Create an agent key to authenticate to the agent channel."
-              : "Create an inference key to authenticate clients against the /v1 proxy."
+              ? t("noKeysAgent")
+              : t("noKeysInference")
           }
         />
       ) : (
@@ -410,7 +415,7 @@ function KeyList({
           {retiredKeys.length > 0 && (
             <div className="mt-6 pt-4 border-t border-[var(--color-border)]">
               <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-2">
-                Retired ({retiredKeys.length})
+                {t("retired", { count: retiredKeys.length })}
               </p>
               {retiredKeys.map((k) => (
                 <KeyRow
@@ -437,23 +442,24 @@ function KeyList({
 
 type Tab = "inference" | "agent";
 
-const TABS: { key: Tab; label: string; icon: typeof Key }[] = [
-  { key: "inference", label: "Inference", icon: Key },
-  { key: "agent", label: "Agent", icon: Bot },
-];
-
 export default function ApiKeys() {
+  const { t } = useTranslation("api-keys");
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>("inference");
+
+  const tabs: { key: Tab; label: string; icon: typeof Key }[] = [
+    { key: "inference", label: t("tabs.inference"), icon: Key },
+    { key: "agent", label: t("tabs.agent"), icon: Bot },
+  ];
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          API Keys
+          {t("title")}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Manage keys that authenticate to the inference proxy and agent channel. These are not login credentials.
+          {t("desc")}
         </p>
       </div>
 
@@ -461,17 +467,19 @@ export default function ApiKeys() {
         <div className="flex items-start gap-3">
           <ShieldAlert className="size-4 text-[var(--color-status-warning)] mt-0.5 shrink-0" />
           <p className="text-xs text-[var(--color-text-muted)] leading-relaxed">
-            API keys authenticate to specific endpoints — inference keys for the{" "}
-            <span className="font-mono">/v1</span> proxy, agent keys for the agent
-            channel. Login uses a separate cookie session — a login credential is
-            not an API key, and vice versa.
+            <Trans
+              i18nKey="info"
+              ns="api-keys"
+              values={{ proxy: "/v1" }}
+              components={[<span className="font-mono" />]}
+            />
           </p>
         </div>
       </Card>
 
       {/* Tab bar — same pattern as swarm ManageRuntimesModal */}
-      <div role="tablist" aria-label="Key scope" className="flex border-b border-[var(--color-border-subtle)]">
-        {TABS.map((tab) => (
+      <div role="tablist" aria-label={t("aria.keyScope")} className="flex border-b border-[var(--color-border-subtle)]">
+        {tabs.map((tab) => (
           <button
             key={tab.key}
             type="button"

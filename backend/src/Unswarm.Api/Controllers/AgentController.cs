@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Remote;
 
@@ -84,20 +85,20 @@ public sealed class AgentController : ControllerBase
 
             if (msg is null || msg.Type != "hello")
             {
-                await SendError(socket, "First message must be type: hello", ct);
+                await SendError(socket, LocalizedError.Create("agents.wsFirstMessageMustBeHello"), ct);
                 return;
             }
 
             if (msg.Payload is not { } payload || !payload.TryGetProperty("name", out var nameProp))
             {
-                await SendError(socket, "hello payload must include: name", ct);
+                await SendError(socket, LocalizedError.Create("agents.wsHelloMissingName"), ct);
                 return;
             }
 
             agentName = nameProp.GetString();
             if (string.IsNullOrWhiteSpace(agentName))
             {
-                await SendError(socket, "name cannot be empty", ct);
+                await SendError(socket, LocalizedError.Create("agents.wsNameEmpty"), ct);
                 return;
             }
 
@@ -112,7 +113,7 @@ public sealed class AgentController : ControllerBase
                     _logger.LogWarning(
                         "Agent key {KeyId} rejected for agent {AgentName}: key is bound to a different agent",
                         apiKeyId, agentName);
-                    await SendError(socket, $"API key is bound to a different agent; connection as '{agentName}' rejected", ct);
+                    await SendError(socket, LocalizedError.Create("agents.wsKeyBindingMismatch", new { agentName }), ct);
                     return;
                 }
             }
@@ -312,7 +313,7 @@ public sealed class AgentController : ControllerBase
                 default:
                     // m3: Use shared camelCase options for error payload
                     var errPayload = JsonSerializer.SerializeToElement(
-                        new { error = $"Unknown message type: {msg.Type}" }, JsonOptions);
+                        LocalizedError.Create("agents.wsUnknownMessageType", new { type = msg.Type }), JsonOptions);
                     var err = new AgentMessage
                     {
                         Type = "error",
@@ -327,7 +328,7 @@ public sealed class AgentController : ControllerBase
     }
 
     // B1: Use shared static options for SendError
-    private static async Task SendError(WebSocket socket, string error, CancellationToken ct)
+    private static async Task SendError(WebSocket socket, object error, CancellationToken ct)
     {
         var msg = new AgentMessage
         {

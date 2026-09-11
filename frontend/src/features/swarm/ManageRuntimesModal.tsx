@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -27,6 +28,7 @@ import type {
   RegisteredRuntime,
 } from "../../lib/api/types";
 import { HostScriptUpload, AgentScriptUpload } from "./ScriptEditor";
+import { enumLabel } from "../../i18n/enum-map";
 import {
   PAGE_SIZE,
   isContainerRegistered,
@@ -46,6 +48,8 @@ function ManageContainersBody({
   onClose: () => void;
   registered: RegisteredRuntime[];
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -125,9 +129,7 @@ function ManageContainersBody({
   return (
     <div className="space-y-4 p-5">
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Running containers on{" "}
-        <span className="font-mono text-[var(--color-text-heading)]">{agentName}</span>.
-        Pick one to register — model discovery runs automatically once it's live.
+        {t('runtime.registerOn', { agentName })}
       </p>
 
         {/* Filter */}
@@ -140,8 +142,8 @@ function ManageContainersBody({
               setFilter(e.target.value);
               setPage(1);
             }}
-            placeholder="Filter by container name or id…"
-            aria-label="Filter containers"
+            placeholder={t('filterPlaceholder')}
+            aria-label={t('agent.searchContainers')}
             className={`
               h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)]
               bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)]
@@ -161,7 +163,7 @@ function ManageContainersBody({
           </div>
         ) : error ? (
           <EmptyState
-            title="Failed to load containers"
+            title={t('container.failedToLoad')}
             description={error.message}
             action={
               <Button
@@ -171,18 +173,18 @@ function ManageContainersBody({
                   queryClient.invalidateQueries({ queryKey: ["agent-containers", agentName] })
                 }
               >
-                Retry
+                {t('retry')}
               </Button>
             }
           />
         ) : filtered.length === 0 ? (
           <EmptyState
             icon={<Box className="size-12" strokeWidth={1.5} />}
-            title={containers?.length ? "No matches" : "No running containers"}
+            title={containers?.length ? t('container.noMatches') : t('container.noRunningContainers')}
             description={
               containers?.length
-                ? `Nothing on this agent matches "${filter}".`
-                : "Start a container on the agent machine and it will show up here."
+                ? t('nothingMatches', { filter })
+                : t('startContainerHint')
             }
           />
         ) : (
@@ -215,12 +217,12 @@ function ManageContainersBody({
                       {c.modelName}
                     </span>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
-                      <span className="flex items-center gap-1 capitalize">
+                      <span className="flex items-center gap-1">
                         <StatusDot
                           status={c.status === "stopping" ? "stopped" : c.status}
                           size="sm"
                         />
-                        {c.status}
+                        {enumLabel('containerStatus', c.status)}
                       </span>
                       <span className="truncate text-right font-mono">{c.port ?? "—"}</span>
                       <span className="flex items-center gap-1">
@@ -235,18 +237,18 @@ function ManageContainersBody({
                       {already ? (
                         <Badge variant="success" className="gap-1">
                           <PackageOpen className="size-2.5" />
-                          registered
+                          {t('registered')}
                         </Badge>
                       ) : selectedCard ? (
                         <Badge variant="info">
-                          selected
+                          {t('selected')}
                         </Badge>
                       ) : (
                         <Badge
                           variant="outline"
                           className="opacity-0 transition-opacity group-hover:opacity-100"
                         >
-                          register
+                          {t('register')}
                         </Badge>
                       )}
                     </div>
@@ -259,15 +261,14 @@ function ManageContainersBody({
             {totalPages > 1 && (
               <div className="flex items-center justify-between pt-1">
                 <span className="text-[10px] text-[var(--color-text-muted)]">
-                  {filtered.length} container{filtered.length !== 1 ? "s" : ""} · page{" "}
-                  {safePage} of {totalPages}
+                  {t('containerCount', { count: filtered.length, page: safePage, total: totalPages })}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
                     onClick={() => go(safePage - 1)}
                     disabled={safePage <= 1}
-                    aria-label="Previous page"
+                    aria-label={t('previousPage')}
                     className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ChevronLeft className="size-3.5" />
@@ -277,7 +278,7 @@ function ManageContainersBody({
                       key={p}
                       type="button"
                       onClick={() => go(p)}
-                      aria-label={`Page ${p}`}
+                      aria-label={`${t('previousPage')} ${p}`}
                       aria-current={p === safePage ? "page" : undefined}
                       className={`
                         flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)]
@@ -296,7 +297,7 @@ function ManageContainersBody({
                     type="button"
                     onClick={() => go(safePage + 1)}
                     disabled={safePage >= totalPages}
-                    aria-label="Next page"
+                    aria-label={t('nextPage')}
                     className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <ChevronRight className="size-3.5" />
@@ -319,12 +320,12 @@ function ManageContainersBody({
             >
               <div className="flex min-w-0 items-center justify-between gap-2">
                 <p className="truncate text-xs font-medium text-[var(--color-text-heading)]">
-                  Register {selected.modelName}
+                  {t('register')} {selected.modelName}
                 </p>
                 <button
                   type="button"
                   onClick={() => setSelectedId(null)}
-                  aria-label="Cancel selection"
+                  aria-label={t('script.cancelSelection')}
                   className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)]"
                 >
                   <X className="size-3.5" />
@@ -332,55 +333,55 @@ function ManageContainersBody({
               </div>
               <div className="space-y-2.5">
                 <Input
-                  label="Display name"
+                  label={t('runtime.displayName')}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
-                  placeholder="my-model-server"
-                  aria-label="Display name"
+                  placeholder={t('runtime.placeholders.displayName')}
+                  aria-label={t('runtime.displayName')}
                 />
                 <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-[var(--color-text-muted)]">Container</span>
+                  <span className="text-xs font-medium text-[var(--color-text-muted)]">{t('containerLabel')}</span>
                   <code className="h-8 truncate rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-1.5 font-mono text-xs text-[var(--color-text)]">
                     {selected.modelName}
                   </code>
                 </div>
                 <Input
-                  label="Port"
+                  label={t('runtime.port')}
                   type="number"
                   value={port}
                   onChange={(e) => setPort(e.target.value)}
-                  placeholder="8080"
-                  aria-label="Port"
+                  placeholder={t('runtime.placeholders.port')}
+                  aria-label={t('runtime.port')}
                 />
                 <Input
-                  label="Mapped port (optional)"
+                  label={t('runtime.mappedPort')}
                   type="number"
                   value={mappedPort}
                   onChange={(e) => setMappedPort(e.target.value)}
-                  placeholder="auto-resolve"
-                  aria-label="Mapped port"
+                  placeholder={t('runtime.placeholders.mappedPort')}
+                  aria-label={t('runtime.mappedPort')}
                 />
                 <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
-                  Host port exposed by Docker. Leave empty to auto-resolve via Docker inspect.
+                  {t('runtime.hostPortHint')}
                 </p>
                 <Input
-                  label="Parallel Lanes"
+                  label={t('runtime.parallelLanes')}
                   type="number"
                   value={String(maxConcurrentInferences)}
                   onChange={(e) => {
                     const v = parseInt(e.target.value, 10);
                     if (!isNaN(v)) setMaxConcurrentInferences(Math.max(1, Math.min(128, v)));
                   }}
-                  placeholder="1"
-                  aria-label="Parallel Lanes"
+                  placeholder={t('runtime.placeholders.parallelLanes')}
+                  aria-label={t('runtime.parallelLanes')}
                 />
                 <p className="text-[10px] leading-tight text-[var(--color-text-muted)]">
-                  Max concurrent inferences this runtime can handle in parallel.
+                  {t('runtime.maxConcurrentHint')}
                 </p>
               </div>
               <div className="flex justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setSelectedId(null)}>
-                  Cancel
+                  {tc('cancel')}
                 </Button>
                 <Button
                   size="sm"
@@ -389,7 +390,7 @@ function ManageContainersBody({
                   onClick={confirmRegister}
                 >
                   <PackageOpen className="size-3" />
-                  Register on {agentName}
+                  {t('runtime.registerOn', { agentName })}
                 </Button>
               </div>
             </motion.div>
@@ -444,15 +445,16 @@ export function ManageRuntimesModal({
   onClose: () => void;
   registered: RegisteredRuntime[];
 }) {
+  const { t } = useTranslation('swarm');
   const [activeTab, setActiveTab] = useState<ManageTab>("containers");
   const queryClient = useQueryClient();
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={`Manage runtimes on ${agentName}`}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('concurrency.title', { agentName })}>
       {/* Tab bar */}
       <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]">
-        <div className="flex" role="tablist" aria-label="Runtimes">
+        <div className="flex" role="tablist" aria-label={t('agent.manageRuntimes')}>
           <button
             type="button"
             role="tab"
@@ -470,7 +472,7 @@ export function ManageRuntimesModal({
             `}
           >
             <PackageOpen className="size-3" />
-            Containers
+            {t('manage.containers')}
           </button>
           <button
             type="button"
@@ -489,7 +491,7 @@ export function ManageRuntimesModal({
             `}
           >
             <Terminal className="size-3" />
-            Scripts
+            {t('manage.scripts')}
           </button>
         </div>
         <button
@@ -497,7 +499,7 @@ export function ManageRuntimesModal({
           onClick={() =>
             queryClient.invalidateQueries({ queryKey: ["agent-containers", agentName] })
           }
-          aria-label="Refresh containers"
+          aria-label={t('manage.refreshContainers')}
           className="mr-2 flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
         >
           <RefreshCw className="size-3.5" />

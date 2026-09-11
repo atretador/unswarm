@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 /** CSS selector for all natively focusable elements. */
 const FOCUSABLE =
@@ -44,6 +45,7 @@ export function Dialog({
   children,
   className,
 }: DialogProps) {
+  const { t } = useTranslation("common");
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -159,7 +161,7 @@ export function Dialog({
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              aria-label="Close dialog"
+              aria-label={t("closeDialog")}
               className="flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
             >
               ×

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
+import { formatMs, formatTokensPerSec } from "../../i18n/format";
 import {
   Card,
   Badge,
@@ -26,23 +28,15 @@ import {
 import type { QueueItem } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
 
-// ─── Helpers ────────────────────────────────────────────────────────
-
-function formatMs(ms: number): string {
-  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms}ms`;
-}
-
-/** Parse targetId into a display label and icon kind. */
+/** Parse targetId into an icon kind and agent name (label is translated via t()). */
 function parseTarget(
   targetId: string | null,
-): { label: string; kind: "host" | "agent" } {
+): { kind: "host" | "agent"; agentName: string } {
   if (!targetId || targetId === "host") {
-    return { label: "Host (local)", kind: "host" };
+    return { kind: "host", agentName: "" };
   }
   const name = targetId.startsWith("agent:") ? targetId.slice(6) : targetId;
-  return { label: `Agent: ${name}`, kind: "agent" };
+  return { kind: "agent", agentName: name };
 }
 
 /**
@@ -51,6 +45,7 @@ function parseTarget(
  * Same per-second tick pattern as the processing elapsed timer below.
  */
 function HoldCountdown({ expiresAt }: { expiresAt: string }) {
+  const { t } = useTranslation("queue");
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -65,7 +60,7 @@ function HoldCountdown({ expiresAt }: { expiresAt: string }) {
       className="rounded-full bg-[color-mix(in_srgb,var(--color-status-warning)_18%,transparent)] px-1 font-mono"
       data-testid="hold-countdown"
     >
-      {remaining > 0 ? `hold ${remaining}s` : "expiring…"}
+      {remaining > 0 ? t("holdCountdown", { remaining }) : t("holdExpiring")}
     </span>
   );
 }
@@ -87,9 +82,11 @@ function TargetSection({
   releaseHoldMutation: ReturnType<typeof useMutation<void, Error, string>>;
   settings?: { hideOriginPrefix: boolean; agentDisplayNames: Record<string, string> };
 }) {
+  const { t } = useTranslation("queue");
   const idle = processing.length === 0 && waiting.length === 0;
   const [expanded, setExpanded] = useState(!idle);
-  const { label, kind } = parseTarget(targetId);
+  const { kind, agentName } = parseTarget(targetId);
+  const label = kind === "host" ? t("hostLocal") : t("agentLabel", { name: agentName });
 
   // Live elapsed timer — ticks every second while anything is processing
   const [now, setNow] = useState(() => Date.now());
@@ -107,7 +104,7 @@ function TargetSection({
           type="button"
           onClick={() => setExpanded((p) => !p)}
           aria-expanded={expanded}
-          aria-label={`Toggle ${label} section`}
+          aria-label={t("toggleSection", { label })}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-[var(--radius-lg)] px-3 py-2 text-left transition-colors hover:bg-[var(--color-bg-muted)]"
         >
           {expanded ? (
@@ -156,7 +153,7 @@ function TargetSection({
               {/* Idle state */}
               {idle && (
                 <div className="px-3 py-3 text-xs text-[var(--color-text-muted)]">
-                  Idle — no queued requests
+                  {t("idleNoRequests")}
                 </div>
               )}
 
@@ -176,19 +173,19 @@ function TargetSection({
                       {item.runtimeId && (
                         <span
                           className="shrink-0 rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px font-mono text-[10px] text-[var(--color-text-muted)]"
-                          title={`Running on runtime ${item.runtimeId}`}
+                          title={t("runningOnRuntime", { id: item.runtimeId })}
                         >
                           {item.runtimeId}
                         </span>
                       )}
                       {item.generationTokensPerSec > 0 && (
-                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Token generation speed">
-                          {item.generationTokensPerSec.toFixed(1)} tok/s
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title={t("tokensSpeed")}>
+                          {formatTokensPerSec(item.generationTokensPerSec)}
                         </span>
                       )}
                       {item.promptTokensPerSec > 0 && (
-                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title="Prompt processing speed">
-                          prompt {item.promptTokensPerSec.toFixed(0)} tok/s
+                        <span className="text-[var(--color-text-muted)] font-mono shrink-0" title={t("promptSpeed")}>
+                          {t("promptLabel")} {formatTokensPerSec(item.promptTokensPerSec)}
                         </span>
                       )}
                       {item.tokensGenerated > 0 ? (
@@ -211,8 +208,8 @@ function TargetSection({
                       className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
                       onClick={() => cancelMutation.mutate(item.id)}
                       disabled={cancelMutation.isPending}
-                      aria-label="Cancel processing request"
-                      title="Cancel"
+                      aria-label={t("cancelProcessing")}
+                      title={t("cancel")}
                     >
                       <X className="size-3.5" />
                     </Button>
@@ -226,7 +223,8 @@ function TargetSection({
                   {waiting.map((item, i) => {
                     const blocked = item.blockedByRuntimeIds.length > 0;
                     const held = item.heldByConversation ?? null;
-                    return (
+
+                      return (
                       <div
                         key={item.id}
                         className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
@@ -241,31 +239,30 @@ function TargetSection({
                           </span>
                           {!blocked && !held && i === 0 && (
                             <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-primary)]">
-                              next up
+                              {t("nextUp")}
                             </span>
                           )}
                           {blocked && !held && (
                             <span
                               className="shrink-0 rounded-full border border-[var(--color-border-subtle)] px-1.5 py-px text-[10px] text-[var(--color-text-muted)]"
-                              title={`Waiting for ${item.blockedByRuntimeIds.join(", ")} to finish`}
+                              title={t("blockedByTitle", { runtimes: item.blockedByRuntimeIds.join(", ") })}
                             >
-                              blocked by{" "}
                               {item.blockedByRuntimeIds.length === 1
-                                ? item.blockedByRuntimeIds[0]
-                                : `${item.blockedByRuntimeIds.length} runtime(s)`}
+                                ? t("blockedBy", { runtimeIds: item.blockedByRuntimeIds[0] })
+                                : t("blockedByCount", { count: item.blockedByRuntimeIds.length })}
                             </span>
                           )}
                           {held && (
                             <span
                               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color-mix(in_srgb,var(--color-status-warning)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-warning)_12%,transparent)] px-1.5 py-px text-[10px] text-[var(--color-status-warning)]"
-                              title={`Held by an active tool-call conversation on runtime ${held.runtimeId} — ${held.requestCount} request${held.requestCount === 1 ? "" : "s"} in flight`}
+                              title={t("heldByTitle", { runtimeId: held.runtimeId, requestCount: held.requestCount })}
                               data-testid="conversation-hold"
                             >
                               <Pause className="size-2.5 shrink-0" aria-hidden />
-                              held by conversation
+                              {t("heldByConversation")}
                               <span className="font-mono">{held.model}</span>
                               <span className="rounded-full bg-[color-mix(in_srgb,var(--color-status-warning)_18%,transparent)] px-1 font-mono">
-                                {held.requestCount} reqs
+                                {t("requestCount", { count: held.requestCount })}
                               </span>
                               <HoldCountdown expiresAt={held.holdExpiresAt} />
                             </span>
@@ -286,8 +283,8 @@ function TargetSection({
                                 releaseHoldMutation.mutate(item.targetId ?? "host")
                               }
                               disabled={releaseHoldMutation.isPending}
-                              aria-label={`Skip — release conversation hold for ${item.modelRequested}`}
-                              title="Release the conversation hold immediately so this request can proceed"
+                              aria-label={t("releaseHoldFor", { model: item.modelRequested })}
+                              title={t("releaseHold")}
                             >
                               <SkipForward className="size-3.5" />
                             </Button>
@@ -298,8 +295,8 @@ function TargetSection({
                             className="text-[var(--color-text-muted)] hover:text-[var(--color-status-error)]"
                             onClick={() => cancelMutation.mutate(item.id)}
                             disabled={cancelMutation.isPending}
-                            aria-label={`Cancel ${item.modelRequested} request`}
-                            title="Cancel"
+                            aria-label={t("cancelRequestFor", { model: item.modelRequested })}
+                            title={t("cancel")}
                           >
                             <X className="size-3.5" />
                           </Button>
@@ -320,6 +317,8 @@ function TargetSection({
 // ─── Main Page ──────────────────────────────────────────────────────
 
 export default function Queue() {
+  const { t } = useTranslation("queue");
+  const { t: tc } = useTranslation("common");
   const queryClient = useQueryClient();
 
   const {
@@ -372,7 +371,7 @@ export default function Queue() {
     return (
       <div className="p-6 max-w-5xl">
         <EmptyState
-          title="Failed to load queue"
+          title={t("failedToLoad")}
           description={error.message}
           action={
             <Button
@@ -381,7 +380,7 @@ export default function Queue() {
               onClick={() => refetch()}
               loading={isRefetching}
             >
-              Retry
+              {tc("retry")}
             </Button>
           }
         />
@@ -419,6 +418,13 @@ export default function Queue() {
   // Skip-budget indicator is only meaningful when the feature has been used
   // or has budget available; fully hidden when skip is off and unused.
   const showSkipBudget = skipsRemaining > 0 || skipsUsed > 0;
+
+  const TRANSITION_LABELS: Record<string, string> = {
+    draining: t('transition.draining'),
+    switching: t('transition.switching'),
+    starting: t('transition.starting'),
+    complete: t('transition.complete'),
+  };
 
   // Transition tallies for the accessible live region.
   const stoppingCount = activeTransitions.reduce(
@@ -465,26 +471,27 @@ export default function Queue() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-            Queue
+            {t("title")}
           </h2>
           <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-            Live request queue grouped by execution target.
+            {t("subtitle")}
           </p>
         </div>
         <div className="flex items-center gap-4 text-xs text-[var(--color-text-muted)] shrink-0 pt-0.5">
           <div className="flex items-center gap-1.5">
             <span className="size-1.5 rounded-full bg-[var(--color-status-running)] animate-pulse" />
-            <span>Live — polling every 2s</span>
+            <span>{t("livePolling")}</span>
           </div>
           {showSkipBudget && (
             <div
               className="flex items-center gap-1.5"
-              title={`Skip queue budget: ${skipsUsed} used`}
+              title={t("skipBudget", { used: skipsUsed })}
             >
               <ArrowRight className="size-3" />
               <span>
-                Skip budget: {skipsRemaining} left
-                {skipsUsed > 0 ? ` (${skipsUsed} used)` : ""}
+                {skipsUsed > 0
+                  ? t("skipBudgetDisplayUsed", { remaining: skipsRemaining, used: skipsUsed })
+                  : t("skipBudgetDisplay", { remaining: skipsRemaining })}
               </span>
             </div>
           )}
@@ -492,7 +499,7 @@ export default function Queue() {
             <div className="flex items-center gap-1.5">
               <ArrowRight className="size-3" />
               <span>
-                {activeTransitions.length} active transition(s)
+                {t("srActiveTransitions", { count: activeTransitions.length })}
               </span>
             </div>
           )}
@@ -504,31 +511,31 @@ export default function Queue() {
         <Card padding="none">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
             <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Model transitions
+              {t("modelTransitions")}
             </span>
           </div>
           <div className="divide-y divide-[var(--color-border-subtle)]">
-            {activeTransitions.map((t) => (
+            {activeTransitions.map((tr) => (
               <div
-                key={t.id}
+                key={tr.id}
                 className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs"
               >
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  {t.stopping.length > 0 && (
+                  {tr.stopping.length > 0 && (
                     <>
                       <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
                         <span
                           className="flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-[var(--color-status-error)]"
-                          title={`${t.stopping.length} runtime${t.stopping.length === 1 ? "" : "s"} going down`}
+                          title={t("runtimesGoingDown", { count: tr.stopping.length })}
                         >
                           <ArrowDown className="size-3" />
-                          down
+                          {t("down")}
                         </span>
-                        {t.stopping.map((s) => (
+                        {tr.stopping.map((s) => (
                           <span
                             key={s.runtimeId}
                             className="flex items-center gap-1"
-                            title={`Stopping on runtime ${s.runtimeId}`}
+                            title={t("stoppingOnRuntime", { id: s.runtimeId })}
                           >
                             <span className="font-mono text-[var(--color-text-muted)] line-through decoration-[var(--color-border-subtle)]">
                               {s.model}
@@ -545,26 +552,26 @@ export default function Queue() {
                   <div className="flex items-center gap-1.5">
                     <span
                       className="flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-[var(--color-primary)]"
-                      title="Model coming up"
+                      title={t("modelComingUp")}
                     >
                       <ArrowUp className="size-3" />
-                      up
+                      {t("up")}
                     </span>
                     <span className="font-mono font-medium text-[var(--color-text-heading)]">
-                      {t.toModel}
+                      {tr.toModel}
                     </span>
-                    {t.runtimeId && (
+                    {tr.runtimeId && (
                       <span
                         className="rounded-full border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-1.5 py-px font-mono text-[10px] text-[var(--color-primary)]"
-                        title={`Starting on runtime ${t.runtimeId}`}
+                        title={t("startingOnRuntime", { id: tr.runtimeId })}
                       >
-                        {t.runtimeId}
+                        {tr.runtimeId}
                       </span>
                     )}
                   </div>
                 </div>
-                <Badge variant={t.status === "complete" ? "success" : "info"}>
-                  {t.status}
+                <Badge variant={tr.status === "complete" ? "success" : "info"}>
+                  {TRANSITION_LABELS[tr.status] ?? tr.status}
                 </Badge>
               </div>
             ))}
@@ -592,7 +599,7 @@ export default function Queue() {
         <Card padding="none">
           <div className="px-4 py-2.5 border-b border-[var(--color-border)]">
             <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Recent completed ({recentCompleted.length})
+              {t("recentCompleted", { count: recentCompleted.length })}
             </span>
           </div>
           <div className="divide-y divide-[var(--color-border-subtle)]">
@@ -606,10 +613,10 @@ export default function Queue() {
                   <span className="font-mono text-[var(--color-text-heading)]">
                     {formatModelName(item.modelAssigned ?? item.modelRequested, "queue", settings?.hideOriginPrefix ?? false, settings?.agentDisplayNames ?? {})}
                   </span>
-                  <Badge variant="success">completed</Badge>
+                  <Badge variant="success">{t("completedBadge")}</Badge>
                 </div>
                 <div className="flex items-center gap-4 text-[var(--color-text-muted)]">
-                  <span>{item.tokensGenerated.toLocaleString()} tokens</span>
+                  <span>{t("tokensGenerated", { count: item.tokensGenerated.toLocaleString() })}</span>
                   <span>{formatMs(item.elapsedMs)}</span>
                 </div>
               </div>
@@ -620,16 +627,15 @@ export default function Queue() {
 
       {/* Accessible live region for screen readers */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        Queue: {waiting.length} waiting,{" "}
         {processing.length > 0
-          ? `${processing.length} processing`
-          : "idle"}
+          ? t("srQueueStatus", { waiting: waiting.length, processing: processing.length })
+          : t("srQueueIdle", { waiting: waiting.length })}
         {activeTransitions.length > 0 &&
-          `, ${activeTransitions.length} active transition(s)`}
+          `, ${t("srActiveTransitions", { count: activeTransitions.length })}`}
         {heldCount > 0 &&
-          `, ${heldCount} waiting item${heldCount === 1 ? "" : "s"} held by conversation`}
-        {stoppingCount > 0 && `, ${stoppingCount} runtime(s) going down`}
-        {startingCount > 0 && `, ${startingCount} model(s) coming up`}
+          `, ${t("srHeldItems", { count: heldCount })}`}
+        {stoppingCount > 0 && `, ${t("srStopping", { count: stoppingCount })}`}
+        {startingCount > 0 && `, ${t("srStarting", { count: startingCount })}`}
       </div>
     </div>
   );

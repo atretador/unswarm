@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Cpu, MemoryStick } from "lucide-react";
 import { Badge } from "../../components/ui";
 import type { ContainerMetrics } from "../../lib/api/types";
@@ -18,15 +19,16 @@ function formatPct(pct: number): string {
   return `${Math.round(pct)}%`;
 }
 
-function formatRam(usedMb: number, totalMb: number): string {
+function formatRam(usedMb: number, totalMb: number, unitGb: string, unitMb: string): string {
   if (usedMb < 0 || totalMb < 0) return "\u2014";
   const used = usedMb >= 1024 ? `${(usedMb / 1024).toFixed(1)}` : `${usedMb}`;
   const total = totalMb >= 1024 ? `${(totalMb / 1024).toFixed(1)}` : `${totalMb}`;
-  const unit = usedMb >= 1024 || totalMb >= 1024 ? "GB" : "MB";
+  const unit = usedMb >= 1024 || totalMb >= 1024 ? unitGb : unitMb;
   return `${used}/${total} ${unit}`;
 }
 
 export function ContainerKPIBadges({ metrics }: ContainerKPIBadgesProps) {
+  const { t } = useTranslation('swarm');
   if (!metrics) return null;
 
   return (
@@ -37,7 +39,7 @@ export function ContainerKPIBadges({ metrics }: ContainerKPIBadgesProps) {
       </Badge>
       <Badge variant={utilizationColor(metrics.ramPercent)} size="sm">
         <MemoryStick className="size-2.5" />
-        {formatRam(metrics.ramUsedMb, metrics.ramTotalMb)}
+        {formatRam(metrics.ramUsedMb, metrics.ramTotalMb, t('kpi.gb'), t('kpi.mb'))}
       </Badge>
     </div>
   );

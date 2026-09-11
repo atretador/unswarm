@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
@@ -58,7 +60,7 @@ public sealed class RouterProfileHandler
         /// <summary>Runtime name for usage attribution.</summary>
         public string? ServedByRuntimeName { get; init; }
         /// <summary>If all models failed, the last error message.</summary>
-        public string? ErrorMessage { get; init; }
+        public object? ErrorMessage { get; init; }
     }
 
     /// <summary>
@@ -86,7 +88,7 @@ public sealed class RouterProfileHandler
             return new RouterResult
             {
                 StatusCode = 404,
-                ErrorMessage = $"Router profile '{profileName}' not found or has no enabled entries."
+                ErrorMessage = LocalizedError.Create("routerProfiles.notFoundOrEmpty", new { name = profileName })
             };
         }
 
@@ -111,6 +113,13 @@ public sealed class RouterProfileHandler
             var modelId = entry.ModelId;
             var lastWasRetryable = false;
 
+            // Apply thinking effort override if set on this entry
+            var effectiveBody = rawBody;
+            if (!string.IsNullOrEmpty(entry.ThinkingEffortOverride))
+            {
+                effectiveBody = InjectThinkingEffort(rawBody, entry.ThinkingEffortOverride);
+            }
+
             for (var attempt = 0; attempt <= retryAttempts; attempt++)
             {
                 if (attempt > 0)
@@ -130,11 +139,11 @@ public sealed class RouterProfileHandler
 
                     if (modelId.StartsWith("cloud/", StringComparison.Ordinal))
                     {
-                        (result, isRetryable) = await TryCloudModelAsync(modelId, rawBody, requestPath, isStreaming, ct, forwardedHeaders);
+                        (result, isRetryable) = await TryCloudModelAsync(modelId, effectiveBody, requestPath, isStreaming, ct, forwardedHeaders);
                     }
                     else
                     {
-                        (result, isRetryable) = await TryLocalModelAsync(modelId, rawBody, isStreaming, effectiveKey, ct, forwardedHeaders);
+                        (result, isRetryable) = await TryLocalModelAsync(modelId, effectiveBody, isStreaming, effectiveKey, ct, forwardedHeaders);
                     }
 
                     if (result is not null)
@@ -181,7 +190,7 @@ public sealed class RouterProfileHandler
                         return new RouterResult
                         {
                             StatusCode = 502,
-                            ErrorMessage = $"All router models failed. Last error: {ex.Message}"
+                            ErrorMessage = LocalizedError.Create("router.allModelsFailed")
                         };
                     }
                     break; // Fall through to next entry
@@ -194,7 +203,7 @@ public sealed class RouterProfileHandler
                 return new RouterResult
                 {
                     StatusCode = 502,
-                    ErrorMessage = $"Model {entries[i].ModelId} returned server error after {retryAttempts + 1} attempts for profile '{profileName}'."
+                    ErrorMessage = LocalizedError.Create("router.modelExhausted", new { model = entries[i].ModelId, attempts = retryAttempts + 1, profile = profileName })
                 };
             }
         }
@@ -202,7 +211,7 @@ public sealed class RouterProfileHandler
         return new RouterResult
         {
             StatusCode = 502,
-            ErrorMessage = $"All {maxAttempts} router models failed for profile '{profileName}'."
+            ErrorMessage = LocalizedError.Create("router.allEntriesFailed", new { count = maxAttempts, profile = profileName })
         };
     }
 
@@ -279,5 +288,30 @@ public sealed class RouterProfileHandler
             PromptTokensCached = response.PromptTokensCached,
             ServedByRuntimeName = response.ServedByRuntimeName,
         }, false);
+    }
+
+    /// <summary>
+    /// Inject or override the reasoning_effort field in the JSON request body.
+    /// Uses System.Text.Json for minimal, allocation-friendly mutation.
+    /// </summary>
+    private static string InjectThinkingEffort(string rawBody, string effort)
+    {
+        using var doc = JsonDocument.Parse(rawBody);
+        var root = doc.RootElement;
+
+        using var ms = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(ms, new JsonWriterOptions { Indented = false }))
+        {
+            writer.WriteStartObject();
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (prop.NameEquals("reasoning_effort"))
+                    continue; // skip existing
+                prop.WriteTo(writer);
+            }
+            writer.WriteString("reasoning_effort", effort);
+            writer.WriteEndObject();
+        }
+        return System.Text.Encoding.UTF8.GetString(ms.ToArray());
     }
 }

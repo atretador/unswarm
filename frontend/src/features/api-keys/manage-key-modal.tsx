@@ -11,6 +11,7 @@
 // notice instead of crashing. If the usage endpoint 404s, that section hides.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -43,6 +44,7 @@ import {
   putApiKeyAccess,
 } from "./api-keys-api";
 import { formatTokens } from "../metrics/format";
+import { formatNumber } from "../../i18n/format";
 
 // ─── Selection-state model ───────────────────────────────────────
 
@@ -166,12 +168,6 @@ function NoticeBanner({ children }: { children: React.ReactNode }) {
 
 type UsageRange = "7d" | "30d" | "90d";
 
-const USAGE_RANGE_OPTIONS = [
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-  { value: "90d", label: "Last 90 days" },
-];
-
 const USAGE_RANGE_MS: Record<UsageRange, number> = {
   "7d": 7 * 86_400_000,
   "30d": 30 * 86_400_000,
@@ -179,7 +175,14 @@ const USAGE_RANGE_MS: Record<UsageRange, number> = {
 };
 
 function UsageSection({ keyId, registryByName }: { keyId: string; registryByName: Map<string, Pick<Model, "displayName" | "sourceRuntimeName">> }) {
+  const { t } = useTranslation("api-keys");
   const [range, setRange] = useState<UsageRange>("30d");
+
+  const USAGE_RANGE_OPTIONS = useMemo(() => [
+    { value: "7d", label: t("manage.range7d") },
+    { value: "30d", label: t("manage.range30d") },
+    { value: "90d", label: t("manage.range90d") },
+  ], [t]);
 
   const window = useMemo(() => {
     const now = new Date();
@@ -202,9 +205,9 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <SectionHeader icon={HardDrive} title="Usage" />
+        <SectionHeader icon={HardDrive} title={t("manage.usage")} />
         <Select
-          aria-label="Usage time range"
+          aria-label={t("manage.usageRange")}
           options={USAGE_RANGE_OPTIONS}
           value={range}
           onChange={(e) => setRange(e.target.value as UsageRange)}
@@ -219,7 +222,7 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
       )}
 
       {isLoading && (
-        <p className="text-xs text-[var(--color-text-muted)] py-3">Loading…</p>
+        <p className="text-xs text-[var(--color-text-muted)] py-3">{t("loading")}</p>
       )}
 
       {data && (
@@ -227,10 +230,10 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
           {/* Headline numbers */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              { label: "Requests", value: data.totals.requestCount.toLocaleString() },
-              { label: "Tokens in", value: formatTokens(data.totals.promptTokens) },
-              { label: "Tokens out", value: formatTokens(data.totals.completionTokens) },
-              { label: "Cached", value: formatTokens(data.totals.cachedTokens) },
+              { label: t("manage.stats.requests"), value: formatNumber(data.totals.requestCount) },
+              { label: t("manage.stats.tokensIn"), value: formatTokens(data.totals.promptTokens) },
+              { label: t("manage.stats.tokensOut"), value: formatTokens(data.totals.completionTokens) },
+              { label: t("manage.stats.cached"), value: formatTokens(data.totals.cachedTokens) },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -253,19 +256,19 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="text-left py-1.5 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
-                    Model
+                    {t("manage.table.model")}
                   </th>
                   <th className="text-right py-1.5 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Requests
+                    {t("manage.table.requests")}
                   </th>
                   <th className="text-right py-1.5 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    In
+                    {t("manage.table.in")}
                   </th>
                   <th className="text-right py-1.5 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    Out
+                    {t("manage.table.out")}
                   </th>
                   <th className="text-right py-1.5 pl-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Cached
+                    {t("manage.table.cached")}
                   </th>
                 </tr>
               </thead>
@@ -286,7 +289,7 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
                       )}
                     </td>
                     <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                      {m.requestCount.toLocaleString()}
+                      {formatNumber(m.requestCount)}
                     </td>
                     <td className="py-2 px-3 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
                       {formatTokens(m.promptTokens)}
@@ -305,7 +308,7 @@ function UsageSection({ keyId, registryByName }: { keyId: string; registryByName
           ) : (
             !isLoading && (
               <p className="text-xs text-[var(--color-text-muted)] py-3 text-center">
-                No usage recorded for this key in the selected window.
+                {t("manage.noUsage")}
               </p>
             )
           )}
@@ -324,6 +327,7 @@ export interface ManageKeyModalProps {
 }
 
 export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalProps) {
+  const { t } = useTranslation("api-keys");
   const [draft, setDraft] = useState<AccessDraft | null>(null);
   const [initialSerialized, setInitialSerialized] = useState<string | null>(null);
   const [savedTick, setSavedTick] = useState(false);
@@ -478,7 +482,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
       <Dialog
         open={open}
         onOpenChange={requestClose}
-        title={`Manage "${apiKey.name}"`}
+        title={t("manage.dialogTitle", { name: apiKey.name })}
         className="sm:max-w-[680px]"
       >
         <div className="px-5 py-4 space-y-6">
@@ -487,22 +491,21 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
               /v1 inference, which agent keys cannot call. */}
           {!isAgentKey && (
           <section className="space-y-4">
-            <SectionHeader icon={ShieldCheck} title="Access control" />
+            <SectionHeader icon={ShieldCheck} title={t("manage.accessControl")} />
 
             {catalogUnavailable && (
               <NoticeBanner>
                 <p>
-                  The provider/model catalog isn't available right now
-                  ({(catalogQuery.error as Error).message}). The backend may need
-                  restarting — access editing is paused until then.
+                  {t("manage.couldntLoadCatalog")}{" "}
+                  ({(catalogQuery.error as Error).message}).
                 </p>
               </NoticeBanner>
             )}
             {!catalogUnavailable && accessUnavailable && (
               <NoticeBanner>
                 <p>
-                  Couldn't load this key's current access ({(accessQuery.error as Error).message}).
-                  Saving is paused until it loads.
+                  {t("manage.couldntLoadAccess")}{" "}
+                  ({(accessQuery.error as Error).message}).
                 </p>
               </NoticeBanner>
             )}
@@ -513,12 +516,11 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                 <div className="flex items-start justify-between gap-4 rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/40 px-3.5 py-3">
                   <div>
                     <p className="text-sm font-medium text-[var(--color-text-heading)] flex items-center gap-1.5">
-                      Full access
+                      {t("manage.fullAccess")}
                       <Globe className="size-3.5 text-[var(--color-text-muted)]" />
                     </p>
                     <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-                      This key can call every provider and model. Turn off to
-                      restrict it below.
+                      {t("manage.fullAccessDesc")}
                     </p>
                   </div>
                   <Switch
@@ -534,15 +536,14 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                 {!draft.fullAccess && (
                   <>
                     <p className="text-xs text-[var(--color-text-muted)]">
-                      Tick a provider to grant <em>all</em> of its models, or pick
-                      individual models for a narrower grant.
+                      {t("manage.grantAllModels")}
                     </p>
 
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-3.5 text-[var(--color-text-muted)]" />
                       <input
                         type="text"
-                        placeholder="Search models…"
+                        placeholder={t("manage.searchModels")}
                         value={modelSearch}
                         onChange={(e) => setModelSearch(e.target.value)}
                         className="w-full rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg)] pl-9 pr-3 py-1.5 text-xs text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:ring-1 focus:ring-[var(--color-primary)]"
@@ -560,6 +561,12 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                         }))
                         .filter((e) => (modelSearch ? e.models.length > 0 : true));
                       if (entries.length === 0) return null;
+
+                      const kindKey =
+                        kind === "cloud" ? "manage.providerCloud" :
+                        kind === "router" ? "manage.providerRouter" :
+                        "manage.providerSelfHosted";
+
                       return (
                         <div key={kind} className="space-y-2">
                           <div className="flex items-center gap-2 pt-1">
@@ -571,7 +578,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   <Server className="size-3.5 text-[var(--color-text-muted)]" />
 )}
 <p className="text-xs font-semibold text-[var(--color-text-heading)]">
-  {kind === "cloud" ? "Cloud providers" : kind === "router" ? "Router profiles" : "Self-hosted agents"}
+  {t(kindKey)}
 </p>
                           </div>
 
@@ -593,7 +600,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                       checked={sel.all}
                                       indeterminate={some}
                                       disabled={saveMutation.isPending}
-                                      label={`Grant all ${entry.name} models`}
+                                      label={t("manage.grantAll", { name: entry.name })}
                                       onChange={(checked) =>
                                         patchProvider(entry.name, {
                                           all: checked,
@@ -608,12 +615,12 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                     </span>
                                     {sel.all ? (
                                       <Badge variant="info" size="sm">
-                                        all models
+                                        {t("manage.allModels")}
                                       </Badge>
                                     ) : (
                                       picked > 0 && (
                                         <Badge variant="default" size="sm">
-                                          {picked} of {entry.models.length}
+                                          {t("manage.modelsOf", { picked, total: entry.models.length })}
                                         </Badge>
                                       )
                                     )}
@@ -623,7 +630,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                                         type="button"
                                         onClick={() => toggleExpand(entry.name)}
                                         className="p-1 rounded hover:bg-[var(--color-bg-muted)] transition-colors"
-                                        aria-label={isExpanded ? `Collapse ${entry.name} models` : `Expand ${entry.name} models`}
+                                        aria-label={isExpanded ? t("manage.collapseModels", { name: entry.name }) : t("manage.expandModels", { name: entry.name })}
                                       >
                                         {isExpanded ? (
                                           <ChevronDown className="size-3.5 text-[var(--color-text-muted)]" />
@@ -677,7 +684,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                       <div className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
                         <Info className="size-3.5 mt-0.5 shrink-0" />
                         <p>
-                          Also granted (no longer in the catalog):{" "}
+                          {t("manage.unmatchedGrant")}{" "}
                           {draft.unmatchedModels.map((m) => (
                             <code
                               key={m}
@@ -694,8 +701,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                       <div className="flex items-start gap-2 rounded-[var(--radius-lg)] border border-[color-mix(in_srgb,var(--color-status-error)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3.5 py-2.5">
                         <TriangleAlert className="size-4 shrink-0 mt-0.5 text-[var(--color-status-error)]" />
                         <p className="text-xs text-[var(--color-status-error)]">
-                          Nothing selected — this key can't call any provider or
-                          model. Pick at least one, or re-enable Full access.
+                          {t("manage.nothingSelected")}
                         </p>
                       </div>
                     )}
@@ -714,13 +720,13 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                   {dirty && (
                     <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-status-warning)]">
                       <span className="size-1.5 rounded-full bg-[var(--color-status-warning)]" />
-                      Unsaved changes
+                      {t("manage.unsavedChanges")}
                     </span>
                   )}
                   {!dirty && savedTick && (
                     <span className="inline-flex items-center gap-1 text-xs text-[var(--color-status-running)]">
                       <Check className="size-3.5" />
-                      Saved
+                      {t("manage.saved")}
                     </span>
                   )}
                   <Button
@@ -732,7 +738,7 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
                     className="gap-1.5"
                   >
                     <SlidersHorizontal className="size-3.5" />
-                    {saveMutation.isPending ? "Saving…" : "Save access"}
+                    {saveMutation.isPending ? t("manage.saving") : t("manage.saveAccess")}
                   </Button>
                 </div>
               </>
@@ -749,9 +755,9 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
 
       <ConfirmDialog
         open={confirmDiscard}
-        title="Discard unsaved changes?"
-        description="Access changes for this key haven't been saved yet."
-        confirmLabel="Discard"
+        title={t("manage.discardChanges")}
+        description={t("manage.discardChangesDesc")}
+        confirmLabel={t("manage.discard")}
         variant="danger"
         onConfirm={() => {
           setConfirmDiscard(false);

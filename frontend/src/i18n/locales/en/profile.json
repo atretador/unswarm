@@ -1,0 +1,26 @@
+{
+  "title": "Profile",
+  "subtitle": "Account details and security.",
+  "account": "Account",
+  "changePassword": "Change Password",
+  "editProfile": "Edit Profile",
+  "passwordChanged": "Password changed successfully.",
+  "passwordFailed": "Failed to change password.",
+  "tempPasswordBanner": "You're using a temporary password. Please change it now.",
+  "tempPasswordBadge": "Temporary password",
+  "accountActive": "Account active",
+  "tempPasswordModal": "Temporary password — change it now",
+  "tempPasswordModalDesc": "You're using a temporary password. Switch to the Password tab to change it.",
+  "detailsTab": "Details",
+  "passwordTab": "Password",
+  "validation": {
+    "passwordMinLength": "New password must be at least 6 characters.",
+    "passwordsNoMatch": "New passwords do not match."
+  },
+  "fields": {
+    "username": "Username",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password"
+  }
+}

@@ -1,14 +1,11 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
+import { useTranslation } from "react-i18next";
 import {
   Activity,
   AlertTriangle,
   BookOpen,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
   Eye,
   FileText,
   History,
@@ -20,6 +17,7 @@ import {
   Zap,
 } from "lucide-react";
 import { client } from "../../lib/query-client";
+import { formatRelativeTime, formatTokensPerSec, formatLatency, formatTokens } from "../../i18n/format";
 import { Dialog } from "../../components/ui/Dialog";
 import {
   Card,
@@ -35,22 +33,6 @@ import type { BenchmarkResult, Model, Prompt, PromptVersion } from "../../lib/ap
 
 // ─── Formatting helpers ───────────────────────────────────────────
 
-function formatTokensPerSec(v: number): string {
-  if (!v || v <= 0) return "n/a";
-  return `${v.toFixed(1)} tok/s`;
-}
-
-function formatLatency(ms: number): string {
-  if (!ms || ms <= 0) return "—";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms)}ms`;
-}
-
-function formatTokens(count: number): string {
-  if (!count || count <= 0) return "—";
-  return `${count.toLocaleString()} tok`;
-}
-
 function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleString(undefined, {
@@ -61,36 +43,22 @@ function formatTimestamp(iso: string): string {
   });
 }
 
-function formatRelativeTime(iso: string): string {
-  const now = Date.now();
-  const then = new Date(iso).getTime();
-  const diffMs = now - then;
-  const mins = Math.floor(diffMs / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days}d ago`;
-  const months = Math.floor(days / 30);
-  return `${months}mo ago`;
-}
-
 /** Model statuses that are safe to benchmark — matches the swarm card semantics. */
-function benchmarkDisabledReason(model: Model | undefined): string | null {
-  if (!model) return "No models available yet";
+function benchmarkDisabledReason(model: Model | undefined, t: (key: string, opts?: Record<string, unknown>) => string): string | null {
+  if (!model) return t('noModelsAvailable');
   const displayName = model.displayName || model.name;
-  if (model.status === "validating") return `${displayName} is still validating — not ready to benchmark`;
-  if (model.status === "invalid") return `${displayName} is invalid — cannot benchmark`;
-  if (model.status === "deprecated") return `${displayName} is deprecated — cannot benchmark`;
-  if (model.status === "conflict") return `${displayName} has a name conflict — rename to resolve`;
+  if (model.status === "validating") return t('modelNotReady', { name: displayName });
+  if (model.status === "invalid") return t('modelInvalid', { name: displayName });
+  if (model.status === "deprecated") return t('modelDeprecated', { name: displayName });
+  if (model.status === "conflict") return t('modelConflict', { name: displayName });
   return null;
 }
 
 // ─── Prompt Library Modal ─────────────────────────────────────────
 
 function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation('benchmarks');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -234,7 +202,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
     <Dialog
       open={open}
       onOpenChange={(o) => { if (!o) onClose(); }}
-      title="Prompt library"
+      title={t('promptLibrary')}
       className="sm:max-w-4xl min-h-[420px] sm:min-h-[480px]"
     >
       {/* Body */}
@@ -248,7 +216,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                 className="flex w-full items-center gap-2 rounded-[var(--radius-lg)] px-2.5 py-1.5 text-xs font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
               >
                 <Plus className="size-3.5" />
-                New prompt
+                {t('newPrompt')}
               </button>
             </div>
             <div className="flex-1 overflow-y-auto">
@@ -259,7 +227,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                   ))}
                 </div>
               ) : prompts?.length === 0 ? (
-                <p className="p-3 text-center text-xs text-[var(--color-text-muted)]">No saved prompts</p>
+                <p className="p-3 text-center text-xs text-[var(--color-text-muted)]">{t('noSavedPrompts')}</p>
               ) : (
                 prompts?.map((p) => {
                   const isSelected = p.id === selectedId;
@@ -280,22 +248,22 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                       >
                         {p.name}
                         {p.isDefault && (
-                          <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-primary)]">default</span>
+                          <span className="ml-1 rounded px-1 py-0.5 text-[9px] font-medium uppercase tracking-wide text-[var(--color-primary)]">{t('default')}</span>
                         )}
                         <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{p.currentVersion ?? 1}</span>
                         {p.maxTokens != null && (
-                          <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">{p.maxTokens} tok</span>
+                          <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">{p.maxTokens} {tc('units.tok')}</span>
                         )}
                         {p.id === selectedId && showHistory && (
-                          <span className="ml-1 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">history</span>
+                          <span className="ml-1 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">{t('history')}</span>
                         )}
                       </button>
                       <button
                         type="button"
                         onClick={(e) => handleShowHistory(e, p.id)}
                         className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
-                        aria-label={`Version history for ${p.name}`}
-                        title="Version history"
+                        aria-label={t('aria.versionHistory', { name: p.name })}
+                        title={t('versionHistory')}
                       >
                         <History className="size-3" />
                       </button>
@@ -309,8 +277,8 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                         }}
                         disabled={setDefaultMutation.isPending}
                         className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] cursor-pointer"
-                        aria-label={p.isDefault ? "Default benchmark prompt" : `Set ${p.name} as default benchmark prompt`}
-                        title={p.isDefault ? "Default benchmark prompt" : `Set ${p.name} as default benchmark prompt`}
+                        aria-label={p.isDefault ? t('aria.defaultPrompt') : t('aria.setDefaultPrompt', { name: p.name })}
+                        title={p.isDefault ? t('aria.defaultPrompt') : t('aria.setDefaultPrompt', { name: p.name })}
                       >
                         <Star
                           className="size-3"
@@ -326,14 +294,14 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                             disabled={deleteMutation.isPending}
                             className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] cursor-pointer"
                           >
-                            Delete
+                            {tc('delete')}
                           </button>
                           <button
                             type="button"
                             onClick={() => setConfirmDeleteId(null)}
                             className="shrink-0 rounded px-1 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] cursor-pointer"
                           >
-                            Cancel
+                            {tc('cancel')}
                           </button>
                         </div>
                       ) : (
@@ -344,8 +312,8 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                             handleDelete(p.id);
                           }}
                           className="shrink-0 rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-status-error)] cursor-pointer"
-                          aria-label={`Delete ${p.name}`}
-                          title="Delete prompt"
+                          aria-label={t('aria.deletePrompt', { name: p.name })}
+                          title={t('deletePrompt')}
                         >
                           <Trash2 className="size-3" />
                         </button>
@@ -361,27 +329,27 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
           <div className="flex flex-1 min-h-0 flex-col p-5 gap-4 overflow-y-auto">
             {!selectedId && !isCreating ? (
               <div className="flex flex-1 items-center justify-center">
-                <p className="text-sm text-[var(--color-text-muted)]">Select a prompt to edit, or create a new one.</p>
+                <p className="text-sm text-[var(--color-text-muted)]">{t('selectPromptHint')}</p>
               </div>
             ) : showHistory ? (
               /* ── Version history view ── */
               <>
                 <div className="flex items-center justify-between">
                   <h3 className="font-heading text-xs font-semibold text-[var(--color-text-heading)]">
-                    Version History — {draftName || "Untitled"}
+                    {t('versionHistoryTitle', { name: draftName || t('untitled') })}
                   </h3>
                   <button
                     type="button"
                     onClick={() => { setShowHistory(false); setSelectedVersion(null); }}
                     className="text-[10px] font-medium text-[var(--color-primary)] hover:underline cursor-pointer"
                   >
-                    ← Back to Editor
+                    {t('backToEditor')}
                   </button>
                 </div>
 
                 {versions.length === 0 ? (
                   <div className="flex flex-1 items-center justify-center">
-                    <p className="text-xs text-[var(--color-text-muted)]">No version history available.</p>
+                    <p className="text-xs text-[var(--color-text-muted)]">{t('noVersionHistory')}</p>
                   </div>
                 ) : (
                   <>
@@ -404,7 +372,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                             </span>
                             {isCurrent && (
                               <span className="shrink-0 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">
-                                current
+                                {t('current')}
                               </span>
                             )}
                             <span className="shrink-0 text-[10px] text-[var(--color-text-muted)]">
@@ -418,8 +386,8 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                                 type="button"
                                 onClick={() => setSelectedVersion(isPreviewing ? null : v)}
                                 className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text-heading)] cursor-pointer"
-                                aria-label={`View version ${v.version}`}
-                                title="View this version"
+                                aria-label={t('aria.viewVersion', { version: v.version })}
+                                title={t('viewVersion')}
                               >
                                 <Eye className="size-3" />
                               </button>
@@ -428,8 +396,8 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                                   type="button"
                                   onClick={() => setConfirmRollbackVersion(v)}
                                   className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-status-error)] cursor-pointer"
-                                  aria-label={`Rollback to version ${v.version}`}
-                                  title="Restore this version"
+                                  aria-label={t('aria.restoreVersion', { version: v.version })}
+                                  title={t('restoreVersion')}
                                 >
                                   <RotateCcw className="size-3" />
                                 </button>
@@ -444,10 +412,10 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                     {selectedVersion && (
                       <div className="flex flex-1 min-h-[120px] flex-col space-y-1.5">
                         <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                          v{selectedVersion.version} text
+                          {t('versionText', { version: selectedVersion.version })}
                           {selectedVersion.version === (prompts?.find((p) => p.id === selectedId)?.currentVersion ?? 1) && (
                             <span className="ml-1.5 rounded bg-[var(--color-primary-soft)] px-1 py-0.5 text-[8px] font-medium text-[var(--color-primary)]">
-                              ← current
+                              ← {t('current')}
                             </span>
                           )}
                         </label>
@@ -455,7 +423,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                           {selectedVersion.text}
                         </div>
                         <span className="text-[10px] text-[var(--color-text-muted)]">
-                          {selectedVersion.text.length} characters · {formatRelativeTime(selectedVersion.createdAt)}
+                          {t('characters', { count: selectedVersion.text.length })} · {formatRelativeTime(selectedVersion.createdAt)}
                         </span>
                       </div>
                     )}
@@ -467,20 +435,20 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
               <>
                 <div className="space-y-1.5">
                   <label htmlFor="prompt-name" className="text-xs font-medium text-[var(--color-text-muted)]">
-                    Name
+                    {t('nameLabel')}
                   </label>
                   <input
                     id="prompt-name"
                     type="text"
                     value={draftName}
                     onChange={(e) => setDraftName(e.target.value)}
-                    placeholder="Short, descriptive name"
+                    placeholder={t('placeholders.promptName')}
                     className="h-9 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
                   />
                 </div>
                 <div className="space-y-1.5">
                   <label htmlFor="prompt-max-tokens" className="text-xs font-medium text-[var(--color-text-muted)]">
-                    Max tokens
+                    {t('maxTokensLabel')}
                   </label>
                   <input
                     id="prompt-max-tokens"
@@ -492,36 +460,36 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                     className="h-9 w-36 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 font-mono text-sm tabular-nums text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
                   />
                   <p className="text-[10px] text-[var(--color-text-muted)]">
-                    Generation cap for runs using this prompt (tokens)
+                    {t('maxTokensDesc')}
                   </p>
                 </div>
                 <div className="flex flex-1 min-h-[160px] flex-col space-y-1.5">
                   <label htmlFor="prompt-text" className="text-xs font-medium text-[var(--color-text-muted)]">
-                    Prompt text
+                    {t('promptText')}
                   </label>
                   <textarea
                     id="prompt-text"
                     value={draftText}
                     onChange={(e) => setDraftText(e.target.value)}
-                    placeholder="Write the prompt the model will follow — instructions, context, format, or constraints."
+                    placeholder={t('placeholders.promptText')}
                     rows={8}
                     className="flex-1 min-h-[140px] w-full resize-y rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-2.5 text-sm leading-relaxed text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
                   />
                 </div>
                 <div className="flex items-center justify-between gap-3 pt-1 border-t border-[var(--color-border-subtle)]">
                   <span className="text-[10px] text-[var(--color-text-muted)]">
-                    {draftText.length > 0 ? `${draftText.length} characters` : "No content yet"}
+                    {draftText.length > 0 ? t('characters', { count: draftText.length }) : t('noContent')}
                   </span>
                   <div className="flex items-center gap-2">
                     {createMutation.isError || updateMutation.isError ? (
                       <span className="text-xs text-[var(--color-status-error)]">
-                        {(createMutation.error ?? updateMutation.error)?.message ?? "Save failed"}
+                        {(createMutation.error ?? updateMutation.error)?.message ?? t('saveFailed')}
                       </span>
                     ) : null}
                     {createMutation.isSuccess || updateMutation.isSuccess ? (
-                      <span className="text-xs text-[var(--color-status-running)] font-medium">Saved</span>
+                      <span className="text-xs text-[var(--color-status-running)] font-medium">{t('saved')}</span>
                     ) : null}
-                    <Tooltip content={!draftName.trim() || !draftText.trim() ? "Name and prompt text are required" : undefined}>
+                    <Tooltip content={!draftName.trim() || !draftText.trim() ? t('nameRequired') : undefined}>
                       <span className="inline-flex">
                         <Button
                           ref={saveRef}
@@ -530,7 +498,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
                           loading={createMutation.isPending || updateMutation.isPending}
                           onClick={handleSave}
                         >
-                          {isCreating ? "Create" : "Save"}
+                          {isCreating ? t('create') : t('save')}
                         </Button>
                       </span>
                     </Tooltip>
@@ -543,10 +511,10 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
 
       <ConfirmDialog
         open={confirmRollbackVersion !== null}
-        title="Restore this version?"
-        description="This will create a new version with the previous text."
-        confirmLabel="Restore"
-        cancelLabel="Cancel"
+        title={t('restoreVersionConfirm')}
+        description={t('restoreVersionDesc')}
+        confirmLabel={t('restoreVersion')}
+        cancelLabel={tc('cancel')}
         variant="primary"
         loading={rollbackMutation.isPending}
         onConfirm={() => {
@@ -563,6 +531,7 @@ function PromptLibraryModal({ open, onClose }: { open: boolean; onClose: () => v
 // ─── Benchmark row ────────────────────────────────────────────────
 
 function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result: BenchmarkResult; index: number; onShowHistory?: (modelId: string, modelName: string) => void; onShowResults?: (result: BenchmarkResult) => void }) {
+  const { t } = useTranslation('benchmarks');
   const [expanded, setExpanded] = useState(false);
   const isError = result.status === "error";
 
@@ -591,7 +560,7 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
               {formatTimestamp(result.timestamp)}
             </p>
             <p className="truncate text-[10px] text-[var(--color-text-muted)]">
-              {result.promptName ?? "Built-in prompt"}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
+              {result.promptName ?? t('builtInPrompt')}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
             </p>
           </div>
         </button>
@@ -601,7 +570,7 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
           {/* Primary: throughput */}
           <div
             className="flex items-center gap-1.5 justify-self-start"
-            title={`Throughput: ${result.tokensPerSec ? result.tokensPerSec.toFixed(2) : "n/a"} tokens/sec`}
+            title={result.tokensPerSec ? t('throughputTooltip', { value: result.tokensPerSec.toFixed(2) }) : t('throughputTooltipNa')}
           >
             <Zap className="size-3.5 shrink-0 text-[var(--color-primary)]" />
             <span className="whitespace-nowrap font-mono text-sm font-semibold tabular-nums text-[var(--color-primary)]">
@@ -612,7 +581,7 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
           {/* Latency — secondary */}
           <span
             className="whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]"
-            title={result.latencyMs > 0 ? `Processing time: ${result.latencyMs.toLocaleString()} ms` : "No latency data"}
+            title={result.latencyMs > 0 ? t('processingTimeTooltip', { value: result.latencyMs.toLocaleString() }) : t('noLatencyData')}
           >
             {formatLatency(result.latencyMs)}
           </span>
@@ -620,7 +589,7 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
           {/* Tokens generated — secondary */}
           <span
             className="whitespace-nowrap text-right font-mono text-[11px] tabular-nums text-[var(--color-text-muted)]"
-            title={result.tokensGenerated > 0 ? `${result.tokensGenerated.toLocaleString()} tokens generated` : "No token data"}
+            title={result.tokensGenerated > 0 ? t('tokensGeneratedTooltip', { count: result.tokensGenerated.toLocaleString() }) : t('noTokenData')}
           >
             {formatTokens(result.tokensGenerated)}
           </span>
@@ -632,8 +601,8 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
             type="button"
             onClick={() => onShowResults?.(result)}
             className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
-            aria-label={`Results for ${result.modelName} run`}
-            title="View run results"
+            aria-label={t('aria.runResults', { modelName: result.modelName })}
+            title={t('viewRunResults')}
           >
             <FileText className="size-3.5" />
           </button>
@@ -641,15 +610,15 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
             type="button"
             onClick={() => onShowHistory?.(result.modelId, result.modelName)}
             className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
-            aria-label={`Historic results for ${result.modelName}`}
-            title="View historic results"
+            aria-label={t('aria.historicResults', { modelName: result.modelName })}
+            title={t('viewHistoricResults')}
           >
             <History className="size-3.5" />
           </button>
           {isError ? (
-            <Badge variant="error">error</Badge>
+            <Badge variant="error">{t('results.error')}</Badge>
           ) : (
-            <Badge variant="success">completed</Badge>
+            <Badge variant="success">{t('results.completed')}</Badge>
           )}
         </div>
       </div>
@@ -673,195 +642,6 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
   );
 }
 
-// ─── Run results modal ────────────────────────────────────────────
-
-function StatTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-        {label}
-      </p>
-      <p className="mt-0.5 font-mono text-sm font-semibold tabular-nums text-[var(--color-text-heading)]">
-        {value}
-      </p>
-    </div>
-  );
-}
-
-/** Section header that toggles a collapsible content block (aria-expanded pattern). */
-function CollapsibleSectionHeader({ label, open, onToggle }: { label: string; open: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-expanded={open}
-      className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded px-1 py-0.5 -mx-1 text-left transition-colors hover:bg-[var(--color-bg-muted)]"
-    >
-      {open ? (
-        <ChevronDown className="size-3 shrink-0 text-[var(--color-text-muted)]" />
-      ) : (
-        <ChevronRight className="size-3 shrink-0 text-[var(--color-text-muted)]" />
-      )}
-      <span className="truncate text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-        {label}
-      </span>
-    </button>
-  );
-}
-
-function RunResultModal({ result, onClose }: { result: BenchmarkResult; onClose: () => void }) {
-  const [copied, setCopied] = useState<"output" | "thinking" | null>(null);
-  // Thinking is collapsed by default — it's supporting context, not the answer.
-  const [showThinking, setShowThinking] = useState(false);
-  const [showOutput, setShowOutput] = useState(true);
-  const isError = result.status === "error";
-  const hasResponse = typeof result.response === "string" && result.response.length > 0;
-  const hasReasoning = typeof result.reasoning === "string" && result.reasoning.length > 0;
-  const hasAnyContent = hasResponse || hasReasoning;
-
-  const handleCopy = useCallback((text: string, key: "output" | "thinking") => {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        setCopied(key);
-        window.setTimeout(() => setCopied(null), 1500);
-      })
-      .catch(() => {
-        // Clipboard unavailable (permissions/insecure context) — nothing sensible to do.
-      });
-  }, []);
-
-  const copyButton = (key: "output" | "thinking", text: string, label: string) => (
-    <button
-      type="button"
-      onClick={() => handleCopy(text, key)}
-      className="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary-soft)] cursor-pointer"
-      aria-label={label}
-    >
-      {copied === key ? (
-        <>
-          <Check className="size-3" />
-          Copied
-        </>
-      ) : (
-        <>
-          <Copy className="size-3" />
-          Copy
-        </>
-      )}
-    </button>
-  );
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => { if (!o) onClose(); }}
-      title={`${result.modelName} — run details`}
-      className="sm:max-w-3xl"
-    >
-      <div className="flex flex-col gap-4 p-5">
-        {/* Header: status + when */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {isError ? (
-            <Badge variant="error">error</Badge>
-          ) : (
-            <Badge variant="success">completed</Badge>
-          )}
-          <span className="text-xs text-[var(--color-text-muted)]" title={new Date(result.timestamp).toLocaleString()}>
-            {formatTimestamp(result.timestamp)} · {formatRelativeTime(result.timestamp)}
-          </span>
-          {(result.promptName || result.promptVersion != null) && (
-            <span className="ml-auto truncate text-[10px] text-[var(--color-text-muted)]">
-              {result.promptName ?? "Built-in prompt"}{result.promptVersion != null ? ` · v${result.promptVersion}` : ""}
-            </span>
-          )}
-        </div>
-
-        {/* Metrics */}
-        <div className="grid grid-cols-3 gap-2">
-          <StatTile label="Tokens generated" value={formatTokens(result.tokensGenerated)} />
-          <StatTile label="Throughput" value={formatTokensPerSec(result.tokensPerSec)} />
-          <StatTile label="Latency" value={formatLatency(result.latencyMs)} />
-        </div>
-
-        {/* Prompt */}
-        <div className="flex min-h-0 flex-col gap-1.5">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-            Prompt
-          </span>
-          <div className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-text-muted)]">
-            {result.prompt}
-          </div>
-        </div>
-
-        {/* Error / thinking / output */}
-        {isError && result.errorMessage ? (
-          <div className="flex min-h-0 flex-col gap-1.5">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-              Response
-            </span>
-            <div className="flex items-start gap-1.5 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-error)_8%,transparent)] px-3 py-2.5">
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--color-status-error)]" />
-              <span className="whitespace-pre-wrap break-words text-xs leading-relaxed text-[var(--color-status-error)]">
-                {result.errorMessage}
-              </span>
-            </div>
-          </div>
-        ) : !hasAnyContent ? (
-          <div className="flex min-h-0 flex-col gap-1.5">
-            <span className="text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
-              Response
-            </span>
-            <div className="rounded-[var(--radius-lg)] border border-dashed border-[var(--color-border)] px-3 py-4 text-center text-xs text-[var(--color-text-muted)]">
-              No response captured
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Thinking — collapsed by default, only when reasoning was captured */}
-            {hasReasoning && (
-              <section className="flex min-h-0 flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <CollapsibleSectionHeader
-                    label="Thinking"
-                    open={showThinking}
-                    onToggle={() => setShowThinking((v) => !v)}
-                  />
-                  {copyButton("thinking", result.reasoning as string, "Copy thinking to clipboard")}
-                </div>
-                {showThinking && (
-                  <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-muted)]">
-                    {result.reasoning}
-                  </pre>
-                )}
-              </section>
-            )}
-
-            {/* Output — expanded by default, only when response text exists */}
-            {hasResponse && (
-              <section className="flex min-h-0 flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-2">
-                  <CollapsibleSectionHeader
-                    label="Output"
-                    open={showOutput}
-                    onToggle={() => setShowOutput((v) => !v)}
-                  />
-                  {copyButton("output", result.response as string, "Copy output to clipboard")}
-                </div>
-                {showOutput && (
-                  <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--color-text-heading)]">
-                    {result.response}
-                  </pre>
-                )}
-              </section>
-            )}
-          </>
-        )}
-      </div>
-    </Dialog>
-  );
-}
-
 // ─── Model results modal ──────────────────────────────────────────
 
 function ModelResultsModal({
@@ -877,6 +657,7 @@ function ModelResultsModal({
   onClose: () => void;
   onShowResults?: (result: BenchmarkResult) => void;
 }) {
+  const { t } = useTranslation('benchmarks');
   const { data: results, isLoading } = useQuery({
     queryKey: ["benchmarks", modelId],
     queryFn: () => client.listBenchmarks(modelId),
@@ -887,7 +668,7 @@ function ModelResultsModal({
     <Dialog
       open={open}
       onOpenChange={(o) => { if (!o) onClose(); }}
-      title={`${modelName} — benchmark results`}
+      title={t('benchmarkResultsTitle', { modelName })}
     >
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
@@ -899,7 +680,7 @@ function ModelResultsModal({
             </div>
           ) : !results || results.length === 0 ? (
             <div className="flex flex-1 items-center justify-center p-8">
-              <EmptyState title="No benchmark runs for this model yet" />
+              <EmptyState title={t('noRunsForModel')} />
             </div>
           ) : (
             <div>
@@ -913,7 +694,7 @@ function ModelResultsModal({
                     {/* Prompt name + version */}
                     <div className="min-w-0 flex-1 basis-40 truncate">
                       <span className="text-xs font-medium text-[var(--color-text-heading)]">
-                        {r.promptName ?? "Built-in prompt"}
+                        {r.promptName ?? t('builtInPrompt')}
                       </span>
                       {r.promptVersion != null && (
                         <span className="ml-1 font-mono text-[9px] text-[var(--color-text-muted)]">v{r.promptVersion}</span>
@@ -927,10 +708,10 @@ function ModelResultsModal({
                         {formatTokensPerSec(r.tokensPerSec)}
                       </span>
                       <span className="font-mono text-xs text-[var(--color-text-muted)]">
-                        {r.latencyMs > 0 ? `${r.latencyMs}ms` : "—"}
+                        {r.latencyMs > 0 ? formatLatency(r.latencyMs) : "—"}
                       </span>
                       <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
-                        {r.tokensGenerated > 0 ? `${r.tokensGenerated} tok` : "n/a"}
+                        {formatTokens(r.tokensGenerated)}
                       </span>
                     </div>
 
@@ -940,15 +721,15 @@ function ModelResultsModal({
                         type="button"
                         onClick={() => onShowResults?.(r)}
                         className="rounded p-1 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] cursor-pointer"
-                        aria-label={`Results for ${modelName} run`}
-                        title="View run results"
+                        aria-label={t('aria.runResults', { modelName })}
+                        title={t('viewRunResults')}
                       >
                         <FileText className="size-3.5" />
                       </button>
                       {isError ? (
-                        <Badge variant="error">error</Badge>
+                        <Badge variant="error">{t('results.error')}</Badge>
                       ) : (
-                        <Badge variant="success">completed</Badge>
+                        <Badge variant="success">{t('results.completed')}</Badge>
                       )}
                       <span className="text-[10px] text-[var(--color-text-muted)]">
                         {formatTimestamp(r.timestamp)}
@@ -967,6 +748,7 @@ function ModelResultsModal({
 // ─── Run benchmark control ────────────────────────────────────────
 
 function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: () => void; onShowResults: (modelId: string, modelName: string) => void }) {
+  const { t } = useTranslation('benchmarks');
   const queryClient = useQueryClient();
   const [modelId, setModelId] = useState("");
   const [selectedPromptId, setSelectedPromptId] = useState("");
@@ -1009,7 +791,7 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
   const defaultPrompt = (prompts ?? []).find((p) => p.isDefault);
 
   const selected = (models ?? []).find((m) => m.id === modelId);
-  const disabledReason = benchmarkDisabledReason(selected ?? undefined);
+  const disabledReason = benchmarkDisabledReason(selected ?? undefined, t);
   const canRun = !!selected && selected.status === "ready";
 
   const run = () => {
@@ -1024,24 +806,24 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
     <Card padding="md" className="flex flex-col gap-3 lg:flex-row lg:items-end">
       <div className="min-w-0 flex-1">
         <Select
-          label="Target model"
-          aria-label="Target model"
+          label={t('placeholders.targetModel')}
+          aria-label={t('aria.targetModel')}
           value={modelId}
           onChange={(e) => setModelId(e.target.value)}
           options={[
-            { value: "", label: "Select a model…" },
+            { value: "", label: t('selectModel') },
             ...modelOptions,
           ]}
         />
       </div>
       <div className="min-w-0 flex-1">
         <Select
-          label="Prompt (optional)"
-          aria-label="Prompt (optional)"
+          label={t('placeholders.promptOptional')}
+          aria-label={t('aria.promptOptional')}
           value={selectedPromptId}
           onChange={(e) => setSelectedPromptId(e.target.value)}
           options={[
-            { value: "", label: defaultPrompt ? `Default prompt (${defaultPrompt.name})` : "Default prompt" },
+            { value: "", label: defaultPrompt ? t('defaultPromptWithName', { name: defaultPrompt.name }) : t('defaultPrompt') },
             ...promptOptions,
           ]}
         />
@@ -1053,7 +835,7 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
         className="lg:self-end"
       >
         <BookOpen className="size-3.5" />
-        Manage prompts
+        {t('managePrompts')}
       </Button>
       <Button
         variant="secondary"
@@ -1067,9 +849,9 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
         className="lg:self-end"
       >
         <History className="size-3.5" />
-        Results
+        {t('resultsButton')}
       </Button>
-      <Tooltip content={disabledReason ?? "Run a benchmark against the selected model"}>
+      <Tooltip content={disabledReason ?? t('runBenchmarkTooltip')}>
         <span className="inline-flex sm:shrink-0">
           <Button
             size="md"
@@ -1078,13 +860,13 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
             onClick={run}
           >
             <Play className="size-3.5" />
-            Run benchmark
+            {t('runBenchmark')}
           </Button>
         </span>
       </Tooltip>
       {readyModels.length > 0 && (
         <p className="text-[10px] text-[var(--color-text-muted)] sm:shrink-0 sm:pb-2">
-          {readyModels.length} ready model{readyModels.length !== 1 ? "s" : ""}
+          {t('readyModel', { count: readyModels.length })}
         </p>
       )}
     </Card>
@@ -1094,9 +876,10 @@ function RunBenchmarkBar({ onManagePrompts, onShowResults }: { onManagePrompts: 
 // ─── Main Benchmarks page ─────────────────────────────────────────
 
 export default function Benchmarks() {
+  const { t } = useTranslation('benchmarks');
+  const { t: tc } = useTranslation('common');
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [modelResultsModal, setModelResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
-  const [runResult, setRunResult] = useState<BenchmarkResult | null>(null);
 
   const {
     data: results,
@@ -1133,11 +916,11 @@ export default function Benchmarks() {
     return (
       <div className="max-w-5xl p-6">
         <EmptyState
-          title="Failed to load benchmarks"
+          title={t('failedToLoad')}
           description={error.message}
           action={
             <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>
-              Retry
+              {tc('retry')}
             </Button>
           }
         />
@@ -1149,9 +932,9 @@ export default function Benchmarks() {
     <div className="max-w-5xl space-y-6 p-6">
       {/* Header */}
       <div>
-        <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Benchmarks</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">{t('title')}</h2>
         <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-          Benchmark runs: measured throughput and latency per model.
+          {t('benchmarkRunsDesc')}
         </p>
       </div>
 
@@ -1164,8 +947,8 @@ export default function Benchmarks() {
         <Card padding="none">
           <EmptyState
             icon={<Activity className="size-12" strokeWidth={1.5} />}
-            title="No benchmark runs yet"
-            description="Run one from the Benchmarks or Swarm page."
+            title={t('noRuns')}
+            description={t('noRunsDesc')}
           />
         </Card>
       ) : (
@@ -1176,7 +959,7 @@ export default function Benchmarks() {
               result={r}
               index={i}
               onShowHistory={(modelId, modelName) => setModelResultsModal({ modelId, modelName })}
-              onShowResults={setRunResult}
+              onShowResults={undefined}
             />
           ))}
         </Card>
@@ -1191,14 +974,8 @@ export default function Benchmarks() {
         modelName={modelResultsModal?.modelName ?? ""}
         open={modelResultsModal !== null}
         onClose={() => setModelResultsModal(null)}
-        onShowResults={setRunResult}
+        onShowResults={undefined}
       />
-      {runResult && (
-        <RunResultModal
-          result={runResult}
-          onClose={() => setRunResult(null)}
-        />
-      )}
     </div>
   );
 }

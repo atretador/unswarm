@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Cloud,
@@ -34,28 +35,26 @@ import type {
   CloudProviderRead,
   CloudProviderUpdateInput,
 } from "../../lib/api/types";
+import { formatRelativeTime } from "../../i18n/format";
+import i18n from "../../i18n";
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function formatExpiry(iso: string): string {
+function formatExpiry(iso: string, t: (key: string) => string): string {
+  const locale = i18n.language === 'pt-BR' ? 'pt-BR' : 'en-US';
   const diff = new Date(iso).getTime() - Date.now();
-  if (diff <= 0) return "Expired";
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 60) return `${minutes}m remaining`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m remaining`;
+  if (diff <= 0) {
+    return t('expired');
+  }
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  const diffMin = Math.floor(diff / 60000);
+  if (diffMin < 60) return rtf.format(diffMin, 'minute');
+  const hours = Math.floor(diffMin / 60);
+  const mins = diffMin % 60;
+  if (mins > 0) {
+    return `${rtf.format(hours, 'hour')} ${rtf.format(mins, 'minute')}`;
+  }
+  return rtf.format(hours, 'hour');
 }
 
 // ─── Provider Row ────────────────────────────────────────────────
@@ -69,6 +68,8 @@ function ProviderRow({
   onEdit: (provider: CloudProvider) => void;
   onDelete: (provider: CloudProvider) => void;
 }) {
+  const { t } = useTranslation("providers");
+
   return (
     <div className="flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)]">
       {/* Name */}
@@ -82,7 +83,7 @@ function ProviderRow({
         {p.authType === 1 && (
           <Badge variant="info" size="sm">
             <Shield className="size-2.5" />
-            GPT Sub
+            {t("gptSub")}
           </Badge>
         )}
       </div>
@@ -104,7 +105,7 @@ function ProviderRow({
       {/* Model Count */}
       <div className="shrink-0 w-[80px] text-right">
         <span className="text-xs text-[var(--color-text)]">
-          {p.modelCount} {p.modelCount === 1 ? "model" : "models"}
+          {p.modelCount} {t("model", { count: p.modelCount })}
         </span>
       </div>
 
@@ -119,7 +120,7 @@ function ProviderRow({
       <div className="flex items-center gap-1 shrink-0">
         <Button variant="ghost" size="sm" onClick={() => onEdit(p)}>
           <Pencil className="size-3.5" />
-          Edit
+          {t("edit", { ns: "common" })}
         </Button>
         <Button variant="danger" size="sm" onClick={() => onDelete(p)}>
           <Trash2 className="size-3.5" />
@@ -140,15 +141,17 @@ function AuthTypeSelector({
   onChange: (v: CloudProviderAuthType) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation("providers");
+
   const options: { label: string; value: CloudProviderAuthType; icon: typeof KeyRound }[] = [
-    { label: "API Key", value: 0, icon: KeyRound },
-    { label: "GPT Subscription", value: 1, icon: Shield },
+    { label: t("authTypeApiKey"), value: 0, icon: KeyRound },
+    { label: t("authTypeGptSubscription"), value: 1, icon: Shield },
   ];
 
   return (
     <div className="space-y-1.5">
       <label className="text-xs font-medium text-[var(--color-text-muted)]">
-        Authentication Type
+        {t("authType")}
       </label>
       <div className="flex rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-muted)]/30 p-0.5">
         {options.map((opt) => {
@@ -194,6 +197,7 @@ function OAuthModal({
   providerId: string;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation("providers");
   const [userCode, setUserCode] = useState<string | null>(null);
   const [_deviceAuthId, setDeviceAuthId] = useState<string | null>(null);
   const [verificationUrl, setVerificationUrl] = useState<string>("https://auth.openai.com/codex/device");
@@ -261,7 +265,7 @@ function OAuthModal({
       } catch (err) {
         if (cancelled) return;
         setStatus("error");
-        setErrorMsg(err instanceof Error ? err.message : "Failed to start OAuth flow");
+        setErrorMsg(err instanceof Error ? err.message : t("oauthFailedToStart"));
       }
     };
 
@@ -284,12 +288,12 @@ function OAuthModal({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title="Sign in with ChatGPT">
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={t("signInWithChatGPT")}>
       <div className="p-5 space-y-5">
         {status === "loading" && (
           <div className="flex flex-col items-center gap-3 py-6">
             <Loader2 className="size-6 animate-spin text-[var(--color-primary)]" />
-            <span className="text-sm text-[var(--color-text-muted)]">Starting authentication…</span>
+            <span className="text-sm text-[var(--color-text-muted)]">{t("signInProgress")}</span>
           </div>
         )}
 
@@ -297,7 +301,7 @@ function OAuthModal({
           <>
             <div className="rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30 p-4 text-center space-y-3">
               <p className="text-sm text-[var(--color-text)]">
-                Open{" "}
+                {t("open")}{" "}
                 <a
                   href={verificationUrl}
                   target="_blank"
@@ -308,7 +312,7 @@ function OAuthModal({
                   <ExternalLink className="size-3" />
                 </a>
               </p>
-              <p className="text-xs text-[var(--color-text-muted)]">sign in, then enter this code:</p>
+              <p className="text-xs text-[var(--color-text-muted)]">{t("signInCode")}</p>
 
               {/* Device code display */}
               <div className="flex items-center justify-center gap-2">
@@ -319,7 +323,7 @@ function OAuthModal({
                   type="button"
                   onClick={handleCopy}
                   className="flex size-7 items-center justify-center rounded-[var(--radius-sm)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                  title="Copy code"
+                  title={t("copyCode")}
                 >
                   {copied ? <Check className="size-3.5 text-[var(--color-status-success)]" /> : <Copy className="size-3.5" />}
                 </button>
@@ -327,7 +331,7 @@ function OAuthModal({
             </div>
 
             <p className="text-xs text-[var(--color-text-muted)] text-center">
-              Waiting for you to authenticate in the browser…
+              {t("waitingAuth")}
             </p>
           </>
         )}
@@ -337,8 +341,8 @@ function OAuthModal({
             <div className="flex size-10 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-status-success)_15%,transparent)]">
               <Check className="size-5 text-[var(--color-status-success)]" />
             </div>
-            <span className="text-sm text-[var(--color-text)] font-medium">Authentication successful!</span>
-            <span className="text-xs text-[var(--color-text-muted)]">Fetching your models…</span>
+            <span className="text-sm text-[var(--color-text)] font-medium">{t("authSuccess")}</span>
+            <span className="text-xs text-[var(--color-text-muted)]">{t("fetchingModels")}</span>
           </div>
         )}
 
@@ -347,7 +351,7 @@ function OAuthModal({
             <div className="flex size-10 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-status-error)_15%,transparent)]">
               <AlertCircle className="size-5 text-[var(--color-status-error)]" />
             </div>
-            <span className="text-sm text-[var(--color-text)] font-medium">Authentication failed</span>
+            <span className="text-sm text-[var(--color-text)] font-medium">{t("authFailed")}</span>
             <span className="text-xs text-[var(--color-text-muted)] text-center max-w-xs">{errorMsg}</span>
           </div>
         )}
@@ -359,7 +363,7 @@ function OAuthModal({
             onClick={onClose}
             disabled={status === "loading"}
           >
-            {status === "success" ? "Done" : "Cancel"}
+            {status === "success" ? t("done") : t("cancel")}
           </Button>
           {status === "error" && (
             <Button
@@ -372,7 +376,7 @@ function OAuthModal({
               }}
             >
               <RefreshCw className="size-3.5" />
-              Retry
+              {t("retry", { ns: "common" })}
             </Button>
           )}
         </div>
@@ -392,6 +396,7 @@ function ProviderDialog({
   onClose: () => void;
   editProvider: CloudProvider | null;
 }) {
+  const { t } = useTranslation("providers");
   const queryClient = useQueryClient();
   const isEdit = editProvider !== null;
 
@@ -504,7 +509,7 @@ function ProviderDialog({
         setSelectedModels(new Set(result.modelIds));
       }
     } catch (err) {
-      setFetchModelsError(err instanceof Error ? err.message : "Failed to fetch models");
+      setFetchModelsError(err instanceof Error ? err.message : t("validation.saveFailed"));
     } finally {
       setFetchModelsPending(false);
     }
@@ -561,14 +566,14 @@ function ProviderDialog({
     setFetchModelsError(null);
 
     if (!name.trim()) {
-      setError("Provider name is required.");
+      setError(t("validation.nameRequired"));
       return;
     }
 
     if (isEdit) {
       // Edit mode — always requires a base URL
       if (!baseUrl.trim()) {
-        setError("Base URL is required.");
+        setError(t("validation.baseUrlRequired"));
         return;
       }
     } else {
@@ -576,11 +581,11 @@ function ProviderDialog({
       if (authType === 0) {
         // API Key mode — requires baseUrl and apiKey
         if (!baseUrl.trim()) {
-          setError("Base URL is required.");
+          setError(t("validation.baseUrlRequired"));
           return;
         }
         if (!apiKey) {
-          setError("API key is required for new providers.");
+          setError(t("validation.apiKeyRequired"));
           return;
         }
       } else {
@@ -651,7 +656,7 @@ function ProviderDialog({
         onClose();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : t("validation.saveFailed"));
     }
   };
 
@@ -678,7 +683,7 @@ function ProviderDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={isEdit ? "Edit Provider" : "Add Provider"}>
+      <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={isEdit ? t("editProvider") : t("addProvider")}>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           {/* Auth type selector — only in add mode */}
           {!isEdit && (
@@ -694,24 +699,24 @@ function ProviderDialog({
             <div className="flex items-center gap-2 p-2.5 rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30">
               <Shield className="size-4 text-[var(--color-primary)]" />
               <span className="text-xs text-[var(--color-text-muted)]">
-                ChatGPT Subscription — authenticated via OAuth
+                {t("fields.chatgptSub")}
               </span>
             </div>
           )}
 
           <Input
-            label="Name"
+            label={t("fields.name")}
             value={name}
             onChange={(e) => setName(e.target.value)}
             disabled={isEdit}
-            placeholder="e.g. OpenAI"
+            placeholder={t("placeholders.name")}
             autoFocus={!isEdit}
           />
 
           {/* Base URL — hidden for subscription providers in add mode */}
           {(!authType || isEdit) && (
             <Input
-              label="Base URL"
+              label={t("fields.baseUrl")}
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
               placeholder={isSubscriptionEdit ? "https://chatgpt.com" : "https://api.openai.com/v1"}
@@ -722,7 +727,7 @@ function ProviderDialog({
           {/* API Key — only for API Key auth type */}
           {authType === 0 && (
             <Input
-              label={isEdit ? "API Key (leave blank to keep existing)" : "API Key"}
+              label={isEdit ? t("fields.apiKeyKeepExisting") : t("fields.apiKey")}
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
@@ -736,14 +741,14 @@ function ProviderDialog({
             <div className="space-y-3">
               {readProvider.chatgptAccountId && (
                 <div className="text-xs text-[var(--color-text-muted)]">
-                  Account: <span className="font-mono text-[var(--color-text)]">{readProvider.chatgptAccountId}</span>
+                  {t("fields.account", { id: readProvider.chatgptAccountId })}
                 </div>
               )}
               {readProvider.tokenExpiresAt && (
                 <div className="flex items-center gap-2">
                   <div className={`size-2 rounded-full ${new Date(readProvider.tokenExpiresAt) > new Date() ? "bg-[var(--color-status-success)]" : "bg-[var(--color-status-error)]"}`} />
                   <span className="text-xs text-[var(--color-text-muted)]">
-                    Token {formatExpiry(readProvider.tokenExpiresAt)}
+                    {t("fields.tokenExpiry", { expiry: formatExpiry(readProvider.tokenExpiresAt, t) })}
                   </span>
                 </div>
               )}
@@ -760,7 +765,7 @@ function ProviderDialog({
                   ) : (
                     <RefreshCw className="size-3.5" />
                   )}
-                  Refresh Token
+                  {t("refreshToken")}
                 </Button>
                 <Button
                   type="button"
@@ -771,7 +776,7 @@ function ProviderDialog({
                   }}
                 >
                   <KeyRound className="size-3.5" />
-                  Re-authenticate
+                  {t("reAuthenticate")}
                 </Button>
               </div>
             </div>
@@ -793,12 +798,12 @@ function ProviderDialog({
                   ) : (
                     <Cloud className="size-3.5" />
                   )}
-                  Fetch Models
+                  {t("fetchModels")}
                 </Button>
                 {fetchedModels !== null && (
                   <span className="flex items-center gap-1.5 text-xs text-[var(--color-status-success)]">
                     <Check className="size-3.5" />
-                    {fetchedModels.length} {fetchedModels.length === 1 ? "model" : "models"} found
+                    {t("modelsFound", { count: fetchedModels.length })}
                   </span>
                 )}
                 {fetchModelsError && (
@@ -816,10 +821,10 @@ function ProviderDialog({
                       checked={allModelsSelected}
                       indeterminate={someModelsSelected}
                       onChange={toggleSelectAll}
-                      label={allModelsSelected ? "Deselect all models" : "Select all models"}
+                      label={allModelsSelected ? t("deselectAllModels") : t("selectAllModels")}
                     />
                     <span className="text-xs text-[var(--color-text-muted)]">
-                      {selectedModels.size} of {fetchedModels.length} models selected
+                      {t("modelsSelected", { count: selectedModels.size, total: fetchedModels.length })}
                     </span>
                   </div>
 
@@ -853,10 +858,10 @@ function ProviderDialog({
 
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="secondary" size="sm" onClick={onClose} disabled={isPending}>
-              Cancel
+              {t("cancel")}
             </Button>
             <Button type="submit" variant="primary" size="sm" loading={isPending}>
-              {isEdit ? "Save Changes" : "Add Provider"}
+              {isEdit ? t("saveChanges") : t("addProvider")}
             </Button>
           </div>
         </form>
@@ -883,6 +888,7 @@ function ProviderDialog({
 // ─── Main Providers Page ─────────────────────────────────────────
 
 export default function Providers() {
+  const { t } = useTranslation("providers");
   const queryClient = useQueryClient();
 
   const {
@@ -922,10 +928,10 @@ export default function Providers() {
       {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Cloud Providers
+          {t("cloudProviders")}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Cloud LLM providers route through the OpenAI-compatible endpoint without local scheduling.
+          {t("cloudProvidersDesc")}
         </p>
       </div>
 
@@ -936,12 +942,12 @@ export default function Providers() {
           <div className="flex items-center gap-2">
             <Cloud className="size-4 text-[var(--color-text-muted)]" />
             <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Cloud Providers
+              {t("cloudProviders")}
             </p>
           </div>
           <Button variant="primary" size="sm" onClick={handleAdd}>
             <Plus className="size-3.5" />
-            Add Provider
+            {t("addProvider")}
           </Button>
         </div>
 
@@ -957,22 +963,22 @@ export default function Providers() {
             {/* Column headers */}
             <div className="flex items-center gap-4 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/30">
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider min-w-0 flex-1">
-                Provider
+                {t("colProvider")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[220px]">
-                Base URL
+                {t("colBaseUrl")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[120px]">
-                API Key
+                {t("colApiKey")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[80px] text-right">
-                Models
+                {t("colModels")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[100px] text-right">
-                Updated
+                {t("colUpdated")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[120px] text-right">
-                Actions
+                {t("colActions")}
               </span>
             </div>
 
@@ -988,12 +994,12 @@ export default function Providers() {
         ) : (
           <EmptyState
             icon={<Cloud className="size-12" strokeWidth={1.5} />}
-            title="No cloud providers"
-            description="Add a cloud LLM provider to route requests through an OpenAI-compatible endpoint."
+            title={t("noProviders")}
+            description={t("noProvidersDesc")}
             action={
               <Button variant="primary" size="sm" onClick={handleAdd}>
                 <Plus className="size-3.5" />
-                Add Provider
+                {t("addProvider")}
               </Button>
             }
           />
@@ -1010,9 +1016,9 @@ export default function Providers() {
       {/* Delete Confirmation */}
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete provider"
-        description={`Delete provider "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t("deleteProvider")}
+        description={t("deleteProviderDesc", { name: deleteTarget?.name ?? "" })}
+        confirmLabel={t("delete", { ns: "common" })}
         variant="danger"
         loading={deleteMutation.isPending}
         onConfirm={() => {

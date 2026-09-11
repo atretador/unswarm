@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
 } from "lucide-react";
+import { useTranslation, Trans } from "react-i18next";
 import { TriCheckbox } from "../../components/ui";
 import { Button, Badge, Tooltip } from "../../components/ui";
 import { getProviderModelCatalog } from "../api-keys/api-keys-api";
@@ -19,6 +20,8 @@ import { client } from "../../lib/query-client";
  * to ModelsJson via PUT /api/cloudproviders/{id}/models.
  */
 export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?: () => void; onChatModel?: (modelId: string) => void; filter?: string }) {
+  const { t } = useTranslation('models');
+  const { t: tCommon } = useTranslation('common');
   const queryClient = useQueryClient();
 
   // Fetch cloud providers (for ID ↔ name mapping)
@@ -226,9 +229,16 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
         <div className="flex items-start gap-2.5">
           <TriangleAlert className="size-4 shrink-0 text-[var(--color-status-warning)] mt-0.5" />
           <p className="text-xs text-[var(--color-text)]">
-            Models selected here determine what&apos;s available via the API. To use a
-            model, it must also be granted to an API key in the{" "}
-            <span className="font-medium">API Keys</span> page.
+            <Trans
+              i18nKey="cloud.warningBanner"
+              ns="models"
+              components={{ 1: <span className="font-medium" /> }}
+            >
+              Models selected here determine what&apos;s available via the API. To use a
+              model, it must also be granted to an API key in the{' '}
+              <span className="font-medium">API Keys</span>{' '}
+              page.
+            </Trans>
           </p>
         </div>
       </div>
@@ -242,7 +252,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
           loading={fetchAllMutation.isPending}
         >
           <RefreshCw className="size-3.5" />
-          Check all providers
+          {t('cloud.checkAllProviders')}
         </Button>
         <Button
           variant="primary"
@@ -252,7 +262,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
           disabled={!isDirty}
         >
           <Save className="size-3.5" />
-          Save
+          {tCommon('save')}
         </Button>
       </div>
 
@@ -281,7 +291,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                     type="button"
                     onClick={() => toggleExpanded(provider.name)}
                     className="flex size-5 shrink-0 items-center justify-center rounded text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
-                    aria-label={isExpanded ? "Collapse" : "Expand"}
+                    aria-label={isExpanded ? t('cloud.collapse') : t('cloud.expand')}
                   >
                     {isExpanded ? (
                       <ChevronDown className="size-3.5" />
@@ -300,7 +310,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                     onChange={(c) =>
                       toggleProvider(provider.name, provider.models, c)
                     }
-                    label={`Select all ${provider.name} models`}
+                    label={t('cloud.selectProviderModels', { provider: provider.name })}
                   />
 
                   {/* Provider name */}
@@ -323,10 +333,10 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                       onClick={() => clearError(provider.name)}
                       className="flex items-center gap-1 text-xs text-[var(--color-status-error)] hover:text-[var(--color-text)] transition-colors"
                       title={error}
-                      aria-label="Dismiss error"
+                      aria-label={t('cloud.error')}
                     >
                       <TriangleAlert className="size-3.5" />
-                      Error
+                      {t('cloud.error')}
                     </button>
                   )}
 
@@ -366,10 +376,10 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                         ? "cursor-wait text-[var(--color-text-muted)]"
                         : "text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
                     }`}
-                    aria-label={`Refresh models for ${provider.name}`}
+                    aria-label={t('cloud.refresh')}
                   >
                     <RefreshCw className={`size-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-                    <span>{isRefreshing ? "Fetching…" : "Refresh"}</span>
+                    <span>{isRefreshing ? t('cloud.fetching') : t('cloud.refresh')}</span>
                   </button>
                 </div>
               </div>
@@ -399,11 +409,11 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                         {modelId}
                       </span>
                       {onChatModel && (
-                        <Tooltip content={`Test chat with ${modelId}`}>
+                        <Tooltip content={t('tooltips.testChat', { name: modelId })}>
                           <button
                             type="button"
                             onClick={() => onChatModel(modelId)}
-                            aria-label={`Test chat with ${modelId}`}
+                            aria-label={t('tooltips.testChat', { name: modelId })}
                             className="flex size-6 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
                           >
                             <MessageSquare className="size-3" />

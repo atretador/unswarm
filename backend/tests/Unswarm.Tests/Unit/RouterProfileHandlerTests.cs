@@ -2,6 +2,7 @@ using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Api.Services;
 using Unswarm.Tests.Fakes;
+using System.Text.Json;
 using LogLevel = Unswarm.Core.Models.LogLevel;
 
 namespace Unswarm.Tests.Unit;
@@ -145,7 +146,7 @@ public sealed class RouterProfileHandlerTests
             "nonexistent", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(404, result.StatusCode);
-        Assert.Contains("not found", result.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -167,7 +168,7 @@ public sealed class RouterProfileHandlerTests
             "empty-profile", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(404, result.StatusCode);
-        Assert.Contains("no enabled entries", result.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("no enabled entries", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -366,7 +367,7 @@ public sealed class RouterProfileHandlerTests
 
         Assert.Equal(502, result.StatusCode);
         Assert.NotNull(result.ErrorMessage);
-        Assert.Contains("server error", result.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("server error", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -682,8 +683,8 @@ public sealed class RouterProfileHandlerTests
             "single-entry-retry", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(502, result.StatusCode);
-        Assert.Contains("server error", result.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("3 attempts", result.ErrorMessage!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("server error", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("3 attempts", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

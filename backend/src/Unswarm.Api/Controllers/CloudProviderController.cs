@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 
 namespace Unswarm.Api.Controllers;
 
@@ -61,7 +62,7 @@ public sealed class CloudProviderController : ControllerBase
     {
         var item = await _store.GetAsync(id, ct);
         return item is null
-            ? NotFound(new { error = "Cloud provider not found." })
+            ? NotFound(LocalizedError.Create("cloudProviders.notFound"))
             : Ok(MapToReadDto(item));
     }
 
@@ -69,18 +70,18 @@ public sealed class CloudProviderController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateCloudProviderRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { error = "Name is required." });
+            return BadRequest(LocalizedError.Create("cloudProviders.nameRequired"));
         if (request.AuthType == 0 && string.IsNullOrWhiteSpace(request.ApiKey))
-            return BadRequest(new { error = "API key is required." });
+            return BadRequest(LocalizedError.Create("cloudProviders.apiKeyRequired"));
 
         // Validate name charset: [a-zA-Z0-9-_] — it becomes part of public model ids
         var name = request.Name.Trim();
         if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^[a-zA-Z0-9\-_]+$"))
-            return BadRequest(new { error = "Name must contain only letters, digits, hyphens, and underscores." });
+            return BadRequest(LocalizedError.Create("cloudProviders.nameInvalidChars"));
 
         var baseUrl = NormalizeBaseUrl(request.BaseUrl);
         if (baseUrl == null)
-            return BadRequest(new { error = "Base URL must be a valid absolute URL (origin only, no path)." });
+            return BadRequest(LocalizedError.Create("cloudProviders.baseUrlInvalid"));
 
         // Extract hint from key (first 4 + last 4 chars)
         var hint = string.IsNullOrWhiteSpace(request.ApiKey)
@@ -106,11 +107,11 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
 
         var baseUrl = NormalizeBaseUrl(request.BaseUrl);
         if (baseUrl == null)
-            return BadRequest(new { error = "Base URL must be a valid absolute URL (origin only, no path)." });
+            return BadRequest(LocalizedError.Create("cloudProviders.baseUrlInvalid"));
 
         var hint = request.ApiKeyHint;
         if (string.IsNullOrWhiteSpace(hint) && !string.IsNullOrWhiteSpace(request.ApiKey))
@@ -133,7 +134,7 @@ public sealed class CloudProviderController : ControllerBase
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
         var deleted = await _store.DeleteAsync(id, ct);
-        return deleted ? NoContent() : NotFound(new { error = "Cloud provider not found." });
+        return deleted ? NoContent() : NotFound(LocalizedError.Create("cloudProviders.notFound"));
     }
 
     [HttpPost("{id}/fetch-models")]
@@ -141,14 +142,14 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
 
         if (existing.AuthType == 1)
         {
             // ChatGPT subscription provider — fetch models via OAuth access token
             var tokenSet = await _store.GetOAuthTokensAsync(id, ct);
             if (tokenSet is null)
-                return BadRequest(new { error = "No OAuth tokens found. Please complete the OAuth flow first." });
+                return BadRequest(LocalizedError.Create("cloudProviders.noOAuthTokens"));
 
             string accessToken;
             try
@@ -157,7 +158,7 @@ public sealed class CloudProviderController : ControllerBase
             }
             catch (System.Security.Cryptography.CryptographicException)
             {
-                return BadRequest(new { error = "Unable to decrypt the access token. The encryption key ring may have changed — please re-authenticate." });
+                return BadRequest(LocalizedError.Create("cloudProviders.cannotDecryptAccessToken"));
             }
 
             var accountId = tokenSet.ChatgptAccountId;
@@ -179,11 +180,11 @@ public sealed class CloudProviderController : ControllerBase
         }
         catch (System.Security.Cryptography.CryptographicException)
         {
-            return BadRequest(new { error = "Unable to decrypt the API key for this provider. The encryption key ring may have changed — please re-enter the API key." });
+            return BadRequest(LocalizedError.Create("cloudProviders.cannotDecryptApiKey"));
         }
 
         if (apiKey == null)
-            return StatusCode(500, new { error = "Provider key is unavailable." });
+            return StatusCode(500, LocalizedError.Create("cloudProviders.keyUnavailable"));
 
         var baseUrl = NormalizeBaseUrl(existing.BaseUrlFull) ?? existing.BaseUrlFull;
         var apiKeyResult = await FetchUpstreamModelsAsync(baseUrl, apiKey, ct);
@@ -205,13 +206,13 @@ public sealed class CloudProviderController : ControllerBase
     public async Task<IActionResult> TestAndFetch([FromBody] TestAndFetchRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.BaseUrl))
-            return BadRequest(new { error = "Base URL is required." });
+            return BadRequest(LocalizedError.Create("cloudProviders.baseUrlRequired"));
         if (string.IsNullOrWhiteSpace(request.ApiKey))
-            return BadRequest(new { error = "API key is required." });
+            return BadRequest(LocalizedError.Create("cloudProviders.apiKeyRequired"));
 
         var baseUrl = NormalizeBaseUrl(request.BaseUrl);
         if (baseUrl == null)
-            return BadRequest(new { error = "Base URL is not valid." });
+            return BadRequest(LocalizedError.Create("cloudProviders.baseUrlInvalid"));
 
         var result = await FetchUpstreamModelsAsync(baseUrl, request.ApiKey.Trim(), ct);
         if (result.Error is not null)
@@ -225,7 +226,7 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
 
         try
         {
@@ -247,9 +248,9 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
         if (existing.AuthType != 1)
-            return BadRequest(new { error = "OAuth is only available for ChatGPT subscription providers (authType == 1)." });
+            return BadRequest(LocalizedError.Create("cloudProviders.oauthNotAvailable"));
 
         try
         {
@@ -259,7 +260,7 @@ public sealed class CloudProviderController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to start OAuth device code flow for provider {Id}", id);
-            return StatusCode(502, new { error = "Failed to initiate OAuth flow with upstream provider." });
+            return StatusCode(502, LocalizedError.Create("cloudProviders.oauthStartFailed"));
         }
     }
 
@@ -268,9 +269,9 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
         if (existing.AuthType != 1)
-            return BadRequest(new { error = "OAuth is only available for ChatGPT subscription providers (authType == 1)." });
+            return BadRequest(LocalizedError.Create("cloudProviders.oauthNotAvailable"));
 
         try
         {
@@ -302,7 +303,7 @@ public sealed class CloudProviderController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to poll OAuth tokens for provider {Id}", id);
-            return StatusCode(502, new { error = "Failed to poll OAuth tokens from upstream provider." });
+            return StatusCode(502, LocalizedError.Create("cloudProviders.oauthPollFailed"));
         }
     }
 
@@ -311,13 +312,13 @@ public sealed class CloudProviderController : ControllerBase
     {
         var existing = await _store.GetAsync(id, ct);
         if (existing is null)
-            return NotFound(new { error = "Cloud provider not found." });
+            return NotFound(LocalizedError.Create("cloudProviders.notFound"));
         if (existing.AuthType != 1)
-            return BadRequest(new { error = "OAuth is only available for ChatGPT subscription providers (authType == 1)." });
+            return BadRequest(LocalizedError.Create("cloudProviders.oauthNotAvailable"));
 
         var tokenSet = await _store.GetOAuthTokensAsync(id, ct);
         if (tokenSet is null)
-            return BadRequest(new { error = "No OAuth tokens found. Please complete the OAuth flow first." });
+            return BadRequest(LocalizedError.Create("cloudProviders.noOAuthTokens"));
 
         string refreshToken;
         try
@@ -326,7 +327,7 @@ public sealed class CloudProviderController : ControllerBase
         }
         catch (System.Security.Cryptography.CryptographicException)
         {
-            return BadRequest(new { error = "Unable to decrypt the refresh token. The encryption key ring may have changed — please re-authenticate." });
+            return BadRequest(LocalizedError.Create("cloudProviders.cannotDecryptRefreshToken"));
         }
 
         try
@@ -343,7 +344,7 @@ public sealed class CloudProviderController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to refresh OAuth tokens for provider {Id}", id);
-            return StatusCode(502, new { error = "Failed to refresh OAuth tokens from upstream provider." });
+            return StatusCode(502, LocalizedError.Create("cloudProviders.oauthRefreshFailed"));
         }
     }
 
@@ -367,7 +368,7 @@ public sealed class CloudProviderController : ControllerBase
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning("Fetch models returned {Status} from {Url}: {Body}", response.StatusCode, modelsUrl, errorBody);
-                return (null, StatusCode((int)response.StatusCode, new { error = $"Upstream returned {response.StatusCode}" }));
+                return (null, StatusCode((int)response.StatusCode, LocalizedError.Create("cloudProviders.upstreamError", new { statusCode = (int)response.StatusCode })));
             }
 
             var modelsResponse = await response.Content.ReadFromJsonAsync<OpenAiModelListResponse>(ct)
@@ -384,12 +385,12 @@ public sealed class CloudProviderController : ControllerBase
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Transport error fetching models from {Url}", modelsUrl);
-            return (null, StatusCode(502, new { error = "Failed to connect to provider." }));
+            return (null, StatusCode(502, LocalizedError.Create("cloudProviders.connectFailed")));
         }
         catch (TaskCanceledException)
         {
             _logger.LogWarning("Timeout fetching models from {Url}", modelsUrl);
-            return (null, StatusCode(504, new { error = "Upstream request timed out." }));
+            return (null, StatusCode(504, LocalizedError.Create("cloudProviders.requestTimeout")));
         }
     }
 
@@ -416,7 +417,7 @@ public sealed class CloudProviderController : ControllerBase
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning("Fetch subscription models returned {Status} from {Url}: {Body}", response.StatusCode, modelsUrl, errorBody);
-                return (null, StatusCode((int)response.StatusCode, new { error = $"Upstream returned {response.StatusCode}" }));
+                return (null, StatusCode((int)response.StatusCode, LocalizedError.Create("cloudProviders.upstreamError", new { statusCode = (int)response.StatusCode })));
             }
 
             var modelsResponse = await response.Content.ReadFromJsonAsync<CodexModelsResponse>(ct)
@@ -433,12 +434,12 @@ public sealed class CloudProviderController : ControllerBase
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Transport error fetching subscription models from {Url}", modelsUrl);
-            return (null, StatusCode(502, new { error = "Failed to connect to provider." }));
+            return (null, StatusCode(502, LocalizedError.Create("cloudProviders.connectFailed")));
         }
         catch (TaskCanceledException)
         {
             _logger.LogWarning("Timeout fetching subscription models from {Url}", modelsUrl);
-            return (null, StatusCode(504, new { error = "Upstream request timed out." }));
+            return (null, StatusCode(504, LocalizedError.Create("cloudProviders.requestTimeout")));
         }
     }
 

@@ -1,4 +1,5 @@
 import { Suspense, lazy, useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { motion } from "motion/react";
@@ -107,11 +108,11 @@ function ChartSkeleton() {
 
 type TimeRange = "24h" | "7d" | "30d" | "all";
 
-const TIME_RANGE_OPTIONS: { value: TimeRange; label: string }[] = [
-  { value: "24h", label: "Last 24h" },
-  { value: "7d", label: "Last 7 days" },
-  { value: "30d", label: "Last 30 days" },
-  { value: "all", label: "All time" },
+const TIME_RANGE_OPTIONS: { value: TimeRange; labelKey: string }[] = [
+  { value: "24h", labelKey: "timeRanges.24h" },
+  { value: "7d", labelKey: "timeRanges.7d" },
+  { value: "30d", labelKey: "timeRanges.30d" },
+  { value: "all", labelKey: "timeRanges.all" },
 ];
 
 function getTimeRangeParams(range: TimeRange): {
@@ -154,30 +155,30 @@ function getPreviousRangeParams(range: TimeRange): {
 
 // ─── Time-Series Metric Toggle ──────────────────────────────────
 
-const METRIC_OPTIONS: { value: TimeSeriesMetric; label: string }[] = [
-  { value: "tokens", label: "Tokens" },
-  { value: "requests", label: "Requests" },
-  { value: "latency", label: "Latency" },
-  { value: "cached", label: "Cached" },
-  { value: "cost", label: "Cost" },
+const METRIC_OPTIONS: { value: TimeSeriesMetric; labelKey: string }[] = [
+  { value: "tokens", labelKey: "metricOptions.tokens" },
+  { value: "requests", labelKey: "metricOptions.requests" },
+  { value: "latency", labelKey: "metricOptions.latency" },
+  { value: "cached", labelKey: "metricOptions.cached" },
+  { value: "cost", labelKey: "metricOptions.cost" },
 ];
 
-const METRIC_TITLES: Record<TimeSeriesMetric, string> = {
-  tokens: "Token usage over time",
-  requests: "Requests over time",
-  latency: "Average latency over time",
-  cached: "Cached tokens over time",
-  cost: "Estimated cost over time",
+const METRIC_TITLES_KEYS: Record<TimeSeriesMetric, string> = {
+  tokens: "metricTitles.tokens",
+  requests: "metricTitles.requests",
+  latency: "metricTitles.latency",
+  cached: "metricTitles.cached",
+  cost: "metricTitles.cost",
 };
 
 // ─── Auto-refresh ────────────────────────────────────────────────
 
 type AutoRefreshInterval = 0 | 10_000 | 30_000;
 
-const AUTO_REFRESH_OPTIONS: { value: string; label: string }[] = [
-  { value: "0", label: "Auto: off" },
-  { value: "10000", label: "Every 10s" },
-  { value: "30000", label: "Every 30s" },
+const AUTO_REFRESH_OPTIONS: { value: string; labelKey: string }[] = [
+  { value: "0", labelKey: "autoRefresh.off" },
+  { value: "10000", labelKey: "autoRefresh.10s" },
+  { value: "30000", labelKey: "autoRefresh.30s" },
 ];
 
 // ─── Sort ────────────────────────────────────────────────────────
@@ -204,6 +205,7 @@ const fadeUp = {
 // ─── Main Component ──────────────────────────────────────────────
 
 export default function Metrics() {
+  const { t } = useTranslation("metrics");
   const [timeRange, setTimeRangeRaw] = useState<TimeRange>("7d");
   const [sortField, setSortField] = useState<SortField>("requestCount");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -732,8 +734,8 @@ export default function Metrics() {
     const name =
       presetName.trim() ||
       [
-        selectedProviders.length > 0 ? selectedProviders.join("+") : "all providers",
-        selectedModels.length > 0 ? selectedModels.join("+") : "all models",
+        selectedProviders.length > 0 ? selectedProviders.join("+") : t("allProvidersLabel"),
+        selectedModels.length > 0 ? selectedModels.join("+") : t("allModelsLabel"),
         timeRange,
       ].join(" · ");
     savePreset({
@@ -818,15 +820,15 @@ export default function Metrics() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const header = [
-      "Model",
-      "Provider",
-      "Requests",
-      "Prompt Tokens",
-      "Completion Tokens",
-      "Cached Tokens",
-      "Cache Hit %",
-      "Avg Latency Ms",
-      "Est Cost USD",
+      t("table.model"),
+      t("table.provider"),
+      t("table.requests"),
+      t("table.promptTokens"),
+      t("table.completionTokens"),
+      t("table.cachedTokens"),
+      t("table.cacheHitPercent"),
+      t("csvHeaders.avgLatencyMs"),
+      t("csvHeaders.estCostUsd"),
     ];
     const lines = sortedModels.map((m) =>
       [
@@ -841,7 +843,7 @@ export default function Metrics() {
           : "",
         Math.round(m.avgLatencyMs),
         isFlatRateProvider(costRates, m.provider)
-          ? "incl."
+          ? t("costCalcSection.incl")
           : (modelCost(m, costRates) ?? "").toString(),
       ].join(","),
     );
@@ -901,12 +903,12 @@ export default function Metrics() {
       <div className="p-6 max-w-6xl">
         <EmptyState
           icon={<AlertTriangle className="size-12" strokeWidth={1.5} />}
-          title="Failed to load metrics"
+          title={t("failedToLoad")}
           description={error.message}
           action={
             <Button variant="secondary" size="sm" onClick={refreshAll}>
               <RefreshCw className="size-3.5" />
-              Retry
+              {t("retry", { ns: "common" })}
             </Button>
           }
         />
@@ -941,13 +943,13 @@ export default function Metrics() {
 
   const streamingSub =
     totals?.totalStreamingRequests !== undefined
-      ? `${totals.totalStreamingRequests.toLocaleString()} streaming`
+      ? t("summary.streaming", { count: totals.totalStreamingRequests.toLocaleString() })
       : undefined;
 
   const summaryCards: StatCard[] = totals
     ? [
         {
-          label: "Total requests",
+          label: t("summary.totalRequests"),
           value: totals.totalRequests.toLocaleString(),
           icon: Activity,
           color: "text-[var(--color-primary)]",
@@ -957,7 +959,7 @@ export default function Metrics() {
             : undefined,
         },
         {
-          label: "Prompt tokens",
+          label: t("summary.promptTokens"),
           value: formatTokens(totals.totalPromptTokens),
           icon: Zap,
           color: "text-[var(--color-status-running)]",
@@ -966,7 +968,7 @@ export default function Metrics() {
             : undefined,
         },
         {
-          label: "Completion tokens",
+          label: t("summary.completionTokens"),
           value: formatTokens(totals.totalCompletionTokens),
           icon: ArrowUpRight,
           color: "text-[var(--color-status-running)]",
@@ -978,7 +980,7 @@ export default function Metrics() {
             : undefined,
         },
         {
-          label: "Cache hit rate",
+          label: t("summary.cacheHitRate"),
           value: hitRate !== null ? `${hitRate.toFixed(1)}%` : "\u2014",
           icon: Database,
           color: "text-[var(--color-status-warning)]",
@@ -988,7 +990,7 @@ export default function Metrics() {
               : undefined,
         },
         {
-          label: "Est. cost",
+          label: t("summary.estCost"),
           value: anyRates ? formatCurrency(estCostTotal ?? 0) : undefined,
           icon: Calculator,
           color: "text-[var(--color-status-error)]",
@@ -997,19 +999,19 @@ export default function Metrics() {
               <>
                 {flatTotals.subscriptions > 0 && (
                   <span className="block">
-                    + {formatCurrency(flatTotals.subscriptions)} subscriptions
+                    + {formatCurrency(flatTotals.subscriptions)} {t("summary.subscriptionsLabel")}
                   </span>
                 )}
                 {flatTotals.selfHosted > 0 && (
                   <span className="block">
-                    + {formatCurrency(flatTotals.selfHosted)} self-hosted
+                    + {formatCurrency(flatTotals.selfHosted)} {t("summary.selfHostedLabel")}
                   </span>
                 )}
               </>
             ) : undefined,
         },
         {
-          label: "Cache savings",
+          label: t("summary.cacheSavings"),
           value: anyRates ? formatCurrency(savingsEstimate ?? 0) : undefined,
           icon: PiggyBank,
           color: "text-[var(--color-status-warning)]",
@@ -1029,7 +1031,7 @@ export default function Metrics() {
         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4"
       >
         <h1 className="text-xl font-semibold font-heading text-[var(--color-text-heading)]">
-          Metrics
+          {t("title")}
         </h1>
         <div className="flex flex-wrap gap-1.5 bg-[var(--color-bg-muted)] rounded-[var(--radius-lg)] p-1">
           {TIME_RANGE_OPTIONS.map((opt) => (
@@ -1048,7 +1050,7 @@ export default function Metrics() {
                 }
               `}
             >
-              {opt.label}
+              {t(opt.labelKey)}
             </button>
           ))}
         </div>
@@ -1067,10 +1069,10 @@ export default function Metrics() {
             size="sm"
             onClick={() => setFilterModalOpen(true)}
             className="gap-1.5 shrink-0"
-            title="Choose providers and models to include"
+            title={t("filterBar.chooseProvidersModels")}
           >
             <SlidersHorizontal className="size-3.5" />
-            Filters
+            {t("filterBar.filters")}
             {activeFilterCount > 0 && (
               <span className="inline-flex min-w-4 justify-center">
                 <Badge variant={hasActiveFilters ? "outline" : "info"} size="sm">
@@ -1085,7 +1087,7 @@ export default function Metrics() {
               {selectedProviders.map((provider) => (
                 <FilterChip
                   key={`p-${provider}`}
-                  dimension="Provider"
+                  dimension={t("table.provider")}
                   label={provider}
                   onRemove={() => toggleProvider(provider)}
                 />
@@ -1093,7 +1095,7 @@ export default function Metrics() {
               {selectedModels.map((model) => (
                 <FilterChip
                   key={`m-${model}`}
-                  dimension="Model"
+                  dimension={t("table.model")}
                   label={modelLabel(model)}
                   onRemove={() =>
                     setSelectedModels((prev) => prev.filter((m) => m !== model))
@@ -1107,12 +1109,12 @@ export default function Metrics() {
                 className="gap-1 text-[var(--color-text-muted)] shrink-0"
               >
                 <X className="size-3" />
-                Clear all
+                {t("filterBar.clearAll")}
               </Button>
             </div>
           ) : (
             <p className="text-xs text-[var(--color-text-muted)] self-center min-w-0 truncate">
-              All providers · All models
+              {t("filterBar.allProvidersModels")}
             </p>
           )}
           <div className="flex-1" />
@@ -1128,8 +1130,8 @@ export default function Metrics() {
                   handleSavePreset();
                 }
               }}
-              placeholder="Preset name…"
-              aria-label="Preset name"
+              placeholder={t("presets.namePlaceholder")}
+              aria-label={t("presets.presetName")}
               className="h-8 w-36 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2.5 text-xs text-[var(--color-text)] border-[var(--color-border)] placeholder:text-[var(--color-text-muted)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors"
             />
             <Button
@@ -1137,10 +1139,10 @@ export default function Metrics() {
               size="sm"
               onClick={handleSavePreset}
               className="gap-1 shrink-0"
-              title="Save current filters as a preset"
+              title={t("presets.savePreset")}
             >
               <BookmarkPlus className="size-3.5" />
-              Save
+              {t("filterBar.save")}
             </Button>
           </div>
           <Button
@@ -1150,7 +1152,7 @@ export default function Metrics() {
             className="gap-1.5 shrink-0"
           >
             <Calculator className="size-3.5" />
-            Cost Calculator
+            {t("costCalculator")}
           </Button>
         </div>
 
@@ -1159,7 +1161,7 @@ export default function Metrics() {
           <div className="flex flex-wrap items-center gap-1.5 mt-2 px-1">
             <span className="text-xs text-[var(--color-text-muted)] mr-0.5 inline-flex items-center gap-1">
               <Bookmark className="size-3" />
-              Presets
+              {t("filterBar.presets")}
             </span>
             {presets.map((p) => (
               <span
@@ -1169,7 +1171,7 @@ export default function Metrics() {
                 <button
                   type="button"
                   onClick={() => applyPreset(p)}
-                  title={`${p.providers.length > 0 ? p.providers.join("+") : "all providers"} · ${p.models.length > 0 ? p.models.map(modelLabel).join("+") : "all models"} · ${p.range}`}
+                  title={`${p.providers.length > 0 ? p.providers.join("+") : t("allProvidersLabel")} · ${p.models.length > 0 ? p.models.map(modelLabel).join("+") : t("allModelsLabel")} · ${p.range}`}
                   className="pl-2.5 pr-1.5 py-1 text-xs text-[var(--color-text)] cursor-pointer max-w-[220px] truncate"
                 >
                   {p.name}
@@ -1177,7 +1179,7 @@ export default function Metrics() {
                 <button
                   type="button"
                   onClick={() => deletePreset(p.name)}
-                  aria-label={`Delete preset ${p.name}`}
+                  aria-label={t("presets.deletePreset", { name: p.name })}
                   className="pr-2 py-1 text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] cursor-pointer"
                 >
                   <X className="size-3" />
@@ -1194,15 +1196,16 @@ export default function Metrics() {
           <Card padding="lg">
             <EmptyState
               icon={<Radio className="size-12" strokeWidth={1.5} />}
-              title="No usage recorded yet"
-              description="Connect a client to the local inference proxy and its requests will show up here automatically."
+              title={t("noUsage")}
+              description={t("noUsageDesc")}
               action={
                 <div className="flex flex-col items-center gap-3">
                   <ProxyUrlSnippet />
                   <p className="text-xs text-[var(--color-text-muted)] max-w-sm">
-                    Point any OpenAI-compatible client at the base URL above
-                    (for example <code className="font-mono">base_url="{window.location.origin}/v1"</code>)
-                    and send a request.
+                    {t("onboarding.pointClient")}{" "}
+                    ({t("onboarding.forExample")}{" "}
+                    <code className="font-mono">base_url="{window.location.origin}/v1"</code>)
+                    {" "}{t("onboarding.andSendRequest")}
                   </p>
                 </div>
               }
@@ -1220,24 +1223,24 @@ export default function Metrics() {
             className="flex flex-wrap items-center justify-end gap-2"
           >
             <Select
-              aria-label="Auto-refresh interval"
-              options={AUTO_REFRESH_OPTIONS}
+              aria-label={t("aria.autoRefreshInterval")}
+              options={AUTO_REFRESH_OPTIONS.map((o) => ({ ...o, label: t(o.labelKey) }))}
               value={String(autoRefreshMs)}
               onChange={(e) =>
                 setAutoRefreshMs(Number(e.target.value) as AutoRefreshInterval)
               }
               className="w-[130px]"
             />
-            <Tooltip content="Refresh data — or press R" side="bottom">
+            <Tooltip content={t("refreshMetrics")} side="bottom">
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={refreshAll}
                 className="gap-1.5"
-                title="Refresh metrics (R)"
+                title={t("refreshMetrics")}
               >
                 <RefreshCw className="size-3.5" />
-                Refresh
+                {t("refresh")}
               </Button>
             </Tooltip>
             <Button
@@ -1246,10 +1249,10 @@ export default function Metrics() {
               onClick={exportCsv}
               disabled={sortedModels.length === 0}
               className="gap-1.5"
-              title="Download the model breakdown as CSV"
+              title={t("downloadBreakdown")}
             >
               <Download className="size-3.5" />
-              Export CSV
+              {t("downloadCsv")}
             </Button>
           </motion.div>
 
@@ -1287,7 +1290,7 @@ export default function Metrics() {
                       onClick={() => setCostDialogOpen(true)}
                       className="text-xs text-[var(--color-primary)] hover:underline underline-offset-2 cursor-pointer mt-1.5"
                     >
-                      Set rates →
+                      {t("summary.setRates")}
                     </button>
                   )}
                   {stat.delta && (
@@ -1314,24 +1317,24 @@ export default function Metrics() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
                 <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
                   {compareDim === "none"
-                    ? METRIC_TITLES[seriesMetric]
-                    : `${METRIC_TITLES[seriesMetric]} — by ${compareDim}`}
+                    ? t(METRIC_TITLES_KEYS[seriesMetric])
+                    : `${t(METRIC_TITLES_KEYS[seriesMetric])}${t("byEntity", { entity: compareDim })}`}
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-[10px] text-[var(--color-text-muted)] hidden lg:inline">
-                    Click a point to inspect those requests
+                    {t("clickPoint")}
                   </span>
                   {/* Comparison dimension */}
                   <div
                     className="flex gap-1 bg-[var(--color-bg-muted)] rounded-[var(--radius-lg)] p-0.5"
                     role="group"
-                    aria-label="Comparison mode"
+                    aria-label={t("aria.comparisonMode")}
                   >
                     {(
                       [
-                        ["none", "Combined"],
-                        ["provider", "By provider"],
-                        ["model", "By model"],
+                        ["none", t("comparisonModes.combined")],
+                        ["provider", t("comparisonModes.byProvider")],
+                        ["model", t("comparisonModes.byModel")],
                       ] as const
                     ).map(([value, label]) => (
                       <button
@@ -1363,7 +1366,7 @@ export default function Metrics() {
                           onClick={() => setSeriesMetric(opt.value)}
                           title={
                             disabled
-                              ? "Set cost rates first (Cost Calculator)"
+                              ? t("setCostRates")
                               : undefined
                           }
                           className={`
@@ -1378,7 +1381,7 @@ export default function Metrics() {
                             }
                           `}
                         >
-                          {opt.label}
+                          {t(opt.labelKey)}
                         </button>
                       );
                     })}
@@ -1398,8 +1401,8 @@ export default function Metrics() {
                 ) : (
                   <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
                     {groupedSummaryLoading
-                      ? "Loading comparison…"
-                      : "No usage data for this time range."}
+                      ? t("chart.loadingComparison")
+                      : t("chart.noUsageData")}
                   </p>
                 )
               ) : summary && summary.length > 0 ? (
@@ -1413,24 +1416,24 @@ export default function Metrics() {
                 </Suspense>
               ) : (
                 <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
-                  No usage data for this time range.
+                  {t("chart.noUsageData")}
                 </p>
               )}
               {seriesMetric === "cost" &&
                 (flatTotals.subscriptions > 0 || flatTotals.selfHosted > 0) && (
                   <p className="text-[10px] text-[var(--color-text-muted)] mt-2">
-                    Excludes{" "}
+                    {t("chart.excludes")}{" "}
                     {[
                       flatTotals.subscriptions > 0
-                        ? `${formatCurrency(flatTotals.subscriptions)}/mo subscriptions`
+                        ? t("chart.excludesSubscriptions", { amount: formatCurrency(flatTotals.subscriptions) })
                         : null,
                       flatTotals.selfHosted > 0
-                        ? `${formatCurrency(flatTotals.selfHosted)}/mo self-hosted costs`
+                        ? t("chart.excludesSelfHosted", { amount: formatCurrency(flatTotals.selfHosted) })
                         : null,
                     ]
                       .filter(Boolean)
-                      .join(" and ")}
-                    {" — "}those aren't time-distributed.
+                      .join(` ${t("chart.and")} `)}
+                    {" — "}{t("chart.notTimeDistributed")}
                   </p>
                 )}
             </Card>
@@ -1446,33 +1449,33 @@ export default function Metrics() {
             >
               <Card padding="lg">
                 <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-                  {compareDim === "provider" ? "Provider" : "Model"} comparison
+                  {t("comparisonTable.providerComparison", { dim: compareDim === "provider" ? t("comparisonTable.provider") : t("comparisonTable.model") })}
                 </p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-[var(--color-border)]">
                         <th className="text-left py-2 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
-                          {compareDim === "provider" ? "Provider" : "Model"}
+                          {compareDim === "provider" ? t("comparisonTable.provider") : t("comparisonTable.model")}
                         </th>
                         <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
-                          Requests
+                          {t("table.requests")}
                         </th>
                         <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                          Prompt Tokens
+                          {t("table.promptTokens")}
                         </th>
                         <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                          Completion Tokens
+                          {t("table.completionTokens")}
                         </th>
                         <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
-                          Cache Hit %
+                          {t("table.cacheHitPercent")}
                         </th>
                         <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
-                          Avg Latency
+                          {t("table.avgLatency")}
                         </th>
                         {anyRates && (
                           <th className="text-right py-2 pl-4 text-xs font-medium text-[var(--color-text-muted)]">
-                            Est. Cost
+                            {t("table.estCost")}
                           </th>
                         )}
                       </tr>
@@ -1494,7 +1497,7 @@ export default function Metrics() {
                               </span>
                               {row.providers.length > 1 && (
                                 <Badge variant="outline" size="sm" className="ml-2">
-                                  {row.providers.length} providers
+                                  {t("comparisonTable.providersCount", { count: row.providers.length })}
                                 </Badge>
                               )}
                             </td>
@@ -1519,7 +1522,7 @@ export default function Metrics() {
                                 {row.hasMissingRate && (
                                   <span
                                     className="ml-1 text-[10px] text-[var(--color-text-muted)]"
-                                    title="Some usage has no rate configured (or is subscription/self-hosted) — not included."
+                                    title={t("noRateConfigured")}
                                   >
                                     *
                                   </span>
@@ -1534,8 +1537,7 @@ export default function Metrics() {
                 </div>
                 {compareRows.some((r) => r.hasMissingRate) && anyRates && (
                   <p className="text-xs text-[var(--color-text-muted)] mt-3">
-                    * Excludes usage without per-token rates (subscriptions,
-                    self-hosted, unrated models).
+                    {t("comparisonTable.missingRateDisclaimer")}
                   </p>
                 )}
               </Card>
@@ -1551,7 +1553,7 @@ export default function Metrics() {
           >
             <Card padding="lg">
               <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-                Per-model breakdown
+                {t("sections.perModelBreakdown")}
               </p>
               {sortedModels.length > 0 ? (
                 <>
@@ -1563,63 +1565,63 @@ export default function Metrics() {
                             className="text-left py-2 pr-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none"
                             onClick={() => handleSort("model")}
                           >
-                            Model
+                            {t("table.model")}
                             <SortIcon field="model" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none"
                             onClick={() => handleSort("requestCount")}
                           >
-                            Requests
+                            {t("table.requests")}
                             <SortIcon field="requestCount" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden sm:table-cell"
                             onClick={() => handleSort("promptTokens")}
                           >
-                            Prompt Tokens
+                            {t("table.promptTokens")}
                             <SortIcon field="promptTokens" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden md:table-cell"
                             onClick={() => handleSort("completionTokens")}
                           >
-                            Completion Tokens
+                            {t("table.completionTokens")}
                             <SortIcon field="completionTokens" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden lg:table-cell"
                             onClick={() => handleSort("cacheHitRate")}
                           >
-                            Cache Hit %
+                            {t("table.cacheHitPercent")}
                             <SortIcon field="cacheHitRate" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden lg:table-cell"
                             onClick={() => handleSort("estCost")}
                           >
-                            Est. Cost
+                            {t("table.estCost")}
                             <SortIcon field="estCost" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none"
                             onClick={() => handleSort("avgLatencyMs")}
                           >
-                            Avg Latency
+                            {t("table.avgLatency")}
                             <SortIcon field="avgLatencyMs" />
                           </th>
                           <th
                             className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden xl:table-cell"
                             onClick={() => handleSort("p95LatencyMs")}
                           >
-                            p95
+                            {t('table.p95')}
                             <SortIcon field="p95LatencyMs" />
                           </th>
                           <th
                             className="text-right py-2 pl-4 text-xs font-medium text-[var(--color-text-muted)] cursor-pointer hover:text-[var(--color-text)] select-none hidden xl:table-cell"
                             onClick={() => handleSort("maxLatencyMs")}
                           >
-                            Max
+                            {t('table.max')}
                             <SortIcon field="maxLatencyMs" />
                           </th>
                         </tr>
@@ -1668,21 +1670,27 @@ export default function Metrics() {
                                 className="py-2.5 px-4 text-right font-mono hidden lg:table-cell"
                                 title={
                                   isSubscriptionProvider(costRates, m.provider)
-                                    ? `Included in the ${formatCurrency(
-                                        costRates[m.provider]?.monthlyPrice ?? 0,
-                                      )}/mo subscription for ${m.provider}`
+                                    ? t("costTooltips.subscription", {
+                                        amount: formatCurrency(
+                                          costRates[m.provider]?.monthlyPrice ?? 0,
+                                        ),
+                                        provider: m.provider,
+                                      })
                                     : isSelfHostedProvider(costRates, m.provider)
-                                      ? `Included in the ${formatCurrency(
-                                          costRates[m.provider]?.monthlyCost ?? 0,
-                                        )}/mo self-hosted cost for ${m.provider}`
+                                      ? t("costTooltips.selfHosted", {
+                                          amount: formatCurrency(
+                                            costRates[m.provider]?.monthlyCost ?? 0,
+                                          ),
+                                          provider: m.provider,
+                                        })
                                       : cost === null
-                                        ? `No rate set for ${m.provider}`
+                                        ? t("costTooltips.noRate", { provider: m.provider })
                                         : undefined
                                 }
                               >
                                 {isFlatRateProvider(costRates, m.provider) ? (
                                   <Badge variant="outline" size="sm">
-                                    incl.
+                                    {t("costCalcSection.incl")}
                                   </Badge>
                                 ) : cost !== null ? (
                                   <span className="text-[var(--color-text)]">
@@ -1729,22 +1737,21 @@ export default function Metrics() {
                   </div>
                   {missingRateCount > 0 && (
                     <p className="text-xs text-[var(--color-text-muted)] mt-3">
-                      {missingRateCount} model{missingRateCount === 1 ? "" : "s"}{" "}
-                      have no cost rate set —{" "}
+                      {t("perModelTable.modelsMissingRate", { count: missingRateCount })}{" "}
                       <button
                         type="button"
                         onClick={() => setCostDialogOpen(true)}
                         className="text-[var(--color-primary)] hover:underline underline-offset-2 cursor-pointer"
                       >
-                        open the Cost Calculator
+                        {t("perModelTable.openCostCalc")}
                       </button>{" "}
-                      to complete the estimates.
+                      {t("perModelTable.toCompleteEstimates")}
                     </p>
                   )}
                 </>
               ) : (
                 <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
-                  No model usage data for this time range.
+                  {t("perModelTable.noModelUsage")}
                 </p>
               )}
             </Card>
@@ -1759,7 +1766,7 @@ export default function Metrics() {
           >
             <Card padding="lg">
               <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-                Requests by hour
+                {t("sections.requestsByHour")}
               </p>
               <HourlyHeatmap
                 rangeIs24h={timeRange === "24h"}
@@ -1808,7 +1815,7 @@ export default function Metrics() {
             >
               <Card padding="lg">
                 <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-                  Per-provider breakdown
+                  {t("sections.perProviderBreakdown")}
                 </p>
                 {providers && providers.length > 0 ? (
                   <Suspense fallback={<ChartSkeleton />}>
@@ -1820,7 +1827,7 @@ export default function Metrics() {
                   </Suspense>
                 ) : (
                   <p className="text-sm text-[var(--color-text-muted)] py-8 text-center">
-                    No provider usage data for this time range.
+                    {t("providerBreakdown.noProviderUsage")}
                   </p>
                 )}
               </Card>
@@ -1852,7 +1859,7 @@ export default function Metrics() {
             <Card padding="lg">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-                  Recent requests
+                  {t("sections.recentRequests")}
                 </p>
                 <RetentionControl onPurged={refreshAll} />
               </div>
@@ -1905,10 +1912,11 @@ function FilterChip({
   label,
   onRemove,
 }: {
-  dimension: "Provider" | "Model";
+  dimension: string;
   label: string;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation("metrics");
   return (
     <span className="inline-flex max-w-[240px] items-center overflow-hidden rounded-full border border-[var(--color-border)] bg-[var(--color-bg-surface)] text-xs">
       <span className="py-1 pl-2.5 pr-1 text-[var(--color-text-muted)]">{dimension}</span>
@@ -1918,7 +1926,7 @@ function FilterChip({
       <button
         type="button"
         onClick={onRemove}
-        aria-label={`Remove ${dimension.toLowerCase()} filter ${label}`}
+        aria-label={t('filterBar.removeFilterAria', { dimension: dimension.toLowerCase(), label })}
         className="cursor-pointer py-1 pr-2 text-[var(--color-text-muted)] transition-colors hover:text-[var(--color-status-error)]"
       >
         <X className="size-3" />
@@ -1935,17 +1943,18 @@ function TrendDelta({
   current: number;
   previous: number | null;
 }) {
+  const { t } = useTranslation("metrics");
   if (previous === null) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
-        <Minus className="size-3" /> no prior data
+        <Minus className="size-3" /> {t("costComparison.noData")}
       </span>
     );
   }
   if (previous === 0 && current === 0) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
-        <Minus className="size-3" /> flat
+        <Minus className="size-3" /> {t("costComparison.flat")}
       </span>
     );
   }
@@ -1953,7 +1962,7 @@ function TrendDelta({
   if (Math.abs(pct) < 0.5) {
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
-        <Minus className="size-3" /> flat
+        <Minus className="size-3" /> {t("costComparison.flat")}
       </span>
     );
   }
@@ -1972,13 +1981,14 @@ function TrendDelta({
         <TrendingDown className="size-3" />
       )}
       {up ? "+" : "\u2212"}
-      {Math.abs(pct).toFixed(1)}% vs prev
+      {t("costComparison.vsPrev", { pct: Math.abs(pct).toFixed(1) })}
     </span>
   );
 }
 
 /** Copyable proxy base-URL snippet used by the onboarding empty state. */
 function ProxyUrlSnippet() {
+  const { t } = useTranslation("metrics");
   const [copied, setCopied] = useState(false);
   const url = `${window.location.origin}/v1`;
 
@@ -1999,7 +2009,7 @@ function ProxyUrlSnippet() {
       type="button"
       onClick={copy}
       className="inline-flex items-center gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-2 font-mono text-xs text-[var(--color-text)] cursor-pointer hover:border-[var(--color-primary)] transition-colors"
-      title="Copy to clipboard"
+      title={t("copyToClipboard")}
     >
       {url}
       {copied ? (
@@ -2046,6 +2056,7 @@ function CostCalculatorDialog({
   catalog,
   monthProviders,
 }: CostCalculatorDialogProps) {
+  const { t } = useTranslation("metrics");
   // Build rate rows from saved data + provider list when dialog opens
   const [rows, setRows] = useState<RateRow[]>([]);
 
@@ -2206,14 +2217,12 @@ function CostCalculatorDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Cost Calculator"
+      title={t("costCalculator")}
       className="sm:max-w-3xl"
     >
       <div className="px-5 py-4 space-y-5">
         <p className="text-xs text-[var(--color-text-muted)]">
-          Set pricing for each provider — usage-based rates per 1M tokens, or a
-          fixed monthly subscription. Rates are saved to your browser's local
-          storage and applied against the current filter selection.
+          {t("costCalc.description")}
         </p>
 
         {/* Rate Entry Table */}
@@ -2227,7 +2236,7 @@ function CostCalculatorDialog({
               <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
                 {i === 0 && (
                   <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                    Provider
+                    {t("costCalcSection.provider")}
                   </label>
                 )}
                 {!catalog || row.customProvider ? (
@@ -2236,17 +2245,17 @@ function CostCalculatorDialog({
                       type="text"
                       value={row.provider}
                       onChange={(e) => setRowProvider(i, e.target.value, true)}
-                      placeholder="e.g. openai"
+                      placeholder={t("costCalc.providerPlaceholder")}
                       className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full min-w-0"
                     />
                     {catalog && (
                       <button
                         type="button"
                         onClick={() => setRowProvider(i, "", false)}
-                        title="Pick from the provider list instead"
+                        title={t("pickFromList")}
                         className="h-8 px-2 shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors cursor-pointer whitespace-nowrap"
                       >
-                        List
+                        {t("costCalcSection.listButton")}
                       </button>
                     )}
                   </div>
@@ -2269,14 +2278,14 @@ function CostCalculatorDialog({
                       bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C/svg%3E')]
                       bg-[position:right_0.5rem_center] bg-no-repeat"
                   >
-                    <option value="">Select provider…</option>
+                    <option value="">{t("costCalcSection.selectProvider")}</option>
                     {/* Preserve a saved provider that isn't in the catalog */}
                     {row.provider !== "" &&
                       !catalog.some((c) => c.name === row.provider) && (
                         <option value={row.provider}>{row.provider}</option>
                       )}
                     {catalog.some((c) => c.kind === "cloud") && (
-                      <optgroup label="Cloud providers">
+                      <optgroup label={t("costCalcSection.cloudProviders")}>
                         {catalog
                           .filter((c) => c.kind === "cloud")
                           .map((c) => (
@@ -2287,7 +2296,7 @@ function CostCalculatorDialog({
                       </optgroup>
                     )}
                     {catalog.some((c) => c.kind === "local") && (
-                      <optgroup label="Self-hosted agents">
+                      <optgroup label={t("costCalcSection.selfHostedAgents")}>
                         {catalog
                           .filter((c) => c.kind === "local")
                           .map((c) => (
@@ -2297,7 +2306,7 @@ function CostCalculatorDialog({
                           ))}
                       </optgroup>
                     )}
-                    <option value={CUSTOM_PROVIDER}>Custom…</option>
+                    <option value={CUSTOM_PROVIDER}>{t("costCalcSection.customOption")}</option>
                   </select>
                 )}
               </div>
@@ -2305,18 +2314,18 @@ function CostCalculatorDialog({
               <div className="flex flex-col gap-1 shrink-0">
                 {i === 0 && (
                   <span className="text-xs font-medium text-[var(--color-text-muted)]">
-                    Pricing
+                    {t("costCalcSection.pricing")}
                   </span>
                 )}
                 <div className="flex gap-0.5 bg-[var(--color-bg-muted)] rounded-[var(--radius-md)] p-0.5 h-8 items-center">
                   {(
                     [
-                      ["per-token", "Per 1M tokens", "Usage-based pricing per 1M tokens"],
-                      ["subscription", "Monthly", "Fixed monthly subscription"],
+                      ["per-token", t("costModes.perToken"), t("costCalcSection.perTokenHint")],
+                      ["subscription", t("costModes.monthly"), t("costCalcSection.monthlyHint")],
                       [
                         "self-hosted",
-                        "Self-hosted",
-                        "Self-hosted (power & hardware) — flat monthly cost",
+                        t("costModes.selfHosted"),
+                        t("costCalcSection.selfHostedHint"),
                       ],
                     ] as const
                   ).map(([mode, label, hint]) => (
@@ -2345,7 +2354,7 @@ function CostCalculatorDialog({
                   <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
                     {i === 0 && (
                       <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        Prompt $/1M tokens
+                        {t("costCalcSection.promptRate")}
                       </label>
                     )}
                     <input
@@ -2361,7 +2370,7 @@ function CostCalculatorDialog({
                   <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
                     {i === 0 && (
                       <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        Completion $/1M tokens
+                        {t("costCalcSection.completionRate")}
                       </label>
                     )}
                     <input
@@ -2378,11 +2387,11 @@ function CostCalculatorDialog({
               )}
               {row.mode === "subscription" && (
                 <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
-                  {i === 0 && (
-                    <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                      Monthly subscription price
-                    </label>
-                  )}
+                    {i === 0 && (
+                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
+                        {t("costCalc.monthlySubscription")}
+                      </label>
+                    )}
                   <input
                     type="number"
                     value={row.monthlyPrice}
@@ -2396,11 +2405,11 @@ function CostCalculatorDialog({
               )}
               {row.mode === "self-hosted" && (
                 <div className="flex flex-col gap-1 flex-1 min-w-[150px]">
-                  {i === 0 && (
-                    <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                      Monthly cost (power, hardware, etc.)
-                    </label>
-                  )}
+                    {i === 0 && (
+                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
+                        {t("costCalc.monthlyCost")}
+                      </label>
+                    )}
                   <input
                     type="number"
                     value={row.monthlyCost}
@@ -2414,12 +2423,12 @@ function CostCalculatorDialog({
                     const derived = derivedSelfHostedRate(row);
                     return derived !== null ? (
                       <span className="text-[10px] text-[var(--color-text-muted)]">
-                        ≈ ${derived.toFixed(2)} per 1M tokens{" "}
-                        <em className="not-italic text-[var(--color-primary)]">(derived)</em>
+                        ≈ {t("format.currency", { value: derived.toFixed(2) })} {t("costCalcSection.per1MTokens")}{" "}
+                        <em className="not-italic text-[var(--color-primary)]">({t("costCalcSection.derived")})</em>
                       </span>
                     ) : (
                       <span className="text-[10px] text-[var(--color-text-muted)] italic">
-                        — no usage this month yet
+                        {t("costCalcSection.noUsageThisMonth")}
                       </span>
                     );
                   })()}
@@ -2429,7 +2438,7 @@ function CostCalculatorDialog({
                 type="button"
                 onClick={() => removeRow(i)}
                 className="h-8 w-8 shrink-0 flex items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] hover:bg-[var(--color-bg-muted)] transition-colors cursor-pointer"
-                aria-label="Remove row"
+                aria-label={t("costCalcSection.removeRow")}
               >
                 <Trash2 className="size-3.5" />
               </button>
@@ -2442,13 +2451,13 @@ function CostCalculatorDialog({
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-muted)] rounded-[var(--radius-md)] transition-colors cursor-pointer"
           >
             <Plus className="size-3" />
-            Add provider
+            {t("costCalcSection.addProvider")}
           </button>
         </div>
 
         <div className="flex justify-end">
           <Button variant="primary" size="sm" onClick={saveRates}>
-            Save Rates
+            {t("costCalcSection.saveRates")}
           </Button>
         </div>
 
@@ -2459,28 +2468,28 @@ function CostCalculatorDialog({
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="text-left py-2 pr-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Provider
+                    {t("costCalcSection.provider")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Prompt Rate
+                    {t("costCalcSection.promptRate")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Completion Rate
+                    {t("costCalcSection.completionRate")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    Prompt Tokens
+                    {t("costCalcSection.promptTokens")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    Completion Tokens
+                    {t("costCalcSection.completionTokens")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Prompt Cost
+                    {t("costCalcSection.promptCost")}
                   </th>
                   <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Completion Cost
+                    {t("costCalcSection.completionCost")}
                   </th>
                   <th className="text-right py-2 pl-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    Total Cost
+                    {t("costCalcSection.totalCost")}
                   </th>
                 </tr>
               </thead>
@@ -2491,22 +2500,22 @@ function CostCalculatorDialog({
                     className="border-b border-[var(--color-border)] last:border-0"
                   >
                     <td className="py-2 pr-3 font-medium text-[var(--color-text-heading)] whitespace-nowrap">
-                      {row.provider || <span className="text-[var(--color-text-muted)] italic">unnamed</span>}
+                      {row.provider || <span className="text-[var(--color-text-muted)] italic">{t("costCalcSection.unnamed")}</span>}
                       {row.isSub && (
                         <Badge variant="outline" size="sm" className="ml-2">
-                          monthly
+                          {t("costCalcSection.monthly")}
                         </Badge>
                       )}
                       {row.isSelfHosted && (
                         <Badge variant="outline" size="sm" className="ml-2">
-                          self-hosted
+                          {t("costCalcSection.selfHosted")}
                         </Badge>
                       )}
                     </td>
                     {row.isSub ? (
                       <>
                         <td className="py-2 px-3 text-right text-[var(--color-text-muted)]" colSpan={2}>
-                          incl.
+                          {t("costCalcSection.incl")}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)] hidden sm:table-cell">
                           {formatTokens(row.promptTokens)}
@@ -2515,7 +2524,7 @@ function CostCalculatorDialog({
                           {formatTokens(row.completionTokens)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]" colSpan={2}>
-                          {formatCurrency(row.monthlyFee)}/mo
+                          {formatCurrency(row.monthlyFee)}{t("monthlySuffix")}
                         </td>
                       </>
                     ) : row.isSelfHosted ? (
@@ -2525,12 +2534,12 @@ function CostCalculatorDialog({
                         <td className="py-2 px-3 text-right text-xs text-[var(--color-text-muted)]" colSpan={2}>
                           {row.derivedRate !== null ? (
                             <>
-                              ${row.derivedRate.toFixed(2)} /1M tok{" "}
-                              <em className="not-italic text-[var(--color-primary)]">(derived)</em>
+                              {t("format.currency", { value: row.derivedRate.toFixed(2) })} {t("per1MTok")}{" "}
+                              <em className="not-italic text-[var(--color-primary)]">({t("costCalcSection.derived")})</em>
                             </>
                           ) : (
                             <span className="italic">
-                              — no usage this month yet
+                              {t("costCalcSection.noUsageThisMonth")}
                             </span>
                           )}
                         </td>
@@ -2541,16 +2550,16 @@ function CostCalculatorDialog({
                           {formatTokens(row.completionTokens)}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]" colSpan={2}>
-                          {formatCurrency(row.monthlyCost)}/mo
+                          {formatCurrency(row.monthlyCost)}{t("monthlySuffix")}
                         </td>
                       </>
                     ) : (
                       <>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {row.promptPer1M ? `$${parseFloat(row.promptPer1M).toFixed(2)}` : "—"}
+                          {row.promptPer1M ? t("format.currency", { value: parseFloat(row.promptPer1M).toFixed(2) }) : "—"}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {row.completionPer1M ? `$${parseFloat(row.completionPer1M).toFixed(2)}` : "—"}
+                          {row.completionPer1M ? t("format.currency", { value: parseFloat(row.completionPer1M).toFixed(2) }) : "—"}
                         </td>
                         <td className="py-2 px-3 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
                           {formatTokens(row.promptTokens)}
@@ -2570,7 +2579,7 @@ function CostCalculatorDialog({
                       {formatCurrency(row.totalCost)}
                       {row.isSub && (
                         <span className="text-[10px] font-normal text-[var(--color-text-muted)] ml-1">
-                          /mo
+                          {t("monthlySuffix")}
                         </span>
                       )}
                     </td>
@@ -2583,7 +2592,7 @@ function CostCalculatorDialog({
                     colSpan={6}
                     className="py-2 pr-3 text-right text-xs font-semibold text-[var(--color-text-heading)] sm:col-span-6"
                   >
-                    Grand Total
+                    {t("costCalcSection.grandTotal")}
                   </td>
                   <td
                     colSpan={2}

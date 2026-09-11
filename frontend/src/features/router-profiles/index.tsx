@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   GitBranch,
   Plus,
@@ -50,16 +51,18 @@ function displayModelName(modelId: string | null | undefined, models?: Model[]):
   return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, undefined, m?.displayName);
 }
 
-function formatRelativeTime(iso: string): string {
+type TFunction = (key: string, options?: Record<string, unknown>) => string;
+
+function formatRelativeTime(iso: string, t: TFunction): string {
   const diff = Date.now() - new Date(iso).getTime();
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return t('timeJustNow');
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t('timeMinutesAgo', { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('timeHoursAgo', { hours });
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t('timeDaysAgo', { days });
 }
 
 // ─── Model Search Autocomplete ────────────────────────────────────
@@ -75,6 +78,7 @@ function ModelSearchInput({
   models: Model[];
   modelsLoading: boolean;
 }) {
+  const { t } = useTranslation('router-profiles');
   const [query, setQuery] = useState(value);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
@@ -207,7 +211,7 @@ function ModelSearchInput({
           if (query.length >= 2) setIsOpen(true);
         }}
         onKeyDown={handleKeyDown}
-        placeholder="Search models…"
+        placeholder={t('placeholders.searchModels')}
         className={`
           h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)]
           px-3 w-full text-xs text-[var(--color-text)]
@@ -224,7 +228,7 @@ function ModelSearchInput({
         >
           {modelsLoading ? (
             <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              Loading models…
+              {t('loadingModels')}
             </div>
           ) : filtered.length > 0 ? (
             filtered.map((m, i) => (
@@ -259,7 +263,7 @@ function ModelSearchInput({
             ))
           ) : (
             <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              No matching models
+              {t('noMatchingModels')}
             </div>
           )}
         </div>
@@ -283,6 +287,7 @@ function ProfileRow({
   onView: (profile: RouterProfile) => void;
   models?: Model[];
 }) {
+  const { t } = useTranslation('router-profiles');
   const sortedModels = useMemo(
     () => [...profile.entries].sort((a, b) => a.priority - b.priority),
     [profile.entries],
@@ -292,7 +297,7 @@ function ProfileRow({
     <div
       className="group relative flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)] cursor-pointer"
       onClick={() => onView(profile)}
-      aria-label={`${profile.name} — ${profile.entries.length} models`}
+      aria-label={t('ariaProfile', { name: profile.name, count: profile.entries.length })}
     >
       {/* Model tooltip */}
       <div className="
@@ -312,7 +317,7 @@ function ProfileRow({
 
           <div className="px-3 py-2">
             <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">
-              Models
+              {t('modelsTitle')}
             </div>
             {sortedModels.length > 0 ? (
               <div className="space-y-1">
@@ -338,7 +343,7 @@ function ProfileRow({
               </div>
             ) : (
               <div className="text-xs text-[var(--color-text-muted)]">
-                No models
+                {t('noModels')}
               </div>
             )}
           </div>
@@ -358,21 +363,21 @@ function ProfileRow({
       {/* Mode */}
       <div className="shrink-0 w-[90px]">
         <Badge variant={profile.mode === "Auto" ? "info" : "warning"}>
-          {profile.mode}
+          {profile.mode === "Auto" ? t('autoBadge') : t('manualBadge')}
         </Badge>
       </div>
 
       {/* Entries count */}
       <div className="shrink-0 w-[100px] text-right">
         <span className="text-xs text-[var(--color-text-muted)]">
-          {profile.entries.length} {profile.entries.length === 1 ? "model" : "models"}
+          {t('modelCount', { count: profile.entries.length })}
         </span>
       </div>
 
       {/* Created */}
       <div className="shrink-0 w-[100px] text-right">
         <span className="text-xs text-[var(--color-text-muted)]">
-          {formatRelativeTime(profile.createdAt)}
+          {formatRelativeTime(profile.createdAt, t)}
         </span>
       </div>
 
@@ -380,7 +385,7 @@ function ProfileRow({
       <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="sm" onClick={() => onEdit(profile)}>
           <Pencil className="size-3.5" />
-          Edit
+          {t('edit')}
         </Button>
         <Button variant="danger" size="sm" onClick={() => onDelete(profile)}>
           <Trash2 className="size-3.5" />
@@ -461,6 +466,7 @@ function EntryRow({
   models: Model[];
   modelsLoading: boolean;
 }) {
+  const { t } = useTranslation('router-profiles');
   const sourceOptions = useSourceOptions(models);
 
   // Auto-detect source from existing modelId; defaults to "all"
@@ -494,7 +500,7 @@ function EntryRow({
         onChange={(e) => setSourceKey(e.target.value)}
         className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] shrink-0 w-32 focus:outline-none focus:border-[var(--color-primary)]"
       >
-        <option value="all">All sources</option>
+        <option value="all">{t('noModelsAllSources')}</option>
         {sourceOptions.map((s) => (
           <option key={s.key} value={s.key}>
             {s.kind === "cloud" ? "☁ " : ""}{s.label}
@@ -514,9 +520,52 @@ function EntryRow({
           onChange={(e) =>
             onUpdate(index, { priority: parseInt(e.target.value, 10) || 0 })
           }
-          placeholder="Priority"
+          placeholder={t('placeholders.priority')}
           className="h-7 text-xs"
         />
+      </div>
+      {/* Thinking effort override */}
+      <div className="shrink-0 w-24">
+        {(() => {
+          const selectedModel = models.find(
+            (m) => m.id === entry.modelId || m.name === entry.modelId,
+          );
+          const supportedEfforts = selectedModel?.supportedThinkingEfforts;
+
+          if (supportedEfforts && supportedEfforts.length > 0) {
+            return (
+              <select
+                value={entry.thinkingEffortOverride ?? ""}
+                onChange={(e) =>
+                  onUpdate(index, {
+                    thinkingEffortOverride: e.target.value || null,
+                  })
+                }
+                className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] w-full focus:outline-none focus:border-[var(--color-primary)]"
+              >
+                <option value="">{t('fields.defaultEffort')}</option>
+                {supportedEfforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            );
+          }
+
+          return (
+            <Input
+              value={entry.thinkingEffortOverride ?? ""}
+              onChange={(e) =>
+                onUpdate(index, {
+                  thinkingEffortOverride: e.target.value || null,
+                })
+              }
+              placeholder={t('placeholders.effort')}
+              className="h-7 text-xs"
+            />
+          );
+        })()}
       </div>
       <div className="shrink-0">
         <Switch
@@ -550,6 +599,7 @@ function ProfileDetailPanel({
   onClose: () => void;
   models?: Model[];
 }) {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
 
   const setActiveMutation = useMutation({
@@ -592,9 +642,9 @@ function ProfileDetailPanel({
       subtitle={
         <div className="flex items-center gap-2">
           <Badge variant={liveProfile.mode === "Auto" ? "info" : "warning"}>
-            {liveProfile.mode}
+            {liveProfile.mode === "Auto" ? t('autoBadge') : t('manualBadge')}
           </Badge>
-          <span>{liveProfile.entries.length} {liveProfile.entries.length === 1 ? "model" : "models"}</span>
+          <span>{t('modelCount', { count: liveProfile.entries.length })}</span>
         </div>
       }
     >
@@ -604,7 +654,7 @@ function ProfileDetailPanel({
           <div className="flex items-center gap-2 mb-1.5">
             <Zap className="size-3.5 text-[var(--color-primary)]" />
             <span className="text-xs font-medium text-[var(--color-text-heading)]">
-              Active Model
+              {t('activeModel')}
             </span>
           </div>
           {effectiveActiveModelId ? (
@@ -614,16 +664,16 @@ function ProfileDetailPanel({
                 {displayModelName(effectiveActiveModelId, models)}
               </span>
               {activeModelId !== null ? (
-                <Badge variant="success" className="ml-auto">Manual</Badge>
+                <Badge variant="success" className="ml-auto">{t('manualBadge')}</Badge>
               ) : (
-                <Badge variant="info" className="ml-auto">Auto</Badge>
+                <Badge variant="info" className="ml-auto">{t('autoBadge')}</Badge>
               )}
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <span className="size-2 rounded-full bg-[var(--color-text-muted)] shrink-0" />
               <span className="text-sm text-[var(--color-text-muted)]">
-                No enabled models
+                {t('noEnabledModels')}
               </span>
             </div>
           )}
@@ -633,10 +683,10 @@ function ProfileDetailPanel({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Models
+              {t('modelsTitle')}
             </span>
             <span className="text-[10px] text-[var(--color-text-muted)]">
-                      Sorted by priority (lowest first)
+                      {t('sortedByPriority')}
             </span>
           </div>
 
@@ -668,11 +718,11 @@ function ProfileDetailPanel({
                       {displayModelName(entry.modelId, models)}
                       </span>
                       {!entry.isEnabled && (
-                        <Badge variant="outline" className="shrink-0">Disabled</Badge>
+                        <Badge variant="outline" className="shrink-0">{t('common:disabled')}</Badge>
                       )}
                     </div>
                     <span className="text-[10px] text-[var(--color-text-muted)]">
-                      Priority {entry.priority}
+                      {t('priorityBadge', { priority: entry.priority })}
                     </span>
                   </div>
 
@@ -687,12 +737,12 @@ function ProfileDetailPanel({
                       }
                       className="shrink-0 text-[var(--color-primary)]"
                     >
-                      Set Active
+                      {t('setActive')}
                     </Button>
                   ) : (
                     <span className="flex items-center gap-1 text-xs text-[var(--color-status-success)] shrink-0 px-2">
                       <Check className="size-3" />
-                      Active
+                      {t('common:active')}
                     </span>
                   )}
                 </div>
@@ -712,7 +762,7 @@ function ProfileDetailPanel({
           className="w-full"
         >
           <RotateCcw className="size-3.5" />
-          Reset to Default
+          {t('resetToDefault')}
         </Button>
       </div>
     </Drawer>
@@ -730,6 +780,7 @@ function ProfileDialog({
   onClose: () => void;
   editProfile: RouterProfile | null;
 }) {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
   const isEdit = editProfile !== null;
 
@@ -789,7 +840,7 @@ function ProfileDialog({
       : 0;
     setEntries((prev) => [
       ...prev,
-      { modelId: "", priority: nextPriority, isEnabled: true },
+      { modelId: "", priority: nextPriority, isEnabled: true, thinkingEffortOverride: null },
     ]);
   };
 
@@ -798,18 +849,18 @@ function ProfileDialog({
     setError(null);
 
     if (!name.trim()) {
-      setError("Profile name is required.");
+      setError(t('validation.nameRequired'));
       return;
     }
 
     if (entries.length === 0) {
-      setError("Add at least one model entry.");
+      setError(t('validation.atLeastOneEntry'));
       return;
     }
 
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].modelId.trim()) {
-        setError(`Model name is required for entry ${i + 1}.`);
+        setError(t('validation.modelRequired', { index: i + 1 }));
         return;
       }
     }
@@ -821,6 +872,7 @@ function ProfileDialog({
         modelId: e.modelId.trim(),
         priority: e.priority,
         isEnabled: e.isEnabled,
+        thinkingEffortOverride: e.thinkingEffortOverride ?? null,
       })),
     };
 
@@ -834,7 +886,7 @@ function ProfileDialog({
       queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : t('validation.saveFailed'));
     }
   };
 
@@ -844,43 +896,46 @@ function ProfileDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={isEdit ? "Edit Profile" : "Add Profile"}
+      title={isEdit ? t('editProfile') : t('addProfile')}
     >
       <form onSubmit={handleSubmit} className="p-5 space-y-4">
         <Input
-          label="Name"
+          label={t('fields.name')}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. GPT-4o Fallback Chain"
+          placeholder={t('placeholders.profileName')}
           autoFocus={!isEdit}
         />
 
         <Select
-          label="Mode"
+          label={t('fields.mode')}
           value={mode}
           onChange={(e) => setMode(e.target.value as "Auto" | "Manual")}
           options={[
-            { value: "Auto", label: "Auto" },
-            { value: "Manual", label: "Manual" },
+            { value: "Auto", label: t('fields.auto') },
+            { value: "Manual", label: t('fields.manual') },
           ]}
         />
 
         {/* Entries section */}
         <div className="space-y-2">
           <p className="text-xs font-medium text-[var(--color-text-muted)]">
-            Model Entries <span className="font-normal">(lower priority number = tried first)</span>
+            {t('fields.modelEntries')} <span className="font-normal">({t('fields.priorityHint')})</span>
           </p>
           <div className="space-y-2 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/20 p-3">
             {entries.length > 0 && (
               <div className="flex items-center gap-2 px-1 pb-1">
                 <span className="flex-1 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-                  Model Name
+                  {t('fields.modelName')}
                 </span>
-                <span className="w-20 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title="Lower number = tried first">
-                  Priority
+                <span className="w-20 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title={t('fields.priorityHint')}>
+                  {t('fields.priority')}
+                </span>
+                <span className="w-24 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title={t('fields.effortTooltip')}>
+                  {t('fields.effort')}
                 </span>
                 <span className="w-9 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider text-center">
-                  On
+                  {t('fields.on')}
                 </span>
                 <span className="w-8" />
               </div>
@@ -906,7 +961,7 @@ function ProfileDialog({
               className="w-full mt-1"
             >
               <Plus className="size-3.5" />
-              Add Entry
+              {t('addEntry')}
             </Button>
           </div>
         </div>
@@ -917,10 +972,10 @@ function ProfileDialog({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isPending}>
-            Cancel
+            {t('common:cancel')}
           </Button>
           <Button type="submit" variant="primary" size="sm" loading={isPending}>
-            {isEdit ? "Save Changes" : "Add Profile"}
+            {isEdit ? t('saveChanges') : t('addProfile')}
           </Button>
         </div>
       </form>
@@ -931,6 +986,7 @@ function ProfileDialog({
 // ─── Main Router Profiles Page ───────────────────────────────────
 
 export default function RouterProfiles() {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
 
   const {
@@ -977,10 +1033,10 @@ export default function RouterProfiles() {
       {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Router Profiles
+          {t('title')}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Chain models with automatic fallback when errors occur.
+          {t('chainDesc')}
         </p>
       </div>
 
@@ -991,12 +1047,12 @@ export default function RouterProfiles() {
           <div className="flex items-center gap-2">
             <GitBranch className="size-4 text-[var(--color-text-muted)]" />
             <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Profiles
+              {t('profilesLabel')}
             </p>
           </div>
           <Button variant="primary" size="sm" onClick={handleAdd}>
             <Plus className="size-3.5" />
-            Add Profile
+            {t('addProfile')}
           </Button>
         </div>
 
@@ -1012,19 +1068,19 @@ export default function RouterProfiles() {
             {/* Column headers */}
             <div className="flex items-center gap-4 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/30">
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider min-w-0 flex-1">
-                Profile
+                {t('columnProfile')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[90px]">
-                Mode
+                {t('fields.mode')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[100px] text-right">
-                Models
+                {t('modelsTitle')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[100px] text-right">
-                Created
+                {t('created')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[120px] text-right">
-                Actions
+                {t('columnActions')}
               </span>
             </div>
 
@@ -1041,12 +1097,12 @@ export default function RouterProfiles() {
         ) : (
           <EmptyState
             icon={<GitBranch className="size-12" strokeWidth={1.5} />}
-            title="No router profiles yet"
-            description="Create a profile to chain multiple models together."
+            title={t('noProfiles')}
+            description={t('noProfilesDesc')}
             action={
               <Button variant="primary" size="sm" onClick={handleAdd}>
                 <Plus className="size-3.5" />
-                Add Profile
+                {t('addProfile')}
               </Button>
             }
           />
@@ -1063,9 +1119,9 @@ export default function RouterProfiles() {
       {/* Delete Confirmation */}
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete profile"
-        description={`Delete profile "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t('deleteProfile')}
+        description={t('deleteProfileDesc', { name: deleteTarget?.name ?? "" })}
+        confirmLabel={t('common:delete')}
         variant="danger"
         loading={deleteMutation.isPending}
         onConfirm={() => {

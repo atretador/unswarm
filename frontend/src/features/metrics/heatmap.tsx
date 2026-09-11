@@ -3,11 +3,23 @@
 // last 7 days (a 24-column grid over longer ranges would just repeat cells).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "../../i18n";
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../lib/query-client";
 import type { MetricsFilters, MetricsWindow } from "../../lib/api/types";
 
-const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function getDayLabels(): string[] {
+  return [
+    i18n.t("metrics:heatmap.dayLabels.mon"),
+    i18n.t("metrics:heatmap.dayLabels.tue"),
+    i18n.t("metrics:heatmap.dayLabels.wed"),
+    i18n.t("metrics:heatmap.dayLabels.thu"),
+    i18n.t("metrics:heatmap.dayLabels.fri"),
+    i18n.t("metrics:heatmap.dayLabels.sat"),
+    i18n.t("metrics:heatmap.dayLabels.sun"),
+  ];
+}
 /** JS getDay(): 0=Sun … 6=Sat, rendered Mon-first. */
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
@@ -32,6 +44,7 @@ export function HourlyHeatmap({
   models,
   autoRefreshMs,
 }: HourlyHeatmapProps) {
+  const { t } = useTranslation("metrics");
   const hours = rangeIs24h ? 24 : 24 * 7;
   const from = useMemo(
     () => new Date(Date.now() - hours * 60 * 60 * 1000),
@@ -128,19 +141,22 @@ export function HourlyHeatmap({
             </div>
           ))}
 
-          {grid.map((row, i) => (
-            <HeatmapRow key={DAY_LABELS[i]} label={DAY_LABELS[i]} row={row} max={maxCount} />
-          ))}
+          {grid.map((row, i) => {
+            const dayLabels = getDayLabels();
+            return (
+              <HeatmapRow key={dayLabels[i]} label={dayLabels[i]} row={row} max={maxCount} />
+            );
+          })}
         </div>
       </div>
 
       <div className="flex items-center justify-between mt-3">
         <p className="text-xs text-[var(--color-text-muted)]">
-          {rangeIs24h ? "Last 24 hours" : "Last 7 days"} ·{" "}
-          {totalRequests.toLocaleString()} request{totalRequests === 1 ? "" : "s"}
+          {rangeIs24h ? t("heatmap.last24h") : t("heatmap.last7d")} ·{" "}
+          {totalRequests.toLocaleString()} {t("heatmap.request", { count: totalRequests })}
         </p>
         <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
-          <span>less</span>
+          <span>{t("heatmap.less", { ns: "common" })}</span>
           {[0.08, 0.25, 0.55, 1].map((level) => (
             <span
               key={level}
@@ -150,16 +166,16 @@ export function HourlyHeatmap({
               }}
             />
           ))}
-          <span>more</span>
+          <span>{t("heatmap.more", { ns: "common" })}</span>
         </div>
       </div>
 
       {isLoading && (
-        <p className="text-xs text-[var(--color-text-muted)] mt-2">Loading…</p>
+        <p className="text-xs text-[var(--color-text-muted)] mt-2">{t("loading", { ns: "common" })}…</p>
       )}
       {!isLoading && maxCount === 0 && (
         <p className="text-xs text-[var(--color-text-muted)] mt-2">
-          No requests recorded in this window.
+          {t("noUsage")}
         </p>
       )}
     </div>
@@ -175,6 +191,7 @@ function HeatmapRow({
   row: number[];
   max: number;
 }) {
+  const { t } = useTranslation("metrics");
   return (
     <>
       <div className="text-[10px] text-[var(--color-text-muted)] leading-none self-center select-none">
@@ -187,7 +204,7 @@ function HeatmapRow({
             key={`${label}-${hour}`}
             title={
               count > 0
-                ? `${label} ${String(hour).padStart(2, "0")}:00 — ${count.toLocaleString()} request${count === 1 ? "" : "s"}`
+                ? `${label} ${String(hour).padStart(2, "0")}:00 — ${count.toLocaleString()} ${t("heatmap.request", { count })}`
                 : undefined
             }
             className="aspect-square min-h-[14px] rounded-[3px] transition-transform duration-100 hover:scale-110"

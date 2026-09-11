@@ -1,0 +1,349 @@
+{
+  "title": "Metrics",
+  "failedToLoad": "Failed to load metrics",
+  "noUsage": "No usage recorded yet",
+  "noUsageDesc": "Connect a client to the local inference proxy and its requests will show up here automatically.",
+  "refresh": "Refresh",
+  "downloadCsv": "Download CSV",
+  "refreshMetrics": "Refresh metrics (R)",
+  "downloadBreakdown": "Download the model breakdown as CSV",
+  "setCostRates": "Set cost rates first (Cost Calculator)",
+  "noRateConfigured": "Some usage has no rate configured (or is subscription/self-hosted) — not included.",
+  "clickPoint": "Click a point to inspect those requests",
+  "costCalculator": "Cost Calculator",
+  "pickFromList": "Pick from the provider list instead",
+  "autoRefresh": {
+    "off": "Auto: off",
+    "10s": "Every 10s",
+    "30s": "Every 30s"
+  },
+  "metricOptions": {
+    "tokens": "Tokens",
+    "requests": "Requests",
+    "latency": "Latency",
+    "cached": "Cached",
+    "cost": "Cost"
+  },
+  "metricTitles": {
+    "tokens": "Token usage over time",
+    "requests": "Requests over time",
+    "latency": "Average latency over time",
+    "cached": "Cached tokens over time",
+    "cost": "Estimated cost over time"
+  },
+  "comparisonModes": {
+    "combined": "Combined",
+    "byProvider": "By provider",
+    "byModel": "By model"
+  },
+  "costModes": {
+    "perToken": "Per 1M tokens",
+    "monthly": "Monthly",
+    "selfHosted": "Self-hosted"
+  },
+  "liveStatus": {
+    "off": "",
+    "connecting": "Connecting…",
+    "open": "Streaming live",
+    "reconnecting": "Reconnecting…",
+    "unavailable": "Unavailable"
+  },
+  "table": {
+    "time": "Time",
+    "model": "Model",
+    "key": "Key",
+    "tokensIn": "Tokens In",
+    "tokensOut": "Tokens Out",
+    "cached": "Cached",
+    "cachedTokens": "Cached Tokens",
+    "mode": "Mode",
+    "latency": "Latency",
+    "provider": "Provider",
+    "requests": "Requests",
+    "promptTokens": "Prompt Tokens",
+    "completionTokens": "Completion Tokens",
+    "cacheHitPercent": "Cache Hit %",
+    "avgLatency": "Avg Latency",
+    "estCost": "Est. Cost",
+    "promptRate": "Prompt Rate",
+    "completionRate": "Completion Rate",
+    "promptCost": "Prompt Cost",
+    "completionCost": "Completion Cost",
+    "totalCost": "Total Cost",
+    "p95": "p95",
+    "max": "Max"
+  },
+  "csvHeaders": {
+    "avgLatencyMs": "Avg Latency (ms)",
+    "estCostUsd": "Est Cost (USD)"
+  },
+  "filter": {
+    "title": "Filter data",
+    "searchProviders": "Search providers…",
+    "noProvidersMatch": "No providers match \"{{search}}\".",
+    "noModelsMatch": "No models match \"{{search}}\"."
+  },
+  "presets": {
+    "namePlaceholder": "Preset name…",
+    "savePreset": "Save current filters as a preset",
+    "deletePreset": "Delete preset {{name}}",
+    "presetName": "Preset name"
+  },
+  "retention": {
+    "title": "Usage retention",
+    "subtitle": "Raw request records older than this many days are eligible for cleanup.",
+    "keepRecords": "Keep records (days)",
+    "requiresAdmin": "Requires an Admin role",
+    "purgeUnavailable": "Purge unavailable",
+    "purgeOldRecords": "Purge old records",
+    "purgeConfirm": "Purge old usage records?",
+    "purgeDesc": "This permanently deletes all raw request records older than {{days}} days. Aggregated metrics may shift accordingly. This cannot be undone.",
+    "purging": "Purging…",
+    "purge": "Purge",
+    "purgeFailed": "Purge failed",
+    "deleted": "Deleted {{count}} record(s)",
+    "adminRoleRequired": "Admin role required",
+    "saved": "Saved",
+    "usageRetention": "Usage retention & purge"
+  },
+  "costCalc": {
+    "provider": "Provider",
+    "providerPlaceholder": "e.g. openai",
+    "promptRate": "Prompt $/1M tokens",
+    "completionRate": "Completion $/1M tokens",
+    "monthlySubscription": "Monthly subscription price",
+    "monthlyCost": "Monthly cost (power, hardware, etc.)",
+    "zeroPlaceholder": "0.00",
+    "description": "Set pricing for each provider — usage-based rates per 1M tokens, or a fixed monthly subscription. Rates are saved to your browser's local storage and applied against the current filter selection."
+  },
+  "breakdown": {
+    "key": "Key",
+    "couldntLoadLatency": "Couldn't load latency distribution.",
+    "couldntLoadUsage": "Couldn't load API-key usage."
+  },
+  "recentRequests": {
+    "couldntLoad": "Couldn't load recent requests.",
+    "toggleLive": "Toggle live request stream",
+    "buffered": "{{status}} · {{count}} buffered"
+  },
+  "heatmap": {
+    "last24h": "Last 24 hours",
+    "last7d": "Last 7 days",
+    "less": "less",
+    "more": "more",
+    "request": {
+      "one": "request",
+      "other": "requests"
+    },
+    "dayLabels": {
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun"
+    }
+  },
+  "budgets": {
+    "done": "Done",
+    "edit": "Edit",
+    "selfHosted": "self-hosted",
+    "monthlyBudgets": "Monthly budgets",
+    "noUsageYet": "No provider usage this month yet — budgets will appear once requests start flowing.",
+    "noBudgetSet": "No budget set",
+    "tokenBudget": "Token budget",
+    "costBudget": "Cost budget ($)",
+    "monthToDate": "Month to date",
+    "tokenBudgetProgress": "{{pct}}% of {{amount}} token budget",
+    "costBudgetProgress": "{{pct}}% of {{amount}} cost budget",
+    "flatCostLine": "Flat {{amount}}/mo",
+    "hardwarePower": "hardware/power",
+    "noUsageBasedCost": "— no usage-based cost"
+  },
+  "format": {
+    "ms": "{{value}} ms",
+    "s": "{{value}} s",
+    "currency": "${{value}}",
+    "mega": "M",
+    "kilo": "K"
+  },
+  "aria": {
+    "presetName": "Preset name",
+    "deletePreset": "Delete preset {{name}}",
+    "autoRefreshInterval": "Auto-refresh interval",
+    "comparisonMode": "Comparison mode",
+    "toggleLive": "Toggle live request stream",
+    "filterData": "Filter data",
+    "costCalculator": "Cost Calculator"
+  },
+  "costComparison": {
+    "providerComparison": "{{dimension}} comparison",
+    "subscriptions": "{{amount}}/mo subscriptions",
+    "selfHosted": "{{amount}}/mo self-hosted costs",
+    "noData": "no prior data",
+    "flat": "flat",
+    "vsPrev": "{{pct}}% vs prev"
+  },
+  "timeRanges": {
+    "24h": "Last 24h",
+    "7d": "Last 7 days",
+    "30d": "Last 30 days",
+    "all": "All time"
+  },
+  "summary": {
+    "totalRequests": "Total requests",
+    "promptTokens": "Prompt tokens",
+    "completionTokens": "Completion tokens",
+    "cacheHitRate": "Cache hit rate",
+    "estCost": "Est. cost",
+    "cacheSavings": "Cache savings",
+    "streaming": "{{count}} streaming",
+    "setRates": "Set rates →",
+    "subscriptionsLabel": "subscriptions",
+    "selfHostedLabel": "self-hosted"
+  },
+  "filterBar": {
+    "filters": "Filters",
+    "clearAll": "Clear all",
+    "allProviders": "All providers",
+    "allModels": "All models",
+    "allProvidersModels": "All providers · All models",
+    "save": "Save",
+    "presets": "Presets",
+    "chooseProvidersModels": "Choose providers and models to include",
+    "removeFilterAria": "Remove {{dimension}} filter {{label}}"
+  },
+  "sections": {
+    "perModelBreakdown": "Per-model breakdown",
+    "perProviderBreakdown": "Per-provider breakdown",
+    "recentRequests": "Recent requests",
+    "requestsByHour": "Requests by hour"
+  },
+  "chart": {
+    "loadingComparison": "Loading comparison…",
+    "noUsageData": "No usage data for this time range.",
+    "excludes": "Excludes",
+    "and": "and",
+    "notTimeDistributed": "those aren't time-distributed.",
+    "excludesSubscriptions": "+ {{amount}}/mo subscriptions",
+    "excludesSelfHosted": "+ {{amount}}/mo self-hosted costs"
+  },
+  "charts": {
+    "tooltip": {
+      "promptTokens": "Prompt tokens",
+      "completionTokens": "Completion tokens",
+      "requests": "Requests",
+      "avgLatency": "Avg latency",
+      "cachedTokens": "Cached tokens",
+      "estCost": "Est. cost",
+      "requestCount": {
+        "one": "{{count}} request",
+        "other": "{{count}} requests"
+      },
+      "ofTotal": "{{pct}}% of total"
+    }
+  },
+  "comparisonTable": {
+    "provider": "Provider",
+    "model": "Model",
+    "providerComparison": "{{dim}} comparison",
+    "missingRateDisclaimer": "* Excludes usage without per-token rates (subscriptions, self-hosted, unrated models).",
+    "providersCount": "{{count}} providers"
+  },
+  "perModelTable": {
+    "noModelUsage": "No model usage data for this time range.",
+    "modelsMissingRate": "{{count}} model(s) have no cost rate set —",
+    "openCostCalc": "open the Cost Calculator",
+    "toCompleteEstimates": "to complete the estimates."
+  },
+  "recentRequestsSection": {
+    "couldnLoad": "Couldn't load recent requests.",
+    "noRequestsInWindow": "No requests in this window.",
+    "loading": "Loading…",
+    "pageInfo": "{{total}} requests · page {{page}} of {{totalPages}}",
+    "showingBetween": "Showing requests between",
+    "clearWindow": "Clear window",
+    "waitingForRequests": "Waiting for incoming requests…",
+    "newestFirst": "Newest first · capped at {{count}} rows",
+    "streamTooltip": "Stream incoming requests as they happen",
+    "live": "Live",
+    "previousPage": "Previous page",
+    "nextPage": "Next page"
+  },
+  "providerBreakdown": {
+    "noProviderUsage": "No provider usage data for this time range."
+  },
+  "breakdownSection": {
+    "latencyDistribution": "Latency distribution",
+    "requestsCount": "{{count}} request(s)",
+    "couldnLoadLatency": "Couldn't load latency distribution.",
+    "noRequestsInWindow": "No requests in this window.",
+    "usageByApiKey": "Usage by API key",
+    "couldnLoadApiUsage": "Couldn't load API-key usage.",
+    "noApiUsageInWindow": "No API-key usage in this window.",
+    "unnamedKey": "unnamed key",
+    "requests": "Requests",
+    "tokensIn": "Tokens In",
+    "tokensOut": "Tokens Out",
+    "cached": "Cached"
+  },
+  "costCalcSection": {
+    "provider": "Provider",
+    "promptRate": "Prompt Rate",
+    "completionRate": "Completion Rate",
+    "promptTokens": "Prompt Tokens",
+    "completionTokens": "Completion Tokens",
+    "promptCost": "Prompt Cost",
+    "completionCost": "Completion Cost",
+    "totalCost": "Total Cost",
+    "grandTotal": "Grand Total",
+    "monthly": "monthly",
+    "selfHosted": "self-hosted",
+    "incl": "incl.",
+    "noUsageYet": "— no usage this month yet",
+    "unnamed": "unnamed",
+    "addProvider": "Add provider",
+    "saveRates": "Save Rates",
+    "selectProvider": "Select provider…",
+    "customOption": "Custom…",
+    "cloudProviders": "Cloud providers",
+    "selfHostedAgents": "Self-hosted agents",
+    "listButton": "List",
+    "pricing": "Pricing",
+    "perTokenHint": "Usage-based pricing per 1M tokens",
+    "monthlyHint": "Fixed monthly subscription",
+    "selfHostedHint": "Self-hosted (power & hardware) — flat monthly cost",
+    "removeRow": "Remove row",
+    "noUsageThisMonth": "— no usage this month yet",
+    "derived": "(derived)",
+    "per1MTokens": "per 1M tokens"
+  },
+  "liveStatusTooltip": "Toggle live request stream",
+  "searchModels": "Search models…",
+  "searchSelectedModels": "Search selected providers' models…",
+  "noModelUsageRecorded": "No model usage recorded for this selection.",
+  "selected": "{{count}} selected",
+  "none": "None",
+  "all": "All",
+  "clearSearch": "Clear search",
+  "apply": "Apply",
+  "cancel": "Cancel",
+  "allProvidersLabel": "all providers",
+  "allModelsLabel": "all models",
+  "byEntity": "by {{entity}}",
+  "onboarding": {
+    "pointClient": "Point any OpenAI-compatible client at the base URL above",
+    "forExample": "for example",
+    "andSendRequest": "and send a request."
+  },
+  "costTooltips": {
+    "subscription": "Included in the {{amount}}/mo subscription for {{provider}}",
+    "selfHosted": "Included in the {{amount}}/mo self-hosted cost for {{provider}}",
+    "noRate": "No rate set for {{provider}}"
+  },
+  "copyToClipboard": "Copy to clipboard",
+  "monthlySuffix": "/mo",
+  "per1MTok": "/1M tok",
+  "tokSuffix": "tok"
+}

@@ -9,6 +9,7 @@
 // AND together, matching the backend's analytics filtering semantics.
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, Search } from "lucide-react";
 import { Badge, Button, Dialog } from "../../components/ui";
 import { formatModelName } from "../../lib/format-model-name";
@@ -99,6 +100,7 @@ interface SearchBoxProps {
 }
 
 function SearchBox({ value, onChange, placeholder }: SearchBoxProps) {
+  const { t } = useTranslation("metrics");
   return (
     <div className="relative">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
@@ -114,7 +116,7 @@ function SearchBox({ value, onChange, placeholder }: SearchBoxProps) {
         <button
           type="button"
           onClick={() => onChange("")}
-          aria-label="Clear search"
+          aria-label={t("clearSearch")}
           className="absolute right-1.5 top-1/2 flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
           ×
@@ -140,6 +142,7 @@ export function FiltersModal({
   modelDisplayNames,
   onApply,
 }: FiltersModalProps) {
+  const { t } = useTranslation("metrics");
   // Draft state — seeded from the live selection each time the modal opens.
   const [draftProviders, setDraftProviders] = useState<string[]>(selectedProviders);
   const [draftModels, setDraftModels] = useState<string[]>(selectedModels);
@@ -211,7 +214,7 @@ export function FiltersModal({
               reg?.sourceRuntimeName ?? undefined,
               reg?.displayName ?? undefined,
             ),
-            badge: m.providers.length > 1 ? `${m.providers.length} providers` : undefined,
+            badge: m.providers.length > 1 ? t("comparisonTable.providersCount", { count: m.providers.length }) : undefined,
           };
         }),
     [modelOptions, draftProviders, modelSearch, hideOriginPrefix, agentDisplayNames, modelDisplayNames],
@@ -225,15 +228,15 @@ export function FiltersModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Filter data" className="sm:max-w-lg">
+    <Dialog open={open} onOpenChange={onOpenChange} title={t("filter.title")} className="sm:max-w-lg">
       <div className="px-5 py-4 space-y-5">
         {/* ── Providers ─────────────────────────────────────── */}
         <section className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-              Providers{" "}
+              {t("table.provider")}{" "}
               <span className="font-normal normal-case tracking-normal">
-                ({draftProviders.length} selected)
+                ({t("selected", { count: draftProviders.length })})
               </span>
             </h4>
             <div className="flex gap-1">
@@ -242,21 +245,21 @@ export function FiltersModal({
                 onClick={() => setDraftProviders(providerOptions.map((p) => p.name))}
                 className="cursor-pointer rounded-[var(--radius-md)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-muted)] transition-colors"
               >
-                All
+                {t("all")}
               </button>
               <button
                 type="button"
                 onClick={() => setDraftProviders([])}
                 className="cursor-pointer rounded-[var(--radius-md)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] transition-colors"
               >
-                None
+                {t("none")}
               </button>
             </div>
           </div>
           <SearchBox
             value={providerSearch}
             onChange={setProviderSearch}
-            placeholder="Search providers…"
+            placeholder={t("filter.searchProviders")}
           />
           <CheckboxList
             options={visibleProviders}
@@ -264,8 +267,8 @@ export function FiltersModal({
             onToggle={(v) => toggle(draftProviders, setDraftProviders, v)}
             emptyText={
               providerOptions.length === 0
-                ? "No usage recorded yet."
-                : `No providers match "${providerSearch}".`
+                ? `${t("noUsage")}.`
+                : t("filter.noProvidersMatch", { search: providerSearch })
             }
           />
         </section>
@@ -274,9 +277,9 @@ export function FiltersModal({
         <section className="space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
-              Models{" "}
+              {t("table.model")}{" "}
               <span className="font-normal normal-case tracking-normal">
-                ({draftModels.length} selected)
+                ({t("selected", { count: draftModels.length })})
               </span>
             </h4>
             <div className="flex gap-1">
@@ -286,14 +289,14 @@ export function FiltersModal({
                 disabled={visibleModels.length === 0}
                 className="cursor-pointer rounded-[var(--radius-md)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-muted)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                All
+                {t("all")}
               </button>
               <button
                 type="button"
                 onClick={() => setDraftModels([])}
                 className="cursor-pointer rounded-[var(--radius-md)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] transition-colors"
               >
-                None
+                {t("none")}
               </button>
             </div>
           </div>
@@ -302,8 +305,8 @@ export function FiltersModal({
             onChange={setModelSearch}
             placeholder={
               draftProviders.length > 0
-                ? "Search selected providers' models…"
-                : "Search models…"
+                ? t("searchSelectedModels")
+                : t("searchModels")
             }
           />
           <CheckboxList
@@ -312,8 +315,8 @@ export function FiltersModal({
             onToggle={(v) => toggle(draftModels, setDraftModels, v)}
             emptyText={
               visibleModels.length === 0 && modelSearch
-                ? `No models match "${modelSearch}".`
-                : "No model usage recorded for this selection."
+                ? t("filter.noModelsMatch", { search: modelSearch })
+                : t("noModelUsageRecorded")
             }
           />
         </section>
@@ -331,14 +334,14 @@ export function FiltersModal({
             className="gap-1 text-[var(--color-text-muted)]"
           >
             <Check className="size-3 rotate-45" />
-            Clear all
+            {t("filterBar.clearAll")}
           </Button>
           <div className="flex gap-2">
             <Button variant="secondary" size="sm" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t("cancel")}
             </Button>
             <Button variant="primary" size="sm" onClick={apply}>
-              Apply{totalSelected > 0 ? ` (${totalSelected})` : ""}
+              {t("apply")}{totalSelected > 0 ? ` (${totalSelected})` : ""}
             </Button>
           </div>
         </div>

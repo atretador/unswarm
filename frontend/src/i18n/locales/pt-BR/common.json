@@ -1,0 +1,129 @@
+{
+  "confirm": "Confirmar",
+  "cancel": "Cancelar",
+  "save": "Salvar",
+  "delete": "Excluir",
+  "close": "Fechar",
+  "edit": "Editar",
+  "create": "Criar",
+  "copied": "Copiado",
+  "copy": "Copiar",
+  "loading": "Carregando",
+  "saving": "Salvando…",
+  "fetching": "Buscando…",
+  "search": "Pesquisar",
+  "backToDashboard": "Voltar ao Painel",
+  "pageNotFound": "Página não encontrada",
+  "pageNotFoundDesc": "A página que você procura não existe ou foi movida.",
+  "done": "Concluído",
+  "created": "Criado",
+  "failedToLoad": "Falha ao carregar",
+  "retry": "Tentar novamente",
+  "noResults": "Nenhum resultado encontrado",
+  "active": "Ativo",
+  "disabled": "Desativado",
+  "enabled": "Ativado",
+  "closeDialog": "Fechar diálogo",
+  "closeDrawer": "Fechar painel",
+  "theme": {
+    "light": "Claro",
+    "dark": "Escuro",
+    "system": "Sistema"
+  },
+  "proxyActive": "Proxy ativo",
+  "signOut": "Sair",
+  "openNavigation": "Abrir navegação",
+  "closeNavigation": "Fechar navegação",
+  "goToProfile": "Ir para o perfil",
+  "userMenu": "Menu do usuário",
+  "navigationMenu": "Menu de navegação",
+  "expandSidebar": "Expandir barra lateral",
+  "collapseSidebar": "Recolher barra lateral",
+  "themeTooltip": "Tema: {{theme}}",
+  "themeSwitchAriaLabel": "Alternar tema (atualmente {{theme}})",
+  "profile": "Perfil",
+  "tempPasswordBanner": "Você está usando uma senha temporária.",
+  "changeItInProfile": "Altere no Perfil",
+  "languageSwitcherTitle": "Idioma",
+  "languageSwitcherLabel": "Selecionar idioma",
+  "units": {
+    "tokPerSec": "tok/s",
+    "tok": "tok",
+    "ms": "ms",
+    "s": "s",
+    "m": "min",
+    "h": "h",
+    "d": "d",
+    "bytes": {
+      "B": "B",
+      "KB": "KB",
+      "MB": "MB",
+      "GB": "GB"
+    }
+  },
+  "na": "n/d",
+  "unknown": "Desconhecido",
+  "enums": {
+    "modelStatus": {
+      "ready": "pronto",
+      "validating": "validando…",
+      "invalid": "inválido",
+      "deprecated": "descontinuado",
+      "conflict": "conflito"
+    },
+    "containerStatus": {
+      "running": "em execução",
+      "starting": "iniciando",
+      "stopping": "parando",
+      "stopped": "parado",
+      "created": "criado",
+      "restarting": "reiniciando",
+      "dead": "morto",
+      "error": "erro"
+    },
+    "containerRegistrationStatus": {
+      "registered": "registrado",
+      "starting": "iniciando",
+      "healthy": "saudável",
+      "discovering": "descobrindo",
+      "ready": "pronto",
+      "error": "erro"
+    },
+    "queueItemStatus": {
+      "waiting": "aguardando",
+      "processing": "processando",
+      "completed": "concluído",
+      "failed": "falhou"
+    },
+    "logLevel": {
+      "info": "info",
+      "warn": "aviso",
+      "error": "erro",
+      "debug": "depuração"
+    },
+    "runtimeSignal": {
+      "running": "Em execução",
+      "transitional": "Iniciando…",
+      "down": "Parado",
+      "unknown": "Desconhecido"
+    },
+    "agentConnectivity": {
+      "connected": "conectado",
+      "stale": "instável",
+      "disconnected": "desconectado"
+    },
+    "apiKeyScope": {
+      "inference": "Inferência",
+      "agent": "Agente"
+    },
+    "pricingMode": {
+      "perToken": "Por 1M tokens",
+      "subscription": "Mensal",
+      "selfHosted": "Auto-hospedado"
+    },
+    "benchmarkStatus": {
+      "completed": "concluído",
+      "error": "erro"
+    }
+  }
+}

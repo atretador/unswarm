@@ -1,0 +1,101 @@
+{
+  "title": "API Keys",
+  "desc": "Manage keys that authenticate to the inference proxy and agent channel. These are not login credentials.",
+  "info": "API keys authenticate to specific endpoints — inference keys for the <1>{{proxy}}</1> proxy, agent keys for the agent channel. Login uses a separate cookie session — a login credential is not an API key, and vice versa.",
+  "tabs": {
+    "inference": "Inference",
+    "agent": "Agent"
+  },
+  "noKeys": "No {{scope}} keys yet",
+  "noKeysAgent": "Create an agent key to authenticate to the agent channel.",
+  "noKeysInference": "Create an inference key to authenticate clients against the /v1 proxy.",
+  "agentKeys": "Agent Keys",
+  "inferenceKeys": "Inference Keys",
+  "retired": "Retired ({{count}})",
+  "newAgentKey": "New Agent Key",
+  "newInferenceKey": "New Inference Key",
+  "keyName": "Key name",
+  "createKey": "Create Key",
+  "createAnother": "Create another",
+  "createDescAgent": "Create a key to authenticate to the agent channel (<1>{{channel1}}</1>, <2>{{channel2}}</2>). These keys are <3>not</3> login credentials.",
+  "createDescInference": "Create a key to authenticate to the inference proxy (<1>{{proxy}}</1>). These keys are <3>not</3> login credentials.",
+  "keyCreated": "Key created — copy your secret now.",
+  "keyCreatedDesc": "This is the only time the full secret is shown. Store it somewhere safe.",
+  "copy": "Copy",
+  "copied": "Copied",
+  "neverUsed": "Never used",
+  "justNow": "just now",
+  "hoursAgo": "{{hours}}h ago",
+  "daysAgo": "{{days}}d ago",
+  "createdPrefix": "Created",
+  "loading": "Loading…",
+  "revoked": "revoked",
+  "rotated": "Key rotated — copy your new secret now.",
+  "rotateWarningComplete": "Rotating the key invalidates the previous secret. Deployers of this key must replace their credentials now.",
+  "validate": {
+    "nameRequired": "Name is required."
+  },
+  "placeholders": {
+    "keyName": "e.g. Remote worker",
+    "keyNameAgent": "e.g. CI runner"
+  },
+  "aria": {
+    "keyScope": "Key scope",
+    "manage": "Manage",
+    "rotate": "Rotate",
+    "revoke": "Revoke",
+    "manageKey": "Manage {{name}}",
+    "rotateKey": "Rotate {{name}}",
+    "revokeKey": "Revoke {{name}}"
+  },
+  "revoke": {
+    "confirm": "Revoke \"{{name}}\"?",
+    "desc": "Existing clients will lose access immediately."
+  },
+  "manage": {
+    "usage": "Usage",
+    "accessControl": "Access control",
+    "fullAccess": "Full access",
+    "fullAccessDesc": "This key can call every provider and model. Turn off to restrict it below.",
+    "grantAllModels": "Tick a provider to grant all of its models, or pick individual models for a narrower grant.",
+    "couldntLoadCatalog": "The provider/model catalog isn't available right now.",
+    "couldntLoadAccess": "Couldn't load this key's current access.",
+    "searchModels": "Search models…",
+    "allModels": "all models",
+    "modelsOf": "{{picked}} of {{total}}",
+    "saving": "Saving…",
+    "saveAccess": "Save access",
+    "saved": "Saved",
+    "discard": "Discard",
+    "discardChanges": "Discard unsaved changes?",
+    "discardChangesDesc": "Access changes for this key haven't been saved yet.",
+    "usageRange": "Usage time range",
+    "grantAll": "Grant all {{name}} models",
+    "dialogTitle": "Manage \"{{name}}\"",
+    "providerCloud": "Cloud providers",
+    "providerRouter": "Router profiles",
+    "providerSelfHosted": "Self-hosted agents",
+    "expandModels": "Expand {{name}} models",
+    "collapseModels": "Collapse {{name}} models",
+    "unmatchedGrant": "Also granted (no longer in the catalog):",
+    "nothingSelected": "Nothing selected — this key can't call any provider or model. Pick at least one, or re-enable Full access.",
+    "unsavedChanges": "Unsaved changes",
+    "noUsage": "No usage recorded for this key in the selected window.",
+    "range7d": "Last 7 days",
+    "range30d": "Last 30 days",
+    "range90d": "Last 90 days",
+    "table": {
+      "model": "Model",
+      "requests": "Requests",
+      "in": "In",
+      "out": "Out",
+      "cached": "Cached"
+    },
+    "stats": {
+      "requests": "Requests",
+      "tokensIn": "Tokens in",
+      "tokensOut": "Tokens out",
+      "cached": "Cached"
+    }
+  }
+}

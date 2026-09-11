@@ -1,6 +1,7 @@
 import {
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -28,18 +29,17 @@ export type { RuntimeSignal } from "./helpers";
 // ─── Add agent modal ──────────────────────────────────────────────
 
 function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { t } = useTranslation('swarm');
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title="Add an agent">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('addAgent')}>
       <div className="space-y-5 p-5">
         <p className="text-sm leading-relaxed text-[var(--color-text-muted)]">
-          Agents run on machines where you want to serve models. Install the agent binary
-          on the target machine and point it at this backend — it registers itself and
-          appears here automatically.
+          {t('addAgentDesc')}
         </p>
 
         <div className="space-y-2.5">
           <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-            1. Run the agent
+            {t('runAgent')}
           </p>
           <div className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-muted)] p-3">
             <code className="block break-all font-mono text-xs text-[var(--color-text-heading)]">
@@ -50,7 +50,7 @@ function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }
 
         <div className="space-y-2.5">
           <p className="text-xs font-medium uppercase tracking-wider text-[var(--color-text-muted)]">
-            2. Point it at this backend
+            {t('pointBackend')}
           </p>
           <div className="space-y-1.5 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-muted)] p-3">
             <p className="font-mono text-xs text-[var(--color-text-muted)]">
@@ -68,15 +68,13 @@ function AddAgentModal({ open, onClose }: { open: boolean; onClose: () => void }
         <div className="flex items-start gap-2 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-primary-soft)] p-3">
           <KeyRound className="mt-0.5 size-3.5 shrink-0 text-[var(--color-primary)]" />
           <p className="text-xs leading-relaxed text-[var(--color-text)]">
-            If the backend has an <span className="font-medium">API key</span> configured,
-            set <code className="font-mono">api_key</code> in agent.yaml to match — otherwise
-            the agent is rejected on connect.
+            {t('apiKeyNote')}
           </p>
         </div>
 
         <div className="flex justify-end">
           <Button size="sm" onClick={onClose}>
-            Got it
+            {t('gotIt')}
           </Button>
         </div>
       </div>
@@ -97,6 +95,7 @@ function ConcurrencyModal({
   onClose: () => void;
   registered: RegisteredRuntime[];
 }) {
+  const { t } = useTranslation('swarm');
   const queryClient = useQueryClient();
   const agentRcs = registered.filter((rc) => rc.agent === agentName);
   const [toggleError, setToggleError] = useState<string | null>(null);
@@ -128,7 +127,7 @@ function ConcurrencyModal({
       });
       invalidate();
     } catch (err) {
-      setToggleError(err instanceof Error ? err.message : "Failed to update concurrency");
+      setToggleError(err instanceof Error ? err.message : t('concurrency.failedToUpdate'));
     } finally {
       setPendingKey(null);
     }
@@ -148,19 +147,17 @@ function ConcurrencyModal({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={`Concurrency on ${agentName}`}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('concurrency.title', { agentName })} className="sm:max-w-5xl">
       <div className="p-5">
         {agentRcs.length === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)]">
-            No runtimes registered on this agent yet.
+            {t('concurrency.noRuntimes')}
           </p>
         ) : (
           <>
             {/* Legend */}
             <p className="mb-3 text-[11px] leading-relaxed text-[var(--color-text-muted)]">
-              Toggle which runtimes may share resources on this agent. Each row/column is
-              a registered runtime — turning a cell ON allows both to run at the same time.
-              An empty row (all OFF) means the runtime runs alone.
+              {t('concurrency.legend')}
             </p>
 
             {/* Matrix scroll wrapper */}
@@ -227,7 +224,7 @@ function ConcurrencyModal({
                                 checked={checked}
                                 disabled={cellDisabled}
                                 onCheckedChange={() => toggleCell(rowRc, colRc)}
-                                aria-label={`${rowRc.displayName} with ${colRc.displayName}`}
+                                aria-label={t('concurrency.runtimeWith', { a: rowRc.displayName, b: colRc.displayName })}
                               />
                             </td>
                           );
@@ -242,7 +239,7 @@ function ConcurrencyModal({
             {/* Runs-alone hint */}
             {agentRcs.some((rc) => rc.canRunAlongWith.length === 0) && (
               <p className="mt-3 text-[10px] text-[var(--color-text-muted)]">
-                Runtimes with all cells off run independently and will not share resources.
+                {t('concurrency.runsAlone')}
               </p>
             )}
           </>
@@ -262,6 +259,8 @@ function ConcurrencyModal({
 // ─── Main Swarm page ──────────────────────────────────────────────
 
 export default function Swarm() {
+  const { t } = useTranslation('swarm');
+  const { t: _tc } = useTranslation('common');
   const [manageAgent, setManageAgent] = useState<string | null>(null);
   const [concurrencyAgent, setConcurrencyAgent] = useState<string | null>(null);
   const [showAddAgent, setShowAddAgent] = useState(false);
@@ -317,11 +316,11 @@ export default function Swarm() {
     return (
       <div className="max-w-5xl p-6">
         <EmptyState
-          title="Failed to load swarm"
+          title={t('failedToLoad')}
           description={error.message}
           action={
             <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>
-              Retry
+              {t('retry')}
             </Button>
           }
         />
@@ -343,25 +342,25 @@ export default function Swarm() {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Swarm</h2>
+          <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">{t('title')}</h2>
           <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-            Manage registered runtimes and run model discovery across agents.
+            {t('description')}
           </p>
         </div>
         <Button size="sm" variant="secondary" onClick={() => setShowAddAgent(true)}>
           <Plus className="size-3.5" />
-          Add agent
+          {t('addAgent')}
         </Button>
       </div>
 
       {!hasAgents ? (
         <EmptyState
-          title="No agents connected"
-          description="Run the agent binary on a machine with Docker to add it to the swarm."
+          title={t('noAgents')}
+          description={t('noAgentsDesc')}
           action={
             <Button size="sm" onClick={() => setShowAddAgent(true)}>
               <Plus className="size-3.5" />
-              Add agent
+              {t('addAgent')}
             </Button>
           }
         />

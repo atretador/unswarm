@@ -19,6 +19,7 @@ export function Logo({ size = 24, className }: LogoProps) {
   const dimId = `${uid}-dim`;
 
   return (
+    // Brand name — intentionally not translated (aria-label)
     <svg
       width={size}
       height={size}

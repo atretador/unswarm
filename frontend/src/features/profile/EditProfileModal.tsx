@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Shield, User } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
 import { Dialog, Input, Button } from "../../components/ui";
@@ -9,6 +10,8 @@ interface EditProfileModalProps {
 }
 
 export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) {
+  const { t } = useTranslation("profile");
+  const { t: tCommon } = useTranslation("common");
   const { user, changePassword } = useAuth();
   const [tab, setTab] = useState<"details" | "password">("details");
 
@@ -39,11 +42,11 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
     setSuccess(false);
 
     if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters.");
+      setError(t("validation.passwordMinLength"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError("New passwords do not match.");
+      setError(t("validation.passwordsNoMatch"));
       return;
     }
 
@@ -55,7 +58,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
       setNewPassword("");
       setConfirmPassword("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password.");
+      setError(err instanceof Error ? err.message : t("passwordFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -64,7 +67,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
   const letter = user?.username?.charAt(0)?.toUpperCase() ?? "?";
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Edit Profile">
+    <Dialog open={open} onOpenChange={onOpenChange} title={t("editProfile")}>
       <div className="p-5 space-y-5">
         {/* Tabs */}
         <div className="flex gap-1 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] p-1">
@@ -78,7 +81,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
             }`}
           >
             <User className="inline-block size-3.5 mr-1.5 -mt-0.5" />
-            Details
+            {t("detailsTab")}
           </button>
           <button
             type="button"
@@ -90,7 +93,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
             }`}
           >
             <Shield className="inline-block size-3.5 mr-1.5 -mt-0.5" />
-            Password
+            {t("passwordTab")}
           </button>
         </div>
 
@@ -103,16 +106,16 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
               </div>
               <div>
                 <p className="text-sm font-medium text-[var(--color-text-heading)]">
-                  {user?.username ?? "Unknown"}
+                  {user?.username ?? tCommon('unknown')}
                 </p>
                 <p className="text-xs text-[var(--color-text-muted)]">
-                  {user?.isTempPassword ? "Temporary password — change it now" : "Account active"}
+                  {user?.isTempPassword ? t("tempPasswordModal") : t("accountActive")}
                 </p>
               </div>
             </div>
 
             <Input
-              label="Username"
+              label={t("fields.username")}
               value={user?.username ?? ""}
               readOnly
               className="opacity-60 cursor-not-allowed"
@@ -121,7 +124,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
             {user?.isTempPassword && (
               <div className="rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--color-status-warning)_30%,transparent)] px-4 py-3">
                 <p className="text-sm text-[var(--color-status-warning)] font-medium">
-                  You&apos;re using a temporary password. Switch to the Password tab to change it.
+                  {t("tempPasswordModalDesc")}
                 </p>
               </div>
             )}
@@ -132,21 +135,21 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
         {tab === "password" && (
           <form onSubmit={handlePasswordSubmit} className="space-y-4">
             <Input
-              label="Current password"
+              label={t("fields.currentPassword")}
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               autoComplete="current-password"
             />
             <Input
-              label="New password"
+              label={t("fields.newPassword")}
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
               autoComplete="new-password"
             />
             <Input
-              label="Confirm new password"
+              label={t("fields.confirmPassword")}
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
@@ -158,7 +161,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
             )}
             {success && (
               <p className="text-sm text-[var(--color-status-running)]">
-                Password changed successfully.
+                {t("passwordChanged")}
               </p>
             )}
 
@@ -169,10 +172,10 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
                 size="sm"
                 onClick={() => onOpenChange(false)}
               >
-                Cancel
+                {tCommon("cancel")}
               </Button>
               <Button type="submit" variant="primary" size="sm" loading={submitting}>
-                Change Password
+                {t("changePassword")}
               </Button>
             </div>
           </form>
@@ -187,7 +190,7 @@ export function EditProfileModal({ open, onOpenChange }: EditProfileModalProps) 
               size="sm"
               onClick={() => onOpenChange(false)}
             >
-              Close
+              {tCommon("close")}
             </Button>
           </div>
         )}

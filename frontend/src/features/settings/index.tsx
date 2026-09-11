@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Settings as SettingsIcon, Shield, Users, Plus, Route } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { ApiError } from "../../lib/api/httpClient";
@@ -20,10 +21,10 @@ import type { Settings as SettingsData, User } from "../../lib/api/types";
 // ─── Tab Definitions ────────────────────────────────────────────
 
 const TABS = [
-  { key: "general", label: "General", icon: SettingsIcon },
-  { key: "users", label: "Users", icon: Users },
-  { key: "scheduler", label: "Scheduler", icon: Shield },
-  { key: "router", label: "Router", icon: Route },
+  { key: "general", labelKey: "tabs.general", icon: SettingsIcon },
+  { key: "users", labelKey: "tabs.users", icon: Users },
+  { key: "scheduler", labelKey: "tabs.scheduler", icon: Shield },
+  { key: "router", labelKey: "tabs.router", icon: Route },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -60,47 +61,49 @@ function clampNumericField(field: NumericField, num: number): number {
   return Math.max(5, num); // healthCheckInterval
 }
 
-const TOGGLES: Array<{ key: string; label: string; desc: string; field: BooleanField }> = [
+const TOGGLES: Array<{ key: string; labelKey: string; descKey: string; field: BooleanField }> = [
   {
     key: "auto-shutdown",
-    label: "Auto-shutdown idle",
-    desc: "Automatically stop containers after idle timeout",
+    labelKey: "autoShutdown",
+    descKey: "autoShutdownDesc",
     field: "autoShutdownIdle",
   },
   {
     key: "batch-drain",
-    label: "Batch drain",
-    desc: "Drain queue items in batches for efficiency",
+    labelKey: "batchDrain",
+    descKey: "batchDrainDesc",
     field: "batchDrain",
   },
   {
     key: "lazy-stop",
-    label: "Lazy stop",
-    desc: "Wait for in-flight requests before stopping",
+    labelKey: "lazyStop",
+    descKey: "lazyStopDesc",
     field: "lazyStop",
   },
   {
     key: "enable-parallel-slot-skip",
-    label: "Enable parallel slot skip",
-    desc: "Skip busy parallel slots and defer requests to later slots",
+    labelKey: "parallelSlotSkip",
+    descKey: "parallelSlotSkipDesc",
     field: "enableParallelSlotSkip",
   },
   {
     key: "conversation-affinity",
-    label: "Conversation affinity",
-    desc: "Keep a model's runtime reserved while an agent/tool-call conversation is actively using it, preventing model-switch thrash between tool calls",
+    labelKey: "conversationAffinity",
+    descKey: "conversationAffinityDesc",
     field: "enableConversationAffinity",
   },
   {
     key: "enable-benchmarking",
-    label: "Enable benchmarking",
-    desc: "Auto-run the default benchmark when a model is registered",
+    labelKey: "enableBenchmarking",
+    descKey: "enableBenchmarkingDesc",
     field: "enableBenchmarking",
   },
 ];
 
 function SchedulerPolicySection() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -187,10 +190,10 @@ function SchedulerPolicySection() {
     }
   }
 
-  for (const t of TOGGLES) {
-    const draftValue = draftToggles[t.field];
-    if (draftValue !== undefined && draftValue !== settings[t.field]) {
-      patch[t.field] = draftValue;
+  for (const toggle of TOGGLES) {
+    const draftValue = draftToggles[toggle.field];
+    if (draftValue !== undefined && draftValue !== settings[toggle.field]) {
+      patch[toggle.field] = draftValue;
     }
   }
 
@@ -226,20 +229,20 @@ function SchedulerPolicySection() {
       <div className="flex items-center gap-2 mb-4">
         <SettingsIcon className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Scheduler Policy
+          {t("schedulerPolicy")}
         </p>
       </div>
 
       <div className="space-y-4">
-        {TOGGLES.map((t) => (
-          <div key={t.key} className="flex items-center justify-between">
+        {TOGGLES.map((toggle) => (
+          <div key={toggle.key} className="flex items-center justify-between">
             <div>
-              <p className="text-sm text-[var(--color-text)]">{t.label}</p>
-              <p className="text-[10px] text-[var(--color-text-muted)]">{t.desc}</p>
+              <p className="text-sm text-[var(--color-text)]">{t(toggle.labelKey)}</p>
+              <p className="text-[10px] text-[var(--color-text-muted)]">{t(toggle.descKey)}</p>
             </div>
             <Switch
-              checked={draftToggles[t.field] ?? settings[t.field]}
-              onCheckedChange={(v) => setDraftToggles((prev) => ({ ...prev, [t.field]: v }))}
+              checked={draftToggles[toggle.field] ?? settings[toggle.field]}
+              onCheckedChange={(v) => setDraftToggles((prev) => ({ ...prev, [toggle.field]: v }))}
             />
           </div>
         ))}
@@ -247,18 +250,18 @@ function SchedulerPolicySection() {
         <div className="pt-2 border-t border-[var(--color-border-subtle)]">
           <div className={!settings.enableConversationAffinity ? "opacity-50" : ""}>
             <Input
-              label="Conversation hold window (seconds)"
+              label={t("fields.conversationHold")}
               type="number"
               value={draftConversationDwell}
               disabled={!settings.enableConversationAffinity}
               onChange={(e) => setDraftConversationDwell(e.target.value)}
             />
             <p className="text-[10px] text-[var(--color-text-muted)]">
-              How long a conversation keeps its runtime reserved after its last request (minimum 1)
+              {t("conversationHoldDesc")}
             </p>
           </div>
           <Input
-            label="Max queue depth"
+            label={t("fields.maxQueueDepth")}
             type="number"
             value={draftMaxQueue}
             onChange={(e) => setDraftMaxQueue(e.target.value)}
@@ -266,60 +269,60 @@ function SchedulerPolicySection() {
           {settings.enableParallelSlotSkip && (
             <>
               <Input
-                label="Parallel slot skip limit"
+                label={t("fields.parallelSlotSkipLimit")}
                 type="number"
                 value={draftParallelSkip}
                 onChange={(e) => setDraftParallelSkip(e.target.value)}
               />
               <div>
                 <Input
-                  label="Queue steps till skip reset"
+                  label={t("fields.queueStepsTillSkipReset")}
                   type="number"
                   value={draftQueueStepsTillReset}
                   onChange={(e) => setDraftQueueStepsTillReset(e.target.value)}
                 />
                 <p className="text-[10px] text-[var(--color-text-muted)]">
-                  How many queue items are processed before the parallel-slot skip counter resets
+                  {t("queueStepsResetDesc")}
                 </p>
               </div>
             </>
           )}
           <Input
-            label="Request timeout (seconds)"
+            label={t("fields.requestTimeout")}
             type="number"
             value={draftRequestTimeout}
             onChange={(e) => setDraftRequestTimeout(e.target.value)}
           />
           <Input
-            label="Idle timeout (seconds)"
+            label={t("fields.idleTimeout")}
             type="number"
             value={draftIdleTimeout}
             onChange={(e) => setDraftIdleTimeout(e.target.value)}
           />
           <Input
-            label="Health check interval (seconds)"
+            label={t("fields.healthCheckInterval")}
             type="number"
             value={draftHealthCheckInterval}
             onChange={(e) => setDraftHealthCheckInterval(e.target.value)}
           />
           <Input
-            label="Health check timeout (seconds)"
+            label={t("fields.healthCheckTimeout")}
             type="number"
             value={draftHealthCheckTimeoutSeconds}
             onChange={(e) => setDraftHealthCheckTimeoutSeconds(e.target.value)}
           />
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Max wait time for a runtime to become healthy (10–600s)
+            {t("maxWaitTime")}
           </p>
           {Number(draftHealthCheckTimeoutSeconds) !== 0 && (Number(draftHealthCheckTimeoutSeconds) < 10 || Number(draftHealthCheckTimeoutSeconds) > 600) && (
-            <p className="text-xs text-amber-500">Value will be clamped to 10–600 on save</p>
+            <p className="text-xs text-amber-500">{t("maxWaitTimeHint")}</p>
           )}
           <Select
-            label="Priority mode"
+            label={t("fields.priorityMode")}
             value={draftPriorityMode}
             options={[
-              { value: "fifo", label: "FIFO" },
-              { value: "priority", label: "Priority" },
+              { value: "fifo", label: t("priorityModes.fifo") },
+              { value: "priority", label: t("priorityModes.priority") },
             ]}
             onChange={(e) => {
               setDraftPriorityMode(e.target.value as SettingsData["priorityMode"]);
@@ -335,7 +338,7 @@ function SchedulerPolicySection() {
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button
             variant="primary"
@@ -344,7 +347,7 @@ function SchedulerPolicySection() {
             disabled={!canSave}
             loading={updateMutation.isPending}
           >
-            Save
+            {tc("save")}
           </Button>
         </div>
       </div>
@@ -362,6 +365,8 @@ function AddUserModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -398,11 +403,11 @@ function AddUserModal({
     setError(null);
 
     if (!username.trim()) {
-      setError("Username is required.");
+      setError(t("validation.usernameRequired"));
       return;
     }
     if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError(t("validation.passwordMinLength"));
       return;
     }
     createMutation.mutate({ username: username.trim(), password });
@@ -411,17 +416,17 @@ function AddUserModal({
   return (
     <Modal open={open} onClose={onClose}>
       <h3 className="text-sm font-semibold text-[var(--color-text-heading)] mb-4">
-        Add User
+        {t("users.addUser")}
       </h3>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="Username"
+          label={t("placeholders.username")}
           value={username}
           onChange={(e) => setUsername(e.target.value)}
           autoFocus
         />
         <Input
-          label="Password"
+          label={t("placeholders.password")}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -434,7 +439,7 @@ function AddUserModal({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={onClose}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button
             type="submit"
@@ -442,7 +447,7 @@ function AddUserModal({
             size="sm"
             loading={createMutation.isPending}
           >
-            Add User
+            {t("users.addUser")}
           </Button>
         </div>
       </form>
@@ -462,6 +467,8 @@ function ResetPasswordModal({
   user: User | null;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -489,11 +496,11 @@ function ResetPasswordModal({
     setError(null);
     if (!targetUser) return;
     if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError(t("validation.passwordMinLength"));
       return;
     }
     if (password !== confirm) {
-      setError("Passwords do not match.");
+      setError(t("validation.passwordsNoMatch"));
       return;
     }
     resetMutation.mutate({ id: targetUser.id, pw: password });
@@ -502,16 +509,16 @@ function ResetPasswordModal({
   return (
     <Modal open={open} onClose={onClose}>
       <h3 className="text-sm font-semibold text-[var(--color-text-heading)] mb-1">
-        Reset Password
+        {t("users.resetPasswordTitle")}
       </h3>
       {targetUser && (
         <p className="text-xs text-[var(--color-text-muted)] mb-4">
-          Set a new password for <span className="font-medium text-[var(--color-text)]">{targetUser.username}</span>.
+          {t("users.resetPasswordDesc", { username: targetUser.username })}
         </p>
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="New password"
+          label={t("placeholders.newPassword")}
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
@@ -519,7 +526,7 @@ function ResetPasswordModal({
           autoComplete="new-password"
         />
         <Input
-          label="Confirm new password"
+          label={t("placeholders.confirmPassword")}
           type="password"
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
@@ -532,7 +539,7 @@ function ResetPasswordModal({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={onClose}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button
             type="submit"
@@ -540,7 +547,7 @@ function ResetPasswordModal({
             size="sm"
             loading={resetMutation.isPending}
           >
-            Set Password
+            {t("users.setPassword")}
           </Button>
         </div>
       </form>
@@ -559,6 +566,8 @@ function UserRow({
   onDelete: (user: User) => void;
   onResetPassword: (user: User) => void;
 }) {
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
   const letter = u.username?.charAt(0)?.toUpperCase() ?? "?";
 
   return (
@@ -577,7 +586,7 @@ function UserRow({
       <div className="shrink-0">
         {u.isTempPassword && (
           <Badge variant="warning" size="sm">
-            temp password
+            {t("users.tempPassword")}
           </Badge>
         )}
       </div>
@@ -589,14 +598,14 @@ function UserRow({
           size="sm"
           onClick={() => onResetPassword(u)}
         >
-          Reset Password
+          {t("users.resetPassword")}
         </Button>
         <Button
           variant="danger"
           size="sm"
           onClick={() => onDelete(u)}
         >
-          Delete
+          {tc("delete")}
         </Button>
       </div>
     </div>
@@ -607,6 +616,8 @@ function UserRow({
 
 function UsersTab() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
 
   const {
     data: users,
@@ -640,7 +651,7 @@ function UsersTab() {
           <div className="flex items-center gap-2">
             <Users className="size-4 text-[var(--color-text-muted)]" />
             <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Users
+              {t("users.title")}
             </p>
           </div>
           <Button
@@ -649,7 +660,7 @@ function UsersTab() {
             onClick={() => setAddModalOpen(true)}
           >
             <Plus className="size-3.5" />
-            Add User
+            {t("users.addUser")}
           </Button>
         </div>
 
@@ -665,13 +676,13 @@ function UsersTab() {
             {/* Column headers */}
             <div className="flex items-center gap-4 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/30">
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider min-w-0 flex-1">
-                User
+                {t("user")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0">
-                Status
+                {t("status")}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[200px] text-right">
-                Actions
+                {t("actions")}
               </span>
             </div>
 
@@ -686,7 +697,7 @@ function UsersTab() {
           </div>
         ) : (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm text-[var(--color-text-muted)]">No users found.</p>
+            <p className="text-sm text-[var(--color-text-muted)]">{t("users.noUsers")}</p>
           </div>
         )}
       </Card>
@@ -695,9 +706,9 @@ function UsersTab() {
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete user"
-        description={`Delete user "${deleteTarget?.username ?? ""}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t("users.deleteUser")}
+        description={t("users.deleteUserDesc", { name: deleteTarget?.username ?? "" })}
+        confirmLabel={tc("delete")}
         variant="danger"
         loading={deleteMutation.isPending}
         onConfirm={() => {
@@ -722,6 +733,8 @@ function UsersTab() {
 
 function GeneralTab() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -751,7 +764,7 @@ function GeneralTab() {
         <div className="flex items-center gap-2 mb-4">
           <SettingsIcon className="size-4 text-[var(--color-text-muted)]" />
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-            System
+            {t("system")}
           </p>
         </div>
         <Skeleton className="h-8 w-full" />
@@ -781,22 +794,22 @@ function GeneralTab() {
       <div className="flex items-center gap-2 mb-4">
         <SettingsIcon className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          System
+          {t("system")}
         </p>
       </div>
 
       <div className="space-y-4">
         <Input
-          label="Log retention (hours)"
+          label={t("logRetention")}
           type="number"
           value={draftRetention}
           onChange={(e) => setDraftRetention(e.target.value)}
         />
 
         <div>
-          <label className="text-sm font-medium">Metrics poll interval (seconds)</label>
+          <label className="text-sm font-medium">{t("metricsPollInterval")}</label>
           <p className="text-xs text-[var(--color-text-muted)]">
-            How often to fetch live GPU/CPU/RAM metrics when agents are expanded
+            {t("metricsPollIntervalDesc")}
           </p>
           <Input
             type="number"
@@ -810,9 +823,9 @@ function GeneralTab() {
 
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-[var(--color-text)]">Hide model origin prefix</p>
+            <p className="text-sm text-[var(--color-text)]">{t("hideOriginPrefix")}</p>
             <p className="text-[10px] text-[var(--color-text-muted)]">
-              Strips "cloud/" or "managed/" from model names (e.g. "cloud/openai/gpt-4o" → "openai/gpt-4o")
+              {t("hideOriginPrefixDesc")}
             </p>
           </div>
           <Switch
@@ -829,7 +842,7 @@ function GeneralTab() {
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button
             variant="primary"
@@ -846,7 +859,7 @@ function GeneralTab() {
             disabled={!canSave}
             loading={updateMutation.isPending}
           >
-            Save
+            {tc("save")}
           </Button>
         </div>
       </div>
@@ -858,6 +871,8 @@ function GeneralTab() {
 
 function RouterTab() {
   const queryClient = useQueryClient();
+  const { t } = useTranslation("settings");
+  const { t: tc } = useTranslation("common");
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ["settings"],
@@ -885,7 +900,7 @@ function RouterTab() {
         <div className="flex items-center gap-2 mb-4">
           <Route className="size-4 text-[var(--color-text-muted)]" />
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-            Router
+            {t("router")}
           </p>
         </div>
         <Skeleton className="h-8 w-full" />
@@ -912,41 +927,41 @@ function RouterTab() {
       <div className="flex items-center gap-2 mb-4">
         <Route className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Router
+          {t("router")}
         </p>
       </div>
 
       <div className="space-y-4">
         <div>
-          <p className="text-sm text-[var(--color-text)] mb-1">Server Error Retry</p>
+          <p className="text-sm text-[var(--color-text)] mb-1">{t("serverErrorRetry")}</p>
           <p className="text-[10px] text-[var(--color-text-muted)] mb-3">
-            When a cloud provider returns a 5xx server error, retry the same model before falling back to the next one in the profile.
+            {t("serverErrorRetryDesc")}
           </p>
 
           <Input
-            label="Retry attempts"
+            label={t("retryAttempts")}
             type="number"
             value={draftRetryAttempts}
             onChange={(e) => setDraftRetryAttempts(e.target.value)}
           />
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Number of retry attempts per model on server error (0–10)
+            {t("retryAttemptsDesc")}
           </p>
           {Number(draftRetryAttempts) !== 0 && (Number(draftRetryAttempts) < 0 || Number(draftRetryAttempts) > 10) && (
-            <p className="text-xs text-amber-500">Value will be clamped to 0–10 on save</p>
+            <p className="text-xs text-amber-500">{t("retryHint")}</p>
           )}
 
           <Input
-            label="Retry delay (ms)"
+            label={t("retryDelay")}
             type="number"
             value={draftRetryDelayMs}
             onChange={(e) => setDraftRetryDelayMs(e.target.value)}
           />
           <p className="text-[10px] text-[var(--color-text-muted)]">
-            Delay between retry attempts in milliseconds (0–30000)
+            {t("retryDelayDesc")}
           </p>
           {Number(draftRetryDelayMs) !== 0 && (Number(draftRetryDelayMs) < 0 || Number(draftRetryDelayMs) > 30000) && (
-            <p className="text-xs text-amber-500">Value will be clamped to 0–30000 on save</p>
+            <p className="text-xs text-amber-500">{t("retryDelayHint")}</p>
           )}
         </div>
 
@@ -958,7 +973,7 @@ function RouterTab() {
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={handleCancel} disabled={updateMutation.isPending}>
-            Cancel
+            {tc("cancel")}
           </Button>
           <Button
             variant="primary"
@@ -972,7 +987,7 @@ function RouterTab() {
             disabled={!canSave}
             loading={updateMutation.isPending}
           >
-            Save
+            {tc("save")}
           </Button>
         </div>
       </div>
@@ -984,6 +999,7 @@ function RouterTab() {
 
 export default function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { t } = useTranslation("settings");
   const tabParam = searchParams.get("tab") as TabKey | null;
   const activeTab: TabKey =
     tabParam && TABS.some((t) => t.key === tabParam) ? tabParam : "general";
@@ -996,8 +1012,8 @@ export default function Settings() {
   });
   const isAdmin = !(usersError && usersError instanceof ApiError && usersError.status === 403);
 
-  const visibleTabs = TABS.filter((t) => {
-    if (t.key === "users" && !isAdmin) return false;
+  const visibleTabs = TABS.filter((tab) => {
+    if (tab.key === "users" && !isAdmin) return false;
     return true;
   });
 
@@ -1014,10 +1030,10 @@ export default function Settings() {
       {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Settings
+          {t("title")}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          System configuration and preferences.
+          {t("description")}
         </p>
       </div>
 
@@ -1042,7 +1058,7 @@ export default function Settings() {
               `}
             >
               <Icon className="size-3.5" />
-              {tab.label}
+              {t(tab.labelKey)}
             </button>
           );
         })}

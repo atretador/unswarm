@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import {
@@ -32,10 +33,11 @@ import type {
   UpdateRuntimePayload,
   ContainerMetrics,
 } from "../../lib/api/types";
+import { enumLabel } from "../../i18n/enum-map";
 import {
   REG_STATUS_VARIANT,
   REG_TRANSITIONAL,
-  RUNTIME_LABEL,
+  getRuntimeLabel,
   runtimeSignal,
   relativeTime,
   benchDisabledTooltip,
@@ -46,20 +48,21 @@ import { ContainerKPIBadges } from "./ContainerKPIBadges";
 // ─── Discovered model chip ────────────────────────────────────────
 
 function ModelChip({ model }: { model: Model }) {
+  const { t } = useTranslation('swarm');
   const validating = model.status === "validating";
   const conflicted = model.status === "conflict";
   return (
     <Tooltip
       content={
         validating
-          ? "Validating — not available for inference yet"
+          ? t('model.validating')
           : model.status === "invalid"
-            ? "Invalid — cannot be served"
+            ? t('model.invalid')
             : model.status === "deprecated"
-              ? "Deprecated — legacy model"
+              ? t('model.deprecated')
               : conflicted
-                ? "Name conflicts with another model — rename to resolve"
-                : "Ready for inference"
+                ? t('model.conflict')
+                : t('model.ready')
       }
     >
       <span
@@ -84,7 +87,7 @@ function ModelChip({ model }: { model: Model }) {
         <span className="truncate">{model.displayName || model.name}</span>
         {model.status !== "ready" && (
           <span className="uppercase tracking-wide opacity-80">
-            {validating ? "validating…" : model.status}
+            {validating ? enumLabel('modelStatus', 'validating') : model.status}
           </span>
         )}
       </span>
@@ -103,6 +106,8 @@ function EditRuntimeDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const [displayName, setDisplayName] = useState(runtime?.displayName ?? "");
   const [containerPort, setContainerPort] = useState(
@@ -158,41 +163,40 @@ function EditRuntimeDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title="Edit runtime">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('runtime.editRuntime')}>
       <div className="space-y-4 p-5">
         <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-          Update settings for{" "}
-          <span className="font-mono text-[var(--color-text-heading)]">{runtime?.displayName}</span>.
+          {t('runtime.updateSettings', { name: runtime?.displayName })}
         </p>
 
         <Input
-          label="Display name"
+          label={t('runtime.displayName')}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="my-runtime"
-          aria-label="Display name"
+          placeholder={t('runtime.placeholders.displayName')}
+          aria-label={t('runtime.displayName')}
           autoFocus
         />
 
         <Input
-          label="Runtime port"
+          label={t('runtime.runtimePort')}
           type="number"
           value={containerPort}
           onChange={(e) => setContainerPort(e.target.value)}
-          placeholder="8080"
-          aria-label="Runtime port"
+          placeholder={t('runtime.placeholders.port')}
+          aria-label={t('runtime.runtimePort')}
         />
 
         <Input
-          label="Parallel slots"
+          label={t('runtime.parallelSlots')}
           type="number"
           value={String(maxConcurrentInferences)}
           onChange={(e) => {
             const v = parseInt(e.target.value, 10);
             if (!isNaN(v)) setMaxConcurrentInferences(Math.max(1, Math.min(128, v)));
           }}
-          placeholder="1"
-          aria-label="Parallel slots"
+          placeholder={t('runtime.placeholders.parallelLanes')}
+          aria-label={t('runtime.parallelSlots')}
         />
 
         {updateMutation.isError && (
@@ -204,7 +208,7 @@ function EditRuntimeDialog({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancel
+            {tc('cancel')}
           </Button>
           <Button
             size="sm"
@@ -212,7 +216,7 @@ function EditRuntimeDialog({
             disabled={!hasChanges}
             onClick={handleSave}
           >
-            Save
+            {tc('save')}
           </Button>
         </div>
       </div>
@@ -236,6 +240,8 @@ export function RegisteredContainerCard({
   /** Live CPU/RAM metrics from agent telemetry. */
   containerMetrics?: ContainerMetrics;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const [benchmark, setBenchmark] = useState<{
     tokensPerSec: number;
@@ -276,7 +282,7 @@ export function RegisteredContainerCard({
       invalidate();
     },
     onError: (err: Error) => {
-      setStartError(err.message || "Start failed");
+      setStartError(err.message || t('container.startFailed'));
       invalidate();
     },
   });
@@ -299,7 +305,7 @@ export function RegisteredContainerCard({
     },
     onError: (err: Error) => {
       // Surface non-2xx failures (e.g. unknown id / dead container) inline.
-      setRediscoverError(err.message || "Rediscover failed");
+      setRediscoverError(err.message || t('container.rediscoverFailed'));
     },
   });
 
@@ -325,7 +331,7 @@ export function RegisteredContainerCard({
       queryClient.invalidateQueries({ queryKey: ["models"] });
     },
     onError: (err: Error) => {
-      setHealthCheckError(err.message || "Health check failed");
+      setHealthCheckError(err.message || t('container.healthCheckFailed'));
     },
   });
 
@@ -387,7 +393,7 @@ export function RegisteredContainerCard({
         {/* Header */}
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
-            <Tooltip content={`Runtime: ${RUNTIME_LABEL[signal]}`}>
+            <Tooltip content={getRuntimeLabel(signal)}>
               <span className="inline-flex">
                 <StatusDot
                   status={
@@ -416,11 +422,11 @@ export function RegisteredContainerCard({
             {isScript && (
               <Badge variant="outline" className="gap-1">
                 <FileCode className="size-2.5" />
-                script
+                {t('runtime.scriptBadge')}
               </Badge>
             )}
             <Badge variant={REG_STATUS_VARIANT[container.status]}>
-              {container.status}
+              {enumLabel('containerRegistrationStatus', container.status)}
             </Badge>
           </div>
         </div>
@@ -430,25 +436,25 @@ export function RegisteredContainerCard({
         {/* Metrics */}
         <div className="grid grid-cols-4 gap-2 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] px-2.5 py-2 text-[10px]">
           <div>
-            <p className="text-[var(--color-text-muted)]">Port</p>
+            <p className="text-[var(--color-text-muted)]">{t('runtime.port')}</p>
             <p className="font-mono text-[var(--color-text-heading)]">
               {container.mappedPort ?? container.containerPort}
             </p>
           </div>
           <div>
-            <p className="text-[var(--color-text-muted)]">Models</p>
+            <p className="text-[var(--color-text-muted)]">{t('runtime.models')}</p>
             <p className="font-mono text-[var(--color-text-heading)]">
               {container.discoveredModels.length > 0 ? container.discoveredModels.length : "—"}
             </p>
           </div>
           <div>
-            <p className="text-[var(--color-text-muted)]">Parallel Slots</p>
+            <p className="text-[var(--color-text-muted)]">{t('runtime.parallelSlots')}</p>
             <p className="font-mono text-[var(--color-text-heading)]">
               {container.maxConcurrentInferences}
             </p>
           </div>
           <div className="min-w-0">
-            <p className="text-[var(--color-text-muted)]">Discovered</p>
+            <p className="text-[var(--color-text-muted)]">{t('runtime.discovered')}</p>
             <p className="truncate font-mono text-[var(--color-text-heading)]" title={container.lastDiscoveredAt ?? undefined}>
               {relativeTime(container.lastDiscoveredAt)}
             </p>
@@ -464,7 +470,7 @@ export function RegisteredContainerCard({
           </div>
         ) : (
           <p className="text-[10px] italic text-[var(--color-text-muted)]">
-            No models discovered yet{transitional ? " — discovery in progress" : ""}.
+            {t('runtime.noModels')}{transitional ? "" : ""}.
           </p>
         )}
 
@@ -480,12 +486,12 @@ export function RegisteredContainerCard({
             <AlertTriangle className="size-3 shrink-0" />
             <span className="min-w-0 flex-1 truncate">
               {rediscoverError}
-              {signal === "down" && " — the container appears to be stopped; start it first."}
+              {signal === "down" && t('container.stoppedHint')}
             </span>
             <button
               type="button"
               onClick={() => setRediscoverError(null)}
-              aria-label="Dismiss rediscover error"
+              aria-label={t('container.errors.dismissRediscover')}
               className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
             >
               <X className="size-3" />
@@ -500,7 +506,7 @@ export function RegisteredContainerCard({
             <button
               type="button"
               onClick={() => setHealthCheckError(null)}
-              aria-label="Dismiss health check error"
+              aria-label={t('container.errors.dismissHealthCheck')}
               className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
             >
               <X className="size-3" />
@@ -515,7 +521,7 @@ export function RegisteredContainerCard({
             <button
               type="button"
               onClick={() => setStartError(null)}
-              aria-label="Dismiss start error"
+              aria-label={t('container.errors.dismissStart')}
               className="shrink-0 rounded-[var(--radius-sm)] p-0.5 text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_14%,transparent)]"
             >
               <X className="size-3" />
@@ -535,17 +541,17 @@ export function RegisteredContainerCard({
                 onClick={() => firstModel && benchmarkMutation.mutate(firstModel.id)}
               >
                 <Gauge className="size-3" />
-                Benchmark
+                {t('runtime.benchmark')}
               </Button>
             </span>
           </Tooltip>
           {benchmark && (
             <span
               className="inline-flex items-center gap-1 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-running)_12%,transparent)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-status-running)]"
-              title="Last benchmark"
+              title={t('runtime.lastBenchmark')}
             >
               <Zap className="size-2.5" />
-              {Number(benchmark.tokensPerSec).toFixed(2)} tok/s · {Number(benchmark.latencyMs).toFixed(2)}ms
+              {Number(benchmark.tokensPerSec).toFixed(2)} {tc('units.tokPerSec')} · {Number(benchmark.latencyMs).toFixed(2)}{tc('units.ms')}
               {benchmark.promptName && (
                 <span className="truncate text-[var(--color-text-muted)]">
                   {" "}· {benchmark.promptName}{benchmark.promptVersion != null ? ` v${benchmark.promptVersion}` : ""}
@@ -563,10 +569,10 @@ export function RegisteredContainerCard({
                 disabled={busy}
                 loading={stopScriptMutation.isPending}
                 onClick={() => stopScriptMutation.mutate(container.id)}
-                title="Stop script"
+                title={t('runtime.stopScript')}
               >
                 <Square className="size-3" />
-                Stop
+                {t('runtime.stop')}
               </Button>
             ) : signal === "down" || signal === "unknown" ? (
               <Button
@@ -575,15 +581,15 @@ export function RegisteredContainerCard({
                 disabled={busy}
                 loading={startMutation.isPending}
                 onClick={() => startMutation.mutate(container.id)}
-                title="Start script"
+                title={t('runtime.startScript')}
               >
                 <Play className="size-3" />
-                Start
+                {t('runtime.start')}
               </Button>
             ) : signal === "transitional" ? (
               <>
                 <span className="text-[10px] italic text-[var(--color-text-muted)]">
-                  {RUNTIME_LABEL[signal]}
+                  {getRuntimeLabel(signal)}
                 </span>
                 <Button
                   variant="ghost"
@@ -591,10 +597,10 @@ export function RegisteredContainerCard({
                   disabled={busy}
                   loading={stopScriptMutation.isPending}
                   onClick={() => stopScriptMutation.mutate(container.id)}
-                  title="Stop script (stuck in Starting)"
+                  title={t('runtime.stopScriptStarting')}
                 >
                   <Square className="size-3" />
-                  Stop
+                  {t('runtime.stop')}
                 </Button>
               </>
             ) : null
@@ -606,10 +612,10 @@ export function RegisteredContainerCard({
                 disabled={!container.runtimeContainerId || busy}
                 loading={restartMutation.isPending}
                 onClick={() => container.runtimeContainerId && restartMutation.mutate(container.runtimeContainerId)}
-                title="Restart runtime container"
+                title={t('runtime.restartRuntime')}
               >
                 <RotateCw className="size-3" />
-                Restart
+                {t('runtime.restart')}
               </Button>
               <Button
                 variant="ghost"
@@ -617,10 +623,10 @@ export function RegisteredContainerCard({
                 disabled={!container.runtimeContainerId || busy}
                 loading={stopMutation.isPending}
                 onClick={() => container.runtimeContainerId && stopMutation.mutate(container.runtimeContainerId)}
-                title="Stop runtime container"
+                title={t('runtime.stopRuntime')}
               >
                 <Square className="size-3" />
-                Stop
+                {t('runtime.stop')}
               </Button>
             </>
           ) : signal === "down" || signal === "unknown" ? (
@@ -633,15 +639,15 @@ export function RegisteredContainerCard({
               disabled={busy}
               loading={startMutation.isPending}
               onClick={() => startMutation.mutate(container.id)}
-              title="Start runtime container"
+              title={t('runtime.startRuntime')}
             >
               <Play className="size-3" />
-              Start
+              {t('runtime.start')}
             </Button>
           ) : (
             // Transitional (starting/stopping/created/restarting) — no lifecycle action.
             <span className="text-[10px] italic text-[var(--color-text-muted)]">
-              {RUNTIME_LABEL[signal]}
+              {getRuntimeLabel(signal)}
             </span>
           )}
           {signal !== "down" && signal !== "unknown" && (
@@ -651,10 +657,10 @@ export function RegisteredContainerCard({
               disabled={busy}
               loading={healthCheckMutation.isPending}
               onClick={() => healthCheckMutation.mutate()}
-              title="Trigger a manual health check"
+              title={t('runtime.healthCheck')}
             >
               <Stethoscope className="size-3" />
-              Check Health
+              {t('runtime.checkHealth')}
             </Button>
           )}
           <div className="ml-auto flex items-center gap-1">
@@ -663,10 +669,10 @@ export function RegisteredContainerCard({
               size="sm"
               disabled={busy}
               onClick={() => setEditingName(true)}
-              title="Edit runtime settings"
+              title={t('runtime.editSettings')}
             >
               <Pencil className="size-3" />
-              Edit
+              {tc('edit')}
             </Button>
             <Button
               variant="ghost"
@@ -674,17 +680,17 @@ export function RegisteredContainerCard({
               disabled={busy}
               loading={rediscoverMutation.isPending}
               onClick={() => rediscoverMutation.mutate(container.id)}
-              title="Rediscover models"
+              title={t('runtime.rediscoverModels')}
             >
               <RefreshCw className="size-3" />
-              Rediscover
+              {t('runtime.rediscover')}
             </Button>
             {confirmingDelete ? (
               <ConfirmDialog
                 open={confirmingDelete}
-                title={`Delete ${container.displayName}?`}
-                description="This will remove the runtime registration and all associated data."
-                confirmLabel="Delete"
+                title={t('runtime.confirmDelete', { name: container.displayName })}
+                description={t('runtime.deleteRegistrationDesc')}
+                confirmLabel={tc('delete')}
                 variant="danger"
                 loading={deleteMutation.isPending}
                 onConfirm={() => {
@@ -699,8 +705,8 @@ export function RegisteredContainerCard({
                 size="sm"
                 disabled={busy}
                 onClick={() => setConfirmingDelete(true)}
-                aria-label={`Delete ${container.displayName} registration`}
-                title="Delete registration"
+                aria-label={t('runtime.deleteRegistrationAria', { name: container.displayName })}
+                title={t('runtime.deleteRegistration')}
                 className="text-[var(--color-status-error)] hover:bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)]"
               >
                 <Trash2 className="size-3" />

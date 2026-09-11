@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
@@ -34,7 +35,7 @@ public sealed class RouterProfileController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateRouterProfileRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { error = "Name is required." });
+            return BadRequest(LocalizedError.Create("routerProfiles.nameRequired"));
 
         var entries = (request.Entries ?? [])
             .Select(e => new RouterProfileEntry
@@ -42,6 +43,7 @@ public sealed class RouterProfileController : ControllerBase
                 ModelId = e.ModelId,
                 Priority = e.Priority,
                 IsEnabled = e.IsEnabled,
+                ThinkingEffortOverride = e.ThinkingEffortOverride,
             })
             .ToList();
 
@@ -60,7 +62,7 @@ public sealed class RouterProfileController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(LocalizedError.Create("routerProfiles.alreadyExists", new { name = request.Name }));
         }
     }
 
@@ -76,7 +78,7 @@ public sealed class RouterProfileController : ControllerBase
     {
         var item = await _profiles.GetAsync(id, ct);
         return item is null
-            ? NotFound(new { error = "Router profile not found." })
+            ? NotFound(LocalizedError.Create("routerProfiles.notFound"))
             : Ok(MapToDto(item));
     }
 
@@ -84,7 +86,7 @@ public sealed class RouterProfileController : ControllerBase
     public async Task<IActionResult> Update(string id, [FromBody] UpdateRouterProfileRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { error = "Name is required." });
+            return BadRequest(LocalizedError.Create("routerProfiles.nameRequired"));
 
         var entries = request.Entries
             .Select(e => new RouterProfileEntry
@@ -92,6 +94,7 @@ public sealed class RouterProfileController : ControllerBase
                 ModelId = e.ModelId,
                 Priority = e.Priority,
                 IsEnabled = e.IsEnabled,
+                ThinkingEffortOverride = e.ThinkingEffortOverride,
             })
             .ToList();
 
@@ -110,11 +113,11 @@ public sealed class RouterProfileController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = "Router profile not found." });
+            return NotFound(LocalizedError.Create("routerProfiles.notFound"));
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { error = ex.Message });
+            return Conflict(LocalizedError.Create("routerProfiles.alreadyExists", new { name = request.Name }));
         }
     }
 
@@ -128,7 +131,7 @@ public sealed class RouterProfileController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = "Router profile not found." });
+            return NotFound(LocalizedError.Create("routerProfiles.notFound"));
         }
     }
 
@@ -158,6 +161,7 @@ public sealed class RouterProfileController : ControllerBase
                 ModelId = e.ModelId,
                 Priority = e.Priority,
                 IsEnabled = e.IsEnabled,
+                ThinkingEffortOverride = e.ThinkingEffortOverride,
             })
             .ToList(),
         ActiveModelId = profile.ActiveModelId,

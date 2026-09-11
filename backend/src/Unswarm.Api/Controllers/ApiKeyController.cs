@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
@@ -46,7 +47,7 @@ public sealed class ApiKeyController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateApiKeyRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { error = "Name is required." });
+            return BadRequest(LocalizedError.Create("apiKeys.nameRequired"));
 
         // Inference-scope key creation. Agent-scoped keys are created
         // through POST api/api-keys/agent below.
@@ -58,12 +59,10 @@ public sealed class ApiKeyController : ControllerBase
     public async Task<IActionResult> CreateAgent([FromBody] CreateApiKeyRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return BadRequest(new { error = "Name is required." });
+            return BadRequest(LocalizedError.Create("apiKeys.nameRequired"));
 
-        // Optional permanent binding: a key created with a bound agent name can
-        // only ever authenticate as that agent in the /ws/agent handshake.
         if (request.BoundAgentName is not null && string.IsNullOrWhiteSpace(request.BoundAgentName))
-            return BadRequest(new { error = "boundAgentName must be a non-empty string when provided." });
+            return BadRequest(LocalizedError.Create("apiKeys.invalidBoundAgentName"));
 
         var created = await _keys.CreateAsync(
             request.Name.Trim(), ApiKeyScope.Agent,
@@ -83,14 +82,14 @@ public sealed class ApiKeyController : ControllerBase
     public async Task<IActionResult> Get(string id, CancellationToken ct)
     {
         var item = await _keys.GetAsync(id, ct);
-        return item is null ? NotFound(new { error = "API key not found." }) : Ok(Map(item));
+        return item is null ? NotFound(LocalizedError.Create("apiKeys.notFound")) : Ok(Map(item));
     }
 
     [HttpDelete("{id}")]
     public async Task<IActionResult> Revoke(string id, CancellationToken ct)
     {
         var ok = await _keys.RevokeAsync(id, ct);
-        return ok ? NoContent() : NotFound(new { error = "API key not found." });
+        return ok ? NoContent() : NotFound(LocalizedError.Create("apiKeys.notFound"));
     }
 
     [HttpPost("{id}/rotate")]
@@ -103,7 +102,7 @@ public sealed class ApiKeyController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = "API key not found." });
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
         }
     }
 
@@ -115,13 +114,13 @@ public sealed class ApiKeyController : ControllerBase
     {
         var item = await _keys.GetAsync(id, ct);
         if (item is null)
-            return NotFound(new { error = "API key not found." });
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
         if (item.Scope == ApiKeyScope.Agent)
-            return BadRequest(new { error = "Access restrictions are not supported for agent API keys." });
+            return BadRequest(LocalizedError.Create("apiKeys.agentKeyNoAccess"));
 
         var access = await _keys.GetAccessAsync(id, ct);
         return access is null
-            ? NotFound(new { error = "API key not found." })
+            ? NotFound(LocalizedError.Create("apiKeys.notFound"))
             : Ok(new KeyAccessDto { Providers = [.. access.Providers], Models = [.. access.Models] });
     }
 
@@ -137,15 +136,15 @@ public sealed class ApiKeyController : ControllerBase
         // agent-scope keys must not carry them.
         var item = await _keys.GetAsync(id, ct);
         if (item is null)
-            return NotFound(new { error = "API key not found." });
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
         if (item.Scope == ApiKeyScope.Agent)
-            return BadRequest(new { error = "Access restrictions are not supported for agent API keys." });
+            return BadRequest(LocalizedError.Create("apiKeys.agentKeyNoAccess"));
 
         var providers = (request.Providers ?? []).Select(p => p.Trim()).Where(p => p.Length > 0).Distinct().ToList();
         var models = (request.Models ?? []).Select(m => m.Trim()).Where(m => m.Length > 0).Distinct().ToList();
 
         if (providers.Count > 200 || models.Count > 500)
-            return BadRequest(new { error = "Too many entries (max 200 providers, 500 models)." });
+            return BadRequest(LocalizedError.Create("apiKeys.tooManyAccessEntries"));
 
         // Strict validation: every listed provider must be a configured cloud provider,
         // a registered local runtime display name, or a router profile name.
@@ -161,7 +160,7 @@ public sealed class ApiKeyController : ControllerBase
 
         var saved = await _keys.SaveAccessAsync(id, new KeyAccess { Providers = providers, Models = models }, ct);
         if (saved is null)
-            return NotFound(new { error = "API key not found." });
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
 
         return Ok(new KeyAccessDto { Providers = [.. saved.Providers], Models = [.. saved.Models] });
     }

@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { httpClient } from "./api/httpClient";
+import i18n from "../i18n";
 
 export interface AuthUser {
   username: string;
@@ -32,6 +33,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const u = await httpClient.login(username, password);
     setUser(u);
+
+    // After successful login, load user's locale preference
+    try {
+      const localeRes = await fetch('/api/users/me/locale', {
+        credentials: 'include',
+      });
+      if (localeRes.ok) {
+        const { locale } = await localeRes.json();
+        if (locale) {
+          i18n.changeLanguage(locale);
+          localStorage.setItem('locale', locale);
+          document.documentElement.lang = locale;
+        }
+      }
+    } catch {
+      // Ignore — use browser/localStorage fallback
+    }
   }, []);
 
   const logout = useCallback(async () => {
@@ -65,6 +83,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 // eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error(i18n.t("auth:useAuthError"));
   return ctx;
 }

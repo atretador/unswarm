@@ -1,4 +1,5 @@
 import { Sun, Moon, Monitor } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useTheme } from "../../lib/theme";
 import { Tooltip } from "../ui/Tooltip";
 
@@ -8,18 +9,13 @@ const ICONS = {
   system: Monitor,
 };
 
-const LABELS = {
-  light: "Light",
-  dark: "Dark",
-  system: "System",
-};
-
 export function ThemeToggle() {
   const { choice, cycle } = useTheme();
+  const { t } = useTranslation("common");
   const Icon = ICONS[choice];
 
   return (
-    <Tooltip content={`Theme: ${LABELS[choice]}`} side="bottom">
+    <Tooltip content={t('themeTooltip', { theme: t(`theme.${choice}`) })} side="bottom">
       <button
         onClick={cycle}
         className="
@@ -29,7 +25,7 @@ export function ThemeToggle() {
           transition-colors duration-[var(--duration-fast)]
           cursor-pointer
         "
-        aria-label={`Switch theme (currently ${LABELS[choice]})`}
+        aria-label={t('themeSwitchAriaLabel', { theme: t(`theme.${choice}`) })}
       >
         <Icon className="size-4" strokeWidth={1.5} />
       </button>
