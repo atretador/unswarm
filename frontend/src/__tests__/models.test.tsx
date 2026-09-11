@@ -58,7 +58,7 @@ describe("Models", () => {
     // ready chips are green; validating is rendered as a distinct amber "validating…" chip
     expect(screen.getAllByText("ready").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("validating…")).toBeInTheDocument();
-    expect(screen.getByText("deprecated")).toBeInTheDocument();
+    expect(screen.getAllByText("deprecated").length).toBeGreaterThanOrEqual(1);
 
     // the validating chip (Badge span wrapping the label) uses the warning palette
     const validatingBadge = screen.getByText("validating…");
@@ -78,7 +78,7 @@ describe("Models", () => {
 
     // llama-3.1-70b has lastBenchmark {tokensPerSec: 42.3, latencyMs: 120, tokensGenerated: 512}
     expect(screen.getByText("42.3 tok/s")).toBeInTheDocument();
-    expect(screen.getByText("120ms")).toBeInTheDocument();
+    expect(screen.getByText("120.00ms")).toBeInTheDocument();
     // tokensGenerated is seeded on this model → tokens chip renders
     expect(screen.getByText("512 tok")).toBeInTheDocument();
     // Labels are visible for each metric
@@ -127,7 +127,7 @@ describe("Models", () => {
 
     // speed + processing + ran chips render; no tokens chip
     expect(screen.getByText("33.1 tok/s")).toBeInTheDocument();
-    expect(screen.getByText("141ms")).toBeInTheDocument();
+    expect(screen.getByText("141.00ms")).toBeInTheDocument();
     expect(screen.queryByText("tokens")).not.toBeInTheDocument();
   });
 

@@ -392,12 +392,12 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                         }
                         className="size-3.5 rounded accent-[var(--color-primary)] cursor-pointer"
                       />
+                      <Badge variant="info" size="sm" className="shrink-0">
+                        {provider.name}
+                      </Badge>
                       <span className="flex-1 text-xs text-[var(--color-text)] font-mono">
                         {modelId}
                       </span>
-                      <Badge variant="info" size="sm">
-                        {provider.name}
-                      </Badge>
                       {onChatModel && (
                         <Tooltip content={`Test chat with ${modelId}`}>
                           <button

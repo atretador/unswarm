@@ -136,6 +136,10 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
+
+  // A model with no source runtime is orphaned — treat as deprecated for display
+  const effectiveStatus: ModelStatus = (!model.sourceRuntimeId && model.status === "ready") ? "deprecated" : model.status;
 
   // Edit state
   const [editing, setEditing] = useState(false);
@@ -227,12 +231,17 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               ].filter(Boolean).join(" · ")}
             </p>
           </div>
-          <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
-            {MODEL_STATUS_LABEL[model.status]}
+          <Badge variant={MODEL_STATUS_VARIANT[effectiveStatus]} className="shrink-0">
+            {MODEL_STATUS_LABEL[effectiveStatus]}
           </Badge>
-          {model.status === "conflict" && (
+          {effectiveStatus === "conflict" && (
             <span className="text-[10px] text-[var(--color-status-error)] leading-tight">
               Name conflicts with another model — rename to resolve
+            </span>
+          )}
+          {effectiveStatus === "deprecated" && model.sourceRuntimeId === null && (
+            <span className="text-[10px] text-[var(--color-status-stopped)] leading-tight">
+              No source runtime — rediscover or delete
             </span>
           )}
         </div>
@@ -302,29 +311,42 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               <Pencil className="size-3.5" />
             </button>
           </Tooltip>
-          {model.status === "deprecated" && (
-            <>
-              <Tooltip content="Remove deprecated model">
-                <button
-                  onClick={() => setShowConfirm(true)}
-                  disabled={deleting}
-                  aria-label={`Delete ${model.displayName || model.name}`}
-                  className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </Tooltip>
-              <ConfirmDialog
-                open={showConfirm}
-                title={`Delete ${model.displayName || model.name}?`}
-                description="This will permanently remove the deprecated model from the registry."
-                confirmLabel="Delete"
-                loading={deleting}
-                onConfirm={handleDelete}
-                onCancel={() => setShowConfirm(false)}
-              />
-            </>
-          )}
+          <Tooltip content="Delete model">
+            <button
+              onClick={() => {
+                if (effectiveStatus === "deprecated" || !model.sourceRuntimeId) {
+                  setShowConfirm(true);
+                } else {
+                  setShowWarning(true);
+                }
+              }}
+              disabled={deleting}
+              aria-label={`Delete ${model.displayName || model.name}`}
+              className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </Tooltip>
+          {/* Direct delete confirm — for deprecated / orphaned models */}
+          <ConfirmDialog
+            open={showConfirm}
+            title={`Delete ${model.displayName || model.name}?`}
+            description="This will permanently remove the model from the registry."
+            confirmLabel="Delete"
+            loading={deleting}
+            onConfirm={handleDelete}
+            onCancel={() => setShowConfirm(false)}
+          />
+          {/* Warning dialog — for active runtime-tied models */}
+          <ConfirmDialog
+            open={showWarning}
+            title={`Remove ${model.displayName || model.name}?`}
+            description="This model is tied to a running runtime. Deleting it only removes it from the registry — the runtime will re-discover it on the next sync. To permanently stop serving this model, remove it from the source runtime first."
+            confirmLabel="Remove from registry"
+            loading={deleting}
+            onConfirm={handleDelete}
+            onCancel={() => setShowWarning(false)}
+          />
         </div>
       </div>
 

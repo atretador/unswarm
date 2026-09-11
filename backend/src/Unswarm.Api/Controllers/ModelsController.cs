@@ -171,17 +171,18 @@ public sealed class ModelsController : ControllerBase
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
             DisplayName = request.DisplayName ?? existing.DisplayName,
+            SourceRuntimeId = existing.SourceRuntimeId,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = existing.UpdatedAt
         };
 
         var result = await _registry.UpdateAsync(existing.Id, updated, ct);
 
-        // If the name changed, check for conflicts with the new name.
-        // A renamed model that was in Conflict may now be unique and should be Ready.
-        var newName = result.Name;
+        // If the name changed, check for conflicts with the new DisplayName.
+        // Conflict is based on DisplayName (served under /v1/models), not internal Name.
+        var newDisplayName = result.DisplayName ?? result.Name;
         var allModels = await _registry.ListAllAsync(ct).ConfigureAwait(false);
-        var sameName = allModels.Where(m => m.Name == newName).ToList();
+        var sameName = allModels.Where(m => (m.DisplayName ?? m.Name) == newDisplayName).ToList();
 
         if (sameName.Count > 1)
         {

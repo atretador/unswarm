@@ -35,11 +35,19 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-/** Look up a model by name and format with runtime prefix for display. */
+/** Return a short label for the model's source (provider or agent). */
+function modelSourceLabel(m: Model): string | null {
+  if (m.origin === "cloud" && m.providerName) return m.providerName;
+  if (m.sourceRuntimeAgent) return m.sourceRuntimeAgent;
+  return null;
+}
+
+/** Look up a model by id or name and format for display. */
 function displayModelName(modelId: string | null | undefined, models?: Model[]): string {
   if (!modelId) return "";
-  const m = models?.find((x) => x.name === modelId);
-  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, m?.sourceRuntimeName ?? undefined, m?.displayName);
+  const m = models?.find((x) => x.id === modelId || x.name === modelId);
+  // Don't pass sourceRuntimeName — the source badge already shows that info
+  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, undefined, m?.displayName);
 }
 
 function formatRelativeTime(iso: string): string {
@@ -73,11 +81,20 @@ function ModelSearchInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Cache display name from handleSelect to avoid stale lookup in useEffect
+  const selectedDisplayNameRef = useRef<string | null>(null);
 
-  // Sync external value changes (e.g. when dialog resets)
+  // Sync external value changes — show display name instead of internal modelId
   useEffect(() => {
-    setQuery(value);
-  }, [value]);
+    // If we just selected this model, use the cached display name
+    if (selectedDisplayNameRef.current) {
+      setQuery(selectedDisplayNameRef.current);
+      selectedDisplayNameRef.current = null;
+      return;
+    }
+    const m = models?.find((x) => x.id === value || x.name === value);
+    setQuery(m?.displayName || value);
+  }, [value, models]);
 
   const filtered = useMemo(() => {
     if (query.length < 2) return [];
@@ -85,7 +102,8 @@ function ModelSearchInput({
     return models.filter(
       (m) =>
         m.id.toLowerCase().includes(lower) ||
-        m.name.toLowerCase().includes(lower),
+        m.name.toLowerCase().includes(lower) ||
+        (m.displayName ?? "").toLowerCase().includes(lower),
     );
   }, [query, models]);
 
@@ -93,13 +111,17 @@ function ModelSearchInput({
 
   const handleSelect = useCallback(
     (modelId: string) => {
-      setQuery(modelId);
+      const m = models?.find((x) => x.id === modelId || x.name === modelId);
+      const displayName = m?.displayName || modelId;
+      // Cache so the useEffect doesn't need to re-lookup (stale models ref)
+      selectedDisplayNameRef.current = displayName;
+      setQuery(displayName);
       onChange(modelId);
       setIsOpen(false);
       setHighlightedIndex(-1);
       inputRef.current?.blur();
     },
-    [onChange],
+    [onChange, models],
   );
 
   const handleKeyDown = useCallback(
@@ -122,7 +144,7 @@ function ModelSearchInput({
         case "Enter":
           e.preventDefault();
           if (highlightedIndex >= 0 && highlightedIndex < filtered.length) {
-            handleSelect(filtered[highlightedIndex].name);
+            handleSelect(filtered[highlightedIndex].id);
           }
           break;
         case "Escape":
@@ -185,7 +207,7 @@ function ModelSearchInput({
           if (query.length >= 2) setIsOpen(true);
         }}
         onKeyDown={handleKeyDown}
-        placeholder="e.g. cloud/openai/gpt-4o"
+        placeholder="Search models…"
         className={`
           h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)]
           px-3 w-full text-xs text-[var(--color-text)]
@@ -216,11 +238,18 @@ function ModelSearchInput({
                 }`}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  handleSelect(m.name);
+                  handleSelect(m.id);
                 }}
                 onMouseEnter={() => setHighlightedIndex(i)}
               >
-                <span className="font-medium truncate block">{displayModelName(m.name, models)}</span>
+                <div className="flex items-center gap-1.5">
+                  {modelSourceLabel(m) && (
+                    <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-medium">
+                      {modelSourceLabel(m)}
+                    </span>
+                  )}
+                  <span className="font-medium truncate">{m.displayName || m.name}</span>
+                </div>
                 {modelSubtitle(m) && (
                   <span className="text-[var(--color-text-muted)] truncate block">
                     {modelSubtitle(m)}
@@ -362,6 +391,59 @@ function ProfileRow({
   );
 }
 
+// ─── Source (runtime/provider) helpers ────────────────────────────
+
+type ModelSource = { key: string; label: string; kind: "runtime" | "cloud" };
+
+/** Derive unique agent/provider sources from the models list.
+ *  Swarm runtimes are grouped by agent name (host / agent-pc / etc.)
+ *  rather than individual runtime display names. */
+function useSourceOptions(models: Model[]): ModelSource[] {
+  return useMemo(() => {
+    const map = new Map<string, ModelSource>();
+    for (const m of models) {
+      if (m.origin === "cloud" && m.providerName) {
+        const key = `cloud:${m.providerName}`;
+        if (!map.has(key)) map.set(key, { key, label: m.providerName, kind: "cloud" });
+      } else if (m.sourceRuntimeAgent) {
+        const key = `agent:${m.sourceRuntimeAgent}`;
+        if (!map.has(key))
+          map.set(key, { key, label: m.sourceRuntimeAgent, kind: "runtime" });
+      } else if (m.sourceRuntimeId) {
+        // Fallback: models without an agent name
+        const key = `agent:${m.sourceRuntimeId}`;
+        if (!map.has(key))
+          map.set(key, { key, label: m.sourceRuntimeName || "Local", kind: "runtime" });
+      }
+    }
+    return Array.from(map.values());
+  }, [models]);
+}
+
+/** Filter models by source key (agent or cloud provider). */
+function filterBySource(models: Model[], sourceKey: string): Model[] {
+  if (sourceKey === "all") return models;
+  if (sourceKey.startsWith("cloud:")) {
+    const provider = sourceKey.slice(6);
+    return models.filter((m) => m.origin === "cloud" && m.providerName === provider);
+  }
+  if (sourceKey.startsWith("agent:")) {
+    const agent = sourceKey.slice(6);
+    return models.filter((m) => m.sourceRuntimeAgent === agent || (!m.sourceRuntimeAgent && m.sourceRuntimeId === agent));
+  }
+  return models;
+}
+
+/** Infer the source key for a given modelId. */
+function sourceKeyForModel(modelId: string, models: Model[]): string | null {
+  const m = models.find((x) => x.id === modelId || x.name === modelId);
+  if (!m) return null;
+  if (m.origin === "cloud" && m.providerName) return `cloud:${m.providerName}`;
+  if (m.sourceRuntimeAgent) return `agent:${m.sourceRuntimeAgent}`;
+  if (m.sourceRuntimeId) return `agent:${m.sourceRuntimeId}`;
+  return null;
+}
+
 // ─── Entry Row (inside the dialog form) ──────────────────────────
 
 function EntryRow({
@@ -379,12 +461,50 @@ function EntryRow({
   models: Model[];
   modelsLoading: boolean;
 }) {
+  const sourceOptions = useSourceOptions(models);
+
+  // Auto-detect source from existing modelId; defaults to "all"
+  const [sourceKey, setSourceKey] = useState<string>(() => {
+    const inferred = entry.modelId ? sourceKeyForModel(entry.modelId, models) : null;
+    return inferred ?? "all";
+  });
+
+  // Re-infer when models load (first render may have empty models)
+  useEffect(() => {
+    if (sourceKey === "all" && entry.modelId) {
+      const inferred = sourceKeyForModel(entry.modelId, models);
+      if (inferred) setSourceKey(inferred);
+    }
+  }, [models, entry.modelId]);
+
+  const filteredModels = useMemo(() => filterBySource(models, sourceKey), [models, sourceKey]);
+
+  const handleModelChange = (modelId: string) => {
+    onUpdate(index, { modelId });
+    // Auto-select the source for the newly selected model
+    const inferred = sourceKeyForModel(modelId, models);
+    if (inferred) setSourceKey(inferred);
+  };
+
   return (
     <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[var(--color-bg-muted)]/40 border border-[var(--color-border-subtle)]">
+      {/* Source filter dropdown */}
+      <select
+        value={sourceKey}
+        onChange={(e) => setSourceKey(e.target.value)}
+        className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] shrink-0 w-32 focus:outline-none focus:border-[var(--color-primary)]"
+      >
+        <option value="all">All sources</option>
+        {sourceOptions.map((s) => (
+          <option key={s.key} value={s.key}>
+            {s.kind === "cloud" ? "☁ " : ""}{s.label}
+          </option>
+        ))}
+      </select>
       <ModelSearchInput
         value={entry.modelId}
-        onChange={(modelId) => onUpdate(index, { modelId })}
-        models={models}
+        onChange={handleModelChange}
+        models={filteredModels}
         modelsLoading={modelsLoading}
       />
       <div className="w-20 shrink-0">

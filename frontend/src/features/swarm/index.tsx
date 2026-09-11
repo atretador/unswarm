@@ -138,7 +138,7 @@ function ConcurrencyModal({
 
   /** Build the label lines for an axis header. */
   function axisLabel(rc: RegisteredRuntime) {
-    const models = rc.discoveredModels.map((m) => m.name);
+    const models = rc.discoveredModels.map((m) => m.displayName || m.name);
     const sub = models.length > 0
       ? models.join(" · ")
       : rc.runtimeKind === "script"

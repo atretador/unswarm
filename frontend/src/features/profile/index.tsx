@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Shield, User } from "lucide-react";
+import { Pencil, Shield, User } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
 import { Card, Input, Button } from "../../components/ui";
+import { EditProfileModal } from "./EditProfileModal";
 
 // ─── Change Password Section (moved from settings) ──────────────
 
@@ -95,6 +96,7 @@ function ChangePasswordSection() {
 
 export default function Profile() {
   const { user } = useAuth();
+  const [editOpen, setEditOpen] = useState(false);
   const letter = user?.username?.charAt(0)?.toUpperCase() ?? "?";
 
   return (
@@ -137,10 +139,21 @@ export default function Profile() {
               {user?.isTempPassword ? "Temporary password" : "Account active"}
             </p>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-auto"
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil className="size-3 mr-1.5" />
+            Edit Profile
+          </Button>
         </div>
       </Card>
 
       <ChangePasswordSection />
+
+      <EditProfileModal open={editOpen} onOpenChange={setEditOpen} />
     </div>
   );
 }

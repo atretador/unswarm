@@ -970,7 +970,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private async Task ResolveNameConflictAsync(string modelName, CancellationToken ct)
     {
         var allModels = await _modelRegistry.ListAllAsync(ct).ConfigureAwait(false);
-        var sameName = allModels.Where(m => m.Name == modelName).ToList();
+        // Conflict is based on DisplayName (the name served under /v1/models), not internal Name (filename).
+        // Two models can share a filename but must not share a display name.
+        var displayName = allModels.FirstOrDefault(m => m.Name == modelName)?.DisplayName ?? modelName;
+        var sameName = allModels.Where(m => (m.DisplayName ?? m.Name) == displayName).ToList();
 
         if (sameName.Count > 1)
         {
