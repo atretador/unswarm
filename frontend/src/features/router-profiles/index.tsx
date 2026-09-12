@@ -26,6 +26,7 @@ import {
   Dialog,
   Drawer,
   Select,
+  Spinner,
 } from "../../components/ui";
 import type {
   RouterProfile,
@@ -283,12 +284,14 @@ function ProfileRow({
   onDelete,
   onView,
   models,
+  activeCount,
 }: {
   profile: RouterProfile;
   onEdit: (profile: RouterProfile) => void;
   onDelete: (profile: RouterProfile) => void;
   onView: (profile: RouterProfile) => void;
   models?: Model[];
+  activeCount?: number;
 }) {
   const { t } = useTranslation('router-profiles');
   const sortedModels = useMemo(
@@ -361,12 +364,24 @@ function ProfileRow({
         <span className="text-sm text-[var(--color-text)] truncate font-medium">
           {profile.name}
         </span>
+        {activeCount != null && activeCount > 0 && (
+          <span
+            className="inline-flex items-center gap-1 shrink-0"
+            role="status"
+            aria-busy="true"
+            aria-label={t('activeRequests', { count: activeCount })}
+            title={t('activeRequests', { count: activeCount })}
+          >
+            <Spinner size="sm" className="text-[var(--color-primary)]" />
+            <span className="sr-only">{t('activeRequests', { count: activeCount })}</span>
+          </span>
+        )}
       </div>
 
       {/* Mode */}
       <div className="shrink-0 w-[90px]">
-        <Badge variant={profile.mode === "Auto" ? "info" : "warning"}>
-          {profile.mode === "Auto" ? t('autoBadge') : t('manualBadge')}
+        <Badge variant={profile.mode === "auto" ? "info" : "warning"}>
+          {profile.mode === "auto" ? t('autoBadge') : t('manualBadge')}
         </Badge>
       </div>
 
@@ -598,11 +613,13 @@ function ProfileDetailPanel({
   open,
   onClose,
   models,
+  activeCount,
 }: {
   profile: RouterProfile | null;
   open: boolean;
   onClose: () => void;
   models?: Model[];
+  activeCount?: number;
 }) {
   const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
@@ -623,13 +640,7 @@ function ProfileDetailPanel({
       modelId: string;
       thinkingEffortOverride: string | null;
     }) =>
-      client.updateRouterProfile(profile!.id, {
-        name: profile!.name,
-        mode: profile!.mode,
-        entries: profile!.entries.map((e) =>
-          e.modelId === modelId ? { ...e, thinkingEffortOverride } : e,
-        ),
-      }),
+      client.setThinkingEffort(profile!.id, modelId, thinkingEffortOverride),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
     },
@@ -663,11 +674,26 @@ function ProfileDetailPanel({
     <Drawer
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={liveProfile.name}
+      title={
+        <span className="inline-flex items-center gap-2">
+          {liveProfile.name}
+          {activeCount != null && activeCount > 0 && (
+            <span
+              className="inline-flex items-center"
+              role="status"
+              aria-busy="true"
+              aria-label={t('activeRequests', { count: activeCount })}
+              title={t('activeRequests', { count: activeCount })}
+            >
+              <Spinner size="sm" className="text-[var(--color-primary)]" />
+            </span>
+          )}
+        </span>
+      }
       subtitle={
         <div className="flex items-center gap-2">
-          <Badge variant={liveProfile.mode === "Auto" ? "info" : "warning"}>
-            {liveProfile.mode === "Auto" ? t('autoBadge') : t('manualBadge')}
+          <Badge variant={liveProfile.mode === "auto" ? "info" : "warning"}>
+            {liveProfile.mode === "auto" ? t('autoBadge') : t('manualBadge')}
           </Badge>
           <span>{t('modelCount', { count: liveProfile.entries.length })}</span>
         </div>
@@ -688,10 +714,14 @@ function ProfileDetailPanel({
               <span className="text-sm font-medium text-[var(--color-text)]">
                 {displayModelName(effectiveActiveModelId, models)}
               </span>
-              {activeModelId !== null ? (
+              {liveProfile.mode === "auto" ? (
+                <Badge variant="info" className="ml-auto">{t('autoBadge')}</Badge>
+              ) : activeModelId !== null ? (
                 <Badge variant="success" className="ml-auto">{t('manualBadge')}</Badge>
               ) : (
-                <Badge variant="info" className="ml-auto">{t('autoBadge')}</Badge>
+                <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">
+                  {t('noActiveModel')}
+                </span>
               )}
             </div>
           ) : (
@@ -867,7 +897,7 @@ function ProfileDialog({
   const isEdit = editProfile !== null;
 
   const [name, setName] = useState("");
-  const [mode, setMode] = useState<"Auto" | "Manual">("Auto");
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [entries, setEntries] = useState<RouterProfileEntryInput[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -890,7 +920,7 @@ function ProfileDialog({
         );
       } else {
         setName("");
-        setMode("Auto");
+        setMode("auto");
         setEntries([{ modelId: "", priority: 0, isEnabled: true }]);
       }
       setError(null);
@@ -993,10 +1023,10 @@ function ProfileDialog({
         <Select
           label={t('fields.mode')}
           value={mode}
-          onChange={(e) => setMode(e.target.value as "Auto" | "Manual")}
+          onChange={(e) => setMode(e.target.value as "auto" | "manual")}
           options={[
-            { value: "Auto", label: t('fields.auto') },
-            { value: "Manual", label: t('fields.manual') },
+            { value: "auto", label: t('fields.auto') },
+            { value: "manual", label: t('fields.manual') },
           ]}
         />
 
@@ -1084,6 +1114,12 @@ export default function RouterProfiles() {
     queryKey: ["models"],
     queryFn: () => client.listModels(),
     staleTime: 60_000,
+  });
+
+  const { data: profileStatus } = useQuery({
+    queryKey: ["router-profiles-status"],
+    queryFn: () => client.getRouterProfileStatus(),
+    refetchInterval: 2000,
   });
 
   const deleteMutation = useMutation({
@@ -1174,6 +1210,8 @@ export default function RouterProfiles() {
                 onEdit={handleEdit}
                 onDelete={setDeleteTarget}
                 onView={setDetailProfile}
+                models={models}
+                activeCount={profileStatus?.[p.name]}
               />
             ))}
           </div>
@@ -1222,6 +1260,7 @@ export default function RouterProfiles() {
         open={detailProfile !== null}
         onClose={() => setDetailProfile(null)}
         models={models}
+        activeCount={detailProfile ? profileStatus?.[detailProfile.name] : undefined}
       />
     </div>
   );

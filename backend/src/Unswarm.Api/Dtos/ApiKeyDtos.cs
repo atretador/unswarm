@@ -117,3 +117,9 @@ public sealed class SetActiveEntryRequest
 {
     public string? ActiveModelId { get; init; }
 }
+
+public sealed class SetThinkingEffortRequest
+{
+    public string ModelId { get; init; } = string.Empty;
+    public string? ThinkingEffortOverride { get; init; }
+}

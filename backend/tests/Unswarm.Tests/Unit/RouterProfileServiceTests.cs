@@ -265,4 +265,81 @@ public sealed class RouterProfileServiceTests
         Assert.Equal("model-a", result.Value.Entries[0].ModelId);
         Assert.Equal("model-c", result.Value.Entries[1].ModelId);
     }
+
+    // ── Thinking effort via service ────────────────────────────────────
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_UpdatesTargetEntry_ThroughService()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-svc", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0, ThinkingEffortOverride = "low" },
+                new RouterProfileEntry { ModelId = "model-b", Priority = 1 },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var service = new RouterProfileService(store);
+        var result = await service.SetThinkingEffortAsync("te-svc", "model-b", "high");
+
+        Assert.Equal("low", result.Entries[0].ThinkingEffortOverride); // preserved
+        Assert.Equal("high", result.Entries[1].ThinkingEffortOverride); // updated
+        Assert.Equal("te-svc", result.Name); // profile unchanged
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_NullProfile_Throws()
+    {
+        var service = NewService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => service.SetThinkingEffortAsync("nonexistent", "model-a", null));
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_NullEntry_Throws()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-svc2", Mode = RouterProfileMode.Auto,
+            Entries = [new RouterProfileEntry { ModelId = "model-a", Priority = 0 }],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var service = new RouterProfileService(store);
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => service.SetThinkingEffortAsync("te-svc2", "model-b", null));
+    }
+
+    [Fact]
+    public async Task SetActiveEntry_ThroughService_SetsAndClears()
+    {
+        var store = NewStore();
+        await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "active-svc", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "model-a", Priority = 0 },
+                new RouterProfileEntry { ModelId = "model-b", Priority = 1 },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var service = new RouterProfileService(store);
+
+        // Set
+        await service.SetActiveModelIdAsync("active-svc", "model-b");
+        var afterSet = await store.GetByNameAsync("active-svc");
+        Assert.Equal("model-b", afterSet!.ActiveModelId);
+
+        // Clear
+        await service.SetActiveModelIdAsync("active-svc", null);
+        var afterClear = await store.GetByNameAsync("active-svc");
+        Assert.Null(afterClear!.ActiveModelId);
+    }
 }

@@ -10,5 +10,6 @@ public interface IRouterProfileStore
     Task<RouterProfile> CreateAsync(RouterProfile profile, CancellationToken ct = default);
     Task<RouterProfile> UpdateAsync(string id, RouterProfile profile, CancellationToken ct = default);
     Task SetActiveModelIdAsync(string id, string? activeModelId, CancellationToken ct = default);
+    Task<RouterProfile> SetThinkingEffortAsync(string id, string modelId, string? thinkingEffortOverride, CancellationToken ct = default);
     Task DeleteAsync(string id, CancellationToken ct = default);
 }

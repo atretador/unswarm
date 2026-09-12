@@ -706,7 +706,7 @@ export interface RouterProfileEntry {
 export interface RouterProfile {
   id: string;
   name: string;
-  mode: "Auto" | "Manual";
+  mode: "auto" | "manual";
   entries: RouterProfileEntry[];
   activeModelId: string | null;
   createdAt: string;
@@ -722,8 +722,17 @@ export interface RouterProfileEntryInput {
 
 export interface RouterProfileInput {
   name: string;
-  mode: "Auto" | "Manual";
+  mode: "auto" | "manual";
   entries: RouterProfileEntryInput[];
+}
+
+/** Response shape of `GET /api/router-profiles/status`. */
+export type RouterProfileStatusMap = Record<string, number>;
+
+/** Request body for `PATCH /api/router-profiles/{id}/thinking-effort`. */
+export interface ThinkingEffortPayload {
+  modelId: string;
+  thinkingEffortOverride: string | null;
 }
 
 // ─── Test Chat (direct model testing through the proxy) ───────────

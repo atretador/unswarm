@@ -21,6 +21,7 @@ public sealed class RouterProfileHandler
     private readonly ILogStore _logStore;
     private readonly IClock _clock;
     private readonly ISettingsStore _settings;
+    private readonly RouterProfileActivityTracker _activityTracker;
 
     public RouterProfileHandler(
         IRouterProfileService routerProfile,
@@ -28,7 +29,8 @@ public sealed class RouterProfileHandler
         ISchedulerQueue scheduler,
         ILogStore logStore,
         IClock clock,
-        ISettingsStore settings)
+        ISettingsStore settings,
+        RouterProfileActivityTracker activityTracker)
     {
         _routerProfile = routerProfile;
         _cloudForwarding = cloudForwarding;
@@ -36,6 +38,7 @@ public sealed class RouterProfileHandler
         _logStore = logStore;
         _clock = clock;
         _settings = settings;
+        _activityTracker = activityTracker;
     }
 
     /// <summary>
@@ -74,6 +77,26 @@ public sealed class RouterProfileHandler
     /// <param name="ct">Cancellation token.</param>
     /// <param name="forwardedHeaders">Optional headers to forward for routed requests.</param>
     public async Task<RouterResult> HandleAsync(
+        string profileName,
+        string rawBody,
+        string requestPath,
+        bool isStreaming,
+        string? conversationKey,
+        CancellationToken ct,
+        Dictionary<string, string>? forwardedHeaders = null)
+    {
+        _activityTracker.Increment(profileName);
+        try
+        {
+            return await HandleCoreAsync(profileName, rawBody, requestPath, isStreaming, conversationKey, ct, forwardedHeaders);
+        }
+        finally
+        {
+            _activityTracker.Decrement(profileName);
+        }
+    }
+
+    private async Task<RouterResult> HandleCoreAsync(
         string profileName,
         string rawBody,
         string requestPath,

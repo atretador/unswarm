@@ -65,6 +65,7 @@ public sealed class ApiKeyControllerTests
         public Task<RouterProfile> CreateAsync(RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
         public Task<RouterProfile> UpdateAsync(string id, RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
         public Task SetActiveModelIdAsync(string id, string? activeModelId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<RouterProfile> SetThinkingEffortAsync(string id, string modelId, string? thinkingEffortOverride, CancellationToken ct = default) => Task.FromResult(new RouterProfile { Id = id, Name = "", Mode = RouterProfileMode.Auto, Entries = [], CreatedAt = default, UpdatedAt = default });
         public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
     }
 

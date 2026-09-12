@@ -27,6 +27,8 @@ import type {
   RegisteredRuntime,
   RouterProfile,
   RouterProfileInput,
+  RouterProfileStatusMap,
+  ThinkingEffortPayload,
   ScriptInfo,
   SendTestChatOptions,
   Settings,
@@ -914,6 +916,20 @@ export const httpClient: UnswarmClient = {
         body: JSON.stringify({ activeModelId }),
       },
     );
+  },
+
+  setThinkingEffort(id: string, modelId: string, thinkingEffortOverride: string | null) {
+    return request<RouterProfile>(
+      `/api/router-profiles/${encodeURIComponent(id)}/thinking-effort`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ modelId, thinkingEffortOverride } satisfies ThinkingEffortPayload),
+      },
+    );
+  },
+
+  getRouterProfileStatus() {
+    return request<RouterProfileStatusMap>("/api/router-profiles/status");
   },
 
   // ── Cloud Providers ──────────────────────────────────────────

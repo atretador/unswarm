@@ -91,6 +91,41 @@ public sealed class RouterProfileHandlerTests
             }
             return Task.CompletedTask;
         }
+
+        public Task<RouterProfile> SetThinkingEffortAsync(string profileName, string modelId, string? thinkingEffortOverride, CancellationToken ct = default)
+        {
+            var profile = _profiles.FirstOrDefault(p =>
+                string.Equals(p.Name, profileName, StringComparison.Ordinal))
+                ?? throw new KeyNotFoundException($"Router profile '{profileName}' not found.");
+
+            var entries = profile.Entries.ToList();
+            var idx = entries.FindIndex(e => string.Equals(e.ModelId, modelId, StringComparison.Ordinal));
+            if (idx < 0)
+                throw new KeyNotFoundException($"Entry '{modelId}' not found in profile '{profileName}'.");
+
+            var old = entries[idx];
+            entries[idx] = new RouterProfileEntry
+            {
+                ModelId = old.ModelId,
+                Priority = old.Priority,
+                IsEnabled = old.IsEnabled,
+                ThinkingEffortOverride = thinkingEffortOverride,
+            };
+
+            _profiles.Remove(profile);
+            var result = new RouterProfile
+            {
+                Id = profile.Id,
+                Name = profile.Name,
+                Mode = profile.Mode,
+                Entries = entries,
+                ActiveModelId = profile.ActiveModelId,
+                CreatedAt = profile.CreatedAt,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+            _profiles.Add(result);
+            return Task.FromResult(result);
+        }
     }
 
     private sealed class ScriptedCloudForwarding : ICloudForwardingService
@@ -122,7 +157,8 @@ public sealed class RouterProfileHandlerTests
         ISchedulerQueue? scheduler = null,
         ILogStore? logStore = null,
         IClock? clock = null,
-        ISettingsStore? settings = null)
+        ISettingsStore? settings = null,
+        RouterProfileActivityTracker? activityTracker = null)
     {
         return new RouterProfileHandler(
             routerProfile,
@@ -130,7 +166,8 @@ public sealed class RouterProfileHandlerTests
             scheduler ?? new FakeSchedulerQueue(),
             logStore ?? new FakeLogStore(),
             clock ?? new FakeClock(),
-            settings ?? new FakeSettingsStore());
+            settings ?? new FakeSettingsStore(),
+            activityTracker ?? new RouterProfileActivityTracker());
     }
 
     private static FakeSettingsStore CreateRetrySettings(int retryAttempts = 0, int retryDelayMs = 0)
@@ -1027,5 +1064,98 @@ public sealed class RouterProfileHandlerTests
         // Cloud path: ForwardedHeaders should be captured by the fake
         Assert.Single(scheduler.EnqueuedRequests);
         Assert.Single(cloud.Forwarded);
+    }
+
+    // ── Activity tracking ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task HandleAsync_IncrementsAndDecrementsActivity()
+    {
+        var profileService = new FakeRouterProfileService();
+        profileService.AddProfile(new RouterProfile
+        {
+            Id = "id-1",
+            Name = "activity-profile",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "cloud/openai/gpt-4o", Priority = 0, IsEnabled = true },
+            ],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        var cloud = new ScriptedCloudForwarding((idx, modelId, body, path, stream, ct, _) =>
+            Task.FromResult(new CloudForwardResponse
+            {
+                StatusCode = 200,
+                ContentType = "application/json",
+                Body = new MemoryStream("\"ok\""u8.ToArray())
+            }));
+
+        var tracker = new RouterProfileActivityTracker();
+        var handler = CreateHandler(profileService, cloudForwarding: cloud, activityTracker: tracker);
+
+        // Before
+        Assert.Empty(tracker.GetActiveByProfile());
+
+        var result = await handler.HandleAsync(
+            "activity-profile", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
+
+        Assert.Equal(200, result.StatusCode);
+        // After: counter should be decremented back to 0, key removed
+        Assert.Empty(tracker.GetActiveByProfile());
+    }
+
+    [Fact]
+    public void RouterProfileActivityTracker_IncrementDecrement_Works()
+    {
+        var tracker = new RouterProfileActivityTracker();
+
+        Assert.Empty(tracker.GetActiveByProfile());
+
+        tracker.Increment("Exec");
+        Assert.Single(tracker.GetActiveByProfile());
+        Assert.Equal(1, tracker.GetActiveByProfile()["Exec"]);
+
+        tracker.Increment("Exec");
+        Assert.Equal(2, tracker.GetActiveByProfile()["Exec"]);
+
+        tracker.Decrement("Exec");
+        Assert.Equal(1, tracker.GetActiveByProfile()["Exec"]);
+
+        tracker.Decrement("Exec");
+        Assert.Empty(tracker.GetActiveByProfile());
+    }
+
+    [Fact]
+    public async Task HandleAsync_ExceptionStillDecrementsActivity()
+    {
+        var profileService = new FakeRouterProfileService();
+        profileService.AddProfile(new RouterProfile
+        {
+            Id = "id-1",
+            Name = "exception-activity",
+            Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "cloud/openai/gpt-4o", Priority = 0, IsEnabled = true },
+            ],
+            CreatedAt = default,
+            UpdatedAt = default,
+        });
+
+        var cloud = new ScriptedCloudForwarding((idx, modelId, body, path, stream, ct, _) =>
+            throw new HttpRequestException("boom"));
+
+        var tracker = new RouterProfileActivityTracker();
+        var handler = CreateHandler(profileService, cloudForwarding: cloud, activityTracker: tracker);
+
+        var result = await handler.HandleAsync(
+            "exception-activity", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
+
+        // Even on exception, activity should be decremented
+        Assert.Empty(tracker.GetActiveByProfile());
+        Assert.Equal(502, result.StatusCode);
     }
 }

@@ -210,6 +210,7 @@ builder.Services.AddSingleton<IChatGptOAuthService, ChatGptOAuthService>();
 // Router profiles: CRUD store following the same scoped pattern as CloudProviderStore
 builder.Services.AddSingleton<IRouterProfileStore, RouterProfileStore>();
 builder.Services.AddSingleton<IRouterProfileService, RouterProfileService>();
+builder.Services.AddSingleton<RouterProfileActivityTracker>();
 builder.Services.AddSingleton<RouterProfileHandler>();
 
 // ── HTTP Client for cloud providers ──────────────────────────────────────

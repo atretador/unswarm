@@ -35,7 +35,7 @@ export interface DrawerProps {
   /** Called when the drawer requests to close (Escape, backdrop, or programmatic). */
   onOpenChange: (open: boolean) => void;
   /** Heading rendered in the drawer header. Also used for `aria-labelledby`. */
-  title?: string;
+  title?: ReactNode;
   /** Optional muted line under the title (e.g. model metadata). */
   subtitle?: ReactNode;
   /** Scrollable drawer body content. */

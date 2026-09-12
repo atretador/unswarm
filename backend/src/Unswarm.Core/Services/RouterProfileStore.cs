@@ -118,7 +118,14 @@ public sealed class RouterProfileStore : IRouterProfileStore
         entity.Name = profile.Name;
         entity.Mode = profile.Mode.ToString();
         entity.EntriesJson = JsonSerializer.Serialize(profile.Entries, s_json);
-        entity.ActiveModelId = profile.ActiveModelId;
+        // Never overwrite ActiveModelId from a PUT — it is managed exclusively
+        // by SetActiveModelIdAsync and auto-fallback.  However, if the pinned
+        // model no longer appears in the new entries list, clear the dangling pin.
+        if (!string.IsNullOrEmpty(entity.ActiveModelId)
+            && !profile.Entries.Any(e => e.ModelId == entity.ActiveModelId))
+        {
+            entity.ActiveModelId = null;
+        }
         entity.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
@@ -145,6 +152,36 @@ public sealed class RouterProfileStore : IRouterProfileStore
         var profile = MapToDomain(entity);
         _cache[id] = (profile, DateTimeOffset.UtcNow);
         _nameCache[entity.Name] = (profile, DateTimeOffset.UtcNow);
+    }
+
+    public async Task<RouterProfile> SetThinkingEffortAsync(string id, string modelId, string? thinkingEffortOverride, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.RouterProfiles.FindAsync([id], ct)
+            ?? throw new KeyNotFoundException($"Router profile '{id}' not found.");
+
+        var entries = DeserializeEntries(entity.EntriesJson).ToList();
+        var entry = entries.FirstOrDefault(e => string.Equals(e.ModelId, modelId, StringComparison.Ordinal))
+            ?? throw new KeyNotFoundException($"Entry '{modelId}' not found in profile '{entity.Name}'.");
+
+        // Replace the entry with an updated copy (entries are init-only)
+        var idx = entries.IndexOf(entry);
+        entries[idx] = new RouterProfileEntry
+        {
+            ModelId = entry.ModelId,
+            Priority = entry.Priority,
+            IsEnabled = entry.IsEnabled,
+            ThinkingEffortOverride = thinkingEffortOverride,
+        };
+
+        entity.EntriesJson = JsonSerializer.Serialize(entries, s_json);
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var result = MapToDomain(entity);
+        _cache[id] = (result, DateTimeOffset.UtcNow);
+        _nameCache[entity.Name] = (result, DateTimeOffset.UtcNow);
+        return result;
     }
 
     public async Task DeleteAsync(string id, CancellationToken ct = default)
