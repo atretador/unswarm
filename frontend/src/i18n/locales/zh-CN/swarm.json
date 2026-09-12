@@ -13,6 +13,7 @@
   "apiKeyNote": "如果后端配置了 API 密钥，请在 agent.yaml 中设置 api_key 以匹配。",
   "gotIt": "知道了",
   "manage": {
+    "title": "管理 {{agentName}} 上的运行时",
     "containers": "容器",
     "scripts": "脚本",
     "refreshContainers": "刷新容器"

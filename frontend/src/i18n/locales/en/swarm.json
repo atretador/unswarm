@@ -13,6 +13,7 @@
   "apiKeyNote": "If the backend has an API key configured, set api_key in agent.yaml to match.",
   "gotIt": "Got it",
   "manage": {
+    "title": "Manage runtimes on {{agentName}}",
     "containers": "Containers",
     "scripts": "Scripts",
     "refreshContainers": "Refresh containers"

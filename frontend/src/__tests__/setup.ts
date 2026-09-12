@@ -2,7 +2,11 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 // ── Wire httpClient to mockClient in tests ─────────────────────
 // Components import `client` from query-client.ts which now points to httpClient.

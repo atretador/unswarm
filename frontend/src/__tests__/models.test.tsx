@@ -78,7 +78,7 @@ describe("Models", () => {
 
     // llama-3.1-70b has lastBenchmark {tokensPerSec: 42.3, latencyMs: 120, tokensGenerated: 512}
     expect(screen.getByText("42.3 tok/s")).toBeInTheDocument();
-    expect(screen.getByText("120.00ms")).toBeInTheDocument();
+    expect(screen.getByText("120ms")).toBeInTheDocument();
     // tokensGenerated is seeded on this model → tokens chip renders
     expect(screen.getByText("512 tok")).toBeInTheDocument();
     // Labels are visible for each metric
@@ -127,7 +127,7 @@ describe("Models", () => {
 
     // speed + processing + ran chips render; no tokens chip
     expect(screen.getByText("33.1 tok/s")).toBeInTheDocument();
-    expect(screen.getByText("141.00ms")).toBeInTheDocument();
+    expect(screen.getByText("141ms")).toBeInTheDocument();
     expect(screen.queryByText("tokens")).not.toBeInTheDocument();
   });
 

@@ -6,6 +6,7 @@ import {
   Activity,
   AlertTriangle,
   BookOpen,
+  Copy,
   Eye,
   FileText,
   History,
@@ -642,6 +643,91 @@ function BenchmarkRow({ result, index, onShowHistory, onShowResults }: { result:
   );
 }
 
+// ─── Individual run results modal ─────────────────────────────────
+
+function RunResultsModal({ result, open, onClose }: { result: BenchmarkResult | null; open: boolean; onClose: () => void }) {
+  const { t } = useTranslation('benchmarks');
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [outputExpanded, setOutputExpanded] = useState(true);
+
+  useEffect(() => {
+    if (open) {
+      setThinkingExpanded(false);
+      setOutputExpanded(true);
+    }
+  }, [open, result?.id]);
+
+  if (!result) return null;
+
+  const hasThinking = Boolean(result.reasoning);
+  const hasOutput = Boolean(result.response);
+  const copy = (value: string | null | undefined) => {
+    if (value && navigator.clipboard) void navigator.clipboard.writeText(value);
+  };
+
+  const section = (kind: 'thinking' | 'output', label: string, value: string) => {
+    const expanded = kind === 'thinking' ? thinkingExpanded : outputExpanded;
+    const setExpanded = kind === 'thinking' ? setThinkingExpanded : setOutputExpanded;
+    return (
+      <div className="rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)]">
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((current) => !current)}
+            className="flex-1 cursor-pointer text-left text-xs font-medium text-[var(--color-text-heading)]"
+          >
+            {label}
+          </button>
+          <button
+            type="button"
+            aria-label={kind === 'thinking' ? t('copyThinkingToClipboard') : t('copyOutputToClipboard')}
+            title={kind === 'thinking' ? t('copyThinkingToClipboard') : t('copyOutputToClipboard')}
+            onClick={() => copy(value)}
+            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)]"
+          >
+            <Copy className="size-3.5" />
+          </button>
+        </div>
+        {expanded && (
+          <div className="border-t border-[var(--color-border-subtle)] px-3 py-2.5">
+            <p className="whitespace-pre-wrap text-xs leading-relaxed text-[var(--color-text)]">{value}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}
+      title={t('runDetailsTitle', { modelName: result.modelName })}
+      className="sm:max-w-3xl"
+    >
+      <div className="space-y-4 p-5">
+        <div className="grid grid-cols-3 gap-3 rounded-[var(--radius-lg)] bg-[var(--color-bg-muted)] p-3 text-xs">
+          <div><p className="text-[var(--color-text-muted)]">{t('tokensGenerated')}</p><p className="mt-1 font-mono font-medium">{formatTokens(result.tokensGenerated)}</p></div>
+          <div><p className="text-[var(--color-text-muted)]">{t('throughput')}</p><p className="mt-1 font-mono font-medium">{formatTokensPerSec(result.tokensPerSec)}</p></div>
+          <div><p className="text-[var(--color-text-muted)]">{t('latency')}</p><p className="mt-1 font-mono font-medium">{formatLatency(result.latencyMs)}</p></div>
+        </div>
+        <div>
+          <h4 className="mb-1.5 text-xs font-medium text-[var(--color-text-muted)]">{t('prompt')}</h4>
+          <p className="whitespace-pre-wrap rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] px-3 py-2.5 text-xs leading-relaxed text-[var(--color-text)]">{result.prompt}</p>
+        </div>
+        {(hasThinking || hasOutput) ? (
+          <div className="space-y-2">
+            {hasThinking && section('thinking', t('thinking'), result.reasoning!)}
+            {hasOutput && section('output', t('output'), result.response!)}
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--color-text-muted)]">{t('noResponseCaptured')}</p>
+        )}
+      </div>
+    </Dialog>
+  );
+}
+
 // ─── Model results modal ──────────────────────────────────────────
 
 function ModelResultsModal({
@@ -880,6 +966,7 @@ export default function Benchmarks() {
   const { t: tc } = useTranslation('common');
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [modelResultsModal, setModelResultsModal] = useState<{ modelId: string; modelName: string } | null>(null);
+  const [runResultsModal, setRunResultsModal] = useState<BenchmarkResult | null>(null);
 
   const {
     data: results,
@@ -959,7 +1046,7 @@ export default function Benchmarks() {
               result={r}
               index={i}
               onShowHistory={(modelId, modelName) => setModelResultsModal({ modelId, modelName })}
-              onShowResults={undefined}
+              onShowResults={setRunResultsModal}
             />
           ))}
         </Card>
@@ -974,7 +1061,12 @@ export default function Benchmarks() {
         modelName={modelResultsModal?.modelName ?? ""}
         open={modelResultsModal !== null}
         onClose={() => setModelResultsModal(null)}
-        onShowResults={undefined}
+        onShowResults={setRunResultsModal}
+      />
+      <RunResultsModal
+        result={runResultsModal}
+        open={runResultsModal !== null}
+        onClose={() => setRunResultsModal(null)}
       />
     </div>
   );

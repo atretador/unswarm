@@ -12,6 +12,13 @@ namespace Unswarm.Tests.Unit;
 /// </summary>
 public sealed class RouterProfileHandlerTests
 {
+    private static void AssertError(object? value, string key)
+    {
+        var error = JsonSerializer.SerializeToElement(value);
+        Assert.Equal(key, error.GetProperty("errorKey").GetString());
+        Assert.True(error.TryGetProperty("errorParams", out _));
+    }
+
     private sealed class FakeRouterProfileService : IRouterProfileService
     {
         private readonly List<RouterProfile> _profiles = [];
@@ -183,7 +190,8 @@ public sealed class RouterProfileHandlerTests
             "nonexistent", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(404, result.StatusCode);
-        Assert.Contains("not found", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
+        AssertError(result.ErrorMessage, "routerProfiles.notFoundOrEmpty");
+        Assert.Equal("nonexistent", JsonSerializer.SerializeToElement(result.ErrorMessage).GetProperty("errorParams").GetProperty("name").GetString());
     }
 
     [Fact]
@@ -205,7 +213,8 @@ public sealed class RouterProfileHandlerTests
             "empty-profile", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(404, result.StatusCode);
-        Assert.Contains("no enabled entries", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
+        AssertError(result.ErrorMessage, "routerProfiles.notFoundOrEmpty");
+        Assert.Equal("empty-profile", JsonSerializer.SerializeToElement(result.ErrorMessage).GetProperty("errorParams").GetProperty("name").GetString());
     }
 
     [Fact]
@@ -404,7 +413,11 @@ public sealed class RouterProfileHandlerTests
 
         Assert.Equal(502, result.StatusCode);
         Assert.NotNull(result.ErrorMessage);
-        Assert.Contains("server error", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
+        AssertError(result.ErrorMessage, "router.modelExhausted");
+        var errorParams = JsonSerializer.SerializeToElement(result.ErrorMessage).GetProperty("errorParams");
+        Assert.Equal("cloud/anthropic/claude-sonnet", errorParams.GetProperty("model").GetString());
+        Assert.Equal(1, errorParams.GetProperty("attempts").GetInt32());
+        Assert.Equal("all-fail", errorParams.GetProperty("profile").GetString());
     }
 
     [Fact]
@@ -720,8 +733,11 @@ public sealed class RouterProfileHandlerTests
             "single-entry-retry", "{}", "/v1/chat/completions", false, null, CancellationToken.None);
 
         Assert.Equal(502, result.StatusCode);
-        Assert.Contains("server error", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("3 attempts", JsonSerializer.Serialize(result.ErrorMessage!), StringComparison.OrdinalIgnoreCase);
+        AssertError(result.ErrorMessage, "router.modelExhausted");
+        var errorParams = JsonSerializer.SerializeToElement(result.ErrorMessage).GetProperty("errorParams");
+        Assert.Equal("cloud/openai/gpt-4o", errorParams.GetProperty("model").GetString());
+        Assert.Equal(3, errorParams.GetProperty("attempts").GetInt32());
+        Assert.Equal("single-entry-retry", errorParams.GetProperty("profile").GetString());
     }
 
     [Fact]

@@ -105,7 +105,7 @@ export function AgentSection({
   onManage: (agentName: string) => void;
   onConcurrency: (agentName: string) => void;
   settings?: Settings;
-  onExpandedChange?: (expanded: boolean) => void;
+  onExpandedChange?: (agentName: string, expanded: boolean) => void;
 }) {
   const { t } = useTranslation('swarm');
   const { t: tc } = useTranslation('common');
@@ -117,8 +117,8 @@ export function AgentSection({
   );
 
   useEffect(() => {
-    onExpandedChange?.(expanded);
-  }, [expanded, onExpandedChange]);
+    onExpandedChange?.(agent.name, expanded);
+  }, [agent.name, expanded, onExpandedChange]);
 
   const [filter, setFilter] = useState("");
   const connectivity = agentConnectivity(agent);

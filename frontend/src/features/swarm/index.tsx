@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -268,6 +269,15 @@ export default function Swarm() {
   const [searchParams] = useSearchParams();
   const focusContainerId = searchParams.get("focus");
 
+  const handleExpandedChange = useCallback((agentName: string, expanded: boolean) => {
+    setExpandedAgents(prev => {
+      const next = new Set(prev);
+      if (expanded) next.add(agentName);
+      else next.delete(agentName);
+      return next;
+    });
+  }, []);
+
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => client.getSettings(),
@@ -376,14 +386,7 @@ export default function Swarm() {
               onManage={(name) => setManageAgent(name)}
               onConcurrency={(name) => setConcurrencyAgent(name)}
               settings={settings}
-              onExpandedChange={(expanded) => {
-                setExpandedAgents(prev => {
-                  const next = new Set(prev);
-                  if (expanded) next.add(agent.name);
-                  else next.delete(agent.name);
-                  return next;
-                });
-              }}
+              onExpandedChange={handleExpandedChange}
             />
           ))}
         </div>

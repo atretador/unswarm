@@ -451,7 +451,7 @@ export function ManageRuntimesModal({
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('concurrency.title', { agentName })}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }} title={t('manage.title', { agentName })}>
       {/* Tab bar */}
       <div className="flex items-center justify-between border-b border-[var(--color-border-subtle)]">
         <div className="flex" role="tablist" aria-label={t('agent.manageRuntimes')}>

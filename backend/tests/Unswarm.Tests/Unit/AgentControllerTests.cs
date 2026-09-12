@@ -13,6 +13,45 @@ namespace Unswarm.Tests.Unit;
 
 public sealed class AgentControllerTests : IDisposable
 {
+    private static JsonElement SentError(string message)
+    {
+        var root = JsonDocument.Parse(message).RootElement;
+        return FindError(root);
+    }
+
+    private static JsonElement FindError(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            if (element.TryGetProperty("errorKey", out _))
+                return element;
+            foreach (var property in element.EnumerateObject())
+            {
+                var found = FindError(property.Value);
+                if (found.ValueKind != JsonValueKind.Undefined)
+                    return found;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                var found = FindError(item);
+                if (found.ValueKind != JsonValueKind.Undefined)
+                    return found;
+            }
+        }
+        return default;
+    }
+
+    private static void AssertSentError(IReadOnlyList<string> messages, string key, string? parameterName = null, string? parameterValue = null)
+    {
+        var error = Assert.Single(messages.Select(SentError), e =>
+            e.ValueKind == JsonValueKind.Object && e.TryGetProperty("errorKey", out var errorKey) && errorKey.GetString() == key);
+        if (parameterName is not null)
+            Assert.Equal(parameterValue, error.GetProperty("errorParams").GetProperty(parameterName).GetString());
+    }
+
     private readonly AgentRegistry _registry = new();
     private readonly AgentController _controller;
 
@@ -158,7 +197,7 @@ public sealed class AgentControllerTests : IDisposable
 
         await _controller.HandleConnectionAsync(socket, CancellationToken.None);
 
-        Assert.Contains(socket.SentMessages, m => m.Contains("hello payload must include: name"));
+        AssertSentError(socket.SentMessages, "agents.wsHelloMissingName");
         Assert.Null(_registry.Get("any-agent"));
     }
 
@@ -176,7 +215,7 @@ public sealed class AgentControllerTests : IDisposable
 
         await _controller.HandleConnectionAsync(socket, CancellationToken.None);
 
-        Assert.Contains(socket.SentMessages, m => m.Contains("name cannot be empty"));
+        AssertSentError(socket.SentMessages, "agents.wsNameEmpty");
     }
 
     [Fact]
@@ -199,7 +238,7 @@ public sealed class AgentControllerTests : IDisposable
         await _controller.HandleConnectionAsync(socket, CancellationToken.None);
 
         // Should get error for unknown type
-        Assert.Contains(socket.SentMessages, m => m.Contains("Unknown message type: bogus"));
+        AssertSentError(socket.SentMessages, "agents.wsUnknownMessageType", "type", "bogus");
     }
 
     [Fact]
@@ -348,8 +387,7 @@ public sealed class AgentControllerTests : IDisposable
 
         await controller.HandleConnectionAsync(socket, CancellationToken.None, apiKeyId: created.Id);
 
-        Assert.Contains(socket.SentMessages, m => m.Contains("bound to a different agent"));
-        Assert.Contains(socket.SentMessages, m => m.Contains("beta"));
+        AssertSentError(socket.SentMessages, "agents.wsKeyBindingMismatch", "agentName", "beta");
 
         // The impostor was never registered; the legitimate agent neither.
         Assert.Null(_registry.Get("beta"));
@@ -420,7 +458,7 @@ public sealed class AgentControllerTests : IDisposable
 
         await controller.HandleConnectionAsync(secondSocket, CancellationToken.None, apiKeyId: created.Id);
 
-        Assert.Contains(secondSocket.SentMessages, m => m.Contains("bound to a different agent"));
+        AssertSentError(secondSocket.SentMessages, "agents.wsKeyBindingMismatch", "agentName", "impostor");
         Assert.Null(_registry.Get("impostor"));
     }
 

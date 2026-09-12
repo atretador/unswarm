@@ -13,6 +13,7 @@
   "apiKeyNote": "Se o backend possuir uma API key configurada, defina api_key no agent.yaml para corresponder.",
   "gotIt": "Entendi",
   "manage": {
+    "title": "Gerenciar runtimes em {{agentName}}",
     "containers": "Contêineres",
     "scripts": "Scripts",
     "refreshContainers": "Atualizar contêineres"

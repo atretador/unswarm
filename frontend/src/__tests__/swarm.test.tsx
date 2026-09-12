@@ -113,7 +113,7 @@ describe("Swarm", () => {
     // Host is expanded by default (its registered containers are visible)
     expect(await screen.findByText("llama-server")).toBeInTheDocument();
     // Remote is collapsed — its empty state is hidden
-    expect(screen.queryByText("No runtimes registered")).not.toBeInTheDocument();
+    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
   });
 
   it("shows registered containers inside the host section", async () => {
@@ -179,12 +179,12 @@ describe("Swarm", () => {
     });
 
     // edge-node-1 has no registered containers → empty state, hidden while collapsed
-    expect(screen.queryByText("No runtimes registered")).not.toBeInTheDocument();
+    expect(screen.queryByText("No containers registered")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
 
     await waitFor(() => {
-      expect(screen.getByText("No runtimes registered")).toBeInTheDocument();
+      expect(screen.getByText("No containers registered")).toBeInTheDocument();
     });
     expect(screen.getByRole("button", { name: "Manage runtimes" })).toBeInTheDocument();
   });
@@ -231,12 +231,12 @@ describe("Swarm", () => {
     await user.click(screen.getByRole("button", { name: "Toggle edge-node-1 section" }));
     await user.click(await screen.findByRole("button", { name: "Manage runtimes" }));
 
-    await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on edge-node-1/i });
     await waitFor(() => {
       expect(screen.getByText("vllm-serve")).toBeInTheDocument();
     });
 
-    const filter = screen.getByRole("searchbox", { name: /filter containers/i });
+    const filter = within(dialog).getByRole("searchbox", { name: /search registered containers/i });
     await user.type(filter, "stable");
 
     expect(screen.queryByText("vllm-serve")).not.toBeInTheDocument();
@@ -280,10 +280,10 @@ describe("Swarm", () => {
     });
 
     // 9 per page → 20 containers = 3 pages; page 2 exists
-    expect(screen.getByRole("button", { name: "Page 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Previous page 2" })).toBeInTheDocument();
     expect(screen.queryByText("container-10")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Page 2" }));
+    await user.click(screen.getByRole("button", { name: "Previous page 2" }));
     expect(within(dialog).getByText("container-10")).toBeInTheDocument();
     expect(within(dialog).queryByText("container-1")).not.toBeInTheDocument();
   });
@@ -439,7 +439,7 @@ describe("Swarm", () => {
     });
 
     // Open the manage modal for the host via the header action
-    await user.click(screen.getByRole("button", { name: "Manage runtimes on host" }));
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
 
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
     await waitFor(() => {
@@ -561,7 +561,7 @@ describe("Swarm", () => {
     await user.click(screen.getAllByRole("button", { name: /benchmark/i })[0]);
 
     await waitFor(() => {
-      expect(screen.getByText(/55\.2 tok\/s · 88ms/)).toBeInTheDocument();
+      expect(screen.getByText(/55\.20 tok\/s · 88\.00ms/)).toBeInTheDocument();
     });
   });
 
@@ -690,7 +690,7 @@ describe("Swarm", () => {
       expect(screen.getByText("Swarm")).toBeInTheDocument();
     });
 
-    const addButtons = screen.getAllByRole("button", { name: /add agent/i });
+    const addButtons = screen.getAllByRole("button", { name: /add an agent/i });
     await user.click(addButtons[0]);
 
     const dialog = await screen.findByRole("dialog", { name: /add an agent/i });
@@ -947,7 +947,7 @@ describe("Swarm", () => {
       expect(screen.getByText("llama-server")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "Manage runtimes on host" }));
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
     const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
     await waitFor(() => {
       expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
@@ -1066,7 +1066,7 @@ describe("Swarm", () => {
     // Red dot = error color; tooltip says Stopped (scope to llama-server's card)
     const card = cardFor("llama-server");
     expect(within(card).getByRole("status", { name: "error" })).toBeInTheDocument();
-    expect(screen.getAllByText("Runtime: Stopped").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Stopped").length).toBeGreaterThanOrEqual(1);
 
     // Stop/Restart are hidden; Start (primary) is shown on this card
     expect(within(card).getByRole("button", { name: /^start$/i })).toBeInTheDocument();
@@ -1151,7 +1151,7 @@ describe("Swarm", () => {
     // The ["agents"] invalidation refetches telemetry; the dot flips to running
     // and the lifecycle buttons switch from Start to Stop/Restart.
     await waitFor(() => {
-      expect(screen.getAllByText("Runtime: Running").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("Running").length).toBeGreaterThanOrEqual(1);
     });
     expect(within(card).getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
     expect(within(card).queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
@@ -1172,7 +1172,7 @@ describe("Swarm", () => {
 
     const card = cardFor("llama-server");
     expect(within(card).getByRole("status", { name: "running" })).toBeInTheDocument();
-    expect(screen.getAllByText("Runtime: Running").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Running").length).toBeGreaterThanOrEqual(1);
 
     expect(within(card).getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: /^restart$/i })).toBeInTheDocument();
@@ -1195,7 +1195,7 @@ describe("Swarm", () => {
     const card = cardFor("llama-server");
     // Transitional maps to the starting dot; assert its semantics.
     expect(within(card).getByRole("status", { name: "starting" })).toBeInTheDocument();
-    expect(screen.getAllByText("Runtime: Starting…").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Starting…").length).toBeGreaterThanOrEqual(1);
 
     // No lifecycle action for a transitional container
     expect(within(card).queryByRole("button", { name: /^start$/i })).not.toBeInTheDocument();
@@ -1239,7 +1239,7 @@ describe("Swarm", () => {
     const card = cardFor("llama-server");
     // Unknown → neutral gray dot (stopped color) + "Unknown" tooltip
     expect(within(card).getByRole("status", { name: "stopped" })).toBeInTheDocument();
-    expect(screen.getAllByText("Runtime: Unknown").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThanOrEqual(1);
 
     // Decision: unknown → show Start (the container may simply be down / unreported).
     expect(within(card).getByRole("button", { name: /^start$/i })).toBeInTheDocument();
@@ -1615,9 +1615,9 @@ describe("Swarm", () => {
     await user.click(within(dialog).getByRole("tab", { name: /scripts/i }));
 
     await waitFor(() => {
-      expect(within(dialog).getByText("No scripts found")).toBeInTheDocument();
+      expect(within(dialog).getByText("No scripts found on gpu-node-1.")).toBeInTheDocument();
     });
-    expect(within(dialog).getByText(/No scripts found on gpu-node-1\. Add \.sh files to the agent's scripts_dir\./i)).toBeInTheDocument();
+    expect(within(dialog).getByText("Add .sh files to the agent's scripts_dir.")).toBeInTheDocument();
   });
 
   it("error fetching available scripts shows inline error with retry", async () => {

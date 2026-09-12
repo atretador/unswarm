@@ -85,7 +85,7 @@ describe("Models page — test chat", () => {
 
     // Stats row (scoped to the drawer — benchmark chips elsewhere also show tok/s)
     const drawer = screen.getByRole("dialog");
-    expect(within(drawer).getByText(/1,?500ms/)).toBeInTheDocument();
+    expect(within(drawer).getByText("1.5 s")).toBeInTheDocument();
     expect(within(drawer).getByText(/2\.7 tok\/s/)).toBeInTheDocument(); // 4 tokens / 1.5s
     expect(within(drawer).getByText(/10 prompt/)).toBeInTheDocument();
     expect(within(drawer).getByText(/4 out/)).toBeInTheDocument();
