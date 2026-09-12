@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Unswarm.Core.Contracts;
@@ -11,24 +10,29 @@ using LogLevel = Unswarm.Core.Models.LogLevel;
 namespace Unswarm.Tests.Unit;
 
 /// <summary>
-/// Real LogStore (SQLite in-memory): enqueue + persistence, historical queries with
+/// Real LogStore (SQLite): enqueue + persistence, historical queries with
 /// filters, live subscriber fan-out, and the subscriber cap.
 /// </summary>
 public sealed class LogStoreTests : IDisposable
 {
-    private readonly SqliteConnection _connection;
+    private readonly string _databaseDirectory;
+    private readonly string _databasePath;
     private readonly Func<UnswarmDbContext> _dbFactory;
     private readonly FakeClock _clock = new();
     private readonly LogStore _store;
 
     public LogStoreTests()
     {
-        _connection = new SqliteConnection("Data Source=:memory:");
-        _connection.Open();
+        _databaseDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"unswarm-logstore-tests-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_databaseDirectory);
+        _databasePath = Path.Combine(_databaseDirectory, "logs.db");
+
         _dbFactory = () =>
         {
             var options = new DbContextOptionsBuilder<UnswarmDbContext>()
-                .UseSqlite(_connection)
+                .UseSqlite($"Data Source={_databasePath}")
                 .Options;
             return new UnswarmDbContext(options);
         };
@@ -186,6 +190,7 @@ public sealed class LogStoreTests : IDisposable
 
     public void Dispose()
     {
-        _connection.Dispose();
+        _store.Dispose();
+        Directory.Delete(_databaseDirectory, recursive: true);
     }
 }
