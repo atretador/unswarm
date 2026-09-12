@@ -33,11 +33,13 @@ public sealed class ModelRegistry : IModelRegistry
             .OrderBy(m => m.Name)
             .ToListAsync(ct).ConfigureAwait(false);
 
-        // Resolve name conflicts on read: if multiple models share the same Name,
-        // flag all of them as Conflict. If only one remains with a conflict name,
-        // restore it to Ready. This covers boot-time detection and manual DB edits.
+        // Resolve name conflicts on read: if multiple models share the same DisplayName
+        // (the name served under /v1/models), flag all of them as Conflict. If only one
+        // remains with a conflict display name, restore it to Ready. This covers boot-time
+        // detection and manual DB edits. Two models sharing an internal Name (filename)
+        // from different runtimes are independent and not conflicts.
         var changed = false;
-        var groups = entities.GroupBy(e => e.Name).ToList();
+        var groups = entities.GroupBy(e => e.DisplayName ?? e.Name).ToList();
         foreach (var group in groups)
         {
             var list = group.ToList();
@@ -99,6 +101,7 @@ public sealed class ModelRegistry : IModelRegistry
             ContainerImage = definition.ContainerImage,
             SourceRuntimeId = definition.SourceRuntimeId,
             DisplayName = definition.DisplayName,
+            SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -127,6 +130,7 @@ public sealed class ModelRegistry : IModelRegistry
         entity.ContainerImage = definition.ContainerImage;
         entity.SourceRuntimeId = definition.SourceRuntimeId;
         entity.DisplayName = definition.DisplayName;
+        entity.SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -187,6 +191,7 @@ public sealed class ModelRegistry : IModelRegistry
         ContainerImage = e.ContainerImage,
         SourceRuntimeId = e.SourceRuntimeId,
         DisplayName = e.DisplayName,
+        SupportedThinkingEffortsJson = e.SupportedThinkingEffortsJson,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

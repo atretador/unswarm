@@ -1,0 +1,349 @@
+{
+  "title": "指标",
+  "failedToLoad": "加载指标失败",
+  "noUsage": "尚无使用记录",
+  "noUsageDesc": "将客户端连接到本地推理代理，其请求将自动显示在此处。",
+  "refresh": "刷新",
+  "downloadCsv": "下载 CSV",
+  "refreshMetrics": "刷新指标（R）",
+  "downloadBreakdown": "将模型明细下载为 CSV",
+  "setCostRates": "请先设置费率（费用计算器）",
+  "noRateConfigured": "部分使用未配置费率（或为订阅/自托管）——未包含在内。",
+  "clickPoint": "点击数据点以查看这些请求",
+  "costCalculator": "费用计算器",
+  "pickFromList": "从提供方列表中选择",
+  "autoRefresh": {
+    "off": "自动刷新：关闭",
+    "10s": "每 10 秒",
+    "30s": "每 30 秒"
+  },
+  "metricOptions": {
+    "tokens": "Token",
+    "requests": "请求",
+    "latency": "延迟",
+    "cached": "缓存",
+    "cost": "费用"
+  },
+  "metricTitles": {
+    "tokens": "Token 使用量随时间变化",
+    "requests": "请求数随时间变化",
+    "latency": "平均延迟随时间变化",
+    "cached": "已缓存的 Token 随时间变化",
+    "cost": "预估费用随时间变化"
+  },
+  "comparisonModes": {
+    "combined": "合并",
+    "byProvider": "按提供方",
+    "byModel": "按模型"
+  },
+  "costModes": {
+    "perToken": "每 1M token",
+    "monthly": "月度",
+    "selfHosted": "自托管"
+  },
+  "liveStatus": {
+    "off": "",
+    "connecting": "连接中…",
+    "open": "实时流",
+    "reconnecting": "重新连接中…",
+    "unavailable": "不可用"
+  },
+  "table": {
+    "time": "时间",
+    "model": "模型",
+    "key": "密钥",
+    "tokensIn": "输入 Token",
+    "tokensOut": "输出 Token",
+    "cached": "已缓存",
+    "cachedTokens": "已缓存的 Token",
+    "mode": "模式",
+    "latency": "延迟",
+    "provider": "提供方",
+    "requests": "请求",
+    "promptTokens": "Prompt Token",
+    "completionTokens": "补全 Token",
+    "cacheHitPercent": "缓存命中率",
+    "avgLatency": "平均延迟",
+    "estCost": "预估费用",
+    "promptRate": "Prompt 费率",
+    "completionRate": "补全费率",
+    "promptCost": "Prompt 费用",
+    "completionCost": "补全费用",
+    "totalCost": "总费用",
+    "p95": "p95",
+    "max": "最大值"
+  },
+  "csvHeaders": {
+    "avgLatencyMs": "平均延迟（毫秒）",
+    "estCostUsd": "预估费用（USD）"
+  },
+  "filter": {
+    "title": "筛选数据",
+    "searchProviders": "搜索提供方…",
+    "noProvidersMatch": "没有匹配 \"{{search}}\" 的提供方。",
+    "noModelsMatch": "没有匹配 \"{{search}}\" 的模型。"
+  },
+  "presets": {
+    "namePlaceholder": "预设名称…",
+    "savePreset": "将当前筛选保存为预设",
+    "deletePreset": "删除预设 {{name}}",
+    "presetName": "预设名称"
+  },
+  "retention": {
+    "title": "使用记录保留",
+    "subtitle": "超出此天数的原始请求记录将被清理。",
+    "keepRecords": "保留天数",
+    "requiresAdmin": "需要管理员角色",
+    "purgeUnavailable": "清除不可用",
+    "purgeOldRecords": "清除旧记录",
+    "purgeConfirm": "清除旧使用记录？",
+    "purgeDesc": "这将永久删除所有超过 {{days}} 天的原始请求记录。聚合指标可能会相应变化。此操作不可撤销。",
+    "purging": "清除中…",
+    "purge": "清除",
+    "purgeFailed": "清除失败",
+    "deleted": "已删除 {{count}} 条记录",
+    "adminRoleRequired": "需要管理员角色",
+    "saved": "已保存",
+    "usageRetention": "使用记录保留与清除"
+  },
+  "costCalc": {
+    "provider": "提供方",
+    "providerPlaceholder": "例如 openai",
+    "promptRate": "Prompt $/1M token",
+    "completionRate": "补全 $/1M token",
+    "monthlySubscription": "月度订阅价格",
+    "monthlyCost": "月度费用（电力、硬件等）",
+    "zeroPlaceholder": "0.00",
+    "description": "为每个提供方设置定价——按 1M token 计费或固定月度订阅。费率保存到浏览器本地存储并应用于当前筛选。"
+  },
+  "breakdown": {
+    "key": "密钥",
+    "couldntLoadLatency": "无法加载延迟分布。",
+    "couldntLoadUsage": "无法加载 API 密钥使用情况。"
+  },
+  "recentRequests": {
+    "couldntLoad": "无法加载最近请求。",
+    "toggleLive": "切换实时请求流",
+    "buffered": "{{status}} · {{count}} 条已缓冲"
+  },
+  "heatmap": {
+    "last24h": "最近 24 小时",
+    "last7d": "最近 7 天",
+    "less": "少",
+    "more": "多",
+    "request": {
+      "one": "个请求",
+      "other": "个请求"
+    },
+    "dayLabels": {
+      "mon": "周一",
+      "tue": "周二",
+      "wed": "周三",
+      "thu": "周四",
+      "fri": "周五",
+      "sat": "周六",
+      "sun": "周日"
+    }
+  },
+  "budgets": {
+    "done": "完成",
+    "edit": "编辑",
+    "selfHosted": "自托管",
+    "monthlyBudgets": "月度预算",
+    "noUsageYet": "本月暂无提供方使用——请求开始流转后预算将显示。",
+    "noBudgetSet": "未设置预算",
+    "tokenBudget": "Token 预算",
+    "costBudget": "费用预算（$）",
+    "monthToDate": "本月至今",
+    "tokenBudgetProgress": "已用 {{pct}}% / {{amount}} Token 预算",
+    "costBudgetProgress": "已用 {{pct}}% / {{amount}} 费用预算",
+    "flatCostLine": "固定 {{amount}}/月",
+    "hardwarePower": "硬件/电力",
+    "noUsageBasedCost": "——无按量费用"
+  },
+  "format": {
+    "ms": "{{value}} 毫秒",
+    "s": "{{value}} 秒",
+    "currency": "${{value}}",
+    "mega": "M",
+    "kilo": "K"
+  },
+  "aria": {
+    "presetName": "预设名称",
+    "deletePreset": "删除预设 {{name}}",
+    "autoRefreshInterval": "自动刷新间隔",
+    "comparisonMode": "比较模式",
+    "toggleLive": "切换实时请求流",
+    "filterData": "筛选数据",
+    "costCalculator": "费用计算器"
+  },
+  "costComparison": {
+    "providerComparison": "{{dimension}} 比较",
+    "subscriptions": "{{amount}}/月 订阅",
+    "selfHosted": "{{amount}}/月 自托管费用",
+    "noData": "无历史数据",
+    "flat": "固定",
+    "vsPrev": "较上期 {{pct}}%"
+  },
+  "timeRanges": {
+    "24h": "最近 24 小时",
+    "7d": "最近 7 天",
+    "30d": "最近 30 天",
+    "all": "全部时间"
+  },
+  "summary": {
+    "totalRequests": "总请求数",
+    "promptTokens": "Prompt Token",
+    "completionTokens": "补全 Token",
+    "cacheHitRate": "缓存命中率",
+    "estCost": "预估费用",
+    "cacheSavings": "缓存节省",
+    "streaming": "{{count}} 个流式请求",
+    "setRates": "设置费率 →",
+    "subscriptionsLabel": "订阅",
+    "selfHostedLabel": "自托管"
+  },
+  "filterBar": {
+    "filters": "筛选",
+    "clearAll": "清除全部",
+    "allProviders": "所有提供方",
+    "allModels": "所有模型",
+    "allProvidersModels": "所有提供方 · 所有模型",
+    "save": "保存",
+    "presets": "预设",
+    "chooseProvidersModels": "选择要包含的提供方和模型",
+    "removeFilterAria": "移除 {{dimension}} 筛选 {{label}}"
+  },
+  "sections": {
+    "perModelBreakdown": "按模型明细",
+    "perProviderBreakdown": "按提供方明细",
+    "recentRequests": "最近请求",
+    "requestsByHour": "按小时请求"
+  },
+  "chart": {
+    "loadingComparison": "加载比较中…",
+    "noUsageData": "此时间范围内没有使用数据。",
+    "excludes": "排除",
+    "and": "和",
+    "notTimeDistributed": "，这些不按时间分布。",
+    "excludesSubscriptions": "+ {{amount}}/月 订阅",
+    "excludesSelfHosted": "+ {{amount}}/月 自托管费用"
+  },
+  "charts": {
+    "tooltip": {
+      "promptTokens": "Prompt Token",
+      "completionTokens": "补全 Token",
+      "requests": "请求",
+      "avgLatency": "平均延迟",
+      "cachedTokens": "已缓存的 Token",
+      "estCost": "预估费用",
+      "requestCount": {
+        "one": "{{count}} 个请求",
+        "other": "{{count}} 个请求"
+      },
+      "ofTotal": "占总计 {{pct}}%"
+    }
+  },
+  "comparisonTable": {
+    "provider": "提供方",
+    "model": "模型",
+    "providerComparison": "{{dim}} 比较",
+    "missingRateDisclaimer": "* 排除无按量费率的使用（订阅、自托管、未设费率的模型）。",
+    "providersCount": "{{count}} 个提供方"
+  },
+  "perModelTable": {
+    "noModelUsage": "此时间范围内没有模型使用数据。",
+    "modelsMissingRate": "{{count}} 个模型未设置费用费率——",
+    "openCostCalc": "打开费用计算器",
+    "toCompleteEstimates": "以完善预估值。"
+  },
+  "recentRequestsSection": {
+    "couldnLoad": "无法加载最近请求。",
+    "noRequestsInWindow": "此时间窗口内没有请求。",
+    "loading": "加载中…",
+    "pageInfo": "{{total}} 个请求 · 第 {{page}} 页，共 {{totalPages}} 页",
+    "showingBetween": "显示时间范围内的请求：",
+    "clearWindow": "清除窗口",
+    "waitingForRequests": "等待传入请求…",
+    "newestFirst": "最新优先 · 最多显示 {{count}} 行",
+    "streamTooltip": "实时传入请求流",
+    "live": "实时",
+    "previousPage": "上一页",
+    "nextPage": "下一页"
+  },
+  "providerBreakdown": {
+    "noProviderUsage": "此时间范围内没有提供方使用数据。"
+  },
+  "breakdownSection": {
+    "latencyDistribution": "延迟分布",
+    "requestsCount": "{{count}} 个请求",
+    "couldnLoadLatency": "无法加载延迟分布。",
+    "noRequestsInWindow": "此时间窗口内没有请求。",
+    "usageByApiKey": "按 API 密钥统计使用",
+    "couldnLoadApiUsage": "无法加载 API 密钥使用情况。",
+    "noApiUsageInWindow": "此时间窗口内没有 API 密钥使用记录。",
+    "unnamedKey": "未命名密钥",
+    "requests": "请求",
+    "tokensIn": "输入 Token",
+    "tokensOut": "输出 Token",
+    "cached": "已缓存"
+  },
+  "costCalcSection": {
+    "provider": "提供方",
+    "promptRate": "Prompt 费率",
+    "completionRate": "补全费率",
+    "promptTokens": "Prompt Token",
+    "completionTokens": "补全 Token",
+    "promptCost": "Prompt 费用",
+    "completionCost": "补全费用",
+    "totalCost": "总费用",
+    "grandTotal": "总计",
+    "monthly": "月度",
+    "selfHosted": "自托管",
+    "incl": "含",
+    "noUsageYet": "——本月暂无使用",
+    "unnamed": "未命名",
+    "addProvider": "添加提供方",
+    "saveRates": "保存费率",
+    "selectProvider": "选择提供方…",
+    "customOption": "自定义…",
+    "cloudProviders": "云提供方",
+    "selfHostedAgents": "自托管 Agent",
+    "listButton": "列表",
+    "pricing": "定价",
+    "perTokenHint": "按 1M token 计费",
+    "monthlyHint": "固定月度订阅",
+    "selfHostedHint": "自托管（电力和硬件）——固定月度费用",
+    "removeRow": "移除行",
+    "noUsageThisMonth": "——本月暂无使用",
+    "derived": "（推导值）",
+    "per1MTokens": "每 1M token"
+  },
+  "liveStatusTooltip": "切换实时请求流",
+  "searchModels": "搜索模型…",
+  "searchSelectedModels": "搜索所选提供方的模型…",
+  "noModelUsageRecorded": "此选择下没有记录的模型使用。",
+  "selected": "已选择 {{count}} 个",
+  "none": "无",
+  "all": "全部",
+  "clearSearch": "清除搜索",
+  "apply": "应用",
+  "cancel": "取消",
+  "allProvidersLabel": "所有提供方",
+  "allModelsLabel": "所有模型",
+  "byEntity": "按 {{entity}}",
+  "onboarding": {
+    "pointClient": "将任何兼容 OpenAI 的客户端指向上述基础 URL",
+    "forExample": "例如",
+    "andSendRequest": "并发送请求。"
+  },
+  "costTooltips": {
+    "subscription": "包含在 {{provider}} 的 {{amount}}/月 订阅中",
+    "selfHosted": "包含在 {{provider}} 的 {{amount}}/月 自托管费用中",
+    "noRate": "未为 {{provider}} 设置费率"
+  },
+  "copyToClipboard": "复制到剪贴板",
+  "monthlySuffix": "/月",
+  "per1MTok": "/1M tok",
+  "tokSuffix": "tok"
+}

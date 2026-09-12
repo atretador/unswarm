@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import { Pause, Play, Trash2, ArrowDown } from "lucide-react";
 import { client } from "../../lib/query-client";
+import i18n from "../../i18n";
 import type { LogEntry, LogLevel } from "../../lib/api/types";
 import { Card, Badge, Button, Skeleton, EmptyState, Select } from "../../components/ui";
 
@@ -13,19 +15,11 @@ const LEVEL_VARIANT: Record<LogLevel, "default" | "info" | "warning" | "error"> 
   debug: "default",
 };
 
-const LEVEL_OPTIONS = [
-  { value: "", label: "All levels" },
-  { value: "info", label: "Info" },
-  { value: "warn", label: "Warn" },
-  { value: "error", label: "Error" },
-  { value: "debug", label: "Debug" },
-];
-
-// Source options are derived dynamically from loaded log entries
+// Level options and source options are computed inside the component using t().
 
 function LogLine({ entry }: { entry: LogEntry }) {
   const time = new Date(entry.timestamp);
-  const timeStr = time.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const timeStr = time.toLocaleTimeString(i18n.language === 'pt-BR' ? 'pt-BR' : 'en-US', { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
     <motion.div
@@ -45,6 +39,8 @@ function LogLine({ entry }: { entry: LogEntry }) {
 }
 
 export default function Logs() {
+  const { t } = useTranslation("logs");
+  const { t: tc } = useTranslation("common");
   const queryClient = useQueryClient();
   const [filterLevel, setFilterLevel] = useState("");
   const [filterSource, setFilterSource] = useState("");
@@ -154,13 +150,22 @@ export default function Logs() {
   const sourceOptions = useMemo(() => {
     const sources = [...new Set(localEntries.map((e) => e.source))].sort();
     const options: Array<{ value: string; label: string }> = [
-      { value: "", label: "All sources" },
+      { value: "", label: t("allSources") },
     ];
     for (const src of sources) {
       options.push({ value: src, label: src });
     }
     return options;
-  }, [localEntries]);
+  }, [localEntries, t]);
+
+  // Level filter options translated
+  const levelOptions = useMemo(() => [
+    { value: "", label: t("allLevels") },
+    { value: "info", label: t("levels.info") },
+    { value: "warn", label: t("levels.warn") },
+    { value: "error", label: t("levels.error") },
+    { value: "debug", label: t("levels.debug") },
+  ], [t]);
 
   // Filter and sort oldest→newest
   const filtered = useMemo(
@@ -197,9 +202,9 @@ export default function Logs() {
     return (
       <div className="p-6 max-w-5xl">
         <EmptyState
-          title="Failed to load logs"
+          title={t("failedToLoad")}
           description={error.message}
-          action={<Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>Retry</Button>}
+          action={<Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>{tc("retry")}</Button>}
         />
       </div>
     );
@@ -209,23 +214,23 @@ export default function Logs() {
     <div className="p-6 space-y-4 max-w-5xl flex flex-col h-full">
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Logs
+          {t("title")}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Streaming container and scheduler logs.
+          {t("subtitle")}
         </p>
       </div>
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <Select
-          label="Filter by level"
-          options={LEVEL_OPTIONS}
+          label={t("filterByLevel")}
+          options={levelOptions}
           value={filterLevel}
           onChange={(e) => setFilterLevel(e.target.value)}
         />
         <Select
-          label="Filter by source"
+          label={t("filterBySource")}
           options={sourceOptions}
           value={filterSource}
           onChange={(e) => setFilterSource(e.target.value)}
@@ -237,7 +242,7 @@ export default function Logs() {
           onClick={() => setPaused((p) => !p)}
         >
           {paused ? <Play className="size-3" /> : <Pause className="size-3" />}
-          {paused ? "Resume" : "Pause"}
+          {paused ? t("resume") : t("pause")}
         </Button>
         <Button
           variant={autoScroll ? "secondary" : "ghost"}
@@ -245,11 +250,11 @@ export default function Logs() {
           onClick={() => setAutoScroll((p) => !p)}
         >
           <ArrowDown className="size-3" />
-          Follow
+          {t("follow")}
         </Button>
         <Button variant="ghost" size="sm" onClick={clearLogs}>
           <Trash2 className="size-3" />
-          Clear
+          {t("clear")}
         </Button>
       </div>
 
@@ -257,35 +262,35 @@ export default function Logs() {
       <Card padding="none" className="flex-1 min-h-0 flex flex-col">
         <div className="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
           <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider font-medium">
-            {filtered.length} entries
+            {t("entries", { count: filtered.length })}
           </span>
           {!paused && !streamDisconnected && (
             <div className="flex items-center gap-1.5 ml-auto">
               <span className="size-1.5 rounded-full bg-[var(--color-status-running)] animate-pulse" />
-              <span className="text-[10px] text-[var(--color-text-muted)]">streaming</span>
+              <span className="text-[10px] text-[var(--color-text-muted)]">{t("streaming")}</span>
             </div>
           )}
           {streamDisconnected && (
             <Badge variant="error" size="sm" className="ml-auto">
-              stream disconnected
+              {t("streamDisconnected")}
             </Badge>
           )}
           {paused && (
-            <span className="text-[10px] text-[var(--color-status-warning)] ml-auto">paused</span>
+            <span className="text-[10px] text-[var(--color-status-warning)] ml-auto">{t("paused")}</span>
           )}
         </div>
         <div
           ref={scrollRef}
           className="flex-1 min-h-0 overflow-y-auto font-mono text-xs divide-y divide-[var(--color-border-subtle)]"
           role="log"
-          aria-label="Log entries"
+          aria-label={t("entries", { count: filtered.length })}
         >
           <AnimatePresence initial={false}>
             {filtered.length > 0 ? (
               filtered.map((entry) => <LogLine key={entry.id} entry={entry} />)
             ) : (
               <div className="px-4 py-8 text-center text-sm text-[var(--color-text-muted)]">
-                {localEntries.length === 0 ? "No logs yet — waiting for events..." : "No logs match the current filter"}
+                {localEntries.length === 0 ? t("noLogs") : t("noLogsFiltered")}
               </div>
             )}
           </AnimatePresence>
@@ -294,8 +299,8 @@ export default function Logs() {
 
       {/* Accessible live region for screen readers */}
       <div className="sr-only" aria-live="polite" aria-atomic="true">
-        {filtered.length} log entries
-        {!paused && " — streaming"}
+        {t("srLogEntries", { count: filtered.length })}
+        {!paused && t("srStreaming")}
       </div>
     </div>
   );

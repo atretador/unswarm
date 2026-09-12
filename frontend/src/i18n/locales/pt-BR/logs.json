@@ -1,0 +1,27 @@
+{
+  "title": "Logs",
+  "subtitle": "Logs de contêiner e agendador em tempo real.",
+  "failedToLoad": "Falha ao carregar logs",
+  "noLogs": "Nenhum log ainda — aguardando eventos...",
+  "noLogsFiltered": "Nenhum log corresponde ao filtro atual",
+  "resume": "Retomar",
+  "pause": "Pausar",
+  "follow": "Acompanhar",
+  "clear": "Limpar",
+  "streaming": "transmitindo",
+  "streamDisconnected": "stream desconectado",
+  "paused": "pausado",
+  "allLevels": "Todos os níveis",
+  "allSources": "Todas as fontes",
+  "filterByLevel": "Filtrar por nível",
+  "filterBySource": "Filtrar por fonte",
+  "entries": "{{count}} entradas",
+  "srLogEntries": "{{count}} entradas de log",
+  "srStreaming": " — transmitindo",
+  "levels": {
+    "info": "Info",
+    "warn": "Aviso",
+    "error": "Erro",
+    "debug": "Depuração"
+  }
+}

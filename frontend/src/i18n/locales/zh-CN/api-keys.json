@@ -1,0 +1,101 @@
+{
+  "title": "API 密钥",
+  "desc": "管理用于认证推理代理和 Agent 通道的密钥。这些不是登录凭据。",
+  "info": "API 密钥用于认证特定端点——推理密钥用于 <1>{{proxy}}</1> 代理，Agent 密钥用于 Agent 通道。登录使用独立的 Cookie 会话——登录凭据不是 API 密钥，反之亦然。",
+  "tabs": {
+    "inference": "推理",
+    "agent": "Agent"
+  },
+  "noKeys": "暂无 {{scope}} 密钥",
+  "noKeysAgent": "创建一个 Agent 密钥以认证 Agent 通道。",
+  "noKeysInference": "创建一个推理密钥以认证客户端访问 /v1 代理。",
+  "agentKeys": "Agent 密钥",
+  "inferenceKeys": "推理密钥",
+  "retired": "已退役（{{count}}）",
+  "newAgentKey": "新建 Agent 密钥",
+  "newInferenceKey": "新建推理密钥",
+  "keyName": "密钥名称",
+  "createKey": "创建密钥",
+  "createAnother": "再创建一个",
+  "createDescAgent": "创建一个密钥以认证 Agent 通道（<1>{{channel1}}</1>、<2>{{channel2}}</2>）。这些密钥<3>不是</3>登录凭据。",
+  "createDescInference": "创建一个密钥以认证推理代理（<1>{{proxy}}</1>）。这些密钥<3>不是</3>登录凭据。",
+  "keyCreated": "密钥已创建——请立即复制您的密钥。",
+  "keyCreatedDesc": "这是唯一一次显示完整密钥。请将其妥善保管。",
+  "copy": "复制",
+  "copied": "已复制",
+  "neverUsed": "从未使用",
+  "justNow": "刚刚",
+  "hoursAgo": "{{hours}}小时前",
+  "daysAgo": "{{days}}天前",
+  "createdPrefix": "创建于",
+  "loading": "加载中…",
+  "revoked": "已吊销",
+  "rotated": "密钥已轮换——请立即复制您的新密钥。",
+  "rotateWarningComplete": "轮换密钥会使之前的密钥失效。此密钥的使用者必须立即替换其凭据。",
+  "validate": {
+    "nameRequired": "名称为必填项。"
+  },
+  "placeholders": {
+    "keyName": "例如 Remote worker",
+    "keyNameAgent": "例如 CI runner"
+  },
+  "aria": {
+    "keyScope": "密钥范围",
+    "manage": "管理",
+    "rotate": "轮换",
+    "revoke": "吊销",
+    "manageKey": "管理 {{name}}",
+    "rotateKey": "轮换 {{name}}",
+    "revokeKey": "吊销 {{name}}"
+  },
+  "revoke": {
+    "confirm": "吊销 \"{{name}}\"？",
+    "desc": "现有客户端将立即失去访问权限。"
+  },
+  "manage": {
+    "usage": "使用情况",
+    "accessControl": "访问控制",
+    "fullAccess": "完全访问",
+    "fullAccessDesc": "此密钥可以调用所有提供方和模型。关闭后可在下方进行限制。",
+    "grantAllModels": "勾选一个提供方以授权其所有模型，或选择个别模型以进行更精确的授权。",
+    "couldntLoadCatalog": "提供方/模型目录当前不可用。",
+    "couldntLoadAccess": "无法加载此密钥的当前访问权限。",
+    "searchModels": "搜索模型…",
+    "allModels": "所有模型",
+    "modelsOf": "{{picked}} / {{total}}",
+    "saving": "保存中…",
+    "saveAccess": "保存访问权限",
+    "saved": "已保存",
+    "discard": "放弃",
+    "discardChanges": "放弃未保存的更改？",
+    "discardChangesDesc": "此密钥的访问权限更改尚未保存。",
+    "usageRange": "使用时间范围",
+    "grantAll": "授权所有 {{name}} 模型",
+    "dialogTitle": "管理 \"{{name}}\"",
+    "providerCloud": "云提供方",
+    "providerRouter": "路由配置",
+    "providerSelfHosted": "自托管 Agent",
+    "expandModels": "展开 {{name}} 模型",
+    "collapseModels": "收起 {{name}} 模型",
+    "unmatchedGrant": "额外授权（已不在目录中）：",
+    "nothingSelected": "未选择任何内容——此密钥无法调用任何提供方或模型。请选择至少一个，或重新启用完全访问。",
+    "unsavedChanges": "未保存的更改",
+    "noUsage": "所选时间窗口内此密钥没有使用记录。",
+    "range7d": "最近 7 天",
+    "range30d": "最近 30 天",
+    "range90d": "最近 90 天",
+    "table": {
+      "model": "模型",
+      "requests": "请求",
+      "in": "输入",
+      "out": "输出",
+      "cached": "已缓存"
+    },
+    "stats": {
+      "requests": "请求",
+      "tokensIn": "输入 Token",
+      "tokensOut": "输出 Token",
+      "cached": "已缓存"
+    }
+  }
+}

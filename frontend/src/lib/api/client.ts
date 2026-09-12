@@ -35,6 +35,7 @@ import type {
   RegisteredRuntime,
   RouterProfile,
   RouterProfileInput,
+  RouterProfileStatusMap,
   ScriptInfo,
   SendTestChatOptions,
   Settings,
@@ -198,6 +199,8 @@ export interface UnswarmClient {
   updateRouterProfile(id: string, data: RouterProfileInput): Promise<void>;
   deleteRouterProfile(id: string): Promise<void>;
   setActiveEntry(id: string, activeModelId: string | null): Promise<void>;
+  setThinkingEffort(id: string, modelId: string, thinkingEffortOverride: string | null): Promise<RouterProfile>;
+  getRouterProfileStatus(): Promise<RouterProfileStatusMap>;
 
   // Cloud Providers
   listCloudProviders(): Promise<CloudProvider[]>;

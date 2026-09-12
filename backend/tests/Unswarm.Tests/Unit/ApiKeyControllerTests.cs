@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
@@ -12,7 +13,8 @@ public sealed class ApiKeyControllerTests
     private static IApiKeyStore NewStore() => TestApiKeyStore.Create();
 
     private static ApiKeyController CreateController(IApiKeyStore? store = null)
-        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry(), new StubRouterProfileStore());
+        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry(), new StubRouterProfileStore(),
+            new LoggerFactory().CreateLogger<ApiKeyController>());
 
     /// <summary>Minimal ICloudProviderStore for controller tests: one configured provider.</summary>
     private sealed class StubCloudProviderStore : ICloudProviderStore
@@ -63,6 +65,7 @@ public sealed class ApiKeyControllerTests
         public Task<RouterProfile> CreateAsync(RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
         public Task<RouterProfile> UpdateAsync(string id, RouterProfile profile, CancellationToken ct = default) => Task.FromResult(profile);
         public Task SetActiveModelIdAsync(string id, string? activeModelId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<RouterProfile> SetThinkingEffortAsync(string id, string modelId, string? thinkingEffortOverride, CancellationToken ct = default) => Task.FromResult(new RouterProfile { Id = id, Name = "", Mode = RouterProfileMode.Auto, Entries = [], CreatedAt = default, UpdatedAt = default });
         public Task DeleteAsync(string id, CancellationToken ct = default) => Task.CompletedTask;
     }
 

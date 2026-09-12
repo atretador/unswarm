@@ -27,6 +27,8 @@ import type {
   RegisteredRuntime,
   RouterProfile,
   RouterProfileInput,
+  RouterProfileStatusMap,
+  ThinkingEffortPayload,
   ScriptInfo,
   SendTestChatOptions,
   Settings,
@@ -39,6 +41,7 @@ import type {
   User,
 } from "./types";
 import type { UnswarmClient } from "./client";
+import i18n from "../../i18n";
 
 /**
  * Base URL for the API. Defaults to '' (same-origin relative paths) so the SPA
@@ -145,7 +148,13 @@ async function request<T>(
     let message = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      if (body && typeof body === "object" && "message" in body) {
+      if (body && typeof body === "object" && "errorKey" in body) {
+        const { errorKey, errorParams } = body as {
+          errorKey: string;
+          errorParams?: Record<string, unknown>;
+        };
+        message = i18n.t("backend-errors:" + errorKey, errorParams || {});
+      } else if (body && typeof body === "object" && "message" in body) {
         message = String((body as { message: unknown }).message);
       } else if (body && typeof body === "object" && "error" in body) {
         message = String((body as { error: unknown }).error);
@@ -180,7 +189,15 @@ async function uploadMultipart<T>(path: string, file: File): Promise<T> {
     let message = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      message = body.message || body.error || message;
+      if (body && typeof body === "object" && "errorKey" in body) {
+        const { errorKey, errorParams } = body as {
+          errorKey: string;
+          errorParams?: Record<string, unknown>;
+        };
+        message = i18n.t("backend-errors:" + errorKey, errorParams || {});
+      } else {
+        message = body.message || body.error || message;
+      }
     } catch {}
     throw new ApiError(res.status, message);
   }
@@ -201,7 +218,15 @@ async function uploadMultipartPut<T>(path: string, file: File): Promise<T> {
     let message = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      message = body.message || body.error || message;
+      if (body && typeof body === "object" && "errorKey" in body) {
+        const { errorKey, errorParams } = body as {
+          errorKey: string;
+          errorParams?: Record<string, unknown>;
+        };
+        message = i18n.t("backend-errors:" + errorKey, errorParams || {});
+      } else {
+        message = body.message || body.error || message;
+      }
     } catch {}
     throw new ApiError(res.status, message);
   }
@@ -220,7 +245,15 @@ async function fetchText(path: string): Promise<string> {
     let message = `HTTP ${res.status}`;
     try {
       const body = await res.json();
-      message = body.message || body.error || message;
+      if (body && typeof body === "object" && "errorKey" in body) {
+        const { errorKey, errorParams } = body as {
+          errorKey: string;
+          errorParams?: Record<string, unknown>;
+        };
+        message = i18n.t("backend-errors:" + errorKey, errorParams || {});
+      } else {
+        message = body.message || body.error || message;
+      }
     } catch {}
     throw new ApiError(res.status, message);
   }
@@ -234,7 +267,13 @@ async function extractTestChatError(res: Response): Promise<string> {
   let message = `HTTP ${res.status}`;
   try {
     const body = await res.json();
-    if (typeof body?.error === "string") {
+    if (body && typeof body === "object" && "errorKey" in body) {
+      const { errorKey, errorParams } = body as {
+        errorKey: string;
+        errorParams?: Record<string, unknown>;
+      };
+      message = i18n.t("backend-errors:" + errorKey, errorParams || {});
+    } else if (typeof body?.error === "string") {
       message = body.error;
     } else if (typeof body?.error?.message === "string") {
       // OpenAI-style error envelope from upstream engines
@@ -877,6 +916,20 @@ export const httpClient: UnswarmClient = {
         body: JSON.stringify({ activeModelId }),
       },
     );
+  },
+
+  setThinkingEffort(id: string, modelId: string, thinkingEffortOverride: string | null) {
+    return request<RouterProfile>(
+      `/api/router-profiles/${encodeURIComponent(id)}/thinking-effort`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ modelId, thinkingEffortOverride } satisfies ThinkingEffortPayload),
+      },
+    );
+  },
+
+  getRouterProfileStatus() {
+    return request<RouterProfileStatusMap>("/api/router-profiles/status");
   },
 
   // ── Cloud Providers ──────────────────────────────────────────

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import {
   GitBranch,
   Plus,
@@ -25,6 +26,7 @@ import {
   Dialog,
   Drawer,
   Select,
+  Spinner,
 } from "../../components/ui";
 import type {
   RouterProfile,
@@ -35,23 +37,33 @@ import type {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-/** Look up a model by name and format with runtime prefix for display. */
-function displayModelName(modelId: string | null | undefined, models?: Model[]): string {
-  if (!modelId) return "";
-  const m = models?.find((x) => x.name === modelId);
-  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, m?.sourceRuntimeName ?? undefined, m?.displayName);
+/** Return a short label for the model's source (provider or agent). */
+function modelSourceLabel(m: Model): string | null {
+  if (m.origin === "cloud" && m.providerName) return m.providerName;
+  if (m.sourceRuntimeAgent) return m.sourceRuntimeAgent;
+  return null;
 }
 
-function formatRelativeTime(iso: string): string {
+/** Look up a model by id or name and format for display. */
+function displayModelName(modelId: string | null | undefined, models?: Model[]): string {
+  if (!modelId) return "";
+  const m = models?.find((x) => x.id === modelId || x.name === modelId);
+  // Don't pass sourceRuntimeName — the source badge already shows that info
+  return formatModelName(modelId, m?.sourceRuntimeAgent ?? "", false, {}, undefined, m?.displayName);
+}
+
+type TFunction = (key: string, options?: Record<string, unknown>) => string;
+
+function formatRelativeTime(iso: string, t: TFunction): string {
   const diff = Date.now() - new Date(iso).getTime();
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return t('timeJustNow');
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t('timeMinutesAgo', { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('timeHoursAgo', { hours });
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t('timeDaysAgo', { days });
 }
 
 // ─── Model Search Autocomplete ────────────────────────────────────
@@ -61,23 +73,35 @@ function ModelSearchInput({
   onChange,
   models,
   modelsLoading,
+  title,
 }: {
   value: string;
   onChange: (value: string) => void;
   models: Model[];
   modelsLoading: boolean;
+  title?: string;
 }) {
+  const { t } = useTranslation('router-profiles');
   const [query, setQuery] = useState(value);
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Cache display name from handleSelect to avoid stale lookup in useEffect
+  const selectedDisplayNameRef = useRef<string | null>(null);
 
-  // Sync external value changes (e.g. when dialog resets)
+  // Sync external value changes — show display name instead of internal modelId
   useEffect(() => {
-    setQuery(value);
-  }, [value]);
+    // If we just selected this model, use the cached display name
+    if (selectedDisplayNameRef.current) {
+      setQuery(selectedDisplayNameRef.current);
+      selectedDisplayNameRef.current = null;
+      return;
+    }
+    const m = models?.find((x) => x.id === value || x.name === value);
+    setQuery(m?.displayName || value);
+  }, [value, models]);
 
   const filtered = useMemo(() => {
     if (query.length < 2) return [];
@@ -85,7 +109,8 @@ function ModelSearchInput({
     return models.filter(
       (m) =>
         m.id.toLowerCase().includes(lower) ||
-        m.name.toLowerCase().includes(lower),
+        m.name.toLowerCase().includes(lower) ||
+        (m.displayName ?? "").toLowerCase().includes(lower),
     );
   }, [query, models]);
 
@@ -93,13 +118,17 @@ function ModelSearchInput({
 
   const handleSelect = useCallback(
     (modelId: string) => {
-      setQuery(modelId);
+      const m = models?.find((x) => x.id === modelId || x.name === modelId);
+      const displayName = m?.displayName || modelId;
+      // Cache so the useEffect doesn't need to re-lookup (stale models ref)
+      selectedDisplayNameRef.current = displayName;
+      setQuery(displayName);
       onChange(modelId);
       setIsOpen(false);
       setHighlightedIndex(-1);
       inputRef.current?.blur();
     },
-    [onChange],
+    [onChange, models],
   );
 
   const handleKeyDown = useCallback(
@@ -122,7 +151,7 @@ function ModelSearchInput({
         case "Enter":
           e.preventDefault();
           if (highlightedIndex >= 0 && highlightedIndex < filtered.length) {
-            handleSelect(filtered[highlightedIndex].name);
+            handleSelect(filtered[highlightedIndex].id);
           }
           break;
         case "Escape":
@@ -172,6 +201,7 @@ function ModelSearchInput({
         ref={inputRef}
         type="text"
         value={query}
+        title={title}
         onChange={(e) => {
           setQuery(e.target.value);
           setHighlightedIndex(-1);
@@ -185,7 +215,7 @@ function ModelSearchInput({
           if (query.length >= 2) setIsOpen(true);
         }}
         onKeyDown={handleKeyDown}
-        placeholder="e.g. cloud/openai/gpt-4o"
+        placeholder={t('placeholders.searchModels')}
         className={`
           h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)]
           px-3 w-full text-xs text-[var(--color-text)]
@@ -202,7 +232,7 @@ function ModelSearchInput({
         >
           {modelsLoading ? (
             <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              Loading models…
+              {t('loadingModels')}
             </div>
           ) : filtered.length > 0 ? (
             filtered.map((m, i) => (
@@ -216,11 +246,18 @@ function ModelSearchInput({
                 }`}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  handleSelect(m.name);
+                  handleSelect(m.id);
                 }}
                 onMouseEnter={() => setHighlightedIndex(i)}
               >
-                <span className="font-medium truncate block">{displayModelName(m.name, models)}</span>
+                <div className="flex items-center gap-1.5">
+                  {modelSourceLabel(m) && (
+                    <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-[var(--color-primary-soft)] text-[var(--color-primary)] font-medium">
+                      {modelSourceLabel(m)}
+                    </span>
+                  )}
+                  <span className="font-medium truncate">{m.displayName || m.name}</span>
+                </div>
                 {modelSubtitle(m) && (
                   <span className="text-[var(--color-text-muted)] truncate block">
                     {modelSubtitle(m)}
@@ -230,7 +267,7 @@ function ModelSearchInput({
             ))
           ) : (
             <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">
-              No matching models
+              {t('noMatchingModels')}
             </div>
           )}
         </div>
@@ -247,13 +284,16 @@ function ProfileRow({
   onDelete,
   onView,
   models,
+  activeCount,
 }: {
   profile: RouterProfile;
   onEdit: (profile: RouterProfile) => void;
   onDelete: (profile: RouterProfile) => void;
   onView: (profile: RouterProfile) => void;
   models?: Model[];
+  activeCount?: number;
 }) {
+  const { t } = useTranslation('router-profiles');
   const sortedModels = useMemo(
     () => [...profile.entries].sort((a, b) => a.priority - b.priority),
     [profile.entries],
@@ -263,7 +303,7 @@ function ProfileRow({
     <div
       className="group relative flex items-center gap-4 px-4 py-3 border-b border-[var(--color-border-subtle)] last:border-b-0 hover:bg-[var(--color-bg-muted)]/50 transition-colors duration-[var(--duration-fast)] cursor-pointer"
       onClick={() => onView(profile)}
-      aria-label={`${profile.name} — ${profile.entries.length} models`}
+      aria-label={t('ariaProfile', { name: profile.name, count: profile.entries.length })}
     >
       {/* Model tooltip */}
       <div className="
@@ -283,7 +323,7 @@ function ProfileRow({
 
           <div className="px-3 py-2">
             <div className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-1.5">
-              Models
+              {t('modelsTitle')}
             </div>
             {sortedModels.length > 0 ? (
               <div className="space-y-1">
@@ -309,7 +349,7 @@ function ProfileRow({
               </div>
             ) : (
               <div className="text-xs text-[var(--color-text-muted)]">
-                No models
+                {t('noModels')}
               </div>
             )}
           </div>
@@ -324,26 +364,38 @@ function ProfileRow({
         <span className="text-sm text-[var(--color-text)] truncate font-medium">
           {profile.name}
         </span>
+        {activeCount != null && activeCount > 0 && (
+          <span
+            className="inline-flex items-center gap-1 shrink-0"
+            role="status"
+            aria-busy="true"
+            aria-label={t('activeRequests', { count: activeCount })}
+            title={t('activeRequests', { count: activeCount })}
+          >
+            <Spinner size="sm" className="text-[var(--color-primary)]" />
+            <span className="sr-only">{t('activeRequests', { count: activeCount })}</span>
+          </span>
+        )}
       </div>
 
       {/* Mode */}
       <div className="shrink-0 w-[90px]">
-        <Badge variant={profile.mode === "Auto" ? "info" : "warning"}>
-          {profile.mode}
+        <Badge variant={profile.mode === "auto" ? "info" : "warning"}>
+          {profile.mode === "auto" ? t('autoBadge') : t('manualBadge')}
         </Badge>
       </div>
 
       {/* Entries count */}
       <div className="shrink-0 w-[100px] text-right">
         <span className="text-xs text-[var(--color-text-muted)]">
-          {profile.entries.length} {profile.entries.length === 1 ? "model" : "models"}
+          {t('modelCount', { count: profile.entries.length })}
         </span>
       </div>
 
       {/* Created */}
       <div className="shrink-0 w-[100px] text-right">
         <span className="text-xs text-[var(--color-text-muted)]">
-          {formatRelativeTime(profile.createdAt)}
+          {formatRelativeTime(profile.createdAt, t)}
         </span>
       </div>
 
@@ -351,7 +403,7 @@ function ProfileRow({
       <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="sm" onClick={() => onEdit(profile)}>
           <Pencil className="size-3.5" />
-          Edit
+          {t('edit')}
         </Button>
         <Button variant="danger" size="sm" onClick={() => onDelete(profile)}>
           <Trash2 className="size-3.5" />
@@ -360,6 +412,59 @@ function ProfileRow({
       </div>
     </div>
   );
+}
+
+// ─── Source (runtime/provider) helpers ────────────────────────────
+
+type ModelSource = { key: string; label: string; kind: "runtime" | "cloud" };
+
+/** Derive unique agent/provider sources from the models list.
+ *  Swarm runtimes are grouped by agent name (host / agent-pc / etc.)
+ *  rather than individual runtime display names. */
+function useSourceOptions(models: Model[]): ModelSource[] {
+  return useMemo(() => {
+    const map = new Map<string, ModelSource>();
+    for (const m of models) {
+      if (m.origin === "cloud" && m.providerName) {
+        const key = `cloud:${m.providerName}`;
+        if (!map.has(key)) map.set(key, { key, label: m.providerName, kind: "cloud" });
+      } else if (m.sourceRuntimeAgent) {
+        const key = `agent:${m.sourceRuntimeAgent}`;
+        if (!map.has(key))
+          map.set(key, { key, label: m.sourceRuntimeAgent, kind: "runtime" });
+      } else if (m.sourceRuntimeId) {
+        // Fallback: models without an agent name
+        const key = `agent:${m.sourceRuntimeId}`;
+        if (!map.has(key))
+          map.set(key, { key, label: m.sourceRuntimeName || "Local", kind: "runtime" });
+      }
+    }
+    return Array.from(map.values());
+  }, [models]);
+}
+
+/** Filter models by source key (agent or cloud provider). */
+function filterBySource(models: Model[], sourceKey: string): Model[] {
+  if (sourceKey === "all") return models;
+  if (sourceKey.startsWith("cloud:")) {
+    const provider = sourceKey.slice(6);
+    return models.filter((m) => m.origin === "cloud" && m.providerName === provider);
+  }
+  if (sourceKey.startsWith("agent:")) {
+    const agent = sourceKey.slice(6);
+    return models.filter((m) => m.sourceRuntimeAgent === agent || (!m.sourceRuntimeAgent && m.sourceRuntimeId === agent));
+  }
+  return models;
+}
+
+/** Infer the source key for a given modelId. */
+function sourceKeyForModel(modelId: string, models: Model[]): string | null {
+  const m = models.find((x) => x.id === modelId || x.name === modelId);
+  if (!m) return null;
+  if (m.origin === "cloud" && m.providerName) return `cloud:${m.providerName}`;
+  if (m.sourceRuntimeAgent) return `agent:${m.sourceRuntimeAgent}`;
+  if (m.sourceRuntimeId) return `agent:${m.sourceRuntimeId}`;
+  return null;
 }
 
 // ─── Entry Row (inside the dialog form) ──────────────────────────
@@ -379,13 +484,53 @@ function EntryRow({
   models: Model[];
   modelsLoading: boolean;
 }) {
+  const { t } = useTranslation('router-profiles');
+  const sourceOptions = useSourceOptions(models);
+
+  // Auto-detect source from existing modelId; defaults to "all"
+  const [sourceKey, setSourceKey] = useState<string>(() => {
+    const inferred = entry.modelId ? sourceKeyForModel(entry.modelId, models) : null;
+    return inferred ?? "all";
+  });
+
+  // Re-infer when models load (first render may have empty models)
+  useEffect(() => {
+    if (sourceKey === "all" && entry.modelId) {
+      const inferred = sourceKeyForModel(entry.modelId, models);
+      if (inferred) setSourceKey(inferred);
+    }
+  }, [models, entry.modelId]);
+
+  const filteredModels = useMemo(() => filterBySource(models, sourceKey), [models, sourceKey]);
+
+  const handleModelChange = (modelId: string) => {
+    onUpdate(index, { modelId });
+    // Auto-select the source for the newly selected model
+    const inferred = sourceKeyForModel(modelId, models);
+    if (inferred) setSourceKey(inferred);
+  };
+
   return (
     <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-[var(--color-bg-muted)]/40 border border-[var(--color-border-subtle)]">
+      {/* Source filter dropdown */}
+      <select
+        value={sourceKey}
+        onChange={(e) => setSourceKey(e.target.value)}
+        className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] shrink-0 w-24 focus:outline-none focus:border-[var(--color-primary)]"
+      >
+        <option value="all">{t('noModelsAllSources')}</option>
+        {sourceOptions.map((s) => (
+          <option key={s.key} value={s.key}>
+            {s.kind === "cloud" ? "☁ " : ""}{s.label}
+          </option>
+        ))}
+      </select>
       <ModelSearchInput
         value={entry.modelId}
-        onChange={(modelId) => onUpdate(index, { modelId })}
-        models={models}
+        onChange={handleModelChange}
+        models={filteredModels}
         modelsLoading={modelsLoading}
+        title={entry.modelId ? displayModelName(entry.modelId, models) : undefined}
       />
       <div className="w-20 shrink-0">
         <Input
@@ -394,9 +539,53 @@ function EntryRow({
           onChange={(e) =>
             onUpdate(index, { priority: parseInt(e.target.value, 10) || 0 })
           }
-          placeholder="Priority"
+          placeholder={t('placeholders.priority')}
           className="h-7 text-xs"
         />
+      </div>
+      {/* Thinking effort override */}
+      <div className="shrink-0 w-24">
+        {(() => {
+          const selectedModel = models.find(
+            (m) => m.id === entry.modelId || m.name === entry.modelId,
+          );
+          const supportedEfforts = selectedModel?.supportedThinkingEfforts;
+
+          if (supportedEfforts && supportedEfforts.length > 0) {
+            return (
+              <select
+                value={entry.thinkingEffortOverride ?? ""}
+                title={t('fields.effortTooltip')}
+                onChange={(e) =>
+                  onUpdate(index, {
+                    thinkingEffortOverride: e.target.value || null,
+                  })
+                }
+                className="h-7 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-2 text-xs text-[var(--color-text)] border-[var(--color-border)] w-full focus:outline-none focus:border-[var(--color-primary)]"
+              >
+                <option value="" title={t('placeholders.defaultEffort')}>{t('placeholders.defaultEffort')}</option>
+                {supportedEfforts.map((effort) => (
+                  <option key={effort} value={effort} title={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            );
+          }
+
+          return (
+            <Input
+              value={entry.thinkingEffortOverride ?? ""}
+              onChange={(e) =>
+                onUpdate(index, {
+                  thinkingEffortOverride: e.target.value || null,
+                })
+              }
+              placeholder={t('placeholders.effort')}
+              className="h-7 text-xs"
+            />
+          );
+        })()}
       </div>
       <div className="shrink-0">
         <Switch
@@ -424,17 +613,34 @@ function ProfileDetailPanel({
   open,
   onClose,
   models,
+  activeCount,
 }: {
   profile: RouterProfile | null;
   open: boolean;
   onClose: () => void;
   models?: Model[];
+  activeCount?: number;
 }) {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
 
   const setActiveMutation = useMutation({
     mutationFn: ({ activeModelId }: { activeModelId: string | null }) =>
       client.setActiveEntry(profile!.id, activeModelId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
+    },
+  });
+
+  const updateThinkingEffortMutation = useMutation({
+    mutationFn: ({
+      modelId,
+      thinkingEffortOverride,
+    }: {
+      modelId: string;
+      thinkingEffortOverride: string | null;
+    }) =>
+      client.setThinkingEffort(profile!.id, modelId, thinkingEffortOverride),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
     },
@@ -468,13 +674,28 @@ function ProfileDetailPanel({
     <Drawer
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={liveProfile.name}
+      title={
+        <span className="inline-flex items-center gap-2">
+          {liveProfile.name}
+          {activeCount != null && activeCount > 0 && (
+            <span
+              className="inline-flex items-center"
+              role="status"
+              aria-busy="true"
+              aria-label={t('activeRequests', { count: activeCount })}
+              title={t('activeRequests', { count: activeCount })}
+            >
+              <Spinner size="sm" className="text-[var(--color-primary)]" />
+            </span>
+          )}
+        </span>
+      }
       subtitle={
         <div className="flex items-center gap-2">
-          <Badge variant={liveProfile.mode === "Auto" ? "info" : "warning"}>
-            {liveProfile.mode}
+          <Badge variant={liveProfile.mode === "auto" ? "info" : "warning"}>
+            {liveProfile.mode === "auto" ? t('autoBadge') : t('manualBadge')}
           </Badge>
-          <span>{liveProfile.entries.length} {liveProfile.entries.length === 1 ? "model" : "models"}</span>
+          <span>{t('modelCount', { count: liveProfile.entries.length })}</span>
         </div>
       }
     >
@@ -484,7 +705,7 @@ function ProfileDetailPanel({
           <div className="flex items-center gap-2 mb-1.5">
             <Zap className="size-3.5 text-[var(--color-primary)]" />
             <span className="text-xs font-medium text-[var(--color-text-heading)]">
-              Active Model
+              {t('activeModel')}
             </span>
           </div>
           {effectiveActiveModelId ? (
@@ -493,17 +714,21 @@ function ProfileDetailPanel({
               <span className="text-sm font-medium text-[var(--color-text)]">
                 {displayModelName(effectiveActiveModelId, models)}
               </span>
-              {activeModelId !== null ? (
-                <Badge variant="success" className="ml-auto">Manual</Badge>
+              {liveProfile.mode === "auto" ? (
+                <Badge variant="info" className="ml-auto">{t('autoBadge')}</Badge>
+              ) : activeModelId !== null ? (
+                <Badge variant="success" className="ml-auto">{t('manualBadge')}</Badge>
               ) : (
-                <Badge variant="info" className="ml-auto">Auto</Badge>
+                <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">
+                  {t('noActiveModel')}
+                </span>
               )}
             </div>
           ) : (
             <div className="flex items-center gap-2">
               <span className="size-2 rounded-full bg-[var(--color-text-muted)] shrink-0" />
               <span className="text-sm text-[var(--color-text-muted)]">
-                No enabled models
+                {t('noEnabledModels')}
               </span>
             </div>
           )}
@@ -513,10 +738,10 @@ function ProfileDetailPanel({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Models
+              {t('modelsTitle')}
             </span>
             <span className="text-[10px] text-[var(--color-text-muted)]">
-                      Sorted by priority (lowest first)
+                      {t('sortedByPriority')}
             </span>
           </div>
 
@@ -548,12 +773,69 @@ function ProfileDetailPanel({
                       {displayModelName(entry.modelId, models)}
                       </span>
                       {!entry.isEnabled && (
-                        <Badge variant="outline" className="shrink-0">Disabled</Badge>
+                        <Badge variant="outline" className="shrink-0">{t('common:disabled')}</Badge>
                       )}
                     </div>
                     <span className="text-[10px] text-[var(--color-text-muted)]">
-                      Priority {entry.priority}
+                      {t('priorityBadge', { priority: entry.priority })}
                     </span>
+                  </div>
+
+                  {/* Thinking effort override */}
+                  <div className="shrink-0 flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={entry.thinkingEffortOverride != null}
+                      onClick={() => {
+                        const hasOverride = entry.thinkingEffortOverride != null;
+                        updateThinkingEffortMutation.mutate({
+                          modelId: entry.modelId,
+                          thinkingEffortOverride: hasOverride ? null : "",
+                        });
+                      }}
+                      className={`
+                        relative inline-flex h-4 w-7 shrink-0 rounded-full
+                        transition-colors duration-[var(--duration-fast)]
+                        ${
+                          entry.thinkingEffortOverride != null
+                            ? "bg-[var(--color-primary)]"
+                            : "bg-[var(--color-border-strong)]"
+                        }
+                        focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
+                        cursor-pointer
+                      `}
+                    >
+                      <span
+                        className={`
+                          pointer-events-none inline-block size-3 rounded-full bg-white shadow-sm
+                          transition-transform duration-[var(--duration-fast)] ease-[var(--ease-spring)]
+                          ${entry.thinkingEffortOverride != null ? "translate-x-3.5" : "translate-x-0.5"}
+                        `}
+                      />
+                    </button>
+                    {entry.thinkingEffortOverride != null && (
+                      <select
+                        value={entry.thinkingEffortOverride}
+                        onChange={(e) => {
+                          updateThinkingEffortMutation.mutate({
+                            modelId: entry.modelId,
+                            thinkingEffortOverride: e.target.value || null,
+                          });
+                        }}
+                        title={t('fields.effortTooltip')}
+                        className="h-6 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-1.5 text-[10px] text-[var(--color-text)] border-[var(--color-border)] w-20 focus:outline-none focus:border-[var(--color-primary)]"
+                      >
+                        <option value="">{t('placeholders.defaultEffort')}</option>
+                        {(models?.find(
+                          (m) => m.id === entry.modelId || m.name === entry.modelId,
+                        )?.supportedThinkingEfforts ?? []).map((effort) => (
+                          <option key={effort} value={effort}>
+                            {effort}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   {/* Actions */}
@@ -567,12 +849,12 @@ function ProfileDetailPanel({
                       }
                       className="shrink-0 text-[var(--color-primary)]"
                     >
-                      Set Active
+                      {t('setActive')}
                     </Button>
                   ) : (
                     <span className="flex items-center gap-1 text-xs text-[var(--color-status-success)] shrink-0 px-2">
                       <Check className="size-3" />
-                      Active
+                      {t('common:active')}
                     </span>
                   )}
                 </div>
@@ -592,7 +874,7 @@ function ProfileDetailPanel({
           className="w-full"
         >
           <RotateCcw className="size-3.5" />
-          Reset to Default
+          {t('resetToDefault')}
         </Button>
       </div>
     </Drawer>
@@ -610,11 +892,12 @@ function ProfileDialog({
   onClose: () => void;
   editProfile: RouterProfile | null;
 }) {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
   const isEdit = editProfile !== null;
 
   const [name, setName] = useState("");
-  const [mode, setMode] = useState<"Auto" | "Manual">("Auto");
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [entries, setEntries] = useState<RouterProfileEntryInput[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -637,7 +920,7 @@ function ProfileDialog({
         );
       } else {
         setName("");
-        setMode("Auto");
+        setMode("auto");
         setEntries([{ modelId: "", priority: 0, isEnabled: true }]);
       }
       setError(null);
@@ -669,7 +952,7 @@ function ProfileDialog({
       : 0;
     setEntries((prev) => [
       ...prev,
-      { modelId: "", priority: nextPriority, isEnabled: true },
+      { modelId: "", priority: nextPriority, isEnabled: true, thinkingEffortOverride: null },
     ]);
   };
 
@@ -678,18 +961,18 @@ function ProfileDialog({
     setError(null);
 
     if (!name.trim()) {
-      setError("Profile name is required.");
+      setError(t('validation.nameRequired'));
       return;
     }
 
     if (entries.length === 0) {
-      setError("Add at least one model entry.");
+      setError(t('validation.atLeastOneEntry'));
       return;
     }
 
     for (let i = 0; i < entries.length; i++) {
       if (!entries[i].modelId.trim()) {
-        setError(`Model name is required for entry ${i + 1}.`);
+        setError(t('validation.modelRequired', { index: i + 1 }));
         return;
       }
     }
@@ -701,6 +984,7 @@ function ProfileDialog({
         modelId: e.modelId.trim(),
         priority: e.priority,
         isEnabled: e.isEnabled,
+        thinkingEffortOverride: e.thinkingEffortOverride ?? null,
       })),
     };
 
@@ -714,7 +998,7 @@ function ProfileDialog({
       queryClient.invalidateQueries({ queryKey: ["router-profiles"] });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : t('validation.saveFailed'));
     }
   };
 
@@ -724,43 +1008,47 @@ function ProfileDialog({
     <Dialog
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={isEdit ? "Edit Profile" : "Add Profile"}
+      title={isEdit ? t('editProfile') : t('addProfile')}
+      className="sm:max-w-4xl"
     >
       <form onSubmit={handleSubmit} className="p-5 space-y-4">
         <Input
-          label="Name"
+          label={t('fields.name')}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. GPT-4o Fallback Chain"
+          placeholder={t('placeholders.profileName')}
           autoFocus={!isEdit}
         />
 
         <Select
-          label="Mode"
+          label={t('fields.mode')}
           value={mode}
-          onChange={(e) => setMode(e.target.value as "Auto" | "Manual")}
+          onChange={(e) => setMode(e.target.value as "auto" | "manual")}
           options={[
-            { value: "Auto", label: "Auto" },
-            { value: "Manual", label: "Manual" },
+            { value: "auto", label: t('fields.auto') },
+            { value: "manual", label: t('fields.manual') },
           ]}
         />
 
         {/* Entries section */}
         <div className="space-y-2">
           <p className="text-xs font-medium text-[var(--color-text-muted)]">
-            Model Entries <span className="font-normal">(lower priority number = tried first)</span>
+            {t('fields.modelEntries')} <span className="font-normal">({t('fields.priorityHint')})</span>
           </p>
           <div className="space-y-2 rounded-md border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/20 p-3">
             {entries.length > 0 && (
               <div className="flex items-center gap-2 px-1 pb-1">
                 <span className="flex-1 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-                  Model Name
+                  {t('fields.modelName')}
                 </span>
-                <span className="w-20 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title="Lower number = tried first">
-                  Priority
+                <span className="w-20 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title={t('fields.priorityHint')}>
+                  {t('fields.priority')}
+                </span>
+                <span className="w-24 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider" title={t('fields.effortTooltip')}>
+                  {t('fields.effort')}
                 </span>
                 <span className="w-9 text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider text-center">
-                  On
+                  {t('fields.on')}
                 </span>
                 <span className="w-8" />
               </div>
@@ -786,7 +1074,7 @@ function ProfileDialog({
               className="w-full mt-1"
             >
               <Plus className="size-3.5" />
-              Add Entry
+              {t('addEntry')}
             </Button>
           </div>
         </div>
@@ -797,10 +1085,10 @@ function ProfileDialog({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" size="sm" onClick={onClose} disabled={isPending}>
-            Cancel
+            {t('common:cancel')}
           </Button>
           <Button type="submit" variant="primary" size="sm" loading={isPending}>
-            {isEdit ? "Save Changes" : "Add Profile"}
+            {isEdit ? t('saveChanges') : t('addProfile')}
           </Button>
         </div>
       </form>
@@ -811,6 +1099,7 @@ function ProfileDialog({
 // ─── Main Router Profiles Page ───────────────────────────────────
 
 export default function RouterProfiles() {
+  const { t } = useTranslation('router-profiles');
   const queryClient = useQueryClient();
 
   const {
@@ -825,6 +1114,12 @@ export default function RouterProfiles() {
     queryKey: ["models"],
     queryFn: () => client.listModels(),
     staleTime: 60_000,
+  });
+
+  const { data: profileStatus } = useQuery({
+    queryKey: ["router-profiles-status"],
+    queryFn: () => client.getRouterProfileStatus(),
+    refetchInterval: 2000,
   });
 
   const deleteMutation = useMutation({
@@ -857,10 +1152,10 @@ export default function RouterProfiles() {
       {/* Page header */}
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Router Profiles
+          {t('title')}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Chain models with automatic fallback when errors occur.
+          {t('chainDesc')}
         </p>
       </div>
 
@@ -871,12 +1166,12 @@ export default function RouterProfiles() {
           <div className="flex items-center gap-2">
             <GitBranch className="size-4 text-[var(--color-text-muted)]" />
             <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-              Profiles
+              {t('profilesLabel')}
             </p>
           </div>
           <Button variant="primary" size="sm" onClick={handleAdd}>
             <Plus className="size-3.5" />
-            Add Profile
+            {t('addProfile')}
           </Button>
         </div>
 
@@ -892,19 +1187,19 @@ export default function RouterProfiles() {
             {/* Column headers */}
             <div className="flex items-center gap-4 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/30">
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider min-w-0 flex-1">
-                Profile
+                {t('columnProfile')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[90px]">
-                Mode
+                {t('fields.mode')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[100px] text-right">
-                Models
+                {t('modelsTitle')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[100px] text-right">
-                Created
+                {t('created')}
               </span>
               <span className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider shrink-0 w-[120px] text-right">
-                Actions
+                {t('columnActions')}
               </span>
             </div>
 
@@ -915,18 +1210,20 @@ export default function RouterProfiles() {
                 onEdit={handleEdit}
                 onDelete={setDeleteTarget}
                 onView={setDetailProfile}
+                models={models}
+                activeCount={profileStatus?.[p.name]}
               />
             ))}
           </div>
         ) : (
           <EmptyState
             icon={<GitBranch className="size-12" strokeWidth={1.5} />}
-            title="No router profiles yet"
-            description="Create a profile to chain multiple models together."
+            title={t('noProfiles')}
+            description={t('noProfilesDesc')}
             action={
               <Button variant="primary" size="sm" onClick={handleAdd}>
                 <Plus className="size-3.5" />
-                Add Profile
+                {t('addProfile')}
               </Button>
             }
           />
@@ -943,9 +1240,9 @@ export default function RouterProfiles() {
       {/* Delete Confirmation */}
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete profile"
-        description={`Delete profile "${deleteTarget?.name ?? ""}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t('deleteProfile')}
+        description={t('deleteProfileDesc', { name: deleteTarget?.name ?? "" })}
+        confirmLabel={t('common:delete')}
         variant="danger"
         loading={deleteMutation.isPending}
         onConfirm={() => {
@@ -963,6 +1260,7 @@ export default function RouterProfiles() {
         open={detailProfile !== null}
         onClose={() => setDetailProfile(null)}
         models={models}
+        activeCount={detailProfile ? profileStatus?.[detailProfile.name] : undefined}
       />
     </div>
   );

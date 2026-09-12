@@ -6,6 +6,7 @@
 // hit a 403, which disables the purge button for the rest of the visit.
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, History, Trash2 } from "lucide-react";
 import { ApiError } from "../../lib/api/httpClient";
@@ -18,6 +19,7 @@ export interface RetentionControlProps {
 }
 
 export function RetentionControl({ onPurged }: RetentionControlProps) {
+  const { t } = useTranslation("metrics");
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [daysInput, setDaysInput] = useState<string>("");
@@ -84,16 +86,16 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
     setPurging(true);
     try {
       const result = await client.purgeMetricsUsage(Number.isNaN(days) ? retentionDays : days);
-      setPurgeResult(`Deleted ${result.deleted.toLocaleString()} record${result.deleted === 1 ? "" : "s"}`);
+      setPurgeResult(t("retention.deleted", { count: result.deleted.toLocaleString() }));
       setTimeout(() => setPurgeResult(null), 4000);
       onPurged();
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         setPurgeForbidden(true);
-        setPurgeResult("Admin role required");
+        setPurgeResult(t("retention.adminRoleRequired"));
         setTimeout(() => setPurgeResult(null), 4000);
       } else {
-        setPurgeResult(err instanceof Error ? err.message : "Purge failed");
+        setPurgeResult(err instanceof Error ? err.message : t("retention.purgeFailed"));
         setTimeout(() => setPurgeResult(null), 4000);
       }
     } finally {
@@ -107,7 +109,7 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        title="Usage retention & purge"
+        title={t("retention.usageRetention")}
         className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-[var(--radius-lg)] text-xs font-medium border transition-colors cursor-pointer ${
           open
             ? "border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-bg-surface)]"
@@ -115,23 +117,22 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
         }`}
       >
         <History className="size-3.5" />
-        <span className="hidden sm:inline">Retention</span>
+        <span className="hidden sm:inline">{t("retention.title")}</span>
       </button>
 
       {open && (
         <div className="absolute right-0 top-full mt-2 z-30 w-72 rounded-[var(--radius-xl)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] shadow-lg p-4 space-y-3">
           <p className="text-xs font-semibold text-[var(--color-text-heading)]">
-            Usage retention
+            {t("retention.title")}
           </p>
           <p className="text-xs text-[var(--color-text-muted)]">
-            Raw request records older than this many days are eligible for
-            cleanup.
+            {t("retention.subtitle")}
           </p>
 
           <div className="flex items-end gap-2">
             <label className="flex flex-col gap-1 flex-1">
               <span className="text-[10px] font-medium text-[var(--color-text-muted)]">
-                Keep records (days)
+                {t("retention.keepRecords")}
               </span>
               <input
                 type="number"
@@ -152,10 +153,10 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
               {savedTick ? (
                 <>
                   <Check className="size-3.5 text-[var(--color-status-running)]" />
-                  Saved
+                  {t("retention.saved")}
                 </>
               ) : (
-                "Save"
+                t("save", { ns: "common" })
               )}
             </Button>
           </div>
@@ -169,17 +170,17 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
               className="gap-1.5 w-full justify-center"
               title={
                 purgeForbidden
-                  ? "Requires an Admin role"
-                  : `Delete all records older than ${daysInput || retentionDays} days`
+                  ? t("retention.requiresAdmin")
+                  : t("retention.purgeOldRecords")
               }
             >
               <Trash2 className="size-3.5" />
-              {purgeForbidden ? "Purge unavailable" : "Purge old records"}
+              {purgeForbidden ? t("retention.purgeUnavailable") : t("retention.purgeOldRecords")}
             </Button>
             {purgeResult && (
               <p
                 className={`text-xs mt-2 ${
-                  purgeResult.startsWith("Deleted")
+                  purgeResult === t("retention.deleted", { count: purgeResult })
                     ? "text-[var(--color-status-running)]"
                     : "text-[var(--color-status-error)]"
                 }`}
@@ -193,11 +194,9 @@ export function RetentionControl({ onPurged }: RetentionControlProps) {
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Purge old usage records?"
-        description={`This permanently deletes all raw request records older than ${
-          daysInput || retentionDays
-        } days. Aggregated metrics may shift accordingly. This cannot be undone.`}
-        confirmLabel={purging ? "Purging…" : "Purge"}
+        title={t("retention.purgeConfirm")}
+        description={t("retention.purgeDesc", { days: daysInput || retentionDays })}
+        confirmLabel={purging ? t("retention.purging") : t("retention.purge")}
         loading={purging}
         variant="danger"
         onConfirm={handlePurge}

@@ -210,6 +210,7 @@ builder.Services.AddSingleton<IChatGptOAuthService, ChatGptOAuthService>();
 // Router profiles: CRUD store following the same scoped pattern as CloudProviderStore
 builder.Services.AddSingleton<IRouterProfileStore, RouterProfileStore>();
 builder.Services.AddSingleton<IRouterProfileService, RouterProfileService>();
+builder.Services.AddSingleton<RouterProfileActivityTracker>();
 builder.Services.AddSingleton<RouterProfileHandler>();
 
 // ── HTTP Client for cloud providers ──────────────────────────────────────
@@ -304,7 +305,7 @@ builder.Services.AddSingleton<Unswarm.Core.Services.Benchmarks.AutoBenchmarkServ
 // ── OpenTelemetry ─────────────────────────────────────────────────────────
 // Traces + metrics for ASP.NET Core and HttpClient, plus Unswarm's custom
 // "Unswarm" meter. OTLP export is enabled only when OTEL_EXPORTER_OTLP_ENDPOINT
-// is set; Prometheus scraping is always available at /metrics. With no exporter
+// is set; Prometheus scraping is always available at /internal/metrics. With no exporter
 // configured everything stays in-process and cheap (no-op instruments).
 var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
 
@@ -413,8 +414,10 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
+        var path = context.Request.Path;
+
         // /v1 inference endpoints: higher limit, keyed by API key ID
-        if (context.Request.Path.StartsWithSegments("/v1"))
+        if (path.StartsWithSegments("/v1"))
         {
             var apiKeyId = context.User.FindFirst("unswarm:key-id")?.Value ?? "unknown";
             return RateLimitPartition.GetFixedWindowLimiter(
@@ -427,9 +430,21 @@ builder.Services.AddRateLimiter(options =>
                 });
         }
 
+        // Everything that is not the management API is unlimited: SPA assets,
+        // the index.html fallback, /health, Prometheus scraping and Swagger.
+        // A single navigation can fan out to a dozen hashed chunks on top of a
+        // steady stream of SPA polling; a 429 on a lazy-route chunk makes the
+        // dynamic import reject, and React.lazy caches rejections for the rest
+        // of the session (URL changes, page never renders until reload).
+        if (!path.StartsWithSegments("/api"))
+        {
+            return RateLimitPartition.GetNoLimiter("unlimited");
+        }
+
         // Management endpoints: per-user when authenticated, per-IP otherwise.
         // An authenticated user browsing the dashboard should never trip the same
-        // shared-IP bucket as unauthenticated callers.
+        // shared-IP bucket as unauthenticated callers. Headroom above the SPA's
+        // own polling cadence (queue snapshot: every 2s) plus page-load bursts.
         var mgmtKey = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value is { Length: > 0 } uid
             ? $"user:{uid}"
             : $"ip:{context.Connection.RemoteIpAddress}";
@@ -437,7 +452,7 @@ builder.Services.AddRateLimiter(options =>
             partitionKey: mgmtKey,
             factory: _ => new FixedWindowRateLimiterOptions
             {
-                PermitLimit = 60,
+                PermitLimit = 300,
                 QueueLimit = 0,
                 Window = TimeSpan.FromMinutes(1)
             });
@@ -558,7 +573,8 @@ app.UseSwaggerUI(options => {
     options.SwaggerEndpoint("/swagger/v1/swagger.json", "Unswarm API v1");
 });
 
-// ── Prometheus /metrics scrape protection ─────────────────────────────────
+// ── Prometheus /internal/metrics scrape protection ────────────────────────
+// Lives under /internal/ so it can never shadow the SPA's /metrics page.
 // The endpoint itself stays AllowAnonymous (scrapers can't do the cookie
 // dance); this guard decides who may read it:
 //   - Prometheus:ScrapeToken set (env PROMETHEUS_SCRAPE_TOKEN): require
@@ -566,7 +582,7 @@ app.UseSwaggerUI(options => {
 //   - Unset: loopback-only (127.0.0.1 / ::1), 403 for everyone else.
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.Value?.Equals("/metrics", StringComparison.OrdinalIgnoreCase) == true)
+    if (context.Request.Path.Value?.Equals("/internal/metrics", StringComparison.OrdinalIgnoreCase) == true)
     {
         var scrapeToken = Environment.GetEnvironmentVariable("PROMETHEUS_SCRAPE_TOKEN");
         if (string.IsNullOrWhiteSpace(scrapeToken))
@@ -607,10 +623,11 @@ app.MapControllers();
 app.MapHealthChecks("/health");
 
 // Prometheus scrape endpoint — access is gated by the scrape-protection
-// middleware above ("/metrics" is not a protected prefix in
+// middleware above ("/internal/metrics" is not a protected prefix in
 // ApiKeyAuthMiddleware). Serves whatever the OpenTelemetry metric provider has
-// collected, including the "Unswarm" meter.
-app.MapPrometheusScrapingEndpoint("/metrics").AllowAnonymous();
+// collected, including the "Unswarm" meter. Deliberately NOT "/metrics" so the
+// SPA's client-side /metrics route still reaches MapFallbackToFile below.
+app.MapPrometheusScrapingEndpoint("/internal/metrics").AllowAnonymous();
 
 // ── SPA fallback ────────────────────────────────────────────────────────
 // Any request that doesn't match a controller, health check, metrics,

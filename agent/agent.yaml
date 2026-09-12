@@ -6,16 +6,16 @@
 #
 # Precedence: a non-empty value here wins. If this field is empty, the agent
 # falls back to the UNSWARM_AGENT_BACKEND_URL environment variable.
-backend_url: "ws://192.168.11.73:22301"
+backend_url: "ws://backend:url"
 
 # API key for authentication (empty = no auth)
 #
 # Precedence: a non-empty value here wins. If this field is empty, the agent
 # falls back to the UNSWARM_AGENT_API_KEY environment variable.
-api_key: "ak_zzoQHPuIQNfBHMQ38ykkjKCamAqBeww_vtW3mZx-Qd8"
+api_key: "ak_replace_me_api_key"
 
 # Unique agent name — must be unique across all agents on the same backend
-agent_name: "caf-agent"
+agent_name: "machine54-agent"
 
 # Docker socket path
 docker_socket: "unix:///var/run/docker.sock"

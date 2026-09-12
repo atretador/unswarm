@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Persistence;
 
 namespace Unswarm.Api.Controllers;
@@ -39,14 +40,14 @@ public class UsersController : ControllerBase
         var user = new ApplicationUser { UserName = request.Username };
         var result = await _userManager.CreateAsync(user, request.Password);
         if (!result.Succeeded)
-            return BadRequest(new { error = string.Join(", ", result.Errors.Select(e => e.Description)) });
+            return BadRequest(LocalizedError.Create("users.createFailed", new { details = string.Join(", ", result.Errors.Select(e => e.Description)) }));
 
         // Every dashboard user created here gets the default "User" role
         // (seeded at startup). Admin rights are granted explicitly afterwards.
         var roleResult = await _userManager.AddToRoleAsync(user, "User");
         if (!roleResult.Succeeded)
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { error = "User created but role assignment failed: " + string.Join(", ", roleResult.Errors.Select(e => e.Description)) });
+                LocalizedError.Create("users.roleAssignmentFailed", new { details = string.Join(", ", roleResult.Errors.Select(e => e.Description)) }));
 
         return Ok(new { id = user.Id, username = user.UserName, isTempPassword = user.IsTempPassword });
     }
@@ -59,7 +60,7 @@ public class UsersController : ControllerBase
 
         var currentUserId = _userManager.GetUserId(User);
         if (user.Id == currentUserId)
-            return BadRequest(new { error = "Cannot reset your own password here. Use Change Password instead." });
+            return BadRequest(LocalizedError.Create("users.cannotResetOwnPassword"));
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
         var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
@@ -83,11 +84,11 @@ public class UsersController : ControllerBase
 
         var currentUserId = _userManager.GetUserId(User);
         if (user.Id == currentUserId)
-            return BadRequest(new { error = "Cannot delete your own account" });
+            return BadRequest(LocalizedError.Create("users.cannotDeleteOwnAccount"));
 
         var result = await _userManager.DeleteAsync(user);
         if (!result.Succeeded)
-            return BadRequest(new { error = string.Join(", ", result.Errors.Select(e => e.Description)) });
+            return BadRequest(LocalizedError.Create("users.createFailed", new { details = string.Join(", ", result.Errors.Select(e => e.Description)) }));
 
         return Ok();
     }

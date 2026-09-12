@@ -1224,6 +1224,165 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Empty(_healthChecker.CheckedPorts);
     }
 
+    /// <summary>
+    /// Regression: when runtime B discovers the same model name that runtime A
+    /// already registered, CreateModelFromDiscoveredAsync falls back to
+    /// GetByNameAsync and UPDATES runtime A's model (hijacking SourceRuntimeId)
+    /// instead of creating a new model for runtime B. This means:
+    ///   1. Only one model exists instead of two
+    ///   2. No Conflict status is set
+    ///   3. Runtime A's model points to runtime B
+    /// </summary>
+    [Fact]
+    public async Task RediscoverAsync_SameModelNameTwoRuntimes_CreatesSeparateModelEntries_WithConflict()
+    {
+        var service = CreateService();
+
+        // --- Runtime A: register, start, discover model "A.GUFF" ---
+        var portA = StartDiscoveryServer("""{"data":[{"id":"A.GUFF","owned_by":"runtime-a"}]}""");
+        _docker.MappedPortOverride = portA;
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-a",
+            DisplayName = "Runtime A",
+            Image = "test:latest",
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        var resultA = await service.StartAsync("reg-a");
+        Assert.Equal(ContainerRegistrationStatus.Ready, resultA.Container.Status);
+        Assert.Single(resultA.DiscoveredModels);
+        Assert.Equal("A.GUFF", resultA.DiscoveredModels[0].Name);
+
+        // --- Runtime B: register with same image, start, discover same model ---
+        var portB = StartDiscoveryServer("""{"data":[{"id":"A.GUFF","owned_by":"runtime-b"}]}""");
+        _docker.MappedPortOverride = portB;
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-b",
+            DisplayName = "Runtime B",
+            Image = "test:latest",
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        var resultB = await service.StartAsync("reg-b");
+        Assert.Equal(ContainerRegistrationStatus.Ready, resultB.Container.Status);
+        Assert.Single(resultB.DiscoveredModels);
+
+        // --- Verify: two separate model entries exist, both flagged Conflict ---
+        var allModels = await _modelRegistry.ListAllAsync();
+        var aGuffModels = allModels.Where(m => m.Name == "A.GUFF").ToList();
+
+        // BUG: currently only 1 model exists (runtime A's was hijacked)
+        // EXPECTED: 2 models, one per runtime
+        Assert.Equal(2, aGuffModels.Count);
+
+        // Each model should point to its own runtime
+        var modelA = aGuffModels.Single(m => m.SourceRuntimeId == "reg-a");
+        var modelB = aGuffModels.Single(m => m.SourceRuntimeId == "reg-b");
+        Assert.Equal("reg-a", modelA.SourceRuntimeId);
+        Assert.Equal("reg-b", modelB.SourceRuntimeId);
+
+        // Both should be in Conflict state (same name, two runtimes)
+        Assert.Equal(ModelStatus.Conflict, modelA.Status);
+        Assert.Equal(ModelStatus.Conflict, modelB.Status);
+
+        // Composite IDs should be different (scoped to each runtime)
+        Assert.StartsWith("reg-a:", modelA.Id);
+        Assert.StartsWith("reg-b:", modelB.Id);
+    }
+
+    /// <summary>
+    /// Variant: runtime A is stopped, then runtime B rediscovers the same model
+    /// name. The GetByNameAsync fallback should NOT steal A's model.
+    /// </summary>
+    [Fact]
+    public async Task RediscoverAsync_RuntimeAStopped_BDoesNotStealAModel()
+    {
+        var service = CreateService();
+
+        // --- Runtime A: register, start, discover, then stop ---
+        var portA = StartDiscoveryServer("""{"data":[{"id":"A.GUFF"}]}""");
+        _docker.MappedPortOverride = portA;
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-a",
+            DisplayName = "Runtime A",
+            Image = "test:latest",
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        await service.StartAsync("reg-a");
+        await service.StopAsync("reg-a");
+
+        // --- Runtime B: register and discover same model ---
+        var portB = StartDiscoveryServer("""{"data":[{"id":"A.GUFF"}]}""");
+        _docker.MappedPortOverride = portB;
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-b",
+            DisplayName = "Runtime B",
+            Image = "test:latest",
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        await service.StartAsync("reg-b");
+
+        // Runtime A's model should still belong to runtime A
+        var allModels = await _modelRegistry.ListAllAsync();
+        var aGuffModels = allModels.Where(m => m.Name == "A.GUFF").ToList();
+
+        Assert.Equal(2, aGuffModels.Count);
+
+        var modelA = aGuffModels.Single(m => m.SourceRuntimeId == "reg-a");
+        var modelB = aGuffModels.Single(m => m.SourceRuntimeId == "reg-b");
+        Assert.Equal("reg-a", modelA.SourceRuntimeId);
+        Assert.Equal("reg-b", modelB.SourceRuntimeId);
+    }
+
+    /// <summary>
+    /// Same model name on same runtime during rediscover should NOT create
+    /// a duplicate — the existing model is updated, not stolen.
+    /// </summary>
+    [Fact]
+    public async Task RediscoverAsync_SameModelSameRuntime_NoDuplicate()
+    {
+        var service = CreateService();
+
+        // --- Runtime A: register, start, discover ---
+        var portA = StartDiscoveryServer("""{"data":[{"id":"A.GUFF"}]}""");
+        _docker.MappedPortOverride = portA;
+
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-a",
+            DisplayName = "Runtime A",
+            Image = "test:latest",
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        await service.StartAsync("reg-a");
+
+        // --- Rediscover same runtime, same model ---
+        _docker.MappedPortOverride = portA;
+        var result = await service.RediscoverAsync("reg-a");
+
+        var allModels = await _modelRegistry.ListAllAsync();
+        var aGuffModels = allModels.Where(m => m.Name == "A.GUFF").ToList();
+
+        Assert.Single(aGuffModels);
+        Assert.Equal(ModelStatus.Ready, aGuffModels[0].Status);
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

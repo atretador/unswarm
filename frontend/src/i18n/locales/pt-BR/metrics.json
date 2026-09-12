@@ -1,0 +1,349 @@
+{
+  "title": "Métricas",
+  "failedToLoad": "Falha ao carregar métricas",
+  "noUsage": "Nenhum uso registrado ainda",
+  "noUsageDesc": "Conecte um cliente ao proxy de inferência local e suas requisições aparecerão aqui automaticamente.",
+  "refresh": "Atualizar",
+  "downloadCsv": "Baixar CSV",
+  "refreshMetrics": "Atualizar métricas (R)",
+  "downloadBreakdown": "Baixar o detalhamento por modelo como CSV",
+  "setCostRates": "Defina as taxas de custo primeiro (Calculadora de Custo)",
+  "noRateConfigured": "Algumas utilizações não possuem taxa configurada (ou são assinatura/auto-hospedado) — não incluídas.",
+  "clickPoint": "Clique em um ponto para inspecionar aquelas requisições",
+  "costCalculator": "Calculadora de Custo",
+  "pickFromList": "Selecione da lista de provedores",
+  "autoRefresh": {
+    "off": "Auto: desligado",
+    "10s": "A cada 10s",
+    "30s": "A cada 30s"
+  },
+  "metricOptions": {
+    "tokens": "Tokens",
+    "requests": "Requisições",
+    "latency": "Latência",
+    "cached": "Cache",
+    "cost": "Custo"
+  },
+  "metricTitles": {
+    "tokens": "Uso de tokens ao longo do tempo",
+    "requests": "Requisições ao longo do tempo",
+    "latency": "Latência média ao longo do tempo",
+    "cached": "Tokens em cache ao longo do tempo",
+    "cost": "Custo estimado ao longo do tempo"
+  },
+  "comparisonModes": {
+    "combined": "Combinado",
+    "byProvider": "Por provedor",
+    "byModel": "Por modelo"
+  },
+  "costModes": {
+    "perToken": "Por 1M tokens",
+    "monthly": "Mensal",
+    "selfHosted": "Auto-hospedado"
+  },
+  "liveStatus": {
+    "off": "",
+    "connecting": "Conectando…",
+    "open": "Streaming ao vivo",
+    "reconnecting": "Reconectando…",
+    "unavailable": "Indisponível"
+  },
+  "table": {
+    "time": "Hora",
+    "model": "Modelo",
+    "key": "Chave",
+    "tokensIn": "Tokens de Entrada",
+    "tokensOut": "Tokens de Saída",
+    "cached": "Cache",
+    "cachedTokens": "Tokens em Cache",
+    "mode": "Modo",
+    "latency": "Latência",
+    "provider": "Provedor",
+    "requests": "Requisições",
+    "promptTokens": "Tokens do Prompt",
+    "completionTokens": "Tokens de Conclusão",
+    "cacheHitPercent": "% Acesso ao Cache",
+    "avgLatency": "Latência Média",
+    "estCost": "Custo Est.",
+    "promptRate": "Taxa Prompt",
+    "completionRate": "Taxa Conclusão",
+    "promptCost": "Custo Prompt",
+    "completionCost": "Custo Conclusão",
+    "totalCost": "Custo Total",
+    "p95": "p95",
+    "max": "Máx"
+  },
+  "csvHeaders": {
+    "avgLatencyMs": "Latência Média (ms)",
+    "estCostUsd": "Custo Est. (USD)"
+  },
+  "filter": {
+    "title": "Filtrar dados",
+    "searchProviders": "Pesquisar provedores…",
+    "noProvidersMatch": "Nenhum provedor corresponde a \"{{search}}\".",
+    "noModelsMatch": "Nenhum modelo corresponde a \"{{search}}\"."
+  },
+  "presets": {
+    "namePlaceholder": "Nome do preset…",
+    "savePreset": "Salvar filtros atuais como preset",
+    "deletePreset": "Excluir preset {{name}}",
+    "presetName": "Nome do preset"
+  },
+  "retention": {
+    "title": "Retenção de uso",
+    "subtitle": "Registros de requisições brutos com mais de tantos dias são elegíveis para limpeza.",
+    "keepRecords": "Manter registros (dias)",
+    "requiresAdmin": "Requer perfil de Admin",
+    "purgeUnavailable": "Purga indisponível",
+    "purgeOldRecords": "Limpar registros antigos",
+    "purgeConfirm": "Limpar registros de uso antigos?",
+    "purgeDesc": "Isso exclui permanentemente todos os registros de requisições brutos com mais de {{days}} dias. Métricas agregadas podem ser afetadas. Isso não pode ser desfeito.",
+    "purging": "Limpando…",
+    "purge": "Limpar",
+    "purgeFailed": "Falha na limpeza",
+    "deleted": "Excluído(s) {{count}} registro(s)",
+    "adminRoleRequired": "Perfil de administrador necessário",
+    "saved": "Salvo",
+    "usageRetention": "Retenção de uso e limpeza"
+  },
+  "costCalc": {
+    "provider": "Provedor",
+    "providerPlaceholder": "ex.: openai",
+    "promptRate": "Prompt $/1M tokens",
+    "completionRate": "Conclusão $/1M tokens",
+    "monthlySubscription": "Preço da assinatura mensal",
+    "monthlyCost": "Custo mensal (energia, hardware, etc.)",
+    "zeroPlaceholder": "0,00",
+    "description": "Defina o preço para cada provedor — taxas por uso por 1M tokens, ou uma assinatura mensal fixa. As taxas são salvas no armazenamento local do navegador e aplicadas à seleção de filtros atual."
+  },
+  "breakdown": {
+    "key": "Chave",
+    "couldntLoadLatency": "Não foi possível carregar a distribuição de latência.",
+    "couldntLoadUsage": "Não foi possível carregar o uso por API key."
+  },
+  "recentRequests": {
+    "couldntLoad": "Não foi possível carregar as requisições recentes.",
+    "toggleLive": "Ativar/desativar stream de requisições ao vivo",
+    "buffered": "{{status}} · {{count}} em buffer"
+  },
+  "heatmap": {
+    "last24h": "Últimas 24 horas",
+    "last7d": "Últimos 7 dias",
+    "less": "menos",
+    "more": "mais",
+    "request": {
+      "one": "requisição",
+      "other": "requisições"
+    },
+    "dayLabels": {
+      "mon": "Seg",
+      "tue": "Ter",
+      "wed": "Qua",
+      "thu": "Qui",
+      "fri": "Sex",
+      "sat": "Sáb",
+      "sun": "Dom"
+    }
+  },
+  "budgets": {
+    "done": "Concluído",
+    "edit": "Editar",
+    "selfHosted": "auto-hospedado",
+    "monthlyBudgets": "Orçamentos mensais",
+    "noUsageYet": "Nenhum uso de provedor este mês ainda — orçamentos aparecerão quando as requisições começarem a fluir.",
+    "noBudgetSet": "Nenhum orçamento definido",
+    "tokenBudget": "Orçamento de tokens",
+    "costBudget": "Orçamento de custo ($)",
+    "monthToDate": "Mês até agora",
+    "tokenBudgetProgress": "{{pct}}% de {{amount}} orçamento de tokens",
+    "costBudgetProgress": "{{pct}}% de {{amount}} orçamento de custo",
+    "flatCostLine": "Fixo {{amount}}/mês",
+    "hardwarePower": "hardware/energia",
+    "noUsageBasedCost": "— sem custo baseado em uso"
+  },
+  "format": {
+    "ms": "{{value}} ms",
+    "s": "{{value}} s",
+    "currency": "R$ {{value}}",
+    "mega": "M",
+    "kilo": "K"
+  },
+  "aria": {
+    "presetName": "Nome do preset",
+    "deletePreset": "Excluir preset {{name}}",
+    "autoRefreshInterval": "Intervalo de atualização automática",
+    "comparisonMode": "Modo de comparação",
+    "toggleLive": "Ativar/desativar stream de requisições ao vivo",
+    "filterData": "Filtrar dados",
+    "costCalculator": "Calculadora de Custo"
+  },
+  "costComparison": {
+    "providerComparison": "Comparação por {{dimension}}",
+    "subscriptions": "{{amount}}/mês de assinaturas",
+    "selfHosted": "{{amount}}/mês de custos auto-hospedados",
+    "noData": "sem dados anteriores",
+    "flat": "fixo",
+    "vsPrev": "{{pct}}% vs anterior"
+  },
+  "timeRanges": {
+    "24h": "Últimas 24h",
+    "7d": "Últimos 7 dias",
+    "30d": "Últimos 30 dias",
+    "all": "Todo o período"
+  },
+  "summary": {
+    "totalRequests": "Total de requisições",
+    "promptTokens": "Tokens do prompt",
+    "completionTokens": "Tokens de conclusão",
+    "cacheHitRate": "Taxa de acerto do cache",
+    "estCost": "Custo est.",
+    "cacheSavings": "Economia do cache",
+    "streaming": "{{count}} streaming",
+    "setRates": "Definir taxas →",
+    "subscriptionsLabel": "assinaturas",
+    "selfHostedLabel": "auto-hospedado"
+  },
+  "filterBar": {
+    "filters": "Filtros",
+    "clearAll": "Limpar tudo",
+    "allProviders": "Todos os provedores",
+    "allModels": "Todos os modelos",
+    "allProvidersModels": "Todos os provedores · Todos os modelos",
+    "save": "Salvar",
+    "presets": "Presets",
+    "chooseProvidersModels": "Escolha provedores e modelos para incluir",
+    "removeFilterAria": "Remover filtro de {{dimension}} {{label}}"
+  },
+  "sections": {
+    "perModelBreakdown": "Detalhamento por modelo",
+    "perProviderBreakdown": "Detalhamento por provedor",
+    "recentRequests": "Requisições recentes",
+    "requestsByHour": "Requisições por hora"
+  },
+  "chart": {
+    "loadingComparison": "Carregando comparação…",
+    "noUsageData": "Sem dados de uso para este período.",
+    "excludes": "Exclui",
+    "and": "e",
+    "notTimeDistributed": "aqueles não são distribuídos no tempo.",
+    "excludesSubscriptions": "+ {{amount}}/mês de assinaturas",
+    "excludesSelfHosted": "+ {{amount}}/mês de custos auto-hospedados"
+  },
+  "charts": {
+    "tooltip": {
+      "promptTokens": "Tokens do prompt",
+      "completionTokens": "Tokens de conclusão",
+      "requests": "Requisições",
+      "avgLatency": "Latência média",
+      "cachedTokens": "Tokens em cache",
+      "estCost": "Custo est.",
+      "requestCount": {
+        "one": "{{count}} requisição",
+        "other": "{{count}} requisições"
+      },
+      "ofTotal": "{{pct}}% do total"
+    }
+  },
+  "comparisonTable": {
+    "provider": "Provedor",
+    "model": "Modelo",
+    "providerComparison": "Comparação por {{dim}}",
+    "missingRateDisclaimer": "* Exclui uso sem taxas por token (assinaturas, auto-hospedado, modelos sem taxa).",
+    "providersCount": "{{count}} provedores"
+  },
+  "perModelTable": {
+    "noModelUsage": "Sem dados de uso por modelo para este período.",
+    "modelsMissingRate": "{{count}} modelo(s) não possuem taxa de custo definida —",
+    "openCostCalc": "abra a Calculadora de Custo",
+    "toCompleteEstimates": "para completar as estimativas."
+  },
+  "recentRequestsSection": {
+    "couldnLoad": "Não foi possível carregar as requisições recentes.",
+    "noRequestsInWindow": "Nenhuma requisição neste período.",
+    "loading": "Carregando…",
+    "pageInfo": "{{total}} requisições · página {{page}} de {{totalPages}}",
+    "showingBetween": "Mostrando requisições entre",
+    "clearWindow": "Limpar período",
+    "waitingForRequests": "Aguardando requisições…",
+    "newestFirst": "Mais recentes primeiro · limitado a {{count}} linhas",
+    "streamTooltip": "Receber requisições ao vivo conforme chegam",
+    "live": "Ao vivo",
+    "previousPage": "Página anterior",
+    "nextPage": "Próxima página"
+  },
+  "providerBreakdown": {
+    "noProviderUsage": "Sem dados de uso por provedor para este período."
+  },
+  "breakdownSection": {
+    "latencyDistribution": "Distribuição de latência",
+    "requestsCount": "{{count}} requisição(ões)",
+    "couldnLoadLatency": "Não foi possível carregar a distribuição de latência.",
+    "noRequestsInWindow": "Nenhuma requisição neste período.",
+    "usageByApiKey": "Uso por API key",
+    "couldnLoadApiUsage": "Não foi possível carregar o uso por API key.",
+    "noApiUsageInWindow": "Nenhum uso de API key neste período.",
+    "unnamedKey": "chave sem nome",
+    "requests": "Requisições",
+    "tokensIn": "Tokens de Entrada",
+    "tokensOut": "Tokens de Saída",
+    "cached": "Cache"
+  },
+  "costCalcSection": {
+    "provider": "Provedor",
+    "promptRate": "Taxa Prompt",
+    "completionRate": "Taxa Conclusão",
+    "promptTokens": "Tokens do Prompt",
+    "completionTokens": "Tokens de Conclusão",
+    "promptCost": "Custo Prompt",
+    "completionCost": "Custo Conclusão",
+    "totalCost": "Custo Total",
+    "grandTotal": "Total Geral",
+    "monthly": "mensal",
+    "selfHosted": "auto-hospedado",
+    "incl": "incl.",
+    "noUsageYet": "— sem uso este mês ainda",
+    "unnamed": "sem nome",
+    "addProvider": "Adicionar provedor",
+    "saveRates": "Salvar Taxas",
+    "selectProvider": "Selecionar provedor…",
+    "customOption": "Personalizado…",
+    "cloudProviders": "Provedores na nuvem",
+    "selfHostedAgents": "Agentes auto-hospedados",
+    "listButton": "Lista",
+    "pricing": "Preço",
+    "perTokenHint": "Preço por uso por 1M tokens",
+    "monthlyHint": "Assinatura mensal fixa",
+    "selfHostedHint": "Auto-hospedado (energia e hardware) — custo mensal fixo",
+    "removeRow": "Remover linha",
+    "noUsageThisMonth": "— sem uso este mês ainda",
+    "derived": "(derivado)",
+    "per1MTokens": "por 1M tokens"
+  },
+  "liveStatusTooltip": "Ativar/desativar stream de requisições ao vivo",
+  "searchModels": "Pesquisar modelos…",
+  "searchSelectedModels": "Pesquisar modelos dos provedores selecionados…",
+  "noModelUsageRecorded": "Nenhum uso de modelo registrado para esta seleção.",
+  "selected": "{{count}} selecionado(s)",
+  "none": "Nenhum",
+  "all": "Todos",
+  "clearSearch": "Limpar pesquisa",
+  "apply": "Aplicar",
+  "cancel": "Cancelar",
+  "allProvidersLabel": "todos os provedores",
+  "allModelsLabel": "todos os modelos",
+  "byEntity": "por {{entity}}",
+  "onboarding": {
+    "pointClient": "Aponte qualquer cliente compatível com OpenAI para a URL base acima",
+    "forExample": "por exemplo",
+    "andSendRequest": "e envie uma requisição."
+  },
+  "costTooltips": {
+    "subscription": "Incluído na assinatura de {{amount}}/mês para {{provider}}",
+    "selfHosted": "Incluído no custo auto-hospedado de {{amount}}/mês para {{provider}}",
+    "noRate": "Nenhuma taxa definida para {{provider}}"
+  },
+  "copyToClipboard": "Copiar para a área de transferência",
+  "monthlySuffix": "/mês",
+  "per1MTok": "/1M tok",
+  "tokSuffix": "tok"
+}

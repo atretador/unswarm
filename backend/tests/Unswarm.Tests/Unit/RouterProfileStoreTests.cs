@@ -351,4 +351,229 @@ public sealed class RouterProfileStoreTests
         var fetched = await store.GetAsync(created.Id);
         Assert.Null(fetched!.ActiveModelId);
     }
+
+    // ── Pin preservation tests ─────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateAsync_DoesNotOverwriteActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "pinned", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+        await store.SetActiveModelIdAsync(created.Id, "m2");
+
+        var updated = await store.UpdateAsync(created.Id, new RouterProfile
+        {
+            Id = created.Id, Name = "pinned", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            CreatedAt = created.CreatedAt, UpdatedAt = default,
+        });
+
+        // The PUT DTO carries no ActiveModelId, but the store must preserve it
+        Assert.Equal("m2", updated.ActiveModelId);
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Equal("m2", fetched!.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_DoesNotChangeActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "pinned2", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            ActiveModelId = "m1",
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var updated = await store.UpdateAsync(created.Id, new RouterProfile
+        {
+            Id = created.Id, Name = "pinned2", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            CreatedAt = created.CreatedAt, UpdatedAt = default,
+        });
+
+        Assert.Equal("m1", updated.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_RemovingPinnedEntry_ClearsActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "dangling-pin", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+        await store.SetActiveModelIdAsync(created.Id, "m2");
+
+        // Update: remove m2 from entries — pin should be cleared
+        var updated = await store.UpdateAsync(created.Id, new RouterProfile
+        {
+            Id = created.Id, Name = "dangling-pin", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+            ],
+            CreatedAt = created.CreatedAt, UpdatedAt = default,
+        });
+
+        Assert.Null(updated.ActiveModelId);
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Null(fetched!.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_DisablingPinnedEntry_DoesNotClearActiveModelId()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "disabled-pin", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1, IsEnabled = true },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+        await store.SetActiveModelIdAsync(created.Id, "m2");
+
+        // Update: disable m2 but keep it in entries — pin should be preserved
+        var updated = await store.UpdateAsync(created.Id, new RouterProfile
+        {
+            Id = created.Id, Name = "disabled-pin", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1, IsEnabled = false },
+            ],
+            CreatedAt = created.CreatedAt, UpdatedAt = default,
+        });
+
+        Assert.Equal("m2", updated.ActiveModelId);
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Equal("m2", fetched!.ActiveModelId);
+    }
+
+    // ── Thinking effort tests ──────────────────────────────────────────
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_UpdatesOnlyTargetEntry()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-profile", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0, IsEnabled = true, ThinkingEffortOverride = "low" },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1, IsEnabled = true, ThinkingEffortOverride = "high" },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var result = await store.SetThinkingEffortAsync(created.Id, "m1", "medium");
+
+        Assert.Equal("medium", result.Entries[0].ThinkingEffortOverride);
+        Assert.Equal("high", result.Entries[1].ThinkingEffortOverride); // preserved
+        Assert.Equal(RouterProfileMode.Auto, result.Mode); // mode preserved
+
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Equal("medium", fetched!.Entries[0].ThinkingEffortOverride);
+        Assert.Equal("high", fetched.Entries[1].ThinkingEffortOverride);
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_AcceptsNull()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-null", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0, IsEnabled = true, ThinkingEffortOverride = "high" },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        var result = await store.SetThinkingEffortAsync(created.Id, "m1", null);
+
+        Assert.Null(result.Entries[0].ThinkingEffortOverride);
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Null(fetched!.Entries[0].ThinkingEffortOverride);
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_PreservesPin()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-pin", Mode = RouterProfileMode.Auto,
+            Entries =
+            [
+                new RouterProfileEntry { ModelId = "m1", Priority = 0 },
+                new RouterProfileEntry { ModelId = "m2", Priority = 1 },
+            ],
+            CreatedAt = default, UpdatedAt = default,
+        });
+        await store.SetActiveModelIdAsync(created.Id, "m2");
+
+        var result = await store.SetThinkingEffortAsync(created.Id, "m1", "low");
+
+        Assert.Equal("m2", result.ActiveModelId); // pin preserved
+        var fetched = await store.GetAsync(created.Id);
+        Assert.Equal("m2", fetched!.ActiveModelId);
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_UnknownProfile_Throws()
+    {
+        var store = NewStore();
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => store.SetThinkingEffortAsync("nonexistent", "m1", null));
+    }
+
+    [Fact]
+    public async Task SetThinkingEffortAsync_UnknownEntry_Throws()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync(new RouterProfile
+        {
+            Id = "", Name = "te-noentry", Mode = RouterProfileMode.Auto,
+            Entries = [new RouterProfileEntry { ModelId = "m1", Priority = 0 }],
+            CreatedAt = default, UpdatedAt = default,
+        });
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(
+            () => store.SetThinkingEffortAsync(created.Id, "nonexistent", null));
+    }
 }

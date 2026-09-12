@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
 using LogLevel = Unswarm.Core.Models.LogLevel;
@@ -131,7 +132,7 @@ public sealed class ModelsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] ModelCreateRequest request, CancellationToken ct)
     {
         if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
-            return BadRequest("contextWindow must be between 1 and 10,000,000");
+            return BadRequest(LocalizedError.Create("models.contextWindowInvalid"));
 
         var definition = new ModelDefinition
         {
@@ -141,7 +142,8 @@ public sealed class ModelsController : ControllerBase
             ParameterSize = request.ParameterSize,
             Quantization = request.Quantization,
             ContextWindow = request.ContextWindow,
-            ContainerImage = request.ContainerImage
+            ContainerImage = request.ContainerImage,
+            SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson
         };
 
         var created = await _registry.CreateAsync(definition, ct);
@@ -153,7 +155,7 @@ public sealed class ModelsController : ControllerBase
     public async Task<IActionResult> Update(string id, [FromBody] ModelUpdateRequest request, CancellationToken ct)
     {
         if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
-            return BadRequest("contextWindow must be between 1 and 10,000,000");
+            return BadRequest(LocalizedError.Create("models.contextWindowInvalid"));
 
         var existing = await _registry.GetAsync(id, ct);
         if (existing is null && !string.IsNullOrEmpty(id) && id[0] != '/')
@@ -171,17 +173,19 @@ public sealed class ModelsController : ControllerBase
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
             DisplayName = request.DisplayName ?? existing.DisplayName,
+            SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson ?? existing.SupportedThinkingEffortsJson,
+            SourceRuntimeId = existing.SourceRuntimeId,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = existing.UpdatedAt
         };
 
         var result = await _registry.UpdateAsync(existing.Id, updated, ct);
 
-        // If the name changed, check for conflicts with the new name.
-        // A renamed model that was in Conflict may now be unique and should be Ready.
-        var newName = result.Name;
+        // If the name changed, check for conflicts with the new DisplayName.
+        // Conflict is based on DisplayName (served under /v1/models), not internal Name.
+        var newDisplayName = result.DisplayName ?? result.Name;
         var allModels = await _registry.ListAllAsync(ct).ConfigureAwait(false);
-        var sameName = allModels.Where(m => m.Name == newName).ToList();
+        var sameName = allModels.Where(m => (m.DisplayName ?? m.Name) == newDisplayName).ToList();
 
         if (sameName.Count > 1)
         {
@@ -203,6 +207,7 @@ public sealed class ModelsController : ControllerBase
                             ContainerImage = model.ContainerImage,
                             SourceRuntimeId = model.SourceRuntimeId,
                             DisplayName = model.DisplayName,
+                            SupportedThinkingEffortsJson = model.SupportedThinkingEffortsJson,
                             CreatedAt = model.CreatedAt,
                             UpdatedAt = _clock.UtcNow
                         }, ct).ConfigureAwait(false);
@@ -227,6 +232,7 @@ public sealed class ModelsController : ControllerBase
                     ContainerImage = sameName[0].ContainerImage,
                     SourceRuntimeId = sameName[0].SourceRuntimeId,
                     DisplayName = sameName[0].DisplayName,
+                    SupportedThinkingEffortsJson = sameName[0].SupportedThinkingEffortsJson,
                     CreatedAt = sameName[0].CreatedAt,
                     UpdatedAt = _clock.UtcNow
                 }, ct).ConfigureAwait(false);
@@ -268,7 +274,7 @@ public sealed class ModelsController : ControllerBase
     public async Task<IActionResult> TestChat([FromBody] TestChatRequest? request, CancellationToken ct)
     {
         if (request is null || string.IsNullOrWhiteSpace(request.Model))
-            return BadRequest(new { error = "'model' is required" });
+            return BadRequest(LocalizedError.Create("inference.invalidJson"));
 
         var messages = new List<TestChatMessage>();
         if (!string.IsNullOrWhiteSpace(request.System))
@@ -281,7 +287,7 @@ public sealed class ModelsController : ControllerBase
             m.Role is "system" or "user" or "assistant"));
 
         if (messages.Count == 0)
-            return BadRequest(new { error = "'messages' must contain at least one non-empty message" });
+            return BadRequest(LocalizedError.Create("models.messagesRequired"));
 
         if (request.Model.StartsWith("cloud/", StringComparison.Ordinal))
             return await TestChatCloudAsync(
@@ -302,7 +308,7 @@ public sealed class ModelsController : ControllerBase
         var model = await _registry.GetAsync(modelId, ct);
         if (model is null && modelId.Length > 0 && modelId[0] != '/')
             model = await _registry.GetAsync("/" + modelId, ct).ConfigureAwait(false);
-        if (model is null) return NotFound(new { error = $"Model {modelId} not found" });
+        if (model is null) return NotFound(LocalizedError.Create("models.notFound", new { modelId }));
 
         // The engine-visible "model" field is the registry NAME — identical to what
         // external clients send to /v1/chat/completions (OpenAIController lists

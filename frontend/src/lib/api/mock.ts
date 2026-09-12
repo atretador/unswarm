@@ -26,6 +26,7 @@ import type {
   RouterProfile,
   RouterProfileInput,
   RouterProfileEntryInput,
+  RouterProfileStatusMap,
   UpdateRuntimePayload,
   UsageRecordResponse,
   User,
@@ -2254,6 +2255,25 @@ export const mockClient: UnswarmClient = {
     if (!profile) throw new Error("Not found");
     profile.activeModelId = activeModelId;
     profile.updatedAt = new Date().toISOString();
+  },
+
+  async setThinkingEffort(id, modelId, thinkingEffortOverride) {
+    await delay(rand(40, 100));
+    const profile = routerProfiles.find((p) => p.id === id);
+    if (!profile) throw new Error("Not found");
+    const entry = profile.entries.find((e) => e.modelId === modelId);
+    if (entry) entry.thinkingEffortOverride = thinkingEffortOverride;
+    profile.updatedAt = new Date().toISOString();
+    return { ...profile, entries: [...profile.entries] };
+  },
+
+  async getRouterProfileStatus() {
+    await delay(rand(20, 50));
+    const result: RouterProfileStatusMap = {};
+    for (const p of routerProfiles) {
+      result[p.name] = 0;
+    }
+    return result;
   },
 
 };

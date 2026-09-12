@@ -1,0 +1,26 @@
+{
+  "title": "个人资料",
+  "subtitle": "账户详情和安全。",
+  "account": "账户",
+  "changePassword": "修改密码",
+  "editProfile": "编辑个人资料",
+  "passwordChanged": "密码修改成功。",
+  "passwordFailed": "修改密码失败。",
+  "tempPasswordBanner": "您正在使用临时密码。请立即修改。",
+  "tempPasswordBadge": "临时密码",
+  "accountActive": "账户活跃",
+  "tempPasswordModal": "临时密码——请立即修改",
+  "tempPasswordModalDesc": "您正在使用临时密码。请切换到密码选项卡进行修改。",
+  "detailsTab": "详情",
+  "passwordTab": "密码",
+  "validation": {
+    "passwordMinLength": "新密码至少需要 6 个字符。",
+    "passwordsNoMatch": "新密码不匹配。"
+  },
+  "fields": {
+    "username": "用户名",
+    "currentPassword": "当前密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码"
+  }
+}

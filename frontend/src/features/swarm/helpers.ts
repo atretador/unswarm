@@ -5,6 +5,9 @@ import type {
   Model,
   RegisteredRuntime,
 } from "../../lib/api/types";
+import { enumLabel } from "../../i18n/enum-map";
+import i18n from "../../i18n";
+import { formatRelativeTime } from "../../i18n/format";
 
 // ─── Status semantics ─────────────────────────────────────────────
 
@@ -50,12 +53,10 @@ export function runtimeSignal(status: string | null | undefined): RuntimeSignal 
   return "unknown";
 }
 
-export const RUNTIME_LABEL: Record<RuntimeSignal, string> = {
-  running: "Running",
-  transitional: "Starting…",
-  down: "Stopped",
-  unknown: "Unknown",
-};
+/** Translated runtime signal label. */
+export function getRuntimeLabel(signal: string): string {
+  return enumLabel('runtimeSignal', signal);
+}
 
 /** Find the runtime telemetry status for a registered container on its agent. */
 export function runtimeStatusFor(
@@ -97,15 +98,15 @@ export function runtimeStatusForScript(
 
 export function formatMb(mb: number): string {
   if (!mb) return "—";
-  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
-  return `${mb} MB`;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} ${i18n.t('swarm:metrics.gb')}`;
+  return `${mb} ${i18n.t('swarm:metrics.mb')}`;
 }
 
 export function formatOsPlatform(platform: string): string {
   const lower = platform.toLowerCase();
-  if (lower.includes("linux")) return "Linux";
-  if (lower.includes("windows")) return "Windows";
-  if (lower.includes("darwin") || lower.includes("mac")) return "macOS";
+  if (lower.includes("linux")) return i18n.t('swarm:platform.linux');
+  if (lower.includes("windows")) return i18n.t('swarm:platform.windows');
+  if (lower.includes("darwin") || lower.includes("mac")) return i18n.t('swarm:platform.macos');
   return platform;
 }
 
@@ -121,11 +122,7 @@ export function agentConnectivity(agent: Agent): AgentConnectivity {
 
 export function relativeTime(iso: string | null): string {
   if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return new Date(iso).toLocaleDateString();
+  return formatRelativeTime(iso);
 }
 
 /** A container counts as "already registered" when name/id matches image or runtimeContainerId (case-insensitive, matching backend OrdinalIgnoreCase). */
@@ -153,12 +150,12 @@ export function displayNameFromContainer(c: Container): string {
 }
 
 export function benchDisabledTooltip(firstModel: Model | undefined): string {
-  if (!firstModel) return "No discovered models to benchmark";
-  if (firstModel.status === "validating") return `${firstModel.name} is still validating — not ready to benchmark`;
-  if (firstModel.status === "invalid") return `${firstModel.name} is invalid — cannot benchmark`;
-  if (firstModel.status === "deprecated") return `${firstModel.name} is deprecated — cannot benchmark`;
-  if (firstModel.status === "conflict") return `${firstModel.name} has a name conflict — rename to resolve`;
-  return `${firstModel.name} is not ready to benchmark`;
+  if (!firstModel) return i18n.t('swarm:bench.noModels');
+  if (firstModel.status === "validating") return i18n.t('swarm:bench.validating', { name: firstModel.name });
+  if (firstModel.status === "invalid") return i18n.t('swarm:bench.invalid', { name: firstModel.name });
+  if (firstModel.status === "deprecated") return i18n.t('swarm:bench.deprecated', { name: firstModel.name });
+  if (firstModel.status === "conflict") return i18n.t('swarm:bench.conflict', { name: firstModel.name });
+  return i18n.t('swarm:bench.notReady', { name: firstModel.name });
 }
 
 // ─── Constants ───────────────────────────────────────────────────

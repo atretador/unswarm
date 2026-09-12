@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Tooltip } from "../ui/Tooltip";
 import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
@@ -13,6 +14,8 @@ export interface SidebarProps {
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const location = useLocation();
   const hasConflicts = useModelConflicts();
+  const { t } = useTranslation("common");
+  const { t: tNav } = useTranslation("nav");
 
   return (
     <aside
@@ -44,10 +47,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 py-2 px-1.5 space-y-0.5 overflow-y-auto">
-        {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
+        {NAV_ITEMS.map(({ to, icon: Icon, tKey }) => {
           const isActive =
             to === "/" ? location.pathname === "/" : location.pathname.startsWith(to);
           const showConflictDot = !collapsed && to === "/models" && hasConflicts;
+          const label = tNav(tKey);
 
           const link = (
             <NavLink
@@ -94,7 +98,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             transition-colors duration-[var(--duration-fast)]
             cursor-pointer
           `}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           {collapsed ? (
             <ChevronRight className="size-4" />

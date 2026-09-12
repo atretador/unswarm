@@ -1,0 +1,134 @@
+{
+  "confirm": "Confirmar",
+  "cancel": "Cancelar",
+  "save": "Guardar",
+  "delete": "Eliminar",
+  "close": "Cerrar",
+  "edit": "Editar",
+  "create": "Crear",
+  "copied": "Copiado",
+  "copy": "Copiar",
+  "loading": "Cargando",
+  "saving": "Guardando…",
+  "fetching": "Obteniendo…",
+  "search": "Buscar",
+  "backToDashboard": "Volver al panel",
+  "pageNotFound": "Página no encontrada",
+  "pageNotFoundDesc": "La página que busca no existe o ha sido movida.",
+  "done": "Listo",
+  "created": "Creado",
+  "failedToLoad": "Error al cargar",
+  "retry": "Reintentar",
+  "errorBoundary": {
+    "title": "Algo salió mal",
+    "description": "No se pudo cargar esta página. Inténtalo de nuevo o recarga la página.",
+    "reload": "Recargar página"
+  },
+  "noResults": "No se encontraron resultados",
+  "active": "Activo",
+  "disabled": "Desactivado",
+  "enabled": "Activado",
+  "theme": {
+    "light": "Claro",
+    "dark": "Oscuro",
+    "system": "Sistema"
+  },
+  "proxyActive": "Proxy activo",
+  "signOut": "Cerrar sesión",
+  "openNavigation": "Abrir navegación",
+  "closeNavigation": "Cerrar navegación",
+  "goToProfile": "Ir al perfil",
+  "userMenu": "Menú de usuario",
+  "navigationMenu": "Menú de navegación",
+  "expandSidebar": "Expandir barra lateral",
+  "collapseSidebar": "Contraer barra lateral",
+  "closeDialog": "Cerrar diálogo",
+  "closeDrawer": "Cerrar cajón",
+  "themeTooltip": "Tema: {{theme}}",
+  "themeSwitchAriaLabel": "Cambiar tema (actualmente {{theme}})",
+  "profile": "Perfil",
+  "tempPasswordBanner": "Está usando una contraseña temporal.",
+  "changeItInProfile": "Cambiarla en el Perfil",
+  "languageSwitcherTitle": "Idioma",
+  "languageSwitcherLabel": "Seleccionar idioma",
+  "units": {
+    "tokPerSec": "tok/s",
+    "tok": "tok",
+    "ms": "ms",
+    "s": "s",
+    "m": "min",
+    "h": "h",
+    "d": "d",
+    "bytes": {
+      "B": "B",
+      "KB": "KB",
+      "MB": "MB",
+      "GB": "GB"
+    }
+  },
+  "na": "n/d",
+  "unknown": "Desconocido",
+  "enums": {
+    "modelStatus": {
+      "ready": "listo",
+      "validating": "validando…",
+      "invalid": "inválido",
+      "deprecated": "obsoleto",
+      "conflict": "conflicto"
+    },
+    "containerStatus": {
+      "running": "en ejecución",
+      "starting": "iniciando",
+      "stopping": "deteniendo",
+      "stopped": "detenido",
+      "created": "creado",
+      "restarting": "reiniciando",
+      "dead": "inactivo",
+      "error": "error"
+    },
+    "containerRegistrationStatus": {
+      "registered": "registrado",
+      "starting": "iniciando",
+      "healthy": "saludable",
+      "discovering": "descubriendo",
+      "ready": "listo",
+      "error": "error"
+    },
+    "queueItemStatus": {
+      "waiting": "esperando",
+      "processing": "procesando",
+      "completed": "completado",
+      "failed": "fallido"
+    },
+    "logLevel": {
+      "info": "info",
+      "warn": "advertencia",
+      "error": "error",
+      "debug": "depuración"
+    },
+    "runtimeSignal": {
+      "running": "En ejecución",
+      "transitional": "Iniciando…",
+      "down": "Detenido",
+      "unknown": "Desconocido"
+    },
+    "agentConnectivity": {
+      "connected": "conectado",
+      "stale": "sin actividad",
+      "disconnected": "desconectado"
+    },
+    "apiKeyScope": {
+      "inference": "Inferencia",
+      "agent": "Agente"
+    },
+    "pricingMode": {
+      "perToken": "Por 1M tokens",
+      "subscription": "Mensual",
+      "selfHosted": "Auto-hospedado"
+    },
+    "benchmarkStatus": {
+      "completed": "completado",
+      "error": "error"
+    }
+  }
+}

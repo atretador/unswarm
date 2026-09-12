@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../../components/ui";
 import type { ScriptInfo, RegisteredRuntime } from "../../lib/api/types";
 import { ApiError } from "../../lib/api/httpClient";
+import i18n from "../../i18n";
 
 // ─── Constants ────────────────────────────────────────────────────
 
@@ -35,9 +37,14 @@ const MAX_FILE_SIZE = 1_048_576; // 1 MB
 // ─── Helpers ──────────────────────────────────────────────────────
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (bytes === 0) return `0 ${i18n.t('common:units.bytes.B')}`;
   const k = 1024;
-  const units = ["B", "KB", "MB", "GB"];
+  const units = [
+    i18n.t('common:units.bytes.B'),
+    i18n.t('common:units.bytes.KB'),
+    i18n.t('common:units.bytes.MB'),
+    i18n.t('common:units.bytes.GB'),
+  ];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${units[i]}`;
 }
@@ -46,13 +53,13 @@ function relativeTime(iso: string | null): string {
   if (!iso) return "—";
   const diff = Date.now() - new Date(iso).getTime();
   const sec = Math.floor(diff / 1000);
-  if (sec < 60) return "just now";
+  if (sec < 60) return i18n.t('swarm:time.justNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return i18n.t('swarm:time.minutesAgo', { count: min });
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return i18n.t('swarm:time.hoursAgo', { count: hr });
   const d = Math.floor(hr / 24);
-  return `${d}d ago`;
+  return i18n.t('swarm:time.daysAgo', { count: d });
 }
 
 /** Derive a display name from a script file name. */
@@ -74,6 +81,7 @@ export function ScriptDropZone({
   onFilesSelected: (files: File[]) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation('swarm');
   const [isDragOver, setIsDragOver] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,16 +92,16 @@ export function ScriptDropZone({
       const rejected: string[] = [];
       for (const file of Array.from(files)) {
         if (!file.name.endsWith(".sh")) {
-          rejected.push(`${file.name}: only .sh files are allowed`);
+          rejected.push(t('script.onlyShFiles', { name: file.name }));
         } else if (file.size > MAX_FILE_SIZE) {
-          rejected.push(`${file.name}: exceeds 1 MB limit`);
+          rejected.push(t('script.exceedsSize', { name: file.name }));
         } else {
           valid.push(file);
         }
       }
       return { valid, rejected };
     },
-    [],
+    [t],
   );
 
   const handleFiles = useCallback(
@@ -166,10 +174,10 @@ export function ScriptDropZone({
         </div>
         <div>
           <p className="text-xs font-medium text-[var(--color-text-heading)]">
-            {isDragOver ? "Drop to upload" : "Drop .sh files here or click to browse"}
+            {isDragOver ? t('script.dropToUpload') : t('script.dropOrBrowse')}
           </p>
           <p className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">
-            Multiple files supported · Max 1 MB each
+            {t('script.maxSize')}
           </p>
         </div>
       </button>
@@ -229,6 +237,7 @@ function ScriptCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useTranslation('swarm');
   return (
     <div
       className={`
@@ -257,11 +266,11 @@ function ScriptCard({
           {isRegistered && (
             <Badge variant="success" className="gap-1 text-[10px]">
               <Terminal className="size-2.5" />
-              registered
+              {t('registered')}
             </Badge>
           )}
           {!isRegistered && isSelected && (
-            <Badge variant="info" className="text-[10px]">selected</Badge>
+            <Badge variant="info" className="text-[10px]">{t('selected')}</Badge>
           )}
         </div>
       </div>
@@ -283,7 +292,7 @@ function ScriptCard({
               onSelect();
             }}
           >
-            {isSelected ? "Selected" : "Select"}
+            {isSelected ? t('script.selected') : t('script.select')}
           </Button>
         )}
         <Button
@@ -293,11 +302,11 @@ function ScriptCard({
             e.stopPropagation();
             onEdit();
           }}
-          title="Edit script content"
+          title={t('script.editContent')}
           className={isRegistered ? "" : "opacity-0 transition-opacity group-hover:opacity-100"}
         >
           <Pencil className="size-3" />
-          Edit
+          {t('script.editContent', { ns: 'common' })}
         </Button>
         <Button
           variant="ghost"
@@ -306,7 +315,7 @@ function ScriptCard({
             e.stopPropagation();
             onDelete();
           }}
-          title="Delete script"
+          title={t('script.deleteScript')}
           className="text-[var(--color-status-error)] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)]"
         >
           <Trash2 className="size-3" />
@@ -339,6 +348,7 @@ export function ScriptCardGrid({
   onDelete: (name: string) => void;
   onRetry: () => void;
 }) {
+  const { t } = useTranslation('swarm');
   if (isLoading) {
     return (
       <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -352,11 +362,11 @@ export function ScriptCardGrid({
   if (error) {
     return (
       <EmptyState
-        title="Couldn't list scripts"
-        description={`Couldn't reach ${agentName} to list scripts.`}
+        title={t('script.couldntList')}
+        description={t('script.couldntReach', { agentName })}
         action={
           <Button variant="secondary" size="sm" onClick={onRetry}>
-            Retry
+            {t('retry')}
           </Button>
         }
       />
@@ -367,8 +377,8 @@ export function ScriptCardGrid({
     return (
       <EmptyState
         icon={<Terminal className="size-12" strokeWidth={1.5} />}
-        title="No scripts uploaded"
-        description="Upload .sh files using the drop zone above, or add scripts to the agent's scripts_dir."
+        title={t('script.noScriptsUploaded')}
+        description={t('script.noScriptsUploadedDesc')}
       />
     );
   }
@@ -409,6 +419,8 @@ export function ScriptEditorDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const [content, setContent] = useState("");
   const [isDirty, setIsDirty] = useState(false);
@@ -470,13 +482,13 @@ export function ScriptEditorDialog({
 
   return (
     <>
-    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }} title={`Edit ${scriptName ?? "script"}`}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) handleClose(); }} title={t('script.editContent') + ` ${scriptName ?? ""}`}>
       <div className="flex flex-col gap-4 p-5">
         {isRunning && (
           <div className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-warning)_10%,transparent)] px-3 py-2 text-xs text-[var(--color-status-warning)]">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <span>
-              This script is currently running. Changes will take effect on next start.
+              {t('script.runningWarning')}
             </span>
           </div>
         )}
@@ -489,7 +501,7 @@ export function ScriptEditorDialog({
         ) : (
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-[var(--color-text-heading)]">
-              Script content
+              {t('script.scriptContent')}
             </label>
             <textarea
               value={content}
@@ -505,7 +517,7 @@ export function ScriptEditorDialog({
                 outline-none transition-colors
                 focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]
               "
-              placeholder="#!/bin/bash"
+              placeholder={t('script.placeholders.scriptContent')}
             />
           </div>
         )}
@@ -519,7 +531,7 @@ export function ScriptEditorDialog({
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" size="sm" onClick={handleClose}>
-            Cancel
+            {tc('cancel')}
           </Button>
           <Button
             size="sm"
@@ -527,7 +539,7 @@ export function ScriptEditorDialog({
             disabled={!isDirty || contentLoading}
             onClick={() => saveMutation.mutate()}
           >
-            Save
+            {tc('save')}
           </Button>
         </div>
       </div>
@@ -535,9 +547,9 @@ export function ScriptEditorDialog({
 
     <ConfirmDialog
       open={showDiscardConfirm}
-      title="Discard changes?"
-      description="You have unsaved changes. Are you sure you want to close without saving?"
-      confirmLabel="Discard"
+      title={t('script.discardChanges')}
+      description={t('script.discardChangesDesc')}
+      confirmLabel={t('script.discard')}
       variant="danger"
       onConfirm={() => {
         setShowDiscardConfirm(false);
@@ -558,6 +570,8 @@ export function HostScriptUpload({
   registered: RegisteredRuntime[];
   onClose: () => void;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
   const agentName = "host";
 
@@ -686,23 +700,17 @@ export function HostScriptUpload({
           <Terminal className="size-8 text-[var(--color-text-muted)]" strokeWidth={1.5} />
           <div className="space-y-1">
             <p className="text-sm font-medium text-[var(--color-text-heading)]">
-              Host scripts are not available in Docker
+              {t('script.hostScriptsDockerTitle')}
             </p>
             <p className="text-xs text-[var(--color-text-muted)]">
-              Host script management requires bare-metal access. Run with{" "}
-              <code className="rounded bg-[var(--color-bg-elevated)] px-1 py-0.5 font-mono text-[var(--color-text-heading)]">
-                dotnet run
-              </code>{" "}
-              or use an agent with a configured scripts directory.
+              {t('script.hostScriptsDockerDesc')}
             </p>
           </div>
         </div>
       ) : (
         <>
           <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-            Upload and manage launcher scripts on{" "}
-            <span className="font-mono text-[var(--color-text-heading)]">host</span>.
-            Upload .sh files, then select one to register as a runtime.
+            {t('script.uploadManageHost')} {t('script.uploadThenSelect')}
           </p>
 
           <ScriptDropZone
@@ -713,7 +721,7 @@ export function HostScriptUpload({
           {uploadMutation.isPending && (
             <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
               <div className="animate-spin size-3.5 border-2 border-current border-t-transparent rounded-full" />
-              Uploading...
+              {t('script.uploading')}
             </div>
           )}
 
@@ -742,12 +750,12 @@ export function HostScriptUpload({
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-[var(--color-text-heading)]">
-                Register script
+                {t('script.registerScript')}
               </p>
               <button
                 type="button"
                 onClick={() => setSelectedScript(null)}
-                aria-label="Cancel selection"
+                aria-label={t('script.cancelSelection')}
                 className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)]"
               >
                 <X className="size-3.5" />
@@ -758,22 +766,22 @@ export function HostScriptUpload({
             </p>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
               <Input
-                label="Display name"
+                label={t('runtime.displayName')}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="my-script-server"
+                placeholder={t('script.placeholders.scriptName')}
               />
               <Input
-                label="Port"
+                label={t('runtime.port')}
                 type="number"
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
-                placeholder="8080"
+                placeholder={t('script.placeholders.port')}
               />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" size="sm" onClick={() => setSelectedScript(null)}>
-                Cancel
+                {tc('cancel')}
               </Button>
               <Button
                 size="sm"
@@ -782,7 +790,7 @@ export function HostScriptUpload({
                 onClick={handleRegister}
               >
                 <Terminal className="size-3" />
-                Register script
+                {t('script.registerScript')}
               </Button>
             </div>
           </motion.div>
@@ -798,9 +806,9 @@ export function HostScriptUpload({
       {/* Delete confirmation */}
       <ConfirmDialog
         open={deletingScript !== null}
-        title="Delete script"
-        description={`Are you sure you want to delete "${deletingScript}"? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={t('script.deleteScriptConfirm')}
+        description={t('script.deleteScriptConfirmDesc', { name: deletingScript })}
+        confirmLabel={tc('delete')}
         variant="danger"
         loading={deleteMutation.isPending}
         onConfirm={() => {
@@ -838,6 +846,8 @@ export function AgentScriptUpload({
   registered: RegisteredRuntime[];
   onClose: () => void;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const queryClient = useQueryClient();
 
   // State
@@ -943,9 +953,7 @@ export function AgentScriptUpload({
   return (
     <div className="space-y-4 p-5">
       <p className="text-xs leading-relaxed text-[var(--color-text-muted)]">
-        Upload and manage launcher scripts on{" "}
-        <span className="font-mono text-[var(--color-text-heading)]">{agentName}</span>.
-        Upload .sh files, then select one to register as a runtime.
+        {t('script.uploadManageAgent', { agentName })} {t('script.uploadThenSelect')}
       </p>
 
       <ScriptDropZone
@@ -956,7 +964,7 @@ export function AgentScriptUpload({
       {uploadMutation.isPending && (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
           <div className="animate-spin size-3.5 border-2 border-current border-t-transparent rounded-full" />
-          Uploading...
+          {t('script.uploading')}
         </div>
       )}
 
@@ -968,8 +976,8 @@ export function AgentScriptUpload({
         </div>
       ) : error ? (
         <EmptyState
-          title="Couldn't list scripts"
-          description={`Couldn't reach ${agentName} to list scripts.`}
+          title={t('script.couldntList')}
+          description={t('script.couldntReach', { agentName })}
           action={
             <Button
               variant="secondary"
@@ -978,15 +986,15 @@ export function AgentScriptUpload({
                 queryClient.invalidateQueries({ queryKey: ["agent-available-scripts", agentName] })
               }
             >
-              Retry
+              {t('retry')}
             </Button>
           }
         />
       ) : (availableScripts ?? []).length === 0 ? (
         <EmptyState
           icon={<Terminal className="size-12" strokeWidth={1.5} />}
-          title="No scripts found"
-          description={`No scripts found on ${agentName}. Add .sh files to the agent's scripts_dir.`}
+          title={t('script.noScriptsFound', { agentName })}
+          description={t('script.noScriptsFoundDesc')}
         />
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -1020,18 +1028,18 @@ export function AgentScriptUpload({
                   {already ? (
                     <Badge variant="success" className="shrink-0 gap-1">
                       <Terminal className="size-2.5" />
-                      registered
+                      {t('registered')}
                     </Badge>
                   ) : selected ? (
                     <Badge variant="info" className="shrink-0">
-                      selected
+                      {t('selected')}
                     </Badge>
                   ) : (
                     <Badge
                       variant="outline"
                       className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
                     >
-                      register
+                      {t('register')}
                     </Badge>
                   )}
                 </div>
@@ -1051,11 +1059,11 @@ export function AgentScriptUpload({
                         const filename = s.path.split("/").pop() ?? s.name;
                         setEditingScript(filename);
                       }}
-                      title="Edit script content"
+                      title={t('script.editContent')}
                       className="opacity-0 transition-opacity group-hover:opacity-100"
                     >
                       <Pencil className="size-3" />
-                      Edit
+                      {tc('edit')}
                     </Button>
                   </div>
                 )}
@@ -1077,12 +1085,12 @@ export function AgentScriptUpload({
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-[var(--color-text-heading)]">
-                Register script
+                {t('script.registerScript')}
               </p>
               <button
                 type="button"
                 onClick={() => setSelectedScript(null)}
-                aria-label="Cancel selection"
+                aria-label={t('script.cancelSelection')}
                 className="flex size-6 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:bg-[var(--color-bg-elevated)]"
               >
                 <X className="size-3.5" />
@@ -1093,22 +1101,22 @@ export function AgentScriptUpload({
             </p>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
               <Input
-                label="Display name"
+                label={t('runtime.displayName')}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="my-script-server"
+                placeholder={t('script.placeholders.scriptName')}
               />
               <Input
-                label="Port"
+                label={t('runtime.port')}
                 type="number"
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
-                placeholder="8080"
+                placeholder={t('script.placeholders.port')}
               />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" size="sm" onClick={() => setSelectedScript(null)}>
-                Cancel
+                {tc('cancel')}
               </Button>
               <Button
                 size="sm"
@@ -1117,7 +1125,7 @@ export function AgentScriptUpload({
                 onClick={handleRegister}
               >
                 <Terminal className="size-3" />
-                Register on {agentName}
+                {t('runtime.registerOn', { agentName })}
               </Button>
             </div>
           </motion.div>

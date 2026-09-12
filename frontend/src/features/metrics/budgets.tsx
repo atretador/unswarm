@@ -10,6 +10,7 @@
 // current calendar month.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PiggyBank, Settings2 } from "lucide-react";
 import { Card, Badge } from "../../components/ui";
@@ -126,6 +127,7 @@ export function BudgetsPanel({
   loading,
   costRates,
 }: BudgetsPanelProps) {
+  const { t } = useTranslation("metrics");
   const queryClient = useQueryClient();
 
   // Shares the ["settings"] cache entry warmed by the page-level query.
@@ -214,7 +216,7 @@ export function BudgetsPanel({
     <Card padding="lg">
       <div className="flex items-center justify-between mb-4">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Monthly budgets
+          {t("budgets.monthlyBudgets")}
         </p>
         <button
           type="button"
@@ -223,20 +225,19 @@ export function BudgetsPanel({
           aria-expanded={editing}
         >
           <Settings2 className="size-3.5" />
-          {editing ? "Done" : "Edit"}
+          {editing ? t("budgets.done") : t("budgets.edit")}
         </button>
       </div>
 
       {loading && (
-        <p className="text-sm text-[var(--color-text-muted)] py-4">Loading…</p>
+        <p className="text-sm text-[var(--color-text-muted)] py-4">{t("loading", { ns: "common" })}…</p>
       )}
 
       {!loading && rows.length === 0 && (
         <div className="flex flex-col items-center py-6 text-center">
           <PiggyBank className="size-8 text-[var(--color-text-muted)] opacity-40 mb-2" />
           <p className="text-sm text-[var(--color-text-muted)] max-w-xs">
-            No provider usage this month yet — budgets will appear once requests
-            start flowing.
+            {t("budgets.noUsageYet")}
           </p>
         </div>
       )}
@@ -267,17 +268,17 @@ export function BudgetsPanel({
                   <span className="truncate">{row.provider}</span>
                   {flatKind === "subscription" && (
                     <Badge variant="outline" size="sm">
-                      monthly
+                      {t("costCalcSection.monthly")}
                     </Badge>
                   )}
                   {flatKind === "self-hosted" && (
                     <Badge variant="outline" size="sm">
-                      self-hosted
+                      {t("budgets.selfHosted")}
                     </Badge>
                   )}
                 </span>
                 <span className="text-xs font-mono text-[var(--color-text-muted)] shrink-0 tabular-nums">
-                  {formatTokens(row.tokensUsed)} tok
+                  {formatTokens(row.tokensUsed)} {t("tokSuffix")}
                   {!isFlat && budget.cost !== undefined && budget.cost > 0
                     ? ` · ${formatCurrency(row.costUsed)}`
                     : ""}
@@ -288,28 +289,28 @@ export function BudgetsPanel({
                 <div className="mt-2 space-y-1.5">
                   {tokens.pct !== null && (
                     <ProgressBar
-                      label={`${Math.round(tokens.pct)}% of ${formatTokens(budget.tokens!)} token budget`}
+                      label={t("budgets.tokenBudgetProgress", { pct: Math.round(tokens.pct), amount: formatTokens(budget.tokens!) })}
                       state={tokens}
                     />
                   )}
                   {isFlat ? (
                     <p className="text-[10px] text-[var(--color-text-muted)]">
-                      Flat {formatCurrency(flatCost)}/mo{" "}
+                      {t("budgets.flatCostLine", { amount: formatCurrency(flatCost) })}{" "}
                       {flatKind === "self-hosted"
-                        ? "hardware/power"
-                        : "— no usage-based cost"}
+                        ? t("budgets.hardwarePower")
+                        : t("budgets.noUsageBasedCost")}
                     </p>
                   ) : (
                     cost.pct !== null && (
                       <ProgressBar
-                        label={`${Math.round(cost.pct)}% of ${formatCurrency(budget.cost!)} cost budget`}
+                        label={t("budgets.costBudgetProgress", { pct: Math.round(cost.pct), amount: formatCurrency(budget.cost!) })}
                         state={cost}
                       />
                     )
                   )}
                   {tokens.pct === null && (isFlat || cost.pct === null) && (
                     <p className="text-xs text-[var(--color-text-muted)] italic">
-                      No budget set
+                      {t("budgets.noBudgetSet")}
                     </p>
                   )}
                 </div>
@@ -318,7 +319,7 @@ export function BudgetsPanel({
               {editing && (
                 <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-[var(--color-border-subtle)]">
                   <BudgetInput
-                    label="Token budget"
+                    label={t("budgets.tokenBudget")}
                     value={budget.tokens?.toString() ?? ""}
                     onChange={(v) =>
                       updateBudget(row.provider, {
@@ -328,7 +329,7 @@ export function BudgetsPanel({
                   />
                   {!isFlat && (
                     <BudgetInput
-                      label="Cost budget ($)"
+                      label={t("budgets.costBudget")}
                       value={budget.cost?.toString() ?? ""}
                       step="0.01"
                       onChange={(v) =>
@@ -347,10 +348,10 @@ export function BudgetsPanel({
         {rows.length > 0 && (
           <div className="flex items-baseline justify-between pt-2 border-t border-[var(--color-border-strong)]">
             <span className="text-xs font-semibold text-[var(--color-text-heading)]">
-              Month to date
+              {t("budgets.monthToDate")}
             </span>
             <span className="text-xs font-mono font-semibold text-[var(--color-text-heading)] tabular-nums">
-              {formatTokens(rows.reduce((sum, r) => sum + r.tokensUsed, 0))} tok ·{" "}
+              {formatTokens(rows.reduce((sum, r) => sum + r.tokensUsed, 0))} {t("tokSuffix")} ·{" "}
               {formatCurrency(rows.reduce((sum, r) => sum + r.costUsed, 0))}
             </span>
           </div>

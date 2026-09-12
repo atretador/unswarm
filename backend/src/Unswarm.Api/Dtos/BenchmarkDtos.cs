@@ -12,6 +12,7 @@ public sealed class BenchmarkResponse
     public string Id { get; set; } = "";
     public string ModelId { get; set; } = "";
     public string ModelName { get; set; } = "";
+    public string ModelDisplayName { get; set; } = "";
     public string? Prompt { get; set; }
     public double TokensPerSec { get; set; }
     public double LatencyMs { get; set; }

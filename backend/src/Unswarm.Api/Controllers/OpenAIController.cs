@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
 using Unswarm.Api.Services;
@@ -86,7 +87,8 @@ public sealed class OpenAIController : ControllerBase
                 Quantization = m.Quantization,
                 ContextWindow = m.ContextWindow,
                 ContainerImage = m.ContainerImage,
-                Status = m.Status.ToString().ToLowerInvariant()
+                Status = m.Status.ToString().ToLowerInvariant(),
+                SupportedThinkingEfforts = DeserializeThinkingEfforts(m.SupportedThinkingEffortsJson)
             }
         }).ToList();
 
@@ -186,7 +188,7 @@ public sealed class OpenAIController : ControllerBase
         }
         catch
         {
-            return BadRequest(new { error = "Invalid JSON: 'model' field required" });
+            return BadRequest(LocalizedError.Create("inference.invalidJson"));
         }
 
         // Extract client headers to forward to upstream engines.
@@ -204,13 +206,7 @@ public sealed class OpenAIController : ControllerBase
                 $"Access denied: key={apiKeyName ?? apiKeyId} requested model={modelName}");
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
-                error = new
-                {
-                    message = $"API key does not have access to model '{modelName}'.",
-                    type = "invalid_request_error",
-                    param = "model",
-                    code = "model_access_denied"
-                }
+                error = LocalizedError.Create("inference.modelAccessDenied", new { model = modelName })
             });
         }
 
@@ -260,7 +256,7 @@ public sealed class OpenAIController : ControllerBase
             {
                 _logStore.Enqueue(LogLevel.Error, "cloud-proxy",
                     $"Cloud request failed: model={modelName}, error={ex.Message}");
-                return StatusCode(502, new { error = "Cloud inference request failed" });
+                return StatusCode(502, LocalizedError.Create("inference.cloudRequestFailed"));
             }
 
             var cloudElapsedMs = (long)(_clock.UtcNow - cloudStartTime).TotalMilliseconds;
@@ -372,7 +368,7 @@ public sealed class OpenAIController : ControllerBase
             }
 
             // Should not reach here, but handle gracefully
-            return StatusCode(500, new { error = "Unexpected cloud proxy state" });
+            return StatusCode(500, LocalizedError.Create("inference.unexpectedState"));
         }
 
         // Router profile models: resolve profile and attempt inference with fallback
@@ -394,13 +390,7 @@ public sealed class OpenAIController : ControllerBase
                         $"Router failed: profile={profileName}, error={routerResult.ErrorMessage}");
                     return StatusCode(routerResult.StatusCode, new
                     {
-                        error = new
-                        {
-                            message = routerResult.ErrorMessage ?? "Router inference failed",
-                            type = "invalid_request_error",
-                            param = "model",
-                            code = "router_inference_failed"
-                        }
+                        error = LocalizedError.Create("inference.routerFailed")
                     });
                 }
 
@@ -469,7 +459,7 @@ public sealed class OpenAIController : ControllerBase
             {
                 _logStore.Enqueue(LogLevel.Error, "router",
                     $"Router request failed: profile={profileName}, error={ex.Message}");
-                return StatusCode(502, new { error = "Router inference request failed" });
+                return StatusCode(502, LocalizedError.Create("inference.routerRequestFailed"));
             }
         }
 
@@ -507,7 +497,7 @@ public sealed class OpenAIController : ControllerBase
         {
             _logStore.Enqueue(LogLevel.Error, "proxy",
                 $"Request failed: model={modelName}, error={ex.Message}");
-            return StatusCode(502, new { error = "Inference request failed" });
+            return StatusCode(502, LocalizedError.Create("inference.requestFailed"));
         }
 
         var elapsedMs = (long)(_clock.UtcNow - startTime).TotalMilliseconds;
@@ -587,6 +577,25 @@ public sealed class OpenAIController : ControllerBase
         var rest = modelName["cloud/".Length..];
         var slashIdx = rest.IndexOf('/');
         return slashIdx > 0 ? rest[..slashIdx] : null;
+    }
+
+    /// <summary>
+    /// Deserializes a JSON array string (e.g. "[\"low\",\"medium\",\"high\"]") into
+    /// a string array. Returns null when the input is null/empty or malformed.
+    /// </summary>
+    private static string[]? DeserializeThinkingEfforts(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<string[]>(json);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

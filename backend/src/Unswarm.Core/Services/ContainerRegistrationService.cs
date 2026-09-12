@@ -32,6 +32,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private readonly HostScriptRuntimeController? _scriptController;
     private readonly AutoBenchmarkService? _autoBenchmark;
     private readonly ISchedulerDrainer? _schedulerDrainer;
+    private readonly IApiKeyStore? _apiKeyStore;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -46,7 +47,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         TimeSpan? remoteHealthPollInterval = null,
         HostScriptRuntimeController? scriptController = null,
         AutoBenchmarkService? autoBenchmark = null,
-        ISchedulerDrainer? schedulerDrainer = null)
+        ISchedulerDrainer? schedulerDrainer = null,
+        IApiKeyStore? apiKeyStore = null)
     {
         _registry = registry;
         _router = router;
@@ -61,6 +63,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _scriptController = scriptController;
         _autoBenchmark = autoBenchmark;
         _schedulerDrainer = schedulerDrainer;
+        _apiKeyStore = apiKeyStore;
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -442,6 +445,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
         await _registry.DeleteAsync(id, ct).ConfigureAwait(false);
         _logger.LogInformation("Deleted registered container {Id}", id);
+
+        // Clean up API key access records that reference the deleted runtime's display name.
+        if (_apiKeyStore is not null)
+            await _apiKeyStore.RemoveProviderFromAllKeysAsync(container.DisplayName, ct).ConfigureAwait(false);
 
         // Drop scheduler-side bookkeeping (activity anchors, cached runtime
         // entities) for the deleted runtime so internal caches don't grow forever.
@@ -908,6 +915,17 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var compositeId = $"{registeredContainerId}:{discoveredModel.ModelId}";
         var existing = await _modelRegistry.GetAsync(compositeId, ct).ConfigureAwait(false)
             ?? await _modelRegistry.GetByNameAsync(discoveredModel.ModelId, ct).ConfigureAwait(false);
+
+        // The name-based fallback is only for backward compatibility with models
+        // registered before composite IDs. If it finds a model belonging to a
+        // DIFFERENT runtime, we must NOT hijack it — create a new entry instead so
+        // that both runtimes register their own model and a Conflict is flagged.
+        if (existing is not null && existing.SourceRuntimeId != registeredContainerId
+            && existing.Id != compositeId)
+        {
+            existing = null;
+        }
+
         ModelDefinition result;
         if (existing is null)
         {
@@ -952,7 +970,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     private async Task ResolveNameConflictAsync(string modelName, CancellationToken ct)
     {
         var allModels = await _modelRegistry.ListAllAsync(ct).ConfigureAwait(false);
-        var sameName = allModels.Where(m => m.Name == modelName).ToList();
+        // Conflict is based on DisplayName (the name served under /v1/models), not internal Name (filename).
+        // Two models can share a filename but must not share a display name.
+        var displayName = allModels.FirstOrDefault(m => m.Name == modelName)?.DisplayName ?? modelName;
+        var sameName = allModels.Where(m => (m.DisplayName ?? m.Name) == displayName).ToList();
 
         if (sameName.Count > 1)
         {

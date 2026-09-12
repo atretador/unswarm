@@ -1,0 +1,27 @@
+{
+  "title": "日志",
+  "subtitle": "实时容器和调度器日志。",
+  "failedToLoad": "加载日志失败",
+  "noLogs": "暂无日志——等待事件…",
+  "noLogsFiltered": "没有匹配当前筛选的日志",
+  "resume": "恢复",
+  "pause": "暂停",
+  "follow": "跟随",
+  "clear": "清除",
+  "streaming": "流式传输中",
+  "streamDisconnected": "流已断开",
+  "paused": "已暂停",
+  "allLevels": "所有级别",
+  "allSources": "所有来源",
+  "filterByLevel": "按级别筛选",
+  "filterBySource": "按来源筛选",
+  "entries": "{{count}} 条记录",
+  "srLogEntries": "{{count}} 条日志记录",
+  "srStreaming": " — 流式传输中",
+  "levels": {
+    "info": "信息",
+    "warn": "警告",
+    "error": "错误",
+    "debug": "调试"
+  }
+}

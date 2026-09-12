@@ -1,0 +1,22 @@
+{
+  "title": "Dashboard",
+  "failedToLoad": "Failed to load dashboard",
+  "noData": "No data yet",
+  "copied": "Copied",
+  "copy": "Copy",
+  "retry": "Retry",
+  "totalRequests": "Total requests",
+  "tokensProcessed": "Tokens processed",
+  "avgLatency": "Avg latency",
+  "queueDepth": "Queue depth",
+  "avgSwitch": "Avg switch",
+  "apiEndpoint": "API endpoint",
+  "apiEndpointDescription": "OpenAI-compatible proxy — point any OpenAI SDK client or harness at this base URL. No authentication required.",
+  "requestsPerMinute": "Requests per minute",
+  "tokensPerSecond": "Tokens per second",
+  "activeRequests": "Active requests",
+  "cachedPromptTokens": "Cached prompt tokens",
+  "modelsLoaded": "Models loaded",
+  "uptime": "Uptime",
+  "errorsLast24h": "Errors (24h)"
+}

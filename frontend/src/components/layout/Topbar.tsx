@@ -1,7 +1,9 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { Menu, X, LogOut, Settings, User, ChevronDown } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "./ThemeToggle";
+import { LocaleSwitcher } from "../LocaleSwitcher";
 import { StatusDot } from "../ui/StatusDot";
 import { Logo } from "../ui/Logo";
 import { NAV_ITEMS } from "../../lib/nav-items";
@@ -26,6 +28,7 @@ function UserAvatar({ username }: { username?: string }) {
 export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { t } = useTranslation("common");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -76,7 +79,7 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
           transition-colors duration-[var(--duration-fast)]
           cursor-pointer
         "
-        aria-label={mobileOpen ? "Close navigation" : "Open navigation"}
+        aria-label={mobileOpen ? t("closeNavigation") : t("openNavigation")}
       >
         {mobileOpen ? <X className="size-4" /> : <Menu className="size-4" />}
       </button>
@@ -91,10 +94,12 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
         {/* Live status indicator */}
         <div className="flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           <StatusDot status="running" size="sm" />
-          <span className="hidden sm:inline">Proxy active</span>
+          <span className="hidden sm:inline">{t("proxyActive")}</span>
         </div>
 
         <ThemeToggle />
+
+        <LocaleSwitcher />
 
         {/* User chip + menu */}
         {user && (
@@ -108,7 +113,7 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
                 hover:ring-2 hover:ring-[var(--color-focus-ring)]
                 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
               "
-              aria-label="Go to profile"
+              aria-label={t("goToProfile")}
             >
               <UserAvatar username={user.username} />
               <span className="hidden sm:inline text-sm font-medium text-[var(--color-text-heading)] truncate max-w-[8rem]">
@@ -128,7 +133,7 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
                   transition-colors duration-[var(--duration-fast)]
                   cursor-pointer
                 "
-                aria-label="User menu"
+                aria-label={t("userMenu")}
                 aria-expanded={menuOpen}
               >
                 <ChevronDown className="size-3.5" />
@@ -158,7 +163,7 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
                     "
                   >
                     <Settings className="size-3.5" />
-                    Settings
+                    {t("settings", { ns: "nav" })}
                   </button>
 
                   <button
@@ -172,7 +177,7 @@ export function Topbar({ title, mobileOpen, onMobileToggle }: TopbarProps) {
                     "
                   >
                     <LogOut className="size-3.5" />
-                    Sign out
+                    {t("signOut")}
                   </button>
                 </div>
               )}
@@ -193,6 +198,8 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { t } = useTranslation("common");
+  const { t: tNav } = useTranslation("nav");
   const hasConflicts = useModelConflicts();
   const drawerRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -265,7 +272,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
         ref={drawerRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Navigation menu"
+        aria-label={t("navigationMenu")}
         className="
           fixed inset-y-0 left-0 z-50 w-64
           bg-[var(--color-bg-surface)] border-r border-[var(--color-border)]
@@ -290,7 +297,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
               text-[var(--color-text-muted)] hover:bg-[var(--color-bg-muted)]
               transition-colors cursor-pointer
             "
-            aria-label="Close navigation"
+            aria-label={t("closeNavigation")}
           >
             <X className="size-4" />
           </button>
@@ -298,7 +305,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
 
         {/* Nav items */}
         <nav className="flex-1 py-2 px-1.5 space-y-0.5 overflow-y-auto">
-          {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
+          {NAV_ITEMS.map(({ to, icon: Icon, tKey }) => {
             const isActive =
               to === "/"
                 ? location.pathname === "/"
@@ -321,7 +328,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
                 `}
               >
                 <Icon className="size-4 shrink-0" />
-                {label}
+                {tNav(tKey)}
                 {showConflictDot && (
                   <span className="ml-auto size-2 rounded-full bg-red-500 shrink-0" />
                 )}
@@ -356,7 +363,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
                 "
               >
                 <User className="size-3.5" />
-                Profile
+                {t("profile")}
               </button>
               <button
                 onClick={handleSignOut}
@@ -369,7 +376,7 @@ export function MobileDrawer({ open, onClose }: MobileDrawerProps) {
                 "
               >
                 <LogOut className="size-3.5" />
-                Sign out
+                {t("signOut")}
               </button>
             </div>
           </div>

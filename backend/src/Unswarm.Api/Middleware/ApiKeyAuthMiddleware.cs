@@ -6,6 +6,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Options;
 using Unswarm.Api.Configuration;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Persistence;
 
@@ -210,11 +211,8 @@ public sealed class ApiKeyAuthMiddleware
         context.Response.ContentType = "application/json";
 
         object payload = hasAnyKeys
-            ? new { error = "Unauthorized" }
-            : new
-            {
-                error = "Unauthorized: no API keys exist yet. Bootstrap the server by creating an admin user (unswarm --admin-setup <password> or UNSWARM_ADMIN_PASSWORD), sign in to the dashboard, and generate an API key."
-            };
+            ? LocalizedError.Create("auth.unauthorized")
+            : LocalizedError.Create("auth.noKeysBootstrap");
 
         await context.Response.WriteAsync(JsonSerializer.Serialize(payload));
     }

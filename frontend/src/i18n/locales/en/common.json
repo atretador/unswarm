@@ -1,0 +1,134 @@
+{
+  "confirm": "Confirm",
+  "cancel": "Cancel",
+  "save": "Save",
+  "delete": "Delete",
+  "close": "Close",
+  "edit": "Edit",
+  "create": "Create",
+  "copied": "Copied",
+  "copy": "Copy",
+  "loading": "Loading",
+  "saving": "Saving…",
+  "fetching": "Fetching…",
+  "search": "Search",
+  "backToDashboard": "Back to Dashboard",
+  "pageNotFound": "Page not found",
+  "pageNotFoundDesc": "The page you are looking for does not exist or has been moved.",
+  "done": "Done",
+  "created": "Created",
+  "failedToLoad": "Failed to load",
+  "retry": "Retry",
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "description": "This page failed to load. Try again, or reload the page.",
+    "reload": "Reload page"
+  },
+  "noResults": "No results found",
+  "active": "Active",
+  "disabled": "Disabled",
+  "enabled": "Enabled",
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System"
+  },
+  "proxyActive": "Proxy active",
+  "signOut": "Sign out",
+  "openNavigation": "Open navigation",
+  "closeNavigation": "Close navigation",
+  "goToProfile": "Go to profile",
+  "userMenu": "User menu",
+  "navigationMenu": "Navigation menu",
+  "expandSidebar": "Expand sidebar",
+  "collapseSidebar": "Collapse sidebar",
+  "closeDialog": "Close dialog",
+  "closeDrawer": "Close drawer",
+  "themeTooltip": "Theme: {{theme}}",
+  "themeSwitchAriaLabel": "Switch theme (currently {{theme}})",
+  "profile": "Profile",
+  "tempPasswordBanner": "You're using a temporary password.",
+  "changeItInProfile": "Change it in Profile",
+  "languageSwitcherTitle": "Language",
+  "languageSwitcherLabel": "Select language",
+  "units": {
+    "tokPerSec": "tok/s",
+    "tok": "tok",
+    "ms": "ms",
+    "s": "s",
+    "m": "min",
+    "h": "h",
+    "d": "d",
+    "bytes": {
+      "B": "B",
+      "KB": "KB",
+      "MB": "MB",
+      "GB": "GB"
+    }
+  },
+  "na": "n/a",
+  "unknown": "Unknown",
+  "enums": {
+    "modelStatus": {
+      "ready": "ready",
+      "validating": "validating…",
+      "invalid": "invalid",
+      "deprecated": "deprecated",
+      "conflict": "conflict"
+    },
+    "containerStatus": {
+      "running": "running",
+      "starting": "starting",
+      "stopping": "stopping",
+      "stopped": "stopped",
+      "created": "created",
+      "restarting": "restarting",
+      "dead": "dead",
+      "error": "error"
+    },
+    "containerRegistrationStatus": {
+      "registered": "registered",
+      "starting": "starting",
+      "healthy": "healthy",
+      "discovering": "discovering",
+      "ready": "ready",
+      "error": "error"
+    },
+    "queueItemStatus": {
+      "waiting": "waiting",
+      "processing": "processing",
+      "completed": "completed",
+      "failed": "failed"
+    },
+    "logLevel": {
+      "info": "info",
+      "warn": "warn",
+      "error": "error",
+      "debug": "debug"
+    },
+    "runtimeSignal": {
+      "running": "Running",
+      "transitional": "Starting…",
+      "down": "Stopped",
+      "unknown": "Unknown"
+    },
+    "agentConnectivity": {
+      "connected": "connected",
+      "stale": "stale",
+      "disconnected": "disconnected"
+    },
+    "apiKeyScope": {
+      "inference": "Inference",
+      "agent": "Agent"
+    },
+    "pricingMode": {
+      "perToken": "Per 1M tokens",
+      "subscription": "Monthly",
+      "selfHosted": "Self-hosted"
+    },
+    "benchmarkStatus": {
+      "completed": "completed",
+      "error": "error"
+    }
+  }
+}

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Services.Benchmarks;
 
 namespace Unswarm.Api.Controllers;
@@ -45,9 +46,9 @@ public sealed class PromptsController : ControllerBase
     public async Task<IActionResult> Create([FromBody] PromptUpsertRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
-            return BadRequest(new { error = "Name and text are required" });
+            return BadRequest(LocalizedError.Create("prompts.nameAndTextRequired"));
         if (!IsValidMaxTokens(request.MaxTokens, out var maxTokensError))
-            return BadRequest(new { error = maxTokensError });
+            return BadRequest(LocalizedError.Create("prompts.maxTokensInvalid"));
 
         var entry = await _prompts.CreateAsync(request.Name.Trim(), request.Text.Trim(), request.MaxTokens, ct);
         return CreatedAtAction(nameof(Get), new { id = entry.Id }, PromptResponse.From(entry));
@@ -66,9 +67,9 @@ public sealed class PromptsController : ControllerBase
     public async Task<IActionResult> Update(string id, [FromBody] PromptUpsertRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
-            return BadRequest(new { error = "Name and text are required" });
+            return BadRequest(LocalizedError.Create("prompts.nameAndTextRequired"));
         if (!IsValidMaxTokens(request.MaxTokens, out var maxTokensError))
-            return BadRequest(new { error = maxTokensError });
+            return BadRequest(LocalizedError.Create("prompts.maxTokensInvalid"));
 
         var entry = await _prompts.UpdateAsync(id, request.Name.Trim(), request.Text.Trim(), request.MaxTokens, ct);
         if (entry is null) return NotFound();
@@ -122,7 +123,7 @@ public sealed class PromptsController : ControllerBase
         if (entry is null) return NotFound();
 
         var version = await _prompts.GetVersionAsync(id, request.Version, ct);
-        if (version is null) return NotFound(new { error = $"Version {request.Version} not found" });
+        if (version is null) return NotFound(LocalizedError.Create("prompts.versionNotFound", new { version = request.Version }));
 
         var updated = await _prompts.UpdateAsync(id, entry.Name, version.Text, null, ct);
         if (updated is null) return NotFound();

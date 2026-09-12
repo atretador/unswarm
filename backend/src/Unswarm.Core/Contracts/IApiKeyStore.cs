@@ -73,4 +73,10 @@ public interface IApiKeyStore
     /// Returns the stored value, or null when the key does not exist.
     /// </summary>
     Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes <paramref name="providerName"/> from every key's access provider list.
+    /// Called when a runtime, cloud provider, or router profile is deleted.
+    /// </summary>
+    Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default);
 }

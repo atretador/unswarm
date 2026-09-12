@@ -1,0 +1,128 @@
+{
+  "title": "Models",
+  "subtitle": "Discovered models: inference endpoints registered across agents and cloud providers.",
+  "tabAriaLabel": "Model origin",
+  "searchManaged": "Search models by name, family, or runtime...",
+  "searchCloud": "Search cloud models by name or provider...",
+  "searchAriaLabel": "Search models",
+  "agentFilterLabel": "Agent:",
+  "retry": "Retry",
+  "editDetails": "Edit model details",
+  "conflictHint": "Name conflicts with another model — rename to resolve",
+  "deprecatedHint": "No source runtime — rediscover or delete",
+  "viewRuntime": "View source runtime on the Swarm page",
+  "notRegistered": "not registered",
+  "deleteTitle": "Delete {{name}}?",
+  "removeTitle": "Remove {{name}}?",
+  "editModelAria": "Edit {{name}}",
+  "deleteModelAria": "Delete {{name}}",
+  "tabs": {
+    "managed": "Managed",
+    "cloud": "Cloud"
+  },
+  "status": {
+    "ready": "ready",
+    "validating": "validating…",
+    "invalid": "invalid",
+    "deprecated": "deprecated",
+    "conflict": "conflict"
+  },
+  "empty": {
+    "noModels": "No models discovered yet",
+    "noModelsDesc": "Register containers on the Swarm page to auto-discover their models, or add cloud providers to access hosted models.",
+    "noMatch": "No models match your search",
+    "noMatchDesc": "Try a different search term."
+  },
+  "failedToLoad": "Failed to load models",
+  "editModel": "Edit Model",
+  "deleteModel": "Delete model",
+  "deleteModelDesc": "This will permanently remove the model from the registry.",
+  "removeFromRegistry": "Remove from registry",
+  "removeFromRegistryDesc": "This model is tied to a running runtime. Deleting it only removes it from the registry — the runtime will re-discover it on the next sync.",
+  "allAgents": "All agents",
+  "form": {
+    "displayName": "Display Name",
+    "internalName": "Internal Name",
+    "family": "Family",
+    "parameterSize": "Parameter Size",
+    "quantization": "Quantization",
+    "contextWindow": "Context Window"
+  },
+  "errors": {
+    "contextWindowInvalid": "Context window must be a positive number up to 10M"
+  },
+  "placeholders": {
+    "displayName": "Filename shown in UI (auto-filled from model name)",
+    "family": "e.g. Llama",
+    "parameterSize": "e.g. 8B",
+    "quantization": "e.g. Q4_K_M",
+    "contextWindow": "e.g. 128000"
+  },
+  "tooltips": {
+    "tokensPerSecond": "Speed: tokens per second",
+    "timeToFirstToken": "Processing: time to first token",
+    "tokensGenerated": "Tokens generated",
+    "modelInvalid": "Model invalid — fix registration first",
+    "modelConflict": "Model name conflicts with another model — rename to resolve",
+    "testChat": "Test chat with {{name}}"
+  },
+  "benchmarks": {
+    "notBenchmarked": "Not benchmarked yet",
+    "ran": "ran",
+    "lastRun": "Last run {{date}}",
+    "speedLabel": "speed",
+    "processingLabel": "processing",
+    "tokensLabel": "tokens"
+  },
+  "time": {
+    "justNow": "just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago"
+  },
+  "cloud": {
+    "fetching": "Fetching…",
+    "refresh": "Refresh",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "checkAllProviders": "Check all providers",
+    "error": "Error",
+    "selectProviderModels": "Select all {{provider}} models",
+    "warningBanner": "Models selected here determine what's available via the API. To use a model, it must also be granted to an API key in the <1>API Keys</1> page.",
+    "warningBannerPageSuffix": "page."
+  },
+  "chat": {
+    "send": "Send",
+    "systemPrompt": "Optional instructions for the model…",
+    "default": "default",
+    "roundTripLatency": "Round-trip latency",
+    "generationSpeed": "Generation speed (estimated)",
+    "promptTokens": "Prompt tokens",
+    "completionTokens": "Completion tokens",
+    "stop": "Stop",
+    "stopGenerating": "Stop generating",
+    "sendAriaLabel": "Send message",
+    "composerHint": "Enter to send · Shift+Enter for newline · requests go through the proxy like real /v1 traffic",
+    "parameters": "Parameters",
+    "clearConversation": "Clear this conversation",
+    "clearConversationAria": "Clear conversation",
+    "systemPromptLabel": "System prompt",
+    "maxTokens": "Max tokens",
+    "testModel": "Test this model",
+    "testModelDesc": "Messages are sent through the proxy exactly like external /v1 clients — a reply proves the model and connection work.",
+    "thinking": "Thinking",
+    "requestFailed": "Request failed",
+    "stopped": "(stopped)",
+    "generating": "generating…",
+    "messagePlaceholder": "Message {{name}}…",
+    "quickPrompts": [
+      "Reply with exactly: hello",
+      "What model are you?",
+      "Write one short sentence about the sea."
+    ],
+    "contextUnit": "context",
+    "messageAriaLabel": "Message",
+    "promptUnit": "prompt",
+    "outUnit": "out"
+  }
+}

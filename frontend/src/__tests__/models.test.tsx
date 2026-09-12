@@ -58,7 +58,7 @@ describe("Models", () => {
     // ready chips are green; validating is rendered as a distinct amber "validating…" chip
     expect(screen.getAllByText("ready").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("validating…")).toBeInTheDocument();
-    expect(screen.getByText("deprecated")).toBeInTheDocument();
+    expect(screen.getAllByText("deprecated").length).toBeGreaterThanOrEqual(1);
 
     // the validating chip (Badge span wrapping the label) uses the warning palette
     const validatingBadge = screen.getByText("validating…");

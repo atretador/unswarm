@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { client } from "../../lib/query-client";
 import type { ReactNode } from "react";
 import {
@@ -31,6 +32,8 @@ import {
 } from "../../components/ui";
 import type { Model, ModelStatus, Settings } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
+import { enumLabel } from "../../i18n/enum-map";
+import { formatTokensPerSec, formatLatency, formatTokens } from "../../i18n/format";
 import { TestChatDrawer } from "./test-chat-drawer";
 import { CloudModelSelector } from "./cloud-model-selector";
 
@@ -44,28 +47,7 @@ const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" 
   conflict: "error",
 };
 
-const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
-  ready: "ready",
-  validating: "validating…",
-  invalid: "invalid",
-  deprecated: "deprecated",
-  conflict: "conflict",
-};
-
-function formatTokensPerSec(v: number): string {
-  if (!v || v <= 0) return "n/a";
-  return `${v.toFixed(1)} tok/s`;
-}
-
-function formatLatency(v: number): string {
-  if (!v || v <= 0) return "n/a";
-  return `${v}ms`;
-}
-
-function formatTokens(v: number | undefined): string {
-  if (!v || v <= 0) return "n/a";
-  return `${v.toLocaleString()} tok`;
-}
+// MODEL_STATUS_LABEL is now provided via enumLabel('modelStatus', status)
 
 function formatContextWindow(n: number | undefined): string {
   if (!n || n <= 0) return "";
@@ -74,28 +56,30 @@ function formatContextWindow(n: number | undefined): string {
   return `${n}`;
 }
 
-function formatRelativeTime(iso: string): string {
+function formatRelativeTime(iso: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   const diff = Date.now() - new Date(iso).getTime();
-  if (diff < 60_000) return "just now";
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return `${Math.floor(diff / 86_400_000)}d ago`;
+  if (diff < 60_000) return t('time.justNow');
+  if (diff < 3_600_000) return t('time.minutesAgo', { count: Math.floor(diff / 60_000) });
+  if (diff < 86_400_000) return t('time.hoursAgo', { count: Math.floor(diff / 3_600_000) });
+  return t('time.daysAgo', { count: Math.floor(diff / 86_400_000) });
 }
 
 // ─── Test-chat trigger — shared by Managed and Cloud rows ─────────
 
 function TestChatButton({ model, onChat }: { model: Model; onChat: (model: Model) => void }) {
+  const { t } = useTranslation('models');
   const invalid = model.status === "invalid";
   const conflicted = model.status === "conflict";
+  const modelName = model.displayName || model.name;
   return (
     <Tooltip
-      content={invalid ? "Model invalid — fix registration first" : conflicted ? "Model name conflicts with another model — rename to resolve" : `Test chat with ${model.name}`}
+      content={invalid ? t('tooltips.modelInvalid') : conflicted ? t('tooltips.modelConflict') : t('tooltips.testChat', { name: modelName })}
     >
       <button
         type="button"
         onClick={() => !invalid && onChat(model)}
         disabled={invalid}
-        aria-label={`Test chat with ${model.name}`}
+        aria-label={t('tooltips.testChat', { name: modelName })}
         className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:pointer-events-none disabled:opacity-40"
       >
         <MessageSquare className="size-3.5" />
@@ -132,10 +116,16 @@ function MetricChip({
 }
 
 function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model: Model; index: number; settings?: Settings; isSelected?: boolean; onChat: (model: Model) => void }) {
+  const { t } = useTranslation('models');
+  const { t: tCommon } = useTranslation('common');
   const bench = model.lastBenchmark;
   const queryClient = useQueryClient();
   const [deleting, setDeleting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
+
+  // A model with no source runtime is orphaned — treat as deprecated for display
+  const effectiveStatus: ModelStatus = (!model.sourceRuntimeId && model.status === "ready") ? "deprecated" : model.status;
 
   // Edit state
   const [editing, setEditing] = useState(false);
@@ -145,11 +135,12 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editParamSize, setEditParamSize] = useState("");
   const [editQuant, setEditQuant] = useState("");
   const [editCtxWindow, setEditCtxWindow] = useState("");
+  const [editThinkingEfforts, setEditThinkingEfforts] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number }) =>
-      client.updateModel(model.id, data),
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; supportedThinkingEffortsJson: string | null }) =>
+      client.updateModel(model.id, data as unknown as Partial<Model>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
       setEditing(false);
@@ -164,6 +155,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     setEditParamSize(model.parameterSize ?? "");
     setEditQuant(model.quantization ?? "");
     setEditCtxWindow(model.contextWindow?.toString() ?? "");
+    setEditThinkingEfforts(model.supportedThinkingEfforts?.join(", ") ?? "");
     setEditError(null);
     setEditing(true);
   };
@@ -171,7 +163,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const handleSaveEdit = () => {
     const ctxWindow = editCtxWindow ? parseInt(editCtxWindow, 10) : 0;
     if (editCtxWindow && (isNaN(ctxWindow) || ctxWindow <= 0 || ctxWindow > 10_000_000)) {
-      setEditError("Context window must be a positive number up to 10M");
+      setEditError(t('errors.contextWindowInvalid'));
       return;
     }
     setEditError(null);
@@ -181,6 +173,9 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       parameterSize: editParamSize.trim(),
       quantization: editQuant.trim(),
       contextWindow: ctxWindow,
+      supportedThinkingEffortsJson: editThinkingEfforts.trim()
+        ? JSON.stringify(editThinkingEfforts.split(",").map(s => s.trim()).filter(Boolean))
+        : null,
     });
   };
 
@@ -227,12 +222,17 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               ].filter(Boolean).join(" · ")}
             </p>
           </div>
-          <Badge variant={MODEL_STATUS_VARIANT[model.status]} className="shrink-0">
-            {MODEL_STATUS_LABEL[model.status]}
+          <Badge variant={MODEL_STATUS_VARIANT[effectiveStatus]} className="shrink-0">
+            {enumLabel('modelStatus', effectiveStatus)}
           </Badge>
-          {model.status === "conflict" && (
+          {effectiveStatus === "conflict" && (
             <span className="text-[10px] text-[var(--color-status-error)] leading-tight">
-              Name conflicts with another model — rename to resolve
+              {t('conflictHint')}
+            </span>
+          )}
+          {effectiveStatus === "deprecated" && model.sourceRuntimeId === null && (
+            <span className="text-[10px] text-[var(--color-status-stopped)] leading-tight">
+              {t('deprecatedHint')}
             </span>
           )}
         </div>
@@ -243,29 +243,29 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               <MetricChip
                 icon={<Gauge className="size-2.5" />}
-                label="speed"
+                label={t('benchmarks.speedLabel')}
                 value={formatTokensPerSec(bench.tokensPerSec)}
-                title="Speed: tokens per second"
+                title={t('tooltips.tokensPerSecond')}
               />
               <MetricChip
                 icon={<Clock className="size-2.5" />}
-                label="processing"
+                label={t('benchmarks.processingLabel')}
                 value={formatLatency(bench.latencyMs)}
-                title="Processing: time to first token"
+                title={t('tooltips.timeToFirstToken')}
               />
               {bench.tokensGenerated !== undefined && (
                 <MetricChip
                   icon={<Hash className="size-2.5" />}
-                  label="tokens"
+                  label={t('benchmarks.tokensLabel')}
                   value={formatTokens(bench.tokensGenerated)}
-                  title="Tokens generated"
+                  title={t('tooltips.tokensGenerated')}
                 />
               )}
               <MetricChip
                 icon={<Clock className="size-2.5" />}
-                label="ran"
-                value={formatRelativeTime(bench.timestamp)}
-                title={`Last run ${new Date(bench.timestamp).toLocaleString()}`}
+                label={t('benchmarks.ran')}
+                value={formatRelativeTime(bench.timestamp, t)}
+                title={t('benchmarks.lastRun', { date: new Date(bench.timestamp).toLocaleString() })}
               />
               {bench.promptName && (
                 <span className="truncate text-[10px] text-[var(--color-text-muted)]">
@@ -274,7 +274,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               )}
             </div>
           ) : (
-            <p className="text-xs text-[var(--color-text-muted)]">Not benchmarked yet</p>
+            <p className="text-xs text-[var(--color-text-muted)]">{t('benchmarks.notBenchmarked')}</p>
           )}
         </div>
 
@@ -284,52 +284,65 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
           {model.sourceRuntimeId ? (
             <Link
               to={`/swarm?focus=${encodeURIComponent(model.sourceRuntimeId)}`}
-              aria-label={`View source runtime on the Swarm page`}
+              aria-label={t('viewRuntime')}
               className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
             >
               <ExternalLink className="size-2.5" />
               <span className="truncate max-w-[140px]">{model.sourceRuntimeName || model.sourceRuntimeId}</span>
             </Link>
           ) : (
-            <span className="text-[10px] italic text-[var(--color-text-muted)]">not registered</span>
+            <span className="text-[10px] italic text-[var(--color-text-muted)]">{t('notRegistered')}</span>
           )}
-          <Tooltip content="Edit model details">
+          <Tooltip content={t('editDetails')}>
             <button
               onClick={handleEdit}
-              aria-label={`Edit ${model.name}`}
+              aria-label={t('editModelAria', { name: model.displayName || model.name })}
               className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
             >
               <Pencil className="size-3.5" />
             </button>
           </Tooltip>
-          {model.status === "deprecated" && (
-            <>
-              <Tooltip content="Remove deprecated model">
-                <button
-                  onClick={() => setShowConfirm(true)}
-                  disabled={deleting}
-                  aria-label={`Delete ${model.name}`}
-                  className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </Tooltip>
-              <ConfirmDialog
-                open={showConfirm}
-                title={`Delete ${model.name}?`}
-                description="This will permanently remove the deprecated model from the registry."
-                confirmLabel="Delete"
-                loading={deleting}
-                onConfirm={handleDelete}
-                onCancel={() => setShowConfirm(false)}
-              />
-            </>
-          )}
+          <Tooltip content={tCommon('delete')}>
+            <button
+              onClick={() => {
+                if (effectiveStatus === "deprecated" || !model.sourceRuntimeId) {
+                  setShowConfirm(true);
+                } else {
+                  setShowWarning(true);
+                }
+              }}
+              disabled={deleting}
+              aria-label={t('deleteModelAria', { name: model.displayName || model.name })}
+              className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-status-stopped)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:opacity-50"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          </Tooltip>
+          {/* Direct delete confirm — for deprecated / orphaned models */}
+          <ConfirmDialog
+            open={showConfirm}
+            title={t('deleteTitle', { name: model.displayName || model.name })}
+            description={t('deleteModelDesc')}
+            confirmLabel={tCommon('delete')}
+            loading={deleting}
+            onConfirm={handleDelete}
+            onCancel={() => setShowConfirm(false)}
+          />
+          {/* Warning dialog — for active runtime-tied models */}
+          <ConfirmDialog
+            open={showWarning}
+            title={t('removeTitle', { name: model.displayName || model.name })}
+            description={t('removeFromRegistryDesc')}
+            confirmLabel={t('removeFromRegistry')}
+            loading={deleting}
+            onConfirm={handleDelete}
+            onCancel={() => setShowWarning(false)}
+          />
         </div>
       </div>
 
       {/* Edit Model Dialog */}
-      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)} title="Edit Model">
+      <Dialog open={editing} onOpenChange={(o) => !o && setEditing(false)} title={t('editModel')}>
         <div className="p-5 space-y-4">
           {model.sourceRuntimeAgent && (
             <p className="text-xs text-[var(--color-text-muted)] mb-1">
@@ -339,45 +352,56 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
             </p>
           )}
           <Input
-            label="Display Name"
+            label={t('form.displayName')}
             value={editDisplayName}
             onChange={(e) => setEditDisplayName(e.target.value)}
-            placeholder="Filename shown in UI (auto-filled from model name)"
+            placeholder={t('placeholders.displayName')}
           />
           <Input
-            label="Internal Name"
+            label={t('form.internalName')}
             value={editName}
             readOnly
             className="opacity-60 cursor-not-allowed"
           />
           <div className="grid grid-cols-2 gap-3">
             <Input
-              label="Family"
+              label={t('form.family')}
               value={editFamily}
               onChange={(e) => setEditFamily(e.target.value)}
-              placeholder="e.g. Llama"
+              placeholder={t('placeholders.family')}
             />
             <Input
-              label="Parameter Size"
+              label={t('form.parameterSize')}
               value={editParamSize}
               onChange={(e) => setEditParamSize(e.target.value)}
-              placeholder="e.g. 8B"
+              placeholder={t('placeholders.parameterSize')}
             />
             <Input
-              label="Quantization"
+              label={t('form.quantization')}
               value={editQuant}
               onChange={(e) => setEditQuant(e.target.value)}
-              placeholder="e.g. Q4_K_M"
+              placeholder={t('placeholders.quantization')}
             />
             <Input
-              label="Context Window"
+              label={t('form.contextWindow')}
               value={editCtxWindow}
               onChange={(e) => setEditCtxWindow(e.target.value)}
-              placeholder="e.g. 128000"
+              placeholder={t('placeholders.contextWindow')}
               type="number"
               min={1}
               max={10000000}
             />
+          </div>
+          <div className="grid gap-2">
+            <Input
+              label="Supported Thinking Efforts"
+              value={editThinkingEfforts}
+              onChange={(e) => setEditThinkingEfforts(e.target.value)}
+              placeholder="e.g. none, low, medium, high"
+            />
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Comma-separated effort levels this model supports
+            </p>
           </div>
           {editError && (
             <p className="text-sm text-[var(--color-status-error)]">{editError}</p>
@@ -389,7 +413,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               onClick={() => setEditing(false)}
               disabled={updateMutation.isPending}
             >
-              Cancel
+              {tCommon('cancel')}
             </Button>
             <Button
               variant="primary"
@@ -397,7 +421,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               loading={updateMutation.isPending}
               onClick={handleSaveEdit}
             >
-              Save
+              {tCommon('save')}
             </Button>
           </div>
         </div>
@@ -410,12 +434,13 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
 
 type Tab = "managed" | "cloud";
 
-const TABS: { key: Tab; label: string; icon: typeof Server }[] = [
-  { key: "managed", label: "Managed", icon: Server },
-  { key: "cloud", label: "Cloud", icon: Cloud },
+const TABS: { key: Tab; icon: typeof Server }[] = [
+  { key: "managed", icon: Server },
+  { key: "cloud", icon: Cloud },
 ];
 
 export default function Models() {
+  const { t } = useTranslation('models');
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedModelId = searchParams.get("selected");
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -540,11 +565,11 @@ export default function Models() {
     return (
       <div className="max-w-5xl p-6">
         <EmptyState
-          title="Failed to load models"
+          title={t('failedToLoad')}
           description={error.message}
           action={
             <Button variant="secondary" size="sm" onClick={() => refetch()} loading={isRefetching}>
-              Retry
+              {t('retry')}
             </Button>
           }
         />
@@ -559,15 +584,15 @@ export default function Models() {
     <div className="max-w-5xl space-y-6 p-6">
       {/* Header */}
       <div>
-        <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">Models</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">{t('title')}</h2>
         <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-          Discovered models: inference endpoints registered across agents and cloud providers.
+          {t('subtitle')}
         </p>
       </div>
 
       {/* Tab bar */}
       {hasAnyModels && (
-        <div role="tablist" aria-label="Model origin" className="flex border-b border-[var(--color-border-subtle)]">
+        <div role="tablist" aria-label={t('tabAriaLabel')} className="flex border-b border-[var(--color-border-subtle)]">
           {TABS.map((tab) => {
             const count = tab.key === "managed" ? managedModels.length : cloudModels.length;
             return (
@@ -590,7 +615,7 @@ export default function Models() {
                 `}
               >
                 <tab.icon className="size-3.5" />
-                {tab.label}
+                {t(`tabs.${tab.key}`)}
                 <Badge variant={activeTab === tab.key ? "info" : "default"} size="sm">
                   {count}
                 </Badge>
@@ -610,10 +635,10 @@ export default function Models() {
             onChange={(e) => setFilter(e.target.value)}
             placeholder={
               activeTab === "managed"
-                ? "Search models by name, family, or runtime..."
-                : "Search cloud models by name or provider..."
+                ? t('searchManaged')
+                : t('searchCloud')
             }
-            aria-label="Search models"
+            aria-label={t('searchAriaLabel')}
             className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
           />
         </div>
@@ -622,13 +647,13 @@ export default function Models() {
       {/* Agent filter (Managed tab) */}
       {activeTab === "managed" && uniqueAgents.length > 0 && (
         <div className="flex items-center gap-2">
-          <label className="text-xs text-[var(--color-text-muted)]">Agent:</label>
+          <label className="text-xs text-[var(--color-text-muted)]">{t('agentFilterLabel')}</label>
           <select
             value={agentFilter}
             onChange={(e) => setAgentFilter(e.target.value)}
             className="h-8 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 text-sm text-[var(--color-text)] outline-none focus:border-[var(--color-focus-ring)]"
           >
-            <option value="">All agents</option>
+            <option value="">{t('allAgents')}</option>
             {uniqueAgents.map((a) => (
               <option key={a} value={a}>{a}</option>
             ))}
@@ -642,16 +667,16 @@ export default function Models() {
           <Card padding="none">
             <EmptyState
               icon={<Box className="size-12" strokeWidth={1.5} />}
-              title="No models discovered yet"
-              description="Register containers on the Swarm page to auto-discover their models, or add cloud providers to access hosted models."
+              title={t('empty.noModels')}
+              description={t('empty.noModelsDesc')}
             />
           </Card>
         ) : filteredModels.length === 0 ? (
           <Card padding="none">
             <EmptyState
               icon={<Search className="size-12" strokeWidth={1.5} />}
-              title="No models match your search"
-              description="Try a different search term."
+              title={t('empty.noMatch')}
+              description={t('empty.noMatchDesc')}
             />
           </Card>
         ) : (

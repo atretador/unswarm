@@ -1,0 +1,101 @@
+{
+  "title": "API Keys",
+  "desc": "Gerencie chaves que autenticam no proxy de inferência e canal de agente. Estas não são credenciais de login.",
+  "info": "API keys autenticam em endpoints específicos — chaves de inferência para o proxy <1>{{proxy}}</1>, chaves de agente para o canal de agente. O login usa uma sessão de cookie separada — uma credencial de login não é uma API key, e vice-versa.",
+  "tabs": {
+    "inference": "Inferência",
+    "agent": "Agente"
+  },
+  "noKeys": "Nenhuma chave de {{scope}} ainda",
+  "noKeysAgent": "Crie uma chave de agente para autenticar no canal do agente.",
+  "noKeysInference": "Crie uma chave de inferência para autenticar clientes contra o proxy /v1.",
+  "agentKeys": "Chaves de Agente",
+  "inferenceKeys": "Chaves de Inferência",
+  "retired": "Aposentadas ({{count}})",
+  "newAgentKey": "Nova Chave de Agente",
+  "newInferenceKey": "Nova Chave de Inferência",
+  "keyName": "Nome da chave",
+  "createKey": "Criar Chave",
+  "createAnother": "Criar outra",
+  "createDescAgent": "Crie uma chave para autenticar no canal de agente (<1>{{channel1}}</1>, <2>{{channel2}}</2>). Estas chaves <3>não</3> são credenciais de login.",
+  "createDescInference": "Crie uma chave para autenticar no proxy de inferência (<1>{{proxy}}</1>). Estas chaves <3>não</3> são credenciais de login.",
+  "keyCreated": "Chave criada — copie seu segredo agora.",
+  "keyCreatedDesc": "Esta é a única vez que o segredo completo é exibido. Armazene em local seguro.",
+  "copy": "Copiar",
+  "copied": "Copiado",
+  "neverUsed": "Nunca usada",
+  "justNow": "agora mesmo",
+  "hoursAgo": "{{hours}}h atrás",
+  "daysAgo": "{{days}}d atrás",
+  "createdPrefix": "Criada",
+  "loading": "Carregando…",
+  "revoked": "revogada",
+  "rotated": "Chave rotacionada — copie seu novo segredo agora.",
+  "rotateWarningComplete": "Rotacionar a chave invalida o segredo anterior. Os deploys desta chave devem substituir suas credenciais agora.",
+  "validate": {
+    "nameRequired": "Nome é obrigatório."
+  },
+  "placeholders": {
+    "keyName": "ex.: Trabalhador remoto",
+    "keyNameAgent": "ex.: Runner CI"
+  },
+  "aria": {
+    "keyScope": "Escopo da chave",
+    "manage": "Gerenciar",
+    "rotate": "Rotacionar",
+    "revoke": "Revogar",
+    "manageKey": "Gerenciar {{name}}",
+    "rotateKey": "Rotacionar {{name}}",
+    "revokeKey": "Revogar {{name}}"
+  },
+  "revoke": {
+    "confirm": "Revogar \"{{name}}\"?",
+    "desc": "Clientes existentes perderão o acesso imediatamente."
+  },
+  "manage": {
+    "usage": "Uso",
+    "accessControl": "Controle de acesso",
+    "fullAccess": "Acesso total",
+    "fullAccessDesc": "Esta chave pode chamar todos os provedores e modelos. Desative para restringir abaixo.",
+    "grantAllModels": "Marque um provedor para conceder todos os seus modelos, ou selecione modelos individuais para uma concessão mais restrita.",
+    "couldntLoadCatalog": "O catálogo de provedores/modelos não está disponível no momento.",
+    "couldntLoadAccess": "Não foi possível carregar o acesso atual desta chave.",
+    "searchModels": "Pesquisar modelos…",
+    "allModels": "todos os modelos",
+    "modelsOf": "{{picked}} de {{total}}",
+    "saving": "Salvando…",
+    "saveAccess": "Salvar acesso",
+    "saved": "Salvo",
+    "discard": "Descartar",
+    "discardChanges": "Descartar alterações não salvas?",
+    "discardChangesDesc": "As alterações de acesso desta chave ainda não foram salvas.",
+    "usageRange": "Período de tempo do uso",
+    "grantAll": "Conceder todos os modelos de {{name}}",
+    "dialogTitle": "Gerenciar \"{{name}}\"",
+    "providerCloud": "Provedores de nuvem",
+    "providerRouter": "Perfis de roteador",
+    "providerSelfHosted": "Agentes auto-hospedados",
+    "expandModels": "Expandir modelos de {{name}}",
+    "collapseModels": "Recolher modelos de {{name}}",
+    "unmatchedGrant": "Também concedido (não está mais no catálogo):",
+    "nothingSelected": "Nada selecionado — esta chave não pode chamar nenhum provedor ou modelo. Selecione pelo menos um, ou reative o Acesso total.",
+    "unsavedChanges": "Alterações não salvas",
+    "noUsage": "Nenhum registro de uso para esta chave no período selecionado.",
+    "range7d": "Últimos 7 dias",
+    "range30d": "Últimos 30 dias",
+    "range90d": "Últimos 90 dias",
+    "table": {
+      "model": "Modelo",
+      "requests": "Requisições",
+      "in": "Entrada",
+      "out": "Saída",
+      "cached": "Cache"
+    },
+    "stats": {
+      "requests": "Requisições",
+      "tokensIn": "Tokens de entrada",
+      "tokensOut": "Tokens de saída",
+      "cached": "Cache"
+    }
+  }
+}

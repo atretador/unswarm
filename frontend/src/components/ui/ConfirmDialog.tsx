@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { useTranslation } from "react-i18next";
 import { Button } from "./Button";
 
 export interface ConfirmDialogProps {
@@ -18,14 +19,18 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   variant = "danger",
   loading = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation("common");
   const dialogRef = useRef<HTMLDialogElement>(null);
+
+  const resolvedConfirmLabel = confirmLabel ?? t("confirm");
+  const resolvedCancelLabel = cancelLabel ?? t("cancel");
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -73,10 +78,10 @@ export function ConfirmDialog({
             )}
             <div className="mt-5 flex justify-end gap-2">
               <Button variant="secondary" size="sm" onClick={onCancel} disabled={loading}>
-                {cancelLabel}
+                {resolvedCancelLabel}
               </Button>
               <Button variant={variant} size="sm" onClick={onConfirm} loading={loading}>
-                {confirmLabel}
+                {resolvedConfirmLabel}
               </Button>
             </div>
           </motion.div>

@@ -1,9 +1,12 @@
-import { Suspense, lazy, useState, useCallback } from "react";
+import { Suspense, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { Activity, Zap, Clock, AlertTriangle, RefreshCw, ArrowLeftRight, Copy, Check } from "lucide-react";
 import { client } from "../../lib/query-client";
 import { BASE_URL } from "../../lib/api/httpClient";
+import { lazyWithRetry } from "../../lib/lazy-with-retry";
+import { formatUptime, formatMs, formatCompact } from "../../i18n/format";
 import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../components/ui";
 
 // Lazy-load the charts module (which imports recharts statically) to keep the
@@ -11,10 +14,10 @@ import { Card, Badge, Skeleton, EmptyState, Button, Spinner } from "../../compon
 // do NOT lazy-load individual recharts components behind nested <Suspense>:
 // recharts 3.x + React 19 hits an infinite setState loop in RechartsWrapper's
 // ref callback when the chart subtree suspends/reappears (recharts#7463).
-const LazyRequestsPerMinuteChart = lazy(() =>
+const LazyRequestsPerMinuteChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.RequestsPerMinuteChart })),
 );
-const LazyTokensPerSecondChart = lazy(() =>
+const LazyTokensPerSecondChart = lazyWithRetry(() =>
   import("./charts").then((m) => ({ default: m.TokensPerSecondChart })),
 );
 
@@ -26,24 +29,9 @@ function ChartSkeleton() {
   );
 }
 
-function formatUptime(seconds: number): string {
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  return d > 0 ? `${d}d ${h}h` : `${h}h`;
-}
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
-
-function formatMs(ms: number): string {
-  return `${Math.round(ms)} ms`;
-}
-
 function CopyButton({ text, className = "" }: { text: string; className?: string }) {
   const [copied, setCopied] = useState(false);
+  const { t } = useTranslation("dashboard");
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(text).then(() => {
@@ -68,12 +56,12 @@ function CopyButton({ text, className = "" }: { text: string; className?: string
       {copied ? (
         <>
           <Check className="size-3 text-[var(--color-status-running)]" />
-          <span className="text-[var(--color-status-running)]">Copied</span>
+          <span className="text-[var(--color-status-running)]">{t("copied")}</span>
         </>
       ) : (
         <>
           <Copy className="size-3" />
-          <span>Copy</span>
+          <span>{t("copy")}</span>
         </>
       )}
     </button>
@@ -92,6 +80,7 @@ const fadeUp = {
 };
 
 function DashboardContent() {
+  const { t } = useTranslation("dashboard");
   const {
     data: stats,
     isLoading,
@@ -128,7 +117,7 @@ function DashboardContent() {
       <div className="p-6 max-w-6xl">
         <EmptyState
           icon={<AlertTriangle className="size-12" strokeWidth={1.5} />}
-          title="Failed to load dashboard"
+          title={t("failedToLoad")}
           description={error.message}
           action={
             <Button
@@ -138,7 +127,7 @@ function DashboardContent() {
               loading={isRefetching}
             >
               <RefreshCw className="size-3.5" />
-              Retry
+              {t("retry")}
             </Button>
           }
         />
@@ -167,31 +156,31 @@ function DashboardContent() {
 
   const statCards = [
     {
-      label: "Total requests",
+      label: t("totalRequests"),
       value: stats.totalRequests.toLocaleString(),
       icon: Activity,
       color: "text-[var(--color-primary)]",
     },
     {
-      label: "Tokens processed",
-      value: formatTokens(stats.totalTokensProcessed),
+      label: t("tokensProcessed"),
+      value: formatCompact(stats.totalTokensProcessed),
       icon: Zap,
       color: "text-[var(--color-status-running)]",
     },
     {
-      label: "Avg latency",
+      label: t("avgLatency"),
       value: formatMs(stats.avgLatencyMs),
       icon: Clock,
       color: "text-[var(--color-status-warning)]",
     },
     {
-      label: "Queue depth",
+      label: t("queueDepth"),
       value: String(stats.queueDepth),
       icon: AlertTriangle,
       color: stats.queueDepth > 5 ? "text-[var(--color-status-error)]" : "text-[var(--color-text-muted)]",
     },
     {
-      label: "Avg switch",
+      label: t("avgSwitch"),
       value: stats.switchCount > 0 ? formatMs(stats.avgSwitchMs) : "—",
       icon: ArrowLeftRight,
       color: "text-[var(--color-text-muted)]",
@@ -224,11 +213,10 @@ function DashboardContent() {
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.15 }}>
         <Card padding="lg">
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-3">
-            API endpoint
+            {t("apiEndpoint")}
           </p>
           <p className="text-xs text-[var(--color-text-muted)] mb-4">
-            OpenAI-compatible proxy — point any OpenAI SDK client or harness at this base URL.
-            No authentication required.
+            {t("apiEndpointDescription")}
           </p>
 
           {/* Base URL (falls back to current origin when API is same-origin) */}
@@ -270,7 +258,7 @@ function DashboardContent() {
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.2 }}>
         <Card padding="lg">
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-            Requests per minute
+            {t("requestsPerMinute")}
           </p>
           <Suspense fallback={<ChartSkeleton />}>
             <LazyRequestsPerMinuteChart values={stats.requestsPerMinute} />
@@ -282,7 +270,7 @@ function DashboardContent() {
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.3 }}>
         <Card padding="lg">
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider mb-4">
-            Tokens per second
+            {t("tokensPerSecond")}
           </p>
           <Suspense fallback={<ChartSkeleton />}>
             <LazyTokensPerSecondChart values={stats.tokensPerSecond} />
@@ -294,23 +282,23 @@ function DashboardContent() {
       <motion.div variants={fadeUp} initial="initial" animate="animate" transition={{ delay: 0.4 }}>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
           <Card padding="sm">
-            <p className="text-[var(--color-text-muted)] mb-0.5">Active requests</p>
+            <p className="text-[var(--color-text-muted)] mb-0.5">{t("activeRequests")}</p>
             <p className="font-mono font-medium text-[var(--color-text-heading)]">{stats.activeRequests}</p>
           </Card>
           <Card padding="sm">
-            <p className="text-[var(--color-text-muted)] mb-0.5">Cached prompt tokens</p>
-            <p className="font-mono font-medium text-[var(--color-text-heading)]">{formatTokens(stats.totalPromptTokensCached)}</p>
+            <p className="text-[var(--color-text-muted)] mb-0.5">{t("cachedPromptTokens")}</p>
+            <p className="font-mono font-medium text-[var(--color-text-heading)]">{formatCompact(stats.totalPromptTokensCached)}</p>
           </Card>
           <Card padding="sm">
-            <p className="text-[var(--color-text-muted)] mb-0.5">Models loaded</p>
+            <p className="text-[var(--color-text-muted)] mb-0.5">{t("modelsLoaded")}</p>
             <p className="font-mono font-medium text-[var(--color-text-heading)]">{stats.modelsLoaded}</p>
           </Card>
           <Card padding="sm">
-            <p className="text-[var(--color-text-muted)] mb-0.5">Uptime</p>
+            <p className="text-[var(--color-text-muted)] mb-0.5">{t("uptime")}</p>
             <p className="font-mono font-medium text-[var(--color-text-heading)]">{formatUptime(stats.uptimeSeconds)}</p>
           </Card>
           <Card padding="sm">
-            <p className="text-[var(--color-text-muted)] mb-0.5">Errors (24h)</p>
+            <p className="text-[var(--color-text-muted)] mb-0.5">{t("errorsLast24h")}</p>
             <p className={`font-mono font-medium ${stats.errorsLast24h > 0 ? "text-[var(--color-status-error)]" : "text-[var(--color-text-heading)]"}`}>
               {stats.errorsLast24h}
             </p>

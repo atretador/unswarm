@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { Shield, User } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Pencil, Shield, User } from "lucide-react";
 import { useAuth } from "../../lib/auth-context";
 import { Card, Input, Button } from "../../components/ui";
+import { EditProfileModal } from "./EditProfileModal";
 
 // ─── Change Password Section (moved from settings) ──────────────
 
 function ChangePasswordSection() {
+  const { t } = useTranslation("profile");
   const { changePassword } = useAuth();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -20,11 +23,11 @@ function ChangePasswordSection() {
     setSuccess(false);
 
     if (newPassword.length < 6) {
-      setError("New password must be at least 6 characters.");
+      setError(t("validation.passwordMinLength"));
       return;
     }
     if (newPassword !== confirmPassword) {
-      setError("New passwords do not match.");
+      setError(t("validation.passwordsNoMatch"));
       return;
     }
 
@@ -36,7 +39,7 @@ function ChangePasswordSection() {
       setNewPassword("");
       setConfirmPassword("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to change password.");
+      setError(err instanceof Error ? err.message : t("passwordFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -47,27 +50,27 @@ function ChangePasswordSection() {
       <div className="flex items-center gap-2 mb-4">
         <Shield className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          Change Password
+          {t("changePassword")}
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="Current password"
+          label={t("fields.currentPassword")}
           type="password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
           autoComplete="current-password"
         />
         <Input
-          label="New password"
+          label={t("fields.newPassword")}
           type="password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
           autoComplete="new-password"
         />
         <Input
-          label="Confirm new password"
+          label={t("fields.confirmPassword")}
           type="password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
@@ -79,12 +82,12 @@ function ChangePasswordSection() {
         )}
         {success && (
           <p className="text-sm text-[var(--color-status-running)]">
-            Password changed successfully.
+            {t("passwordChanged")}
           </p>
         )}
 
         <Button type="submit" variant="primary" size="md" loading={submitting}>
-          Change Password
+          {t("changePassword")}
         </Button>
       </form>
     </Card>
@@ -94,17 +97,20 @@ function ChangePasswordSection() {
 // ─── Profile Page ───────────────────────────────────────────────
 
 export default function Profile() {
+  const { t } = useTranslation("profile");
+  const { t: tCommon } = useTranslation("common");
   const { user } = useAuth();
+  const [editOpen, setEditOpen] = useState(false);
   const letter = user?.username?.charAt(0)?.toUpperCase() ?? "?";
 
   return (
     <div className="p-6 space-y-6 max-w-3xl">
       <div>
         <h2 className="text-lg font-semibold text-[var(--color-text-heading)]">
-          Profile
+          {t("title")}
         </h2>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
-          Account details and security.
+          {t("subtitle")}
         </p>
       </div>
 
@@ -113,14 +119,14 @@ export default function Profile() {
         <div className="flex items-center gap-2 mb-4">
           <User className="size-4 text-[var(--color-text-muted)]" />
           <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-            Account
+            {t("account")}
           </p>
         </div>
 
         {user?.isTempPassword && (
           <div className="mb-4 rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-warning)_15%,transparent)] border border-[color-mix(in_srgb,var(--color-status-warning)_30%,transparent)] px-4 py-3">
             <p className="text-sm text-[var(--color-status-warning)] font-medium">
-              You&apos;re using a temporary password. Please change it now.
+              {t("tempPasswordBanner")}
             </p>
           </div>
         )}
@@ -131,16 +137,27 @@ export default function Profile() {
           </div>
           <div>
             <p className="text-sm font-medium text-[var(--color-text-heading)]">
-              {user?.username ?? "Unknown"}
+              {user?.username ?? tCommon('unknown')}
             </p>
             <p className="text-xs text-[var(--color-text-muted)]">
-              {user?.isTempPassword ? "Temporary password" : "Account active"}
+              {user?.isTempPassword ? t("tempPasswordBadge") : t("accountActive")}
             </p>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="ml-auto"
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil className="size-3 mr-1.5" />
+            {t("editProfile")}
+          </Button>
         </div>
       </Card>
 
       <ChangePasswordSection />
+
+      <EditProfileModal open={editOpen} onOpenChange={setEditOpen} />
     </div>
   );
 }

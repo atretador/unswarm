@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services;
 using Unswarm.Core.Services.Remote;
@@ -84,7 +85,7 @@ public sealed class AgentsController : ControllerBase
 
         var info = _registry.GetInfo(name);
         if (info is null)
-            return NotFound(new { error = $"Agent '{name}' not found" });
+            return NotFound(LocalizedError.Create("agents.notFound", new { name }));
 
         return Ok(info.Scripts ?? []);
     }
@@ -100,7 +101,7 @@ public sealed class AgentsController : ControllerBase
         if (string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase))
         {
             if (HostEnvironment.IsRunningInDocker)
-                return BadRequest(new { error = "Host script execution is not available in Docker mode. Use an agent on the host." });
+                return BadRequest(LocalizedError.Create("agents.dockerNoHostScripts"));
 
             var hostScripts = _hostScriptDir.ListScripts();
             return Ok(hostScripts);
@@ -108,11 +109,11 @@ public sealed class AgentsController : ControllerBase
 
         var info = _registry.GetInfo(name);
         if (info is null)
-            return NotFound(new { error = $"Agent '{name}' not found" });
+            return NotFound(LocalizedError.Create("agents.notFound", new { name }));
 
         var targetId = ExecutionTarget.ForAgent(name).Id;
         if (!_router.IsTargetReachable(targetId))
-            return StatusCode(503, new { error = $"Agent '{name}' is not reachable" });
+            return StatusCode(503, LocalizedError.Create("agents.notReachable", new { name }));
 
         try
         {
@@ -124,12 +125,12 @@ public sealed class AgentsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{AgentName}' failed to list scripts", name);
-            return StatusCode(502, new { error = $"Agent '{name}' failed to list scripts: {ex.Message}" });
+            return StatusCode(502, LocalizedError.Create("agents.listScriptsFailed", new { name, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
             _logger.LogWarning(ex, "Failed to list scripts on agent '{AgentName}'", name);
-            return StatusCode(503, new { error = $"Failed to list scripts on agent '{name}': {ex.Message}" });
+            return StatusCode(503, LocalizedError.Create("agents.listScriptsFailed", new { name, detail = ex.Message }));
         }
     }
 
@@ -145,7 +146,7 @@ public sealed class AgentsController : ControllerBase
             : ExecutionTarget.ForAgent(name).Id;
 
         if (!_router.IsTargetReachable(target))
-            return NotFound(new { error = $"Agent '{name}' is not reachable" });
+            return NotFound(LocalizedError.Create("agents.notReachable", new { name }));
 
         try
         {
@@ -155,12 +156,12 @@ public sealed class AgentsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{AgentName}' failed to list containers", name);
-            return StatusCode(502, new { error = $"Agent '{name}' failed to list containers: {ex.Message}" });
+            return StatusCode(502, LocalizedError.Create("agents.listContainersFailed", new { name, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
         {
             _logger.LogWarning(ex, "Failed to list containers on agent '{AgentName}'", name);
-            return StatusCode(503, new { error = $"Failed to list containers on agent '{name}': {ex.Message}" });
+            return StatusCode(503, LocalizedError.Create("agents.listContainersFailed", new { name, detail = ex.Message }));
         }
     }
 

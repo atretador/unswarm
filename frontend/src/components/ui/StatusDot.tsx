@@ -1,6 +1,10 @@
+import { enumLabel } from "../../i18n/enum-map";
+
 export interface StatusDotProps {
   status: "running" | "starting" | "stopped" | "created" | "restarting" | "dead" | "error" | "ready" | "validating" | "invalid" | "deprecated" | "conflict" | "waiting" | "processing" | "registered" | "healthy" | "discovering" | "connected" | "stale" | "disconnected";
   size?: "sm" | "md";
+  /** Enum type key for translating the aria-label. Defaults to "modelStatus". */
+  labelKey?: string;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -33,10 +37,10 @@ const SIZE_MAP: Record<string, string> = {
 
 const PULSE_STATUS = new Set(["starting", "validating", "registered", "discovering", "restarting", "created"]);
 
-export function StatusDot({ status, size = "md" }: StatusDotProps) {
+export function StatusDot({ status, size = "md", labelKey = "modelStatus" }: StatusDotProps) {
   const shouldPulse = PULSE_STATUS.has(status);
   return (
-    <span className="relative inline-flex items-center justify-center" role="status" aria-label={status}>
+    <span className="relative inline-flex items-center justify-center" role="status" aria-label={enumLabel(labelKey, status)}>
       <span
         className={`inline-block rounded-full ${STATUS_COLOR[status]} ${SIZE_MAP[size]}`}
       />

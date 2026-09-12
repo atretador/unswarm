@@ -1,0 +1,134 @@
+{
+  "confirm": "确认",
+  "cancel": "取消",
+  "save": "保存",
+  "delete": "删除",
+  "close": "关闭",
+  "edit": "编辑",
+  "create": "创建",
+  "copied": "已复制",
+  "copy": "复制",
+  "loading": "加载中",
+  "saving": "保存中…",
+  "fetching": "获取中…",
+  "search": "搜索",
+  "backToDashboard": "返回仪表盘",
+  "pageNotFound": "页面未找到",
+  "pageNotFoundDesc": "您查找的页面不存在或已被移动。",
+  "done": "完成",
+  "created": "已创建",
+  "failedToLoad": "加载失败",
+  "retry": "重试",
+  "errorBoundary": {
+    "title": "出现问题",
+    "description": "此页面加载失败。请重试，或刷新页面。",
+    "reload": "刷新页面"
+  },
+  "noResults": "未找到结果",
+  "active": "活跃",
+  "disabled": "已禁用",
+  "enabled": "已启用",
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
+  "proxyActive": "代理已激活",
+  "signOut": "退出登录",
+  "openNavigation": "打开导航",
+  "closeNavigation": "关闭导航",
+  "goToProfile": "前往个人资料",
+  "userMenu": "用户菜单",
+  "navigationMenu": "导航菜单",
+  "expandSidebar": "展开侧边栏",
+  "collapseSidebar": "收起侧边栏",
+  "closeDialog": "关闭对话框",
+  "closeDrawer": "关闭抽屉",
+  "themeTooltip": "主题：{{theme}}",
+  "themeSwitchAriaLabel": "切换主题（当前：{{theme}}）",
+  "profile": "个人资料",
+  "tempPasswordBanner": "您正在使用临时密码。",
+  "changeItInProfile": "请在个人资料中修改",
+  "languageSwitcherTitle": "语言",
+  "languageSwitcherLabel": "选择语言",
+  "units": {
+    "tokPerSec": "tok/s",
+    "tok": "tok",
+    "ms": "毫秒",
+    "s": "秒",
+    "m": "分",
+    "h": "小时",
+    "d": "天",
+    "bytes": {
+      "B": "B",
+      "KB": "KB",
+      "MB": "MB",
+      "GB": "GB"
+    }
+  },
+  "na": "不适用",
+  "unknown": "未知",
+  "enums": {
+    "modelStatus": {
+      "ready": "就绪",
+      "validating": "验证中…",
+      "invalid": "无效",
+      "deprecated": "已弃用",
+      "conflict": "冲突"
+    },
+    "containerStatus": {
+      "running": "运行中",
+      "starting": "启动中",
+      "stopping": "停止中",
+      "stopped": "已停止",
+      "created": "已创建",
+      "restarting": "重启中",
+      "dead": "已终止",
+      "error": "错误"
+    },
+    "containerRegistrationStatus": {
+      "registered": "已注册",
+      "starting": "启动中",
+      "healthy": "健康",
+      "discovering": "发现中",
+      "ready": "就绪",
+      "error": "错误"
+    },
+    "queueItemStatus": {
+      "waiting": "等待中",
+      "processing": "处理中",
+      "completed": "已完成",
+      "failed": "失败"
+    },
+    "logLevel": {
+      "info": "信息",
+      "warn": "警告",
+      "error": "错误",
+      "debug": "调试"
+    },
+    "runtimeSignal": {
+      "running": "运行中",
+      "transitional": "启动中…",
+      "down": "已停止",
+      "unknown": "未知"
+    },
+    "agentConnectivity": {
+      "connected": "已连接",
+      "stale": "过期",
+      "disconnected": "已断开"
+    },
+    "apiKeyScope": {
+      "inference": "推理",
+      "agent": "Agent"
+    },
+    "pricingMode": {
+      "perToken": "每 1M token",
+      "subscription": "月度订阅",
+      "selfHosted": "自托管"
+    },
+    "benchmarkStatus": {
+      "completed": "已完成",
+      "error": "错误"
+    }
+  }
+}

@@ -208,6 +208,42 @@ public sealed class ApiKeyStore : IApiKeyStore
         return access;
     }
 
+    public async Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entities = await db.ApiKeys.Where(k => k.AccessJson != null).ToListAsync(ct);
+        var modified = 0;
+
+        foreach (var entity in entities)
+        {
+            var access = DeserializeAccess(entity.AccessJson!);
+            if (access.Providers.Count == 0)
+                continue;
+
+            var matching = access.Providers
+                .Where(p => string.Equals(p, providerName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            if (matching.Count == 0)
+                continue;
+
+            var updatedProviders = access.Providers
+                .Where(p => !string.Equals(p, providerName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var updatedAccess = new KeyAccess { Providers = updatedProviders, Models = access.Models };
+
+            entity.AccessJson = SerializeAccess(updatedAccess);
+            modified++;
+
+            // Invalidate hot-path cache for the modified key.
+            _accessCache.TryRemove(entity.Id, out _);
+        }
+
+        if (modified > 0)
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
+
+        return modified;
+    }
+
     /// <summary>camelCase wire shape, matching the frontend contract.</summary>
     internal static string SerializeAccess(KeyAccess access) => JsonSerializer.Serialize(
         access,

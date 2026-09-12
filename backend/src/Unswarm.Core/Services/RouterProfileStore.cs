@@ -10,6 +10,7 @@ namespace Unswarm.Core.Services;
 public sealed class RouterProfileStore : IRouterProfileStore
 {
     private readonly Func<UnswarmDbContext> _dbFactory;
+    private readonly IApiKeyStore? _apiKeyStore;
 
     private static readonly JsonSerializerOptions s_json = new()
     {
@@ -21,9 +22,10 @@ public sealed class RouterProfileStore : IRouterProfileStore
     private readonly ConcurrentDictionary<string, (RouterProfile Profile, DateTimeOffset LoadedAt)> _nameCache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
 
-    public RouterProfileStore(Func<UnswarmDbContext> dbFactory)
+    public RouterProfileStore(Func<UnswarmDbContext> dbFactory, IApiKeyStore? apiKeyStore = null)
     {
         _dbFactory = dbFactory;
+        _apiKeyStore = apiKeyStore;
     }
 
     public async Task<IReadOnlyList<RouterProfile>> ListAsync(CancellationToken ct = default)
@@ -116,7 +118,14 @@ public sealed class RouterProfileStore : IRouterProfileStore
         entity.Name = profile.Name;
         entity.Mode = profile.Mode.ToString();
         entity.EntriesJson = JsonSerializer.Serialize(profile.Entries, s_json);
-        entity.ActiveModelId = profile.ActiveModelId;
+        // Never overwrite ActiveModelId from a PUT — it is managed exclusively
+        // by SetActiveModelIdAsync and auto-fallback.  However, if the pinned
+        // model no longer appears in the new entries list, clear the dangling pin.
+        if (!string.IsNullOrEmpty(entity.ActiveModelId)
+            && !profile.Entries.Any(e => e.ModelId == entity.ActiveModelId))
+        {
+            entity.ActiveModelId = null;
+        }
         entity.UpdatedAt = DateTimeOffset.UtcNow;
 
         await db.SaveChangesAsync(ct);
@@ -145,6 +154,36 @@ public sealed class RouterProfileStore : IRouterProfileStore
         _nameCache[entity.Name] = (profile, DateTimeOffset.UtcNow);
     }
 
+    public async Task<RouterProfile> SetThinkingEffortAsync(string id, string modelId, string? thinkingEffortOverride, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.RouterProfiles.FindAsync([id], ct)
+            ?? throw new KeyNotFoundException($"Router profile '{id}' not found.");
+
+        var entries = DeserializeEntries(entity.EntriesJson).ToList();
+        var entry = entries.FirstOrDefault(e => string.Equals(e.ModelId, modelId, StringComparison.Ordinal))
+            ?? throw new KeyNotFoundException($"Entry '{modelId}' not found in profile '{entity.Name}'.");
+
+        // Replace the entry with an updated copy (entries are init-only)
+        var idx = entries.IndexOf(entry);
+        entries[idx] = new RouterProfileEntry
+        {
+            ModelId = entry.ModelId,
+            Priority = entry.Priority,
+            IsEnabled = entry.IsEnabled,
+            ThinkingEffortOverride = thinkingEffortOverride,
+        };
+
+        entity.EntriesJson = JsonSerializer.Serialize(entries, s_json);
+        entity.UpdatedAt = DateTimeOffset.UtcNow;
+        await db.SaveChangesAsync(ct);
+
+        var result = MapToDomain(entity);
+        _cache[id] = (result, DateTimeOffset.UtcNow);
+        _nameCache[entity.Name] = (result, DateTimeOffset.UtcNow);
+        return result;
+    }
+
     public async Task DeleteAsync(string id, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
@@ -152,10 +191,15 @@ public sealed class RouterProfileStore : IRouterProfileStore
         if (entity is null)
             throw new KeyNotFoundException($"Router profile '{id}' not found.");
 
+        var name = entity.Name;
         db.RouterProfiles.Remove(entity);
         await db.SaveChangesAsync(ct);
         _cache.TryRemove(id, out _);
         _nameCache.TryRemove(entity.Name, out _);
+
+        // Clean up API key access records that reference the deleted router profile name.
+        if (_apiKeyStore is not null)
+            await _apiKeyStore.RemoveProviderFromAllKeysAsync(name, ct).ConfigureAwait(false);
     }
 
     private async Task<bool> NameExistsAsync(string name, CancellationToken ct)

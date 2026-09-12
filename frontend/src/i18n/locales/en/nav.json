@@ -1,0 +1,14 @@
+{
+  "dashboard": "Dashboard",
+  "models": "Models",
+  "swarm": "Swarm",
+  "providers": "Providers",
+  "benchmarks": "Benchmarks",
+  "metrics": "Metrics",
+  "queue": "Queue",
+  "logs": "Logs",
+  "apiKeys": "API Keys",
+  "routerProfiles": "Router Profiles",
+  "settings": "Settings",
+  "profile": "Profile"
+}

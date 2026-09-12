@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -31,6 +32,7 @@ import type {
   RegisteredRuntime,
   Settings,
 } from "../../lib/api/types";
+import { enumLabel } from "../../i18n/enum-map";
 import {
   AGENT_STATUS_VARIANT,
   agentConnectivity,
@@ -103,8 +105,10 @@ export function AgentSection({
   onManage: (agentName: string) => void;
   onConcurrency: (agentName: string) => void;
   settings?: Settings;
-  onExpandedChange?: (expanded: boolean) => void;
+  onExpandedChange?: (agentName: string, expanded: boolean) => void;
 }) {
+  const { t } = useTranslation('swarm');
+  const { t: tc } = useTranslation('common');
   const agentRcs = registeredContainers.filter((rc) => rc.agent === agent.name);
   // Deep-link focus forces this section open even if it normally starts collapsed.
   const [expanded, setExpanded] = useState(
@@ -113,8 +117,8 @@ export function AgentSection({
   );
 
   useEffect(() => {
-    onExpandedChange?.(expanded);
-  }, [expanded, onExpandedChange]);
+    onExpandedChange?.(agent.name, expanded);
+  }, [agent.name, expanded, onExpandedChange]);
 
   const [filter, setFilter] = useState("");
   const connectivity = agentConnectivity(agent);
@@ -164,7 +168,7 @@ export function AgentSection({
           type="button"
           onClick={() => setExpanded((p) => !p)}
           aria-expanded={expanded}
-          aria-label={`Toggle ${agent.name} section`}
+          aria-label={t('agent.toggleSection', { name: agent.name })}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-[var(--radius-lg)] px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-bg-muted)]"
         >
           {expanded ? (
@@ -178,7 +182,7 @@ export function AgentSection({
           <span className="truncate text-sm font-semibold text-[var(--color-text-heading)] transition-colors group-hover:text-[var(--color-primary)]">
             {settings?.agentDisplayNames?.[agent.name] ?? agent.name}
           </span>
-          {isHost && <Badge variant="outline">host</Badge>}
+          {isHost && <Badge variant="outline">{t('agent.host')}</Badge>}
 
           <div className="hidden min-w-0 items-center gap-3 text-[10px] text-[var(--color-text-muted)] md:flex">
             {agent.osPlatform && (
@@ -208,7 +212,7 @@ export function AgentSection({
             {agent.cpuCores > 0 && (
               <span className="flex shrink-0 items-center gap-1">
                 <Hash className="size-3 shrink-0" />
-                {agent.cpuCores} threads
+                {t('agent.threads', { count: agent.cpuCores })}
               </span>
             )}
           </div>
@@ -221,20 +225,20 @@ export function AgentSection({
             setEditingAgentName(agent.name);
             setAgentNameDraft(settings?.agentDisplayNames?.[agent.name] ?? agent.name);
           }}
-          aria-label={`Rename agent ${agent.name}`}
-          title="Edit display name"
+          aria-label={t('agent.rename', { name: agent.name })}
+          title={t('agent.editDisplayName')}
           className="flex shrink-0 cursor-pointer items-center rounded p-0.5 text-[var(--color-text-muted)] opacity-0 transition-opacity hover:text-[var(--color-text)] group-hover:opacity-100"
         >
           <Pencil className="size-3" />
         </button>
 
         <Badge variant={AGENT_STATUS_VARIANT[connectivity]} className="shrink-0">
-          {connectivity}
+          {enumLabel('agentConnectivity', connectivity)}
         </Badge>
 
         <div className="flex shrink-0 items-center gap-1">
           {agent.scripts.length > 0 && (
-            <Tooltip content={`${agent.scripts.length} launcher script${agent.scripts.length !== 1 ? "s" : ""} available`}>
+            <Tooltip content={t('agent.scriptsAvailable', { count: agent.scripts.length })}>
               <span className="inline-flex items-center gap-1 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-primary)_10%,transparent)] px-1.5 py-0.5 text-[10px] text-[var(--color-primary)]">
                 <Terminal className="size-2.5" />
                 {agent.scripts.length}
@@ -244,22 +248,22 @@ export function AgentSection({
           <button
             type="button"
             onClick={() => onManage(agent.name)}
-            aria-label={`Manage runtimes on ${agent.name}`}
-            title="Manage runtimes"
+            aria-label={`${t('agent.manageRuntimes')} ${agent.name}`}
+            title={t('agent.manageRuntimes')}
             className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1 text-sm text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
           >
             <PackageOpen className="size-3.5" />
-            Manage
+            {t('agent.manage')}
           </button>
           <button
             type="button"
             onClick={() => onConcurrency(agent.name)}
-            aria-label={`Concurrency on ${agent.name}`}
-            title="Configure concurrency"
+            aria-label={`${t('concurrency.title', { agentName: agent.name })}`}
+            title={t('agent.configureConcurrency')}
             className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-2.5 py-1 text-sm text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
           >
             <Grid2x2 className="size-3.5" />
-            Concurrency
+            {t('agent.concurrency')}
           </button>
         </div>
       </div>
@@ -286,8 +290,8 @@ export function AgentSection({
                         type="search"
                         value={filter}
                         onChange={(e) => setFilter(e.target.value)}
-                        placeholder="Search runtimes..."
-                        aria-label="Search registered containers"
+                        placeholder={t('agent.searchRuntimes')}
+                        aria-label={t('agent.searchContainers')}
                         className="h-8 w-full rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)] outline-none transition-colors focus:border-[var(--color-focus-ring)] focus:ring-1 focus:ring-[var(--color-focus-ring)]"
                       />
                     </div>
@@ -324,14 +328,14 @@ export function AgentSection({
                   </div>
                   <div>
                     <p className="text-sm font-medium text-[var(--color-text-heading)]">
-                      No runtimes registered
+                      {t('container.noContainersRegistered')}
                     </p>
                     <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-                      Register a container or script to auto-discover its models.
+                      {t('agent.noRuntimesDesc')}
                     </p>
                   </div>
                   <Button variant="secondary" size="sm" onClick={() => onManage(agent.name)}>
-                    Manage runtimes
+                    {t('agent.manageRuntimes')}
                   </Button>
                 </Card>
               )}
@@ -345,15 +349,15 @@ export function AgentSection({
         onOpenChange={(o) => {
           if (!o) setEditingAgentName(null);
         }}
-        title={`Rename agent ${agent.name}`}
+        title={t('agent.rename', { name: agent.name })}
       >
         <div className="space-y-4 p-5">
           <Input
-            label="Display name"
+            label={t('runtime.displayName')}
             value={agentNameDraft}
             onChange={(e) => setAgentNameDraft(e.target.value)}
             placeholder={agent.name}
-            aria-label="Display name"
+            aria-label={t('runtime.displayName')}
             autoFocus
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -373,7 +377,7 @@ export function AgentSection({
 
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" size="sm" onClick={() => setEditingAgentName(null)}>
-              Cancel
+              {tc('cancel')}
             </Button>
             <Button
               size="sm"
@@ -390,7 +394,7 @@ export function AgentSection({
                 setEditingAgentName(null);
               }}
             >
-              Save
+              {tc('save')}
             </Button>
           </div>
         </div>

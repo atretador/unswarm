@@ -3,7 +3,12 @@
 name: CI
 
 on:
+  push:
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -20,6 +25,7 @@ jobs:
       - name: Test
         run: dotnet test --no-build
         working-directory: backend
+        timeout-minutes: 10
 
   agent:
     name: Agent (Go)
@@ -63,6 +69,7 @@ jobs:
       - name: Test
         run: pnpm test
         working-directory: frontend
+        timeout-minutes: 10
       - name: Build
         run: pnpm build
         working-directory: frontend

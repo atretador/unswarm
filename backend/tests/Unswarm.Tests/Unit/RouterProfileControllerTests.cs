@@ -1,9 +1,14 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
+using Unswarm.Api.Controllers;
+using Unswarm.Api.Services;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Persistence;
 using Unswarm.Core.Services;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
 
 namespace Unswarm.Tests.Unit;
 
@@ -218,5 +223,47 @@ public sealed class RouterProfileControllerTests
         var allowed = await accessService.IsModelAllowedAsync(key.Id, "router/myrouter");
 
         Assert.True(allowed);
+    }
+
+    // ── Status endpoint ────────────────────────────────────────────────
+
+    private sealed class StubLogger<T> : ILogger<T>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => false;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) { }
+    }
+
+    private static RouterProfileController CreateController(IRouterProfileStore? store = null, RouterProfileActivityTracker? tracker = null)
+        => new(store ?? TestRouterProfileStore.Create(), new StubLogger<RouterProfileController>(), tracker ?? new RouterProfileActivityTracker());
+
+    [Fact]
+    public void GetStatus_ReturnsActiveCounts()
+    {
+        var tracker = new RouterProfileActivityTracker();
+        tracker.Increment("Executor");
+        tracker.Increment("Executor");
+        tracker.Increment("Fast");
+
+        var ctrl = CreateController(tracker: tracker);
+        var result = ctrl.GetStatus();
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dict = Assert.IsAssignableFrom<IReadOnlyDictionary<string, int>>(ok.Value);
+        Assert.Equal(2, dict.Count);
+        Assert.Equal(2, dict["Executor"]);
+        Assert.Equal(1, dict["Fast"]);
+    }
+
+    [Fact]
+    public void GetStatus_EmptyWhenNoActive()
+    {
+        var tracker = new RouterProfileActivityTracker();
+        var ctrl = CreateController(tracker: tracker);
+        var result = ctrl.GetStatus();
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dict = Assert.IsAssignableFrom<IReadOnlyDictionary<string, int>>(ok.Value);
+        Assert.Empty(dict);
     }
 }

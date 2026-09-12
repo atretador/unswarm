@@ -32,6 +32,7 @@ public sealed class ModelResponse
     public string? SourceRuntimeName { get; set; }
     public string? SourceRuntimeAgent { get; set; }
     public string? DisplayName { get; set; }
+    public string[]? SupportedThinkingEfforts { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string Origin { get; set; } = "swarm";
@@ -52,10 +53,18 @@ public sealed class ModelResponse
         ContainerImage = d.ContainerImage,
         SourceRuntimeId = d.SourceRuntimeId,
         DisplayName = d.DisplayName,
+        SupportedThinkingEfforts = ParseThinkingEfforts(d.SupportedThinkingEffortsJson),
         CreatedAt = d.CreatedAt,
         UpdatedAt = d.UpdatedAt,
         Origin = "swarm"
     };
+
+    private static string[]? ParseThinkingEfforts(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<string[]>(json); }
+        catch { return null; }
+    }
 }
 
 public sealed class ModelCreateRequest
@@ -66,6 +75,7 @@ public sealed class ModelCreateRequest
     public string Quantization { get; set; } = "";
     public int ContextWindow { get; set; }
     public string ContainerImage { get; set; } = "";
+    public string? SupportedThinkingEffortsJson { get; set; }
 }
 
 public sealed class ModelUpdateRequest
@@ -78,6 +88,7 @@ public sealed class ModelUpdateRequest
     public int? ContextWindow { get; set; }
     public string? ContainerImage { get; set; }
     public string? DisplayName { get; set; }
+    public string? SupportedThinkingEffortsJson { get; set; }
 }
 
 /// <summary>

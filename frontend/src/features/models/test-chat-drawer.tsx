@@ -13,8 +13,10 @@ import {
   Square,
   Zap,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Drawer, Badge, Button, Input, StatusDot, Tooltip } from "../../components/ui";
 import { client } from "../../lib/query-client";
+import { formatTokensPerSec, formatMs } from "../../i18n/format";
 import type {
   ChatRole,
   Model,
@@ -23,6 +25,7 @@ import type {
   TestChatTurnResult,
 } from "../../lib/api/types";
 import { formatModelName } from "../../lib/format-model-name";
+import { enumLabel } from "../../i18n/enum-map";
 
 // ─── Status palette — identical semantics to the Models page rows ──
 
@@ -34,13 +37,7 @@ const MODEL_STATUS_VARIANT: Record<ModelStatus, "success" | "warning" | "error" 
   conflict: "error",
 };
 
-const MODEL_STATUS_LABEL: Record<ModelStatus, string> = {
-  ready: "ready",
-  validating: "validating…",
-  invalid: "invalid",
-  deprecated: "deprecated",
-  conflict: "conflict",
-};
+// MODEL_STATUS_LABEL is now provided via enumLabel('modelStatus', status)
 
 // ─── Conversation types ─────────────────────────────────────────────
 
@@ -68,12 +65,7 @@ function nextTurnId(): string {
   return `t${++turnSeq}`;
 }
 
-/** Quick-fire prompts shown on an empty transcript — good connection smoke tests. */
-const QUICK_PROMPTS = [
-  "Reply with exactly: hello",
-  "What model are you?",
-  "Write one short sentence about the sea.",
-];
+// QUICK_PROMPTS are now translated via t('chat.quickPrompts')
 
 export interface TestChatDrawerProps {
   model: Model | null;
@@ -88,6 +80,7 @@ export interface TestChatDrawerProps {
  * between models doesn't lose a transcript, and closing the drawer doesn't either.
  */
 export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawerProps) {
+  const { t } = useTranslation('models');
   const [conversations, setConversations] = useState<Record<string, ChatTurn[]>>({});
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -195,7 +188,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
         } else {
           patchLastAssistantTurn(model.id, (turn) => ({
             ...turn,
-            error: (err as Error)?.message || "Request failed",
+            error: (err as Error)?.message || t('chat.requestFailed'),
           }));
         }
       } finally {
@@ -203,7 +196,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
         setPending(false);
       }
     },
-    [model, pending, input, turns, system, maxTokensText, appendTurn, patchLastAssistantTurn],
+    [model, pending, input, turns, system, maxTokensText, appendTurn, patchLastAssistantTurn, t],
   );
 
   const autoResize = useCallback(() => {
@@ -236,7 +229,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
   );
   const subtitle =
     model.origin === "cloud"
-      ? `${model.providerName ?? "cloud"} · ${model.contextWindow.toLocaleString()} context`
+      ? `${model.providerName ?? "cloud"} · ${model.contextWindow.toLocaleString()} ${t('chat.contextUnit')}`
       : `${model.family} · ${model.parameterSize} · ${model.quantization}`;
 
   // ── Composer — plain JSX, NOT an inner component: re-creating the element
@@ -247,11 +240,11 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
       <div className="flex items-end gap-2">
         <textarea
           ref={textareaRef}
-          aria-label="Message"
+          aria-label={t('chat.messageAriaLabel')}
           value={input}
           autoFocus
           rows={1}
-          placeholder={`Message ${displayName}…`}
+          placeholder={t('chat.messagePlaceholder', { name: displayName })}
           onChange={(e) => setInput(e.target.value)}
           onInput={autoResize}
           onKeyDown={(e) => {
@@ -267,11 +260,11 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
             variant="secondary"
             size="md"
             onClick={handleStop}
-            aria-label="Stop generating"
+            aria-label={t('chat.stopGenerating')}
             className="shrink-0"
           >
             <Square className="size-3.5 fill-current" />
-            Stop
+            {t('chat.stop')}
           </Button>
         ) : (
           <Button
@@ -279,16 +272,16 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
             size="md"
             onClick={() => void handleSend()}
             disabled={input.trim().length === 0}
-            aria-label="Send message"
+            aria-label={t('chat.sendAriaLabel')}
             className="shrink-0"
           >
             <SendHorizontal className="size-3.5" />
-            Send
+            {t('chat.send')}
           </Button>
         )}
       </div>
       <p className="text-[10px] text-[var(--color-text-muted)]">
-        Enter to send · Shift+Enter for newline · requests go through the proxy like real /v1 traffic
+        {t('chat.composerHint')}
       </p>
     </div>
   );
@@ -302,7 +295,7 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
         <span className="flex items-center gap-2">
           <span className="truncate">{subtitle}</span>
           <Badge variant={MODEL_STATUS_VARIANT[model.status]} size="sm">
-            {MODEL_STATUS_LABEL[model.status]}
+            {enumLabel('modelStatus', model.status)}
           </Badge>
         </span>
       }
@@ -319,15 +312,15 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
             className="inline-flex items-center gap-1.5 rounded-[var(--radius-md)] px-2 py-1 text-[11px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
           >
             <SlidersHorizontal className="size-3" />
-            Parameters
+            {t('chat.parameters')}
             {paramsOpen ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
           </button>
-          <Tooltip content="Clear this conversation">
+          <Tooltip content={t('chat.clearConversation')}>
             <button
               type="button"
               onClick={handleClear}
               disabled={pending || turns.length === 0}
-              aria-label="Clear conversation"
+              aria-label={t('chat.clearConversationAria')}
               className="flex size-7 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] disabled:pointer-events-none disabled:opacity-40"
             >
               <RotateCcw className="size-3.5" />
@@ -339,17 +332,17 @@ export function TestChatDrawer({ model, open, settings, onClose }: TestChatDrawe
         {paramsOpen && (
           <div className="grid grid-cols-[1fr_7rem] items-end gap-3 border-b border-[var(--color-border-subtle)] px-4 pb-3 pt-1">
             <Input
-              label="System prompt"
+              label={t('chat.systemPromptLabel')}
               value={system}
               onChange={(e) => setSystem(e.target.value)}
-              placeholder="Optional instructions for the model…"
+              placeholder={t('chat.systemPrompt')}
               disabled={pending}
             />
             <Input
-              label="Max tokens"
+              label={t('chat.maxTokens')}
               value={maxTokensText}
               onChange={(e) => setMaxTokensText(e.target.value)}
-              placeholder="default"
+              placeholder={t('chat.default')}
               inputMode="numeric"
               disabled={pending}
             />
@@ -382,19 +375,21 @@ function EmptyTranscript({
   onPick: (prompt: string) => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation('models');
+  const quickPrompts = t('chat.quickPrompts', { returnObjects: true }) as string[];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 py-10 text-center">
       <div className="flex size-10 items-center justify-center rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-primary)_10%,transparent)]">
         <MessageSquare className="size-5 text-[var(--color-primary)]" />
       </div>
       <div>
-        <p className="text-sm font-medium text-[var(--color-text-heading)]">Test this model</p>
+        <p className="text-sm font-medium text-[var(--color-text-heading)]">{t('chat.testModel')}</p>
         <p className="mt-1 max-w-xs text-xs text-[var(--color-text-muted)]">
-          Messages are sent through the proxy exactly like external /v1 clients — a reply proves the model and connection work.
+          {t('chat.testModelDesc')}
         </p>
       </div>
       <div className="flex flex-wrap justify-center gap-2" data-testid="test-chat-quick-prompts">
-        {QUICK_PROMPTS.map((p) => (
+        {quickPrompts.map((p) => (
           <button
             key={p}
             type="button"
@@ -411,6 +406,8 @@ function EmptyTranscript({
 }
 
 function TurnBubble({ turn }: { turn: ChatTurn }) {
+  const { t } = useTranslation('models');
+
   if (turn.role === "user") {
     return (
       <div className="flex justify-end" data-role="user">
@@ -435,7 +432,7 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
           <details className="group rounded-[var(--radius-md)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)] px-3 py-2">
             <summary className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] font-medium text-[var(--color-text-muted)] marker:hidden [&::-webkit-details-marker]:hidden">
               <Brain className="size-3" />
-              Thinking
+              {t('chat.thinking')}
             </summary>
             <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-[var(--color-text-muted)]">
               {turn.reasoning}
@@ -452,7 +449,7 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-[var(--color-status-error)]" />
             <div className="min-w-0">
               <p className="text-xs font-medium text-[var(--color-status-error)]">
-                Request failed
+                {t('chat.requestFailed')}
               </p>
               <p className="mt-0.5 break-words text-xs text-[var(--color-text-muted)]">
                 {turn.error}
@@ -464,7 +461,7 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
             {turn.content || <span className="italic text-[var(--color-text-muted)]">…</span>}
             {turn.stopped && turn.content && (
               <span className="ml-1 align-middle text-[10px] italic text-[var(--color-text-muted)]">
-                (stopped)
+                {t('chat.stopped')}
               </span>
             )}
           </div>
@@ -472,26 +469,26 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
 
         {turn.stats && !turn.error && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-1 text-[10px] text-[var(--color-text-muted)]">
-            <span className="inline-flex items-center gap-1" title="Round-trip latency">
+            <span className="inline-flex items-center gap-1" title={t('chat.roundTripLatency')}>
               <Clock className="size-2.5" />
-              {Math.round(turn.stats.latencyMs)}ms
+              {formatMs(turn.stats.latencyMs)}
             </span>
             {tps !== null && tps > 0 && (
-              <span className="inline-flex items-center gap-1" title="Generation speed (estimated)">
+              <span className="inline-flex items-center gap-1" title={t('chat.generationSpeed')}>
                 <Zap className="size-2.5" />
-                {tps.toFixed(1)} tok/s
+                {formatTokensPerSec(tps)}
               </span>
             )}
             {turn.stats.promptTokens != null && turn.stats.promptTokens > 0 && (
-              <span className="inline-flex items-center gap-1" title="Prompt tokens">
+              <span className="inline-flex items-center gap-1" title={t('chat.promptTokens')}>
                 <Hash className="size-2.5 rotate-90" />
-                {turn.stats.promptTokens.toLocaleString()} prompt
+                {turn.stats.promptTokens.toLocaleString()} {t('chat.promptUnit')}
               </span>
             )}
             {turn.stats.completionTokens != null && turn.stats.completionTokens > 0 && (
-              <span className="inline-flex items-center gap-1" title="Completion tokens">
+              <span className="inline-flex items-center gap-1" title={t('chat.completionTokens')}>
                 <Hash className="size-2.5" />
-                {turn.stats.completionTokens.toLocaleString()} out
+                {turn.stats.completionTokens.toLocaleString()} {t('chat.outUnit')}
               </span>
             )}
           </div>
@@ -499,7 +496,7 @@ function TurnBubble({ turn }: { turn: ChatTurn }) {
 
         {!turn.stats && !turn.error && turn.content && (
           <div className="flex items-center gap-1 pl-1 text-[10px] text-[var(--color-text-muted)]">
-            <StatusDot status="validating" size="sm" /> generating…
+            <StatusDot status="validating" size="sm" /> {t('chat.generating')}
           </div>
         )}
       </div>

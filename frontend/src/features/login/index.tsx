@@ -9,6 +9,7 @@ import {
   Route,
   Waypoints,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../../lib/auth-context";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
@@ -216,6 +217,7 @@ function SwarmField({ animate }: { animate: boolean }) {
 }
 
 export default function LoginPage() {
+  const { t } = useTranslation("auth");
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -237,7 +239,7 @@ export default function LoginPage() {
       await login(username, password);
       navigate(from, { replace: true });
     } catch {
-      setError("Invalid username or password");
+      setError(t("invalidCredentials"));
     } finally {
       setLoading(false);
     }
@@ -295,24 +297,20 @@ export default function LoginPage() {
               variants={reduceMotion ? itemStatic : item}
               className="font-heading text-3xl font-semibold leading-tight tracking-tight text-[var(--color-text-heading)] xl:text-4xl"
             >
-              One console for your{" "}
-              <span className="text-[var(--color-primary)]">
-                entire agent swarm.
-              </span>
+              {t("marketing.headline")}
             </motion.h2>
             <motion.p
               variants={reduceMotion ? itemStatic : item}
               className="mt-4 text-base leading-relaxed text-[var(--color-text-muted)]"
             >
-              Orchestrate models, monitor agents, and keep every run
-              accountable — from a single pane of glass.
+              {t("marketing.description")}
             </motion.p>
 
             <ul className="mt-8 space-y-3.5">
               {[
-                { icon: Waypoints, label: "Multi-agent orchestration at a glance" },
-                { icon: Activity, label: "Live telemetry, queue depth, and run logs" },
-                { icon: Route, label: "Model routing with benchmark-backed picks" },
+                { icon: Waypoints, label: t("marketing.feature1") },
+                { icon: Activity, label: t("marketing.feature2") },
+                { icon: Route, label: t("marketing.feature3") },
               ].map(({ icon: Icon, label }) => (
                 <motion.li
                   key={label}
@@ -374,19 +372,19 @@ export default function LoginPage() {
             variants={reduceMotion ? itemStatic : item}
             className="font-heading text-2xl font-semibold tracking-tight text-[var(--color-text-heading)] lg:text-3xl"
           >
-            Sign in to unswarm
+            {t("signInTitle")}
           </motion.h1>
           <motion.p
             variants={reduceMotion ? itemStatic : item}
             className="mt-2 mb-8 text-sm text-[var(--color-text-muted)]"
           >
-            Enter your credentials to access the control plane.
+            {t("signInDescription")}
           </motion.p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <motion.div variants={reduceMotion ? itemStatic : item}>
               <Input
-                label="Username"
+                label={t("username")}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoFocus
@@ -399,7 +397,7 @@ export default function LoginPage() {
             <motion.div variants={reduceMotion ? itemStatic : item}>
               <div className="relative">
                 <Input
-                  label="Password"
+                  label={t("password")}
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -410,7 +408,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  aria-label={showPassword ? t("hidePassword") : t("showPassword")}
                   className="absolute right-2 top-[1.75rem] flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors duration-[var(--duration-fast)] hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
                 >
                   {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
@@ -449,7 +447,7 @@ export default function LoginPage() {
                 loading={loading}
                 className="mt-2 w-full font-semibold tracking-wide"
               >
-                Sign in
+                {t("signIn")}
                 {!loading && <ArrowRight size={15} aria-hidden="true" />}
               </Button>
             </motion.div>
@@ -459,7 +457,7 @@ export default function LoginPage() {
             variants={reduceMotion ? itemStatic : item}
             className="mt-8 text-center text-xs text-[var(--color-text-muted)]"
           >
-            Need access? Contact your swarm administrator.
+            {t("needAccess")}
           </motion.p>
         </motion.div>
       </main>

@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -106,8 +107,9 @@ public sealed class ApiKeyAuthMiddlewareTests
         using var reader = new StreamReader(context.Response.Body);
         var body = await reader.ReadToEndAsync();
 
-        Assert.Contains("bootstrap", body, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("API key", body, StringComparison.OrdinalIgnoreCase);
+        var error = JsonDocument.Parse(body).RootElement;
+        Assert.Equal("auth.noKeysBootstrap", error.GetProperty("errorKey").GetString());
+        Assert.True(error.GetProperty("errorParams").ValueKind == JsonValueKind.Object);
     }
 
     [Fact]

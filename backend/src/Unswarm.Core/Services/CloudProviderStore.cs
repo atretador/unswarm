@@ -15,15 +15,18 @@ public sealed class CloudProviderStore : ICloudProviderStore
     private readonly Func<UnswarmDbContext> _dbFactory;
     private readonly IApiKeyEncryptor _encryptor;
     private readonly ILogger<CloudProviderStore> _logger;
+    private readonly IApiKeyStore? _apiKeyStore;
 
     public CloudProviderStore(
         Func<UnswarmDbContext> dbFactory,
         IApiKeyEncryptor encryptor,
-        ILogger<CloudProviderStore> logger)
+        ILogger<CloudProviderStore> logger,
+        IApiKeyStore? apiKeyStore = null)
     {
         _dbFactory = dbFactory;
         _encryptor = encryptor;
         _logger = logger;
+        _apiKeyStore = apiKeyStore;
     }
 
     public async Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default)
@@ -109,9 +112,15 @@ public sealed class CloudProviderStore : ICloudProviderStore
         if (entity is null)
             return false;
 
+        var name = entity.Name;
         db.CloudProviders.Remove(entity);
         await db.SaveChangesAsync(ct);
         _logger.LogInformation("Deleted cloud provider {Id}", id);
+
+        // Clean up API key access records that reference the deleted provider name.
+        if (_apiKeyStore is not null)
+            await _apiKeyStore.RemoveProviderFromAllKeysAsync(name, ct).ConfigureAwait(false);
+
         return true;
     }
 

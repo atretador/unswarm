@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 /** CSS selector for all natively focusable elements. */
 const FOCUSABLE =
@@ -34,7 +35,7 @@ export interface DrawerProps {
   /** Called when the drawer requests to close (Escape, backdrop, or programmatic). */
   onOpenChange: (open: boolean) => void;
   /** Heading rendered in the drawer header. Also used for `aria-labelledby`. */
-  title?: string;
+  title?: ReactNode;
   /** Optional muted line under the title (e.g. model metadata). */
   subtitle?: ReactNode;
   /** Scrollable drawer body content. */
@@ -69,6 +70,7 @@ export function Drawer({
   footer,
   className,
 }: DrawerProps) {
+  const { t } = useTranslation("common");
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -192,7 +194,7 @@ export function Drawer({
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              aria-label="Close drawer"
+              aria-label={t("closeDrawer")}
               className="flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
             >
               ×

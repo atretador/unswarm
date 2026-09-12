@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
@@ -68,11 +69,11 @@ public sealed class ContainersController : ControllerBase
     public async Task<IActionResult> Start([FromBody] ContainerStartRequest request, CancellationToken ct)
     {
         var model = await _registry.GetAsync(request.ModelId, ct);
-        if (model is null) return NotFound(new { error = $"Model {request.ModelId} not found" });
+        if (model is null) return NotFound(LocalizedError.Create("containers.modelNotFound", new { modelId = request.ModelId }));
 
         var startResult = await _docker.StartContainerAsync(model.Name, ct);
         if (startResult.ErrorMessage is not null)
-            return StatusCode(500, new { error = "Failed to start container" });
+            return StatusCode(500, LocalizedError.Create("containers.startFailed"));
 
         var inspect = await _docker.InspectContainerAsync(startResult.ContainerId, ct);
 
@@ -81,6 +82,7 @@ public sealed class ContainersController : ControllerBase
             Id = startResult.ContainerId,
             ModelId = model.Id,
             ModelName = model.Name,
+            ModelDisplayName = model.DisplayName ?? model.Name,
             Status = ContainerStatus.Running,
             Port = startResult.MappedPort,
             Pid = inspect?.Pid,
@@ -113,7 +115,7 @@ public sealed class ContainersController : ControllerBase
         var containerId = await _registrationService.ResolveLiveContainerIdAsync(id, ct);
         var result = await _docker.RestartContainerAsync(containerId, ct);
         if (result.ErrorMessage is not null)
-            return StatusCode(500, new { error = "Failed to restart container" });
+            return StatusCode(500, LocalizedError.Create("containers.restartFailed"));
 
         var inspect = await _docker.InspectContainerAsync(result.ContainerId, ct);
 
@@ -149,7 +151,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = $"Failed to register runtime: {ex.Message}" });
+            return StatusCode(500, LocalizedError.Create("containers.registerFailed", new { detail = ex.Message }));
         }
     }
 
@@ -229,7 +231,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
         {
-            return NotFound(new { error = "Registered runtime not found" });
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
         }
         catch (InvalidOperationException ex)
         {
@@ -253,7 +255,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (Exception)
         {
-            return StatusCode(500, new { error = "Health check failed" });
+            return StatusCode(500, LocalizedError.Create("containers.healthCheckFailed"));
         }
     }
 
@@ -269,7 +271,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (KeyNotFoundException)
         {
-            return NotFound(new { error = "Registered container not found" });
+            return NotFound(LocalizedError.Create("containers.containerNotFound"));
         }
 
         // Reuse the same response shape as GET /api/containers/registered/{id}
@@ -288,7 +290,7 @@ public sealed class ContainersController : ControllerBase
         }
         catch (InvalidOperationException)
         {
-            return NotFound(new { error = "Registered runtime not found" });
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
         }
     }
 
@@ -298,7 +300,7 @@ public sealed class ContainersController : ControllerBase
     {
         var existing = await _containerRegistry.GetAsync(id, ct).ConfigureAwait(false);
         if (existing is null)
-            return NotFound(new { error = "Registered runtime not found" });
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
 
         if (!string.IsNullOrWhiteSpace(dto.DisplayName))
         {
@@ -339,7 +341,7 @@ public sealed class ContainersController : ControllerBase
 
         var container = await _registrationService.UpdateCanRunAlongWithAsync(id, cleaned, ct).ConfigureAwait(false);
         if (container is null)
-            return NotFound(new { error = "Registered runtime not found" });
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
 
         // Update MaxConcurrentInferences if provided
         if (dto.MaxConcurrentInferences.HasValue)
@@ -365,7 +367,7 @@ public sealed class ContainersController : ControllerBase
             dto.RuntimeAId, dto.RuntimeBId, dto.CanRunAlongWith, ct).ConfigureAwait(false);
 
         if (result is null)
-            return NotFound(new { error = "One or both runtimes not found" });
+            return NotFound(LocalizedError.Create("containers.oneOrBothRuntimesNotFound"));
 
         return Ok(new
         {
@@ -381,7 +383,7 @@ public sealed class ContainersController : ControllerBase
         // Use CancellationToken.None — stop must complete even if the client disconnects (e.g. browser refresh).
         var result = await _registrationService.StopAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (result is null)
-            return NotFound(new { error = "Registered runtime not found" });
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
 
         return Ok(await BuildRegisteredResponseAsync(result, ct).ConfigureAwait(false));
     }

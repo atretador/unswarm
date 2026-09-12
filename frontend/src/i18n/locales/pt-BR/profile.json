@@ -1,0 +1,26 @@
+{
+  "title": "Perfil",
+  "subtitle": "Detalhes da conta e segurança.",
+  "account": "Conta",
+  "changePassword": "Alterar Senha",
+  "editProfile": "Editar Perfil",
+  "passwordChanged": "Senha alterada com sucesso.",
+  "passwordFailed": "Falha ao alterar senha.",
+  "tempPasswordBanner": "Você está usando uma senha temporária. Por favor, altere-a agora.",
+  "tempPasswordBadge": "Senha temporária",
+  "accountActive": "Conta ativa",
+  "tempPasswordModal": "Senha temporária — altere agora",
+  "tempPasswordModalDesc": "Você está usando uma senha temporária. Vá para a aba de Senha para alterá-la.",
+  "detailsTab": "Detalhes",
+  "passwordTab": "Senha",
+  "validation": {
+    "passwordMinLength": "A nova senha deve ter pelo menos 6 caracteres.",
+    "passwordsNoMatch": "As novas senhas não coincidem."
+  },
+  "fields": {
+    "username": "Nome de usuário",
+    "currentPassword": "Senha atual",
+    "newPassword": "Nova senha",
+    "confirmPassword": "Confirmar nova senha"
+  }
+}

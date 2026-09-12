@@ -12,6 +12,7 @@ public sealed class ModelDefinition
     public string ContainerImage { get; init; } = string.Empty;
     public string? SourceRuntimeId { get; init; }
     public string? DisplayName { get; init; }
+    public string? SupportedThinkingEffortsJson { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
 }

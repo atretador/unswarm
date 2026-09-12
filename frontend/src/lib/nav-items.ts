@@ -15,20 +15,26 @@ import type { LucideIcon } from "lucide-react";
 
 export interface NavItem {
   to: string;
-  label: string;
+  /** Translation key in the 'nav' namespace (e.g. 'dashboard', 'models'). */
+  tKey: string;
   icon: LucideIcon;
 }
 
+/**
+ * Navigation items. Labels are translated via useTranslation('nav') in
+ * consuming components (Sidebar, MobileDrawer). The `tKey` field holds
+ * the key into `nav.json`.
+ */
 export const NAV_ITEMS: NavItem[] = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/models", icon: Box, label: "Models" },
-  { to: "/swarm", icon: Container, label: "Swarm" },
-  { to: "/providers", icon: Cloud, label: "Providers" },
-  { to: "/benchmarks", icon: Gauge, label: "Benchmarks" },
-  { to: "/metrics", icon: BarChart3, label: "Metrics" },
-  { to: "/queue", icon: ListOrdered, label: "Queue" },
-  { to: "/logs", icon: ScrollText, label: "Logs" },
-  { to: "/api-keys", icon: Key, label: "API Keys" },
-  { to: "/router-profiles", icon: Route, label: "Router Profiles" },
-  { to: "/settings", icon: Settings, label: "Settings" },
+  { to: "/", icon: LayoutDashboard, tKey: "dashboard" },
+  { to: "/models", icon: Box, tKey: "models" },
+  { to: "/swarm", icon: Container, tKey: "swarm" },
+  { to: "/providers", icon: Cloud, tKey: "providers" },
+  { to: "/benchmarks", icon: Gauge, tKey: "benchmarks" },
+  { to: "/metrics", icon: BarChart3, tKey: "metrics" },
+  { to: "/queue", icon: ListOrdered, tKey: "queue" },
+  { to: "/logs", icon: ScrollText, tKey: "logs" },
+  { to: "/api-keys", icon: Key, tKey: "apiKeys" },
+  { to: "/router-profiles", icon: Route, tKey: "routerProfiles" },
+  { to: "/settings", icon: Settings, tKey: "settings" },
 ];

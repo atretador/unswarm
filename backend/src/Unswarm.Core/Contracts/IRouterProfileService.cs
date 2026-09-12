@@ -32,4 +32,10 @@ public interface IRouterProfileService
     /// Used by the router profile handler when auto-fallback advances to a new model.
     /// </summary>
     Task SetActiveModelIdAsync(string profileName, string? activeModelId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Update the thinking effort override on a specific entry.
+    /// The modelId is matched by exact ordinal string comparison.
+    /// </summary>
+    Task<RouterProfile> SetThinkingEffortAsync(string profileName, string modelId, string? thinkingEffortOverride, CancellationToken ct = default);
 }

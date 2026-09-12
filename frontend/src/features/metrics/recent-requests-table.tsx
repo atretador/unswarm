@@ -5,6 +5,7 @@
 // narrowed to a custom window via drill-down (see index.tsx).
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, RadioTower, X } from "lucide-react";
 import type { MetricsAnalyticsParams, UsageRecordResponse } from "../../lib/api/types";
@@ -29,13 +30,18 @@ export interface RecentRequestsTableProps {
   onClearCustomWindow: () => void;
 }
 
-const LIVE_STATUS_LABELS: Record<LiveTailStatus, string> = {
-  off: "",
-  connecting: "Connecting…",
-  open: "Streaming live",
-  reconnecting: "Reconnecting…",
-  unavailable: "Unavailable",
-};
+// TODO: LIVE_STATUS_LABELS — empty string for "off" is intentional UI behavior (hides the label).
+// This map is NOT an enum type; the values are WebSocket lifecycle states, not domain enums.
+function getLiveStatusLabel(t: (key: string) => string, status: LiveTailStatus): string {
+  const labels: Record<LiveTailStatus, string> = {
+    off: "",
+    connecting: t("liveStatus.connecting"),
+    open: t("liveStatus.open"),
+    reconnecting: t("liveStatus.reconnecting"),
+    unavailable: t("liveStatus.unavailable"),
+  };
+  return labels[status];
+}
 
 export function RecentRequestsTable({
   filterParams,
@@ -43,6 +49,7 @@ export function RecentRequestsTable({
   autoRefreshMs,
   onClearCustomWindow,
 }: RecentRequestsTableProps) {
+  const { t } = useTranslation("metrics");
   const [page, setPage] = useState(0);
   const [live, setLive] = useState(false);
   const [liveEvents, setLiveEvents] = useState<UsageRecordResponse[]>([]);
@@ -175,7 +182,7 @@ export function RecentRequestsTable({
         {customWindow && !live && (
           <>
             <span className="text-xs text-[var(--color-text-muted)]">
-              Showing requests between
+              {t("recentRequestsSection.showingBetween")}
             </span>
             <Badge variant="info" size="md">
               {formatTimestamp(customWindow.from)} →{" "}
@@ -187,7 +194,7 @@ export function RecentRequestsTable({
               className="inline-flex items-center gap-1 cursor-pointer rounded-[var(--radius-md)] px-1.5 py-0.5 hover:bg-[var(--color-bg-muted)] transition-colors text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs"
             >
               <X className="size-3" />
-              Clear window
+              {t("recentRequestsSection.clearWindow")}
             </button>
           </>
         )}
@@ -207,11 +214,14 @@ export function RecentRequestsTable({
                   : "bg-[var(--color-text-muted)] animate-pulse"
               }`}
             />
-            {LIVE_STATUS_LABELS[liveStatus]} · {filteredLiveEvents.length} buffered
+            {t("recentRequests.buffered", {
+              status: getLiveStatusLabel(t, liveStatus),
+              count: filteredLiveEvents.length,
+            })}
           </span>
         )}
         <Tooltip
-          content="Stream incoming requests as they happen"
+          content={t("recentRequestsSection.streamTooltip")}
           side="top"
         >
           <Button
@@ -219,10 +229,10 @@ export function RecentRequestsTable({
             size="sm"
             onClick={toggleLive}
             className="gap-1.5"
-            title="Toggle live request stream"
+            title={t("liveStatusTooltip")}
           >
             <RadioTower className="size-3.5" />
-            Live
+            {t("recentRequestsSection.live")}
           </Button>
         </Tooltip>
       </div>
@@ -234,28 +244,28 @@ export function RecentRequestsTable({
             <thead>
               <tr className="border-b border-[var(--color-border)]">
                 <th className="text-left py-2 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
-                  Time
+                  {t("table.time")}
                 </th>
                 <th className="text-left py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
-                  Model
+                  {t("table.model")}
                 </th>
                 <th className="text-left py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
-                  Key
+                  {t("table.key")}
                 </th>
                 <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                  Tokens In
+                  {t("table.tokensIn")}
                 </th>
                 <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                  Tokens Out
+                  {t("table.tokensOut")}
                 </th>
                 <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
-                  Cached
+                  {t("table.cached")}
                 </th>
                 <th className="text-center py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden lg:table-cell">
-                  Mode
+                  {t("table.mode")}
                 </th>
                 <th className="text-right py-2 pl-4 text-xs font-medium text-[var(--color-text-muted)]">
-                  Latency
+                  {t("table.latency")}
                 </th>
               </tr>
             </thead>
@@ -266,7 +276,7 @@ export function RecentRequestsTable({
                     colSpan={8}
                     className="py-8 text-center text-[var(--color-text-muted)]"
                   >
-                    Waiting for incoming requests…
+                    {t("recentRequestsSection.waitingForRequests")}
                   </td>
                 </tr>
               )}
@@ -276,7 +286,7 @@ export function RecentRequestsTable({
             </tbody>
           </table>
           <p className="mt-3 pt-3 border-t border-[var(--color-border-subtle)] text-xs text-[var(--color-text-muted)]">
-            Newest first · capped at {LIVE_BUFFER_CAP} rows
+            {t("recentRequestsSection.newestFirst", { count: LIVE_BUFFER_CAP })}
           </p>
         </div>
       ) : (
@@ -291,28 +301,28 @@ export function RecentRequestsTable({
               <thead>
                 <tr className="border-b border-[var(--color-border)]">
                   <th className="text-left py-2 pr-4 text-xs font-medium text-[var(--color-text-muted)]">
-                    Time
+                    {t("table.time")}
                   </th>
                   <th className="text-left py-2 px-4 text-xs font-medium text-[var(--color-text-muted)]">
-                    Model
+                    {t("table.model")}
                   </th>
                   <th className="text-left py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
-                    Key
+                    {t("table.key")}
                   </th>
                   <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    Tokens In
+                    {t("table.tokensIn")}
                   </th>
                   <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
-                    Tokens Out
+                    {t("table.tokensOut")}
                   </th>
                   <th className="text-right py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden md:table-cell">
-                    Cached
+                    {t("table.cached")}
                   </th>
                   <th className="text-center py-2 px-4 text-xs font-medium text-[var(--color-text-muted)] hidden lg:table-cell">
-                    Mode
+                    {t("table.mode")}
                   </th>
                   <th className="text-right py-2 pl-4 text-xs font-medium text-[var(--color-text-muted)]">
-                    Latency
+                    {t("table.latency")}
                   </th>
                 </tr>
               </thead>
@@ -323,7 +333,7 @@ export function RecentRequestsTable({
                       colSpan={8}
                       className="py-8 text-center text-[var(--color-text-muted)]"
                     >
-                      Loading…
+                      {t("recentRequestsSection.loading")}
                     </td>
                   </tr>
                 )}
@@ -333,7 +343,7 @@ export function RecentRequestsTable({
                       colSpan={8}
                       className="py-8 text-center text-[var(--color-status-error)]"
                     >
-                      Couldn't load recent requests.
+                      {t("recentRequestsSection.couldntLoad")}
                     </td>
                   </tr>
                 )}
@@ -343,7 +353,7 @@ export function RecentRequestsTable({
                       colSpan={8}
                       className="py-8 text-center text-[var(--color-text-muted)]"
                     >
-                      No requests in this window.
+                      {t("recentRequestsSection.noRequestsInWindow")}
                     </td>
                   </tr>
                 )}
@@ -357,8 +367,11 @@ export function RecentRequestsTable({
           {/* Pagination controls */}
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-[var(--color-border-subtle)]">
             <p className="text-xs text-[var(--color-text-muted)]">
-              {total.toLocaleString()} request{total === 1 ? "" : "s"} · page{" "}
-              {page + 1} of {totalPages}
+              {t("recentRequestsSection.pageInfo", {
+                total: total.toLocaleString(),
+                page: page + 1,
+                totalPages,
+              })}
             </p>
             <div className="flex gap-1.5">
               <Button
@@ -366,7 +379,7 @@ export function RecentRequestsTable({
                 size="sm"
                 onClick={() => setPage((p) => Math.max(0, p - 1))}
                 disabled={page === 0}
-                aria-label="Previous page"
+                aria-label={t("recentRequestsSection.previousPage")}
               >
                 <ChevronLeft className="size-3.5" />
               </Button>
@@ -375,7 +388,7 @@ export function RecentRequestsTable({
                 size="sm"
                 onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
                 disabled={page >= totalPages - 1 || isPlaceholderData}
-                aria-label="Next page"
+                aria-label={t("recentRequestsSection.nextPage")}
               >
                 <ChevronRight className="size-3.5" />
               </Button>
@@ -396,6 +409,7 @@ const RequestRow = memo(function RequestRow({
   record: r,
   fresh,
 }: RequestRowProps) {
+  const { t } = useTranslation("metrics");
   return (
     <tr
       className={`border-b border-[var(--color-border)] last:border-0 transition-colors duration-700 ${
@@ -428,9 +442,9 @@ const RequestRow = memo(function RequestRow({
       </td>
       <td className="py-2.5 px-4 text-center hidden lg:table-cell">
         {r.isStreaming ? (
-          <Badge variant="success" size="sm">streaming</Badge>
+          <Badge variant="success" size="sm">{t("liveStatus.open")}</Badge>
         ) : (
-          <Badge variant="default" size="sm">batch</Badge>
+          <Badge variant="default" size="sm">{t("table.mode")}</Badge>
         )}
       </td>
       <td className="py-2.5 pl-4 text-right font-mono text-[var(--color-text)]">

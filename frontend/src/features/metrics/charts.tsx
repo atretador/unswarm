@@ -6,6 +6,8 @@
 // (RechartsWrapper portal refs), which loops infinitely under React 19 when
 // the chart subtree suspends/reappears (recharts#7463).
 import { memo, useMemo } from "react";
+import i18n from "../../i18n";
+import { formatMs, formatCurrency } from "./format";
 import {
   AreaChart,
   Area,
@@ -179,19 +181,19 @@ function TokenUsageChartImpl({
           axisLine={false}
           width={48}
           tickFormatter={(v: number) =>
-            metric === "latency" ? `${Math.round(v)}ms` : formatTokens(v)
+            metric === "latency" ? formatMs(v) : formatTokens(v)
           }
         />
         <Tooltip
           contentStyle={tooltipContentStyle}
           formatter={(value, name) => {
-            if (name === "prompt") return [formatTokens(Number(value)), "Prompt tokens"];
+            if (name === "prompt") return [formatTokens(Number(value)), i18n.t("metrics:charts.tooltip.promptTokens")];
             if (name === "completion")
-              return [formatTokens(Number(value)), "Completion tokens"];
-            if (name === "requests") return [Number(value).toLocaleString(), "Requests"];
-            if (name === "latency") return [`${Math.round(Number(value))} ms`, "Avg latency"];
-            if (name === "cached") return [formatTokens(Number(value)), "Cached tokens"];
-            if (name === "cost") return [`$${Number(value).toFixed(4)}`, "Est. cost"];
+              return [formatTokens(Number(value)), i18n.t("metrics:charts.tooltip.completionTokens")];
+            if (name === "requests") return [Number(value).toLocaleString(), i18n.t("metrics:charts.tooltip.requests")];
+            if (name === "latency") return [formatMs(Number(value)), i18n.t("metrics:charts.tooltip.avgLatency")];
+            if (name === "cached") return [formatTokens(Number(value)), i18n.t("metrics:charts.tooltip.cachedTokens")];
+            if (name === "cost") return [formatCurrency(Number(value), { minimumFractionDigits: 2, maximumFractionDigits: 4 }), i18n.t("metrics:charts.tooltip.estCost")];
             return [String(value), String(name)];
           }}
         />
@@ -317,9 +319,9 @@ function ProviderBreakdownChartImpl({
           contentStyle={tooltipContentStyle}
           formatter={(value, name) => {
             const labels: Record<string, string> = {
-              requestCount: "Requests",
-              promptTokens: "Prompt tokens",
-              completionTokens: "Completion tokens",
+              requestCount: i18n.t("metrics:charts.tooltip.requests"),
+              promptTokens: i18n.t("metrics:charts.tooltip.promptTokens"),
+              completionTokens: i18n.t("metrics:charts.tooltip.completionTokens"),
             };
             return [
               name === "requestCount"
@@ -408,9 +410,9 @@ function formatMetricValue(metric: TimeSeriesMetric, value: number): string {
     case "requests":
       return value.toLocaleString();
     case "latency":
-      return `${Math.round(value)} ms`;
+      return formatMs(value);
     case "cost":
-      return `$${value.toFixed(4)}`;
+      return formatCurrency(value, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     default:
       return formatTokens(value);
   }
@@ -459,7 +461,7 @@ function MultiSeriesChartImpl({
           axisLine={false}
           width={48}
           tickFormatter={(v: number) =>
-            metric === "latency" ? `${Math.round(v)}ms` : formatTokens(v)
+            metric === "latency" ? formatMs(v) : formatTokens(v)
           }
         />
         <Tooltip
@@ -530,8 +532,8 @@ export function LatencyBandsChart({ bands }: { bands: MetricsLatencyBand[] }) {
           cursor={{ fill: "var(--color-bg-muted)", opacity: 0.5 }}
           contentStyle={tooltipContentStyle}
           formatter={(value) => [
-            `${Number(value).toLocaleString()} request${Number(value) === 1 ? "" : "s"}`,
-            total > 0 ? `${((Number(value) / total) * 100).toFixed(1)}% of total` : "",
+            i18n.t("metrics:charts.tooltip.requestCount", { count: Number(value) }),
+            total > 0 ? i18n.t("metrics:charts.tooltip.ofTotal", { pct: ((Number(value) / total) * 100).toFixed(1) }) : "",
           ]}
         />
         <Bar dataKey="count" name="requests" radius={[4, 4, 0, 0]} maxBarSize={56}>

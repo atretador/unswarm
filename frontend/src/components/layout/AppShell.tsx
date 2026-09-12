@@ -1,26 +1,31 @@
 import { useState, useCallback } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { motion } from "motion/react";
 import { AlertTriangle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Sidebar } from "./Sidebar";
 import { Topbar, MobileDrawer } from "./Topbar";
+import { ErrorBoundary } from "../ErrorBoundary";
 import { useAuth } from "../../lib/auth-context";
 
-const PAGE_TITLES: Record<string, string> = {
-  "/": "Dashboard",
-  "/models": "Models",
-  "/swarm": "Swarm",
-  "/fleet": "Swarm",
-  "/benchmarks": "Benchmarks",
-  "/queue": "Queue",
-  "/logs": "Logs",
-  "/settings": "Settings",
-  "/profile": "Profile",
+/** Maps route base paths to translation keys in the 'settings' namespace. */
+const PAGE_TITLE_KEYS: Record<string, string> = {
+  "/": "dashboard",
+  "/models": "models",
+  "/swarm": "swarm",
+  "/fleet": "swarm",
+  "/benchmarks": "benchmarks",
+  "/queue": "queue",
+  "/logs": "logs",
+  "/settings": "title",
+  "/profile": "profile",
 };
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell() {
   const location = useLocation();
   const { user } = useAuth();
+  const { t } = useTranslation("settings");
+  const { t: tCommon } = useTranslation("common");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -35,7 +40,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Determine page title
   const basePath = "/" + (location.pathname.split("/")[1] ?? "");
-  const title = PAGE_TITLES[basePath] ?? "unswarm";
+  const titleKey = PAGE_TITLE_KEYS[basePath];
+  const title = titleKey ? t(titleKey) : "unswarm";
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -64,12 +70,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           >
             <AlertTriangle className="size-4 shrink-0" />
             <span>
-              You&apos;re using a temporary password.{" "}
+              {tCommon("tempPasswordBanner")}{" "}
               <Link
                 to="/profile"
                 className="font-medium underline underline-offset-2 hover:text-[var(--color-text-heading)] transition-colors"
               >
-                Change it in Profile
+                {tCommon("changeItInProfile")}
               </Link>
             </span>
           </div>
@@ -86,7 +92,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             }}
             className="h-full"
           >
-            {children}
+            <ErrorBoundary>
+              <Outlet />
+            </ErrorBoundary>
           </motion.div>
         </main>
       </div>

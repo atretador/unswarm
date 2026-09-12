@@ -1,0 +1,101 @@
+{
+  "title": "Claves API",
+  "desc": "Administrar claves que autentican contra el proxy de inferencia y el canal de agentes. Estas no son credenciales de acceso.",
+  "info": "Las claves API autentican en endpoints específicos — claves de inferencia para el proxy <1>{{proxy}}</1>, claves de agente para el canal de agentes. El acceso utiliza una sesión de cookies separada — una credencial de acceso no es una clave API, y viceversa.",
+  "tabs": {
+    "inference": "Inferencia",
+    "agent": "Agente"
+  },
+  "noKeys": "No hay claves de {{scope}} aún",
+  "noKeysAgent": "Cree una clave de agente para autenticar contra el canal de agentes.",
+  "noKeysInference": "Cree una clave de inferencia para autenticar clientes contra el proxy /v1.",
+  "agentKeys": "Claves de agente",
+  "inferenceKeys": "Claves de inferencia",
+  "retired": "Retiradas ({{count}})",
+  "newAgentKey": "Nueva clave de agente",
+  "newInferenceKey": "Nueva clave de inferencia",
+  "keyName": "Nombre de la clave",
+  "createKey": "Crear clave",
+  "createAnother": "Crear otra",
+  "createDescAgent": "Cree una clave para autenticar contra el canal de agentes (<1>{{channel1}}</1>, <2>{{channel2}}</2>). Estas claves <3>no</3> son credenciales de acceso.",
+  "createDescInference": "Cree una clave para autenticar contra el proxy de inferencia (<1>{{proxy}}</1>). Estas claves <3>no</3> son credenciales de acceso.",
+  "keyCreated": "Clave creada — copie su secreto ahora.",
+  "keyCreatedDesc": "Esta es la única vez que se muestra el secreto completo. Guárdelo en un lugar seguro.",
+  "copy": "Copiar",
+  "copied": "Copiado",
+  "neverUsed": "Nunca usada",
+  "justNow": "ahora mismo",
+  "hoursAgo": "hace {{hours}}h",
+  "daysAgo": "hace {{days}}d",
+  "createdPrefix": "Creada",
+  "loading": "Cargando…",
+  "revoked": "revocada",
+  "rotated": "Clave rotada — copie su nuevo secreto ahora.",
+  "rotateWarningComplete": "Rotar la clave invalida el secreto anterior. Los desplegadores de esta clave deben reemplazar sus credenciales ahora.",
+  "validate": {
+    "nameRequired": "El nombre es obligatorio."
+  },
+  "placeholders": {
+    "keyName": "ej. Trabajador remoto",
+    "keyNameAgent": "ej. Ejecutor CI"
+  },
+  "aria": {
+    "keyScope": "Alcance de la clave",
+    "manage": "Administrar",
+    "rotate": "Rotar",
+    "revoke": "Revocar",
+    "manageKey": "Administrar {{name}}",
+    "rotateKey": "Rotar {{name}}",
+    "revokeKey": "Revocar {{name}}"
+  },
+  "revoke": {
+    "confirm": "¿Revocar \"{{name}}\"?",
+    "desc": "Los clientes existentes perderán el acceso inmediatamente."
+  },
+  "manage": {
+    "usage": "Uso",
+    "accessControl": "Control de acceso",
+    "fullAccess": "Acceso completo",
+    "fullAccessDesc": "Esta clave puede llamar a todos los proveedores y modelos. Desactívelo para restringir a continuación.",
+    "grantAllModels": "Marque un proveedor para otorgar todos sus modelos, o seleccione modelos individuales para un otorgamiento más específico.",
+    "couldntLoadCatalog": "El catálogo de proveedores/modelos no está disponible en este momento.",
+    "couldntLoadAccess": "No se pudo cargar el acceso actual de esta clave.",
+    "searchModels": "Buscar modelos…",
+    "allModels": "todos los modelos",
+    "modelsOf": "{{picked}} de {{total}}",
+    "saving": "Guardando…",
+    "saveAccess": "Guardar acceso",
+    "saved": "Guardado",
+    "discard": "Descartar",
+    "discardChanges": "¿Descartar cambios sin guardar?",
+    "discardChangesDesc": "Los cambios de acceso para esta clave no se han guardado aún.",
+    "usageRange": "Rango de tiempo de uso",
+    "grantAll": "Otorgar todos los modelos de {{name}}",
+    "dialogTitle": "Administrar \"{{name}}\"",
+    "providerCloud": "Proveedores en la nube",
+    "providerRouter": "Perfiles de enrutamiento",
+    "providerSelfHosted": "Agentes auto-hospedados",
+    "expandModels": "Expandir modelos de {{name}}",
+    "collapseModels": "Contraer modelos de {{name}}",
+    "unmatchedGrant": "También otorgados (ya no en el catálogo):",
+    "nothingSelected": "Nada seleccionado — esta clave no puede llamar a ningún proveedor o modelo. Seleccione al menos uno, o reactive el Acceso completo.",
+    "unsavedChanges": "Cambios sin guardar",
+    "noUsage": "No hay uso registrado para esta clave en la ventana seleccionada.",
+    "range7d": "Últimos 7 días",
+    "range30d": "Últimos 30 días",
+    "range90d": "Últimos 90 días",
+    "table": {
+      "model": "Modelo",
+      "requests": "Solicitudes",
+      "in": "Entrada",
+      "out": "Salida",
+      "cached": "En caché"
+    },
+    "stats": {
+      "requests": "Solicitudes",
+      "tokensIn": "Tokens de entrada",
+      "tokensOut": "Tokens de salida",
+      "cached": "En caché"
+    }
+  }
+}

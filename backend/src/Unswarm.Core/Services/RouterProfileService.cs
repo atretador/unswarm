@@ -66,4 +66,11 @@ public sealed class RouterProfileService : IRouterProfileService
             ?? throw new KeyNotFoundException($"Router profile '{profileName}' not found.");
         await _store.SetActiveModelIdAsync(profile.Id, activeModelId, ct);
     }
+
+    public async Task<RouterProfile> SetThinkingEffortAsync(string profileName, string modelId, string? thinkingEffortOverride, CancellationToken ct = default)
+    {
+        var profile = await _store.GetByNameAsync(profileName, ct)
+            ?? throw new KeyNotFoundException($"Router profile '{profileName}' not found.");
+        return await _store.SetThinkingEffortAsync(profile.Id, modelId, thinkingEffortOverride, ct);
+    }
 }

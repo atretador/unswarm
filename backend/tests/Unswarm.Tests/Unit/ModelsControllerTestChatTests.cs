@@ -90,7 +90,9 @@ public sealed class ModelsControllerTestChatTests
     {
         var result = await CreateController().TestChat(null, CancellationToken.None);
         var bad = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("model", bad.Value!.ToString());
+        var error = JsonSerializer.SerializeToElement(bad.Value);
+        Assert.Equal("inference.invalidJson", error.GetProperty("errorKey").GetString());
+        Assert.Equal(JsonValueKind.Object, error.GetProperty("errorParams").ValueKind);
     }
 
     [Fact]

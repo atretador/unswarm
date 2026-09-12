@@ -23,8 +23,8 @@ describe("API Keys page", () => {
     });
 
     expect(
-      screen.getByText(/not login credentials/, { exact: false }),
-    ).toBeInTheDocument();
+      screen.getAllByText(/not login credentials/, { exact: false }),
+    ).toHaveLength(2);
   });
 
   it("shows seeded keys with scope badges across tabs", async () => {

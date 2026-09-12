@@ -12,6 +12,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
+import i18n from "../../i18n";
 
 const tooltipContentStyle = {
   background: "var(--color-bg-elevated)",
@@ -21,7 +22,7 @@ const tooltipContentStyle = {
 };
 
 export function RequestsPerMinuteChart({ values }: { values: number[] }) {
-  const data = values.map((v, i) => ({ time: `${i}m`, value: v }));
+  const data = values.map((v, i) => ({ time: `${i}${i18n.t('common:units.m')}`, value: v }));
   return (
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={data}>
@@ -47,7 +48,7 @@ export function RequestsPerMinuteChart({ values }: { values: number[] }) {
 }
 
 export function TokensPerSecondChart({ values }: { values: number[] }) {
-  const data = values.map((v, i) => ({ time: `${i}s`, value: v }));
+  const data = values.map((v, i) => ({ time: `${i}${i18n.t('common:units.s')}`, value: v }));
   return (
     <ResponsiveContainer width="100%" height={200}>
       <AreaChart data={data}>
