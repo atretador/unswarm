@@ -867,7 +867,7 @@ export const httpClient: UnswarmClient = {
       method: "POST",
       body: JSON.stringify({ name, permissions }),
     });
-    return { ...res, scope: res.scope === "controlPlane" ? "control-plane" : res.scope };
+    return { ...res, scope: res.scope === ("controlPlane" as string) ? "control-plane" : res.scope };
   },
 
   async getApiKeyPermissions(id: string): Promise<PermissionMatrix> {
@@ -888,12 +888,12 @@ export const httpClient: UnswarmClient = {
   async listApiKeys() {
     const items = await request<ApiKeyItem[]>("/api/api-keys");
     // Normalise backend camelCase scope ("controlPlane") to frontend kebab-case ("control-plane")
-    return items.map((k) => ({ ...k, scope: k.scope === "controlPlane" ? "control-plane" : k.scope }));
+    return items.map((k) => ({ ...k, scope: k.scope === ("controlPlane" as string) ? "control-plane" : k.scope }));
   },
 
   async getApiKey(id: string) {
     const item = await request<ApiKeyItem>(`/api/api-keys/${encodeURIComponent(id)}`);
-    return { ...item, scope: item.scope === "controlPlane" ? "control-plane" : item.scope };
+    return { ...item, scope: item.scope === ("controlPlane" as string) ? "control-plane" : item.scope };
   },
 
   revokeApiKey(id: string) {
@@ -907,7 +907,7 @@ export const httpClient: UnswarmClient = {
       `/api/api-keys/${encodeURIComponent(id)}/rotate`,
       { method: "POST" },
     );
-    return { ...res, scope: res.scope === "controlPlane" ? "control-plane" : res.scope };
+    return { ...res, scope: res.scope === ("controlPlane" as string) ? "control-plane" : res.scope };
   },
 
   // ── Router Profiles ─────────────────────────────────────────
