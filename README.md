@@ -315,6 +315,151 @@ sudo chmod 0600 /etc/unswarm/agent.yaml
 
 If running inside Docker (e.g. `docker compose --profile agent`), the container handles permissions automatically — the agent runs as `nonroot` and Docker socket access is granted via `group_add` in the compose file.
 
+## CLI
+
+Unswarm includes a full-featured command-line interface for managing your swarm without the dashboard. The CLI talks directly to the backend REST API and supports interactive prompts, name resolution, live monitoring, and scriptable output.
+
+### Install
+
+```bash
+cd cli
+go build -o unswarm ./cmd/unswarm
+# or install globally:
+go install ./cmd/unswarm
+```
+
+### Configure
+
+```bash
+unswarm config init                          # create ~/.config/unswarm/cli.yaml
+unswarm config set url http://localhost:22301  # point to your backend
+unswarm config test                           # verify connectivity
+```
+
+Or use environment variables: `UNSWARM_URL` and `UNSWARM_API_KEY`.
+
+#### Multi-Server Contexts
+
+Manage multiple backends (dev, staging, prod) from one machine:
+
+```bash
+unswarm config init --context staging
+unswarm config contexts     # list all contexts (* = active)
+unswarm config use staging  # switch context
+```
+
+### Usage
+
+Commands accept **names or IDs** everywhere — no need to copy-paste UUIDs:
+
+```bash
+unswarm models list
+unswarm models get llama-7b
+unswarm runtimes start "GPU Runtime"
+unswarm benchmarks run mistral-7b
+unswarm prompts get summarize-code
+```
+
+#### Interactive Wizards
+
+Run complex commands without flags for guided setup:
+
+```bash
+unswarm runtimes register    # prompts for name, image, port, kind, agent...
+unswarm models create        # prompts for name, family, size, quantization...
+```
+
+#### Live Monitoring
+
+```bash
+unswarm health --watch                    # auto-refreshing dashboard (5s default)
+unswarm health --watch --interval 10s     # custom interval
+unswarm stats --watch                     # live stats
+unswarm logs follow                       # streaming log tail
+unswarm logs follow --source runtime-1    # filtered follow
+unswarm logs search "connection timeout"  # client-side grep
+unswarm logs last 50                      # last N entries
+```
+
+#### Comparisons & Shortcuts
+
+```bash
+unswarm models compare llama-7b mistral-7b    # side-by-side model comparison
+unswarm benchmarks compare llama-7b mistral-7b  # compare benchmark results
+unswarm metrics today                          # today's usage
+unswarm metrics last 7d                        # last 7 days
+unswarm queue list                             # list queued items
+unswarm queue list --status pending            # filter by status
+```
+
+#### File I/O
+
+```bash
+unswarm prompts create --name my-prompt --file prompt.txt    # read from file
+unswarm prompts create --name my-prompt --stdin < prompt.txt # from pipe
+unswarm prompts update my-prompt --edit                      # open $EDITOR
+unswarm scripts upload my-script.py --stdin < script.py      # upload from pipe
+```
+
+#### Prompt Versioning
+
+```bash
+unswarm prompts versions my-prompt              # version history
+unswarm prompts diff my-prompt --from 1 --to 3  # diff two versions
+unswarm prompts rollback my-prompt --version 2  # rollback
+```
+
+#### Configuration Management
+
+```bash
+unswarm config get url              # read single setting
+unswarm config set output json      # change output format
+unswarm settings get                # show all settings as table
+unswarm settings get request-timeout  # single setting
+unswarm settings set request-timeout 30  # update a setting
+```
+
+### Shell Completion
+
+```bash
+unswarm completion bash >> ~/.bashrc    # bash
+unswarm completion zsh > ~/.zshrc       # zsh
+unswarm completion fish > ~/.config/fish/completions/unswarm.fish  # fish
+unswarm completion powershell > (Join-Path $env:USERPROFILE ".powershell\completions\unswarm.ps1")  # powershell
+```
+
+### Output Formats
+
+All commands support structured output for scripting:
+
+```bash
+unswarm models list --output json   # JSON (auto-detected when piped)
+unswarm models list --output csv    # CSV
+unswarm models list --output table  # force table (default for TTY)
+```
+
+### Global Flags
+
+| Flag | Description |
+|------|-------------|
+| `--url` / `UNSWARM_URL` | Backend URL |
+| `--api-key` / `UNSWARM_API_KEY` | API key for authentication |
+| `--output json\|csv\|table\|raw` | Output format |
+| `-y`, `--yes` | Skip confirmation prompts |
+| `--dry-run` | Show what would happen without executing |
+| `--quiet` | Non-interactive mode (errors on prompts) |
+| `--no-color` | Disable colorized output |
+
+### Destructive Operations
+
+Destructive commands (`delete`, `stop`, `revoke`, etc.) prompt for confirmation by default. Use `-y` to auto-confirm:
+
+```bash
+unswarm models delete my-model        # prompts "Are you sure?"
+unswarm models delete my-model -y     # skips prompt
+unswarm models delete my-model --dry-run  # shows what would be deleted
+```
+
 ## API Reference
 
 ### REST Endpoints
@@ -556,6 +701,16 @@ unswarm/
 │   │   └── Unswarm.Core/   #   Domain models, services, persistence
 │   ├── tests/              #   Unit tests
 │   └── docs/               #   Protocol and config documentation
+├── cli/                    # Go CLI
+│   ├── cmd/unswarm/        #   Entry point
+│   └── internal/
+│       ├── client/         #   HTTP client with retry, config, error handling
+│       ├── commands/       #   All command groups (30+ subcommands)
+│       ├── helpers/        #   Type-safe extraction from map[string]any
+│       ├── interact/       #   Interactive prompts (confirm, input, password, select)
+│       ├── output/         #   Table/JSON/CSV/raw formatter with color
+│       ├── parse/          #   Relative time parsing (5m, 1h, 3d, yesterday)
+│       └── resolve/        #   Name-to-ID resolution with caching
 └── frontend/               # React SPA
     └── src/
         ├── components/     #   Layout and UI primitives
