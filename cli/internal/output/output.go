@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 )
@@ -137,19 +138,44 @@ func (w *Writer) printTable(data any) error {
 			td = *v
 		}
 	case map[string]any:
+		// If the map has headers/rows keys, extract as table data (used by PrintTable)
 		if h, ok := v["headers"].([]string); ok {
 			td.Headers = h
 		}
 		if r, ok := v["rows"].([][]string); ok {
 			td.Rows = r
 		}
+		// If no headers/rows were found, treat as a single-object key-value table
+		if len(td.Headers) == 0 && len(td.Rows) == 0 {
+			td.Headers = []string{"KEY", "VALUE"}
+			keys := make([]string, 0, len(v))
+			for k := range v {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			td.Rows = make([][]string, 0, len(keys))
+			for _, k := range keys {
+				td.Rows = append(td.Rows, []string{k, fmt.Sprintf("%v", v[k])})
+			}
+		}
 	default:
+		// Try to convert structs/other types to key-value table via JSON round-trip
 		jsonBytes, err := json.Marshal(data)
 		if err != nil {
 			return fmt.Errorf("failed to marshal data for table: %w", err)
 		}
-		if err := json.Unmarshal(jsonBytes, &td); err != nil {
-			return fmt.Errorf("failed to unmarshal data for table: %w", err)
+		var m map[string]any
+		if err := json.Unmarshal(jsonBytes, &m); err == nil && len(m) > 0 {
+			td.Headers = []string{"KEY", "VALUE"}
+			keys := make([]string, 0, len(m))
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			td.Rows = make([][]string, 0, len(keys))
+			for _, k := range keys {
+				td.Rows = append(td.Rows, []string{k, fmt.Sprintf("%v", m[k])})
+			}
 		}
 	}
 

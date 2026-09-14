@@ -5101,11 +5101,12 @@ func TestQueueList(t *testing.T) {
 			t.Errorf("expected /api/queue/snapshot, got %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"items": [
+		fmt.Fprint(w, `{"processing": [
+			{"id": "item-2", "status": "processing", "target": "agent-2", "priority": "normal", "createdAt": "2025-06-01T01:00:00Z"}
+		], "waiting": [
 			{"id": "item-1", "status": "waiting", "target": "agent-1", "priority": "high", "createdAt": "2025-06-01T00:00:00Z"},
-			{"id": "item-2", "status": "processing", "target": "agent-2", "priority": "normal", "createdAt": "2025-06-01T01:00:00Z"},
 			{"id": "item-3", "status": "waiting", "target": "agent-3", "priority": "low", "createdAt": "2025-06-01T02:00:00Z"}
-		]}`)
+		], "recentCompleted": [], "skipsUsed": 0, "skipsRemaining": 0}`)
 	}))
 	defer server.Close()
 
@@ -5124,11 +5125,12 @@ func TestQueueList(t *testing.T) {
 func TestQueueListFilterStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"items": [
+		fmt.Fprint(w, `{"processing": [
+			{"id": "item-2", "status": "processing", "target": "agent-2", "priority": "normal", "createdAt": "2025-06-01T01:00:00Z"}
+		], "waiting": [
 			{"id": "item-1", "status": "waiting", "target": "agent-1", "priority": "high", "createdAt": "2025-06-01T00:00:00Z"},
-			{"id": "item-2", "status": "processing", "target": "agent-2", "priority": "normal", "createdAt": "2025-06-01T01:00:00Z"},
 			{"id": "item-3", "status": "waiting", "target": "agent-3", "priority": "low", "createdAt": "2025-06-01T02:00:00Z"}
-		]}`)
+		], "recentCompleted": [], "skipsUsed": 0, "skipsRemaining": 0}`)
 	}))
 	defer server.Close()
 
@@ -5162,7 +5164,7 @@ func TestQueueListFilterStatus(t *testing.T) {
 func TestQueueListEmpty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"items": []}`)
+		fmt.Fprint(w, `{"processing": [], "waiting": [], "recentCompleted": [], "skipsUsed": 0, "skipsRemaining": 0}`)
 	}))
 	defer server.Close()
 
@@ -5219,9 +5221,9 @@ func TestQueueListAPIError(t *testing.T) {
 func TestQueueListJSONOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"items": [
+		fmt.Fprint(w, `{"processing": [], "waiting": [
 			{"id": "item-1", "status": "waiting", "target": "agent-1", "priority": "high", "createdAt": "2025-06-01T00:00:00Z"}
-		]}`)
+		], "recentCompleted": [], "skipsUsed": 0, "skipsRemaining": 0}`)
 	}))
 	defer server.Close()
 

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/unswarm/cli/internal/client"
 	"github.com/unswarm/cli/internal/helpers"
+	"github.com/unswarm/cli/internal/output"
 )
 
 var queueCmd = &cobra.Command{
@@ -17,6 +18,29 @@ var queueCmd = &cobra.Command{
 }
 
 // --- queue snapshot ---
+
+// renderQueueSection adds a section header and item rows to the given rows slice.
+func renderQueueSection(rows [][]string, section string, itemsRaw any) [][]string {
+	items, ok := itemsRaw.([]any)
+	if !ok || len(items) == 0 {
+		return rows
+	}
+	rows = append(rows, []string{fmt.Sprintf("=== %s (%d) ===", section, len(items)), "", "", "", ""})
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		rows = append(rows, []string{
+			helpers.StrOrDash(m, "id"),
+			helpers.StrOrDash(m, "status"),
+			helpers.StrOrDash(m, "target"),
+			helpers.StrOrDash(m, "priority"),
+			helpers.StrOrDash(m, "createdAt"),
+		})
+	}
+	return rows
+}
 
 var queueSnapshotCmd = &cobra.Command{
 	Use:   "snapshot",
@@ -38,7 +62,24 @@ var queueSnapshotCmd = &cobra.Command{
 		if err := json.Unmarshal(resp.Body, &snapshot); err != nil {
 			return w.Error("parse_error", "failed to parse response", nil, "", 1)
 		}
-		return w.Print(snapshot)
+
+		// JSON mode: print raw snapshot
+		if w.GetFormat() != output.FormatTable {
+			return w.Print(snapshot)
+		}
+
+		// Table mode: build sectioned summary
+		headers := []string{"ITEM", "STATUS", "TARGET", "PRIORITY", "ADDED"}
+		rows := make([][]string, 0)
+		rows = renderQueueSection(rows, "PROCESSING", snapshot["processing"])
+		rows = renderQueueSection(rows, "WAITING", snapshot["waiting"])
+		rows = renderQueueSection(rows, "RECENT COMPLETED", snapshot["recentCompleted"])
+
+		if len(rows) == 0 {
+			rows = append(rows, []string{"(empty queue)", "", "", "", ""})
+		}
+
+		return w.PrintTable(headers, rows)
 	},
 }
 
@@ -120,44 +161,47 @@ var queueListCmd = &cobra.Command{
 			return w.Error("parse_error", "failed to parse response", nil, "", 1)
 		}
 
-		// Extract items array from snapshot
-		itemsRaw, ok := snapshot["items"]
-		if !ok {
-			// No items key — treat as empty
-			return w.Print([]any{})
+		// Flatten processing + waiting into one list, tagging each with its source
+		type taggedItem struct {
+			source string
+			item   map[string]any
 		}
-
-		items, ok := itemsRaw.([]any)
-		if !ok {
-			return w.Error("parse_error", "unexpected items format", nil, "", 1)
-		}
-
-		// Apply --status filter
-		statusFilter, _ := cmd.Flags().GetString("status")
-		if statusFilter != "" {
-			filtered := make([]any, 0, len(items))
-			for _, item := range items {
-				if m, ok := item.(map[string]any); ok {
-					itemStatus := helpers.StrOrDash(m, "status")
-					if strings.EqualFold(itemStatus, statusFilter) {
-						filtered = append(filtered, item)
-					}
+		var all []taggedItem
+		for _, src := range []struct {
+			key    string
+			prefix string
+		}{
+			{"processing", "processing"},
+			{"waiting", "waiting"},
+		} {
+			arr, _ := snapshot[src.key].([]any)
+			for _, raw := range arr {
+				if m, ok := raw.(map[string]any); ok {
+					all = append(all, taggedItem{source: src.prefix, item: m})
 				}
 			}
-			items = filtered
+		}
+
+		// Apply --status filter (matches the source tag)
+		statusFilter, _ := cmd.Flags().GetString("status")
+		if statusFilter != "" {
+			filtered := make([]taggedItem, 0, len(all))
+			for _, ti := range all {
+				if strings.EqualFold(ti.source, statusFilter) {
+					filtered = append(filtered, ti)
+				}
+			}
+			all = filtered
 		}
 
 		// Render table
 		headers := []string{"ID", "STATUS", "TARGET", "PRIORITY", "ADDED"}
-		rows := make([][]string, 0, len(items))
-		for _, item := range items {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
+		rows := make([][]string, 0, len(all))
+		for _, ti := range all {
+			m := ti.item
 			rows = append(rows, []string{
 				helpers.StrOrDash(m, "id"),
-				helpers.StrOrDash(m, "status"),
+				ti.source,
 				helpers.StrOrDash(m, "target"),
 				helpers.StrOrDash(m, "priority"),
 				helpers.StrOrDash(m, "createdAt"),

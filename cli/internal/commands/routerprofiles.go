@@ -334,8 +334,9 @@ var routerProfilesAddEntryCmd = &cobra.Command{
 			return nil
 		}
 
-		// PUT updated profile
+		// PUT updated profile (backend requires "name")
 		updateBody := map[string]any{
+			"name":    profile["name"],
 			"entries": entries,
 		}
 
@@ -476,8 +477,9 @@ var routerProfilesRemoveEntryCmd = &cobra.Command{
 		// Remove the entry
 		entries = append(entries[:removeIdx], entries[removeIdx+1:]...)
 
-		// PUT updated profile
+		// PUT updated profile (backend requires "name")
 		updateBody := map[string]any{
+			"name":    profile["name"],
 			"entries": entries,
 		}
 

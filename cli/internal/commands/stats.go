@@ -98,11 +98,39 @@ func renderStatsDashboard(cmd *cobra.Command, watch bool) error {
 		{"Models Loaded", helpers.IntStr(stats["modelsLoaded"])},
 		{"Containers Running", helpers.IntStr(stats["containersRunning"])},
 		{"Queue Depth", helpers.IntStr(stats["queueDepth"])},
-		{"Requests/min", fmt.Sprintf("%v", stats["requestsPerMinute"])},
+		{"Requests/min", formatRPM(stats["requestsPerMinute"])},
 		{"Errors (24h)", helpers.IntStr(stats["errorsLast24h"])},
 		{"Switch Count", helpers.IntStr(stats["switchCount"])},
 	}
 	return w.PrintTable(headers, rows)
+}
+
+// formatRPM formats the requestsPerMinute value, which is a JSON array of ~60 integers.
+// It sums the array and shows "2.5 avg (150 total / 60 min)" or "0" if total is 0.
+func formatRPM(v any) string {
+	if v == nil {
+		return "0"
+	}
+	jsonBytes, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	var values []int64
+	if err := json.Unmarshal(jsonBytes, &values); err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	if len(values) == 0 {
+		return "0"
+	}
+	var total int64
+	for _, n := range values {
+		total += n
+	}
+	if total == 0 {
+		return "0"
+	}
+	avg := float64(total) / float64(len(values))
+	return fmt.Sprintf("%.1f avg (%d total / %d min)", avg, total, len(values))
 }
 
 func init() {

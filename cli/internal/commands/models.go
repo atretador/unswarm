@@ -80,7 +80,7 @@ var modelsGetCmd = &cobra.Command{
 		c := GetClient(cmd)
 		w := GetOutput(cmd)
 
-		resolver := resolve.New(newResolveAdapter(c), "/api/models", "name")
+		resolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
 		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
 		if err != nil {
 			return w.Error("not_found", err.Error(), nil, "use 'models list' to see available models", 1)
@@ -273,7 +273,7 @@ var modelsUpdateCmd = &cobra.Command{
 		c := GetClient(cmd)
 		w := GetOutput(cmd)
 
-		resolver := resolve.New(newResolveAdapter(c), "/api/models", "name")
+		resolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
 		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
 		if err != nil {
 			return w.Error("not_found", err.Error(), nil, "use 'models list' to see available models", 1)
@@ -344,7 +344,7 @@ var modelsDeleteCmd = &cobra.Command{
 		c := GetClient(cmd)
 		w := GetOutput(cmd)
 
-		resolver := resolve.New(newResolveAdapter(c), "/api/models", "name")
+		resolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
 		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
 		if err != nil {
 			return w.Error("not_found", err.Error(), nil, "use 'models list' to see available models", 1)
@@ -388,7 +388,7 @@ var modelsCompareCmd = &cobra.Command{
 		ctx := cmd.Context()
 
 		// Resolve both model names/IDs to canonical IDs.
-		resolver := resolve.New(newResolveAdapter(c), "/api/models", "name")
+		resolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
 		model1ID, err := resolver.Resolve(ctx, args[0])
 		if err != nil {
 			return w.Error("not_found", fmt.Sprintf("model 1: %s", err), nil, "use 'models list' to see available models", 1)
@@ -525,7 +525,7 @@ var modelsTestChatCmd = &cobra.Command{
 
 		// Resolve model name to ID
 		if model != "" {
-			resolver := resolve.New(newResolveAdapter(c), "/api/models", "name")
+			resolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
 			resolvedID, err := resolver.Resolve(cmd.Context(), model)
 			if err != nil {
 				return w.Error("not_found", err.Error(), nil, "use 'models list' to see available models", 1)
