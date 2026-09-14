@@ -1,13 +1,82 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { setMockLatency, mockClient } from "../lib/api/mock";
+import { mockClient, setMockLatency } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
 import ApiKeys from "../features/api-keys";
+
+vi.mock("../features/api-keys/api-keys-api", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../features/api-keys/api-keys-api")>(),
+  getApiKeyUsage: vi.fn().mockResolvedValue({ totals: { requestCount: 0, promptTokens: 0, completionTokens: 0, cachedTokens: 0 }, models: [] }),
+}));
 
 beforeEach(() => {
   setMockLatency(0);
   vi.restoreAllMocks();
+});
+
+describe("CLI API key tab and permission matrix", () => {
+  const renderPage = () => render(<TestWrapper initialEntries={["/api-keys"]}><ApiKeys /></TestWrapper>);
+
+  it("renders three tabs and the seeded CLI key permission summary", async () => {
+    const user = userEvent.setup(); renderPage();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument());
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
+    await user.click(screen.getByRole("tab", { name: /CLI/i }));
+    await waitFor(() => expect(screen.getByText("CLI read-only")).toBeInTheDocument());
+    expect(screen.getByText("models:r, metrics:r, logs:r, stats:r")).toBeInTheDocument();
+  });
+
+  it("renders all permission groups and read/write controls in the create dialog", async () => {
+    const user = userEvent.setup(); renderPage();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("tab", { name: /CLI/i }));
+    await user.click(screen.getByRole("button", { name: "Create CLI Key" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Key name")).toBeInTheDocument();
+    for (const group of ["Infrastructure", "Configuration", "Observability"]) expect(within(dialog).getByText(group)).toBeInTheDocument();
+    for (const domain of ["models", "runtimes", "agents", "queue", "settings", "users", "apikeys", "routerprofiles", "cloudproviders", "prompts", "metrics", "logs", "stats", "benchmarks", "scripts"]) {
+      expect(within(dialog).getByRole("switch", { name: `${domain} Read` })).toBeInTheDocument();
+      expect(within(dialog).getByRole("switch", { name: `${domain} Write` })).toBeInTheDocument();
+    }
+  });
+
+  it("selects and clears every CLI permission", async () => {
+    const user = userEvent.setup(); renderPage();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("tab", { name: /CLI/i })); await user.click(screen.getByRole("button", { name: "Create CLI Key" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Select all" }));
+    expect(within(dialog).getAllByRole("switch").every((x) => x.getAttribute("aria-checked") === "true")).toBe(true);
+    await user.click(within(dialog).getByRole("button", { name: "Clear all" }));
+    expect(within(dialog).getAllByRole("switch").every((x) => x.getAttribute("aria-checked") === "false")).toBe(true);
+  });
+
+  it("creates a CLI key with permissions and displays its one-time secret and env hint", async () => {
+    const user = userEvent.setup();
+    const spy = vi.spyOn(mockClient, "createControlPlaneApiKey").mockResolvedValueOnce({ id: "new-cli", name: "Deploy", keyPrefix: "ck_new", scope: "control-plane", isActive: true, createdAt: new Date().toISOString(), lastUsedAt: null, permissions: { models: "rw", metrics: "r" }, secret: "cli-secret-once" });
+    renderPage(); await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("tab", { name: /CLI/i })); await user.click(screen.getByRole("button", { name: "Create CLI Key" }));
+    const dialog = await screen.findByRole("dialog"); await user.type(within(dialog).getByLabelText("Key name"), "Deploy");
+    await user.click(within(dialog).getByRole("switch", { name: "models Write" })); await user.click(within(dialog).getByRole("switch", { name: "metrics Read" }));
+    await user.click(within(dialog).getByRole("button", { name: "Create CLI Key" }));
+    await waitFor(() => expect(spy).toHaveBeenCalledWith("Deploy", expect.objectContaining({ models: "rw", metrics: "r" })));
+    expect(await screen.findByText("cli-secret-once")).toBeInTheDocument(); expect(screen.getByText("export UNSWARM_API_KEY=cli-secret-once")).toBeInTheDocument();
+  });
+
+  it("makes write imply read and turning read off clear write", async () => {
+    const user = userEvent.setup(); renderPage(); await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument());
+    await user.click(screen.getByRole("tab", { name: /CLI/i })); await user.click(screen.getByRole("button", { name: "Create CLI Key" })); const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("switch", { name: "models Write" })); expect(within(dialog).getByRole("switch", { name: "models Read" })).toHaveAttribute("aria-checked", "true");
+    await user.click(within(dialog).getByRole("switch", { name: "models Read" })); expect(within(dialog).getByRole("switch", { name: "models Write" })).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("edits and saves permissions for a CLI key", async () => {
+    const user = userEvent.setup(); const spy = vi.spyOn(mockClient, "updateApiKeyPermissions").mockResolvedValueOnce({ models: "rw", metrics: "r", logs: "r", stats: "r" }); renderPage();
+    await waitFor(() => expect(screen.getByRole("tab", { name: /CLI/i })).toBeInTheDocument()); await user.click(screen.getByRole("tab", { name: /CLI/i })); await waitFor(() => expect(screen.getByText("CLI read-only")).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Manage CLI read-only" })); const dialog = await screen.findByRole("dialog"); await waitFor(() => expect(within(dialog).getByRole("switch", { name: "models Write" })).toBeInTheDocument());
+    await user.click(within(dialog).getByRole("switch", { name: "models Write" })); await user.click(within(dialog).getByRole("button", { name: "Save access" })); await waitFor(() => expect(spy).toHaveBeenCalledWith("ak-seed-0003", expect.objectContaining({ models: "rw" })));
+  });
 });
 
 describe("API Keys page", () => {

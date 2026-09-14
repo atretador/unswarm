@@ -28,6 +28,7 @@ import type {
   Prompt,
   PromptInput,
   PromptVersion,
+  PermissionMatrix,
   ProviderCatalogEntry,
   ProviderUsageSummary,
   QueueSnapshot,
@@ -188,6 +189,10 @@ export interface UnswarmClient {
   createApiKey(name: string): Promise<ApiKeyCreateResponse>;
   /** Create an agent-scoped API key (authenticates to the agent channel). */
   createAgentApiKey(name: string): Promise<ApiKeyCreateResponse>;
+  // Control-Plane Keys
+  createControlPlaneApiKey(name: string, permissions: PermissionMatrix): Promise<ApiKeyCreateResponse>;
+  getApiKeyPermissions(id: string): Promise<PermissionMatrix>;
+  updateApiKeyPermissions(id: string, permissions: PermissionMatrix): Promise<PermissionMatrix>;
   listApiKeys(): Promise<ApiKeyItem[]>;
   getApiKey(id: string): Promise<ApiKeyItem>;
   revokeApiKey(id: string): Promise<void>;

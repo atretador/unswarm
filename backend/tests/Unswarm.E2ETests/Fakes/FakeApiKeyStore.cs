@@ -38,7 +38,7 @@ public sealed class FakeApiKeyStore : IApiKeyStore
 
     public Task<CreateApiKeyResponse> CreateAsync(
         string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null,
-        string? boundAgentName = null, CancellationToken ct = default)
+        string? boundAgentName = null, string? permissionsJson = null, CancellationToken ct = default)
     {
         var secret = explicitKey ?? Guid.NewGuid().ToString("N");
         Seed(secret, name, scope, boundAgentName);
@@ -122,6 +122,12 @@ public sealed class FakeApiKeyStore : IApiKeyStore
 
     public Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default)
         => Task.FromResult(_bySecret.Values.Any(e => e.Id == keyId) ? access : null);
+
+    public Task<Dictionary<string, string>?> GetPermissionsAsync(string keyId, CancellationToken ct = default)
+        => Task.FromResult<Dictionary<string, string>?>(null);
+
+    public Task<Dictionary<string, string>?> SavePermissionsAsync(string keyId, string permissionsJson, CancellationToken ct = default)
+        => Task.FromResult<Dictionary<string, string>?>(null);
 
     public Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default)
         => Task.FromResult(0);

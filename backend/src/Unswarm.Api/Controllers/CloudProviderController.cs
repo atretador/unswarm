@@ -24,7 +24,7 @@ namespace Unswarm.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/cloudproviders")]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = "ControlPlaneAccess")]
 public sealed class CloudProviderController : ControllerBase
 {
     private readonly ICloudProviderStore _store;

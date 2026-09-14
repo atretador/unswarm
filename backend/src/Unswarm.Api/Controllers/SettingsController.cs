@@ -29,7 +29,7 @@ public sealed class SettingsController : ControllerBase
         return Ok(SettingsResponse.FromSettings(settings));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPut]
     public async Task<IActionResult> Update([FromBody] SettingsUpdateRequest request, CancellationToken ct)
     {

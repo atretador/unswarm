@@ -64,7 +64,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(containers.Select(ContainerResponse.FromContainerInfo).ToList());
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("start")]
     public async Task<IActionResult> Start([FromBody] ContainerStartRequest request, CancellationToken ct)
     {
@@ -95,7 +95,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(response);
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("{id}/stop")]
     public async Task<IActionResult> Stop(string id, CancellationToken ct)
     {
@@ -107,7 +107,7 @@ public sealed class ContainersController : ControllerBase
         return NoContent();
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("{id}/restart")]
     public async Task<IActionResult> Restart(string id, CancellationToken ct)
     {
@@ -138,7 +138,7 @@ public sealed class ContainersController : ControllerBase
 
     // ── Container-first registration endpoints ─────────────────────────────
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         [FromBody] RegisterRuntimeRequestDto dto,
@@ -220,7 +220,7 @@ public sealed class ContainersController : ControllerBase
         };
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("registered/{id}/rediscover")]
     public async Task<IActionResult> Rediscover(string id, CancellationToken ct)
     {
@@ -242,7 +242,7 @@ public sealed class ContainersController : ControllerBase
     /// <summary>
     /// Triggers a one-shot health check on a registered runtime.
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("registered/{id}/healthcheck")]
     public async Task<IActionResult> HealthCheckRegistered(string id, CancellationToken ct)
     {
@@ -259,7 +259,7 @@ public sealed class ContainersController : ControllerBase
         }
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("registered/{id}/start")]
     public async Task<IActionResult> StartRegistered(string id, CancellationToken ct)
     {
@@ -279,7 +279,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(await BuildRegisteredResponseAsync(result.Container, ct).ConfigureAwait(false));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpDelete("registered/{id}")]
     public async Task<IActionResult> DeleteRegistered(string id, [FromQuery] bool deleteModels = false, CancellationToken ct = default)
     {
@@ -294,7 +294,7 @@ public sealed class ContainersController : ControllerBase
         }
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPut("registered/{id}")]
     public async Task<IActionResult> UpdateRegistered(string id, [FromBody] UpdateRuntimeRequestDto dto, CancellationToken ct)
     {
@@ -326,7 +326,7 @@ public sealed class ContainersController : ControllerBase
         return Ok(await BuildRegisteredResponseAsync(updated, ct).ConfigureAwait(false));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPut("registered/{id}/concurrency")]
     public async Task<IActionResult> UpdateConcurrency(string id, [FromBody] UpdateRuntimeConcurrencyRequestDto dto, CancellationToken ct)
     {
@@ -359,7 +359,7 @@ public sealed class ContainersController : ControllerBase
     /// Atomically toggle concurrency between two runtimes. Updates both directions
     /// in a single DB transaction to prevent inconsistent state.
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("registered/concurrency")]
     public async Task<IActionResult> ToggleConcurrency([FromBody] ToggleConcurrencyRequestDto dto, CancellationToken ct)
     {
@@ -376,7 +376,7 @@ public sealed class ContainersController : ControllerBase
         });
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("registered/{id}/stop")]
     public async Task<IActionResult> StopRegistered(string id, CancellationToken ct)
     {

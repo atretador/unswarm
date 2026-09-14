@@ -230,6 +230,11 @@ public sealed class ApiKeyEntity
     /// Both arrays empty (or "{}"-shaped defaults) mean unrestricted access.
     /// </summary>
     public string AccessJson { get; set; } = "{}";
+    /// <summary>
+    /// Per-key control-plane permissions as JSON: {"models":"rw","metrics":"r",...}.
+    /// Only meaningful for ControlPlane-scope keys. Empty/"{}" means no permissions.
+    /// </summary>
+    public string PermissionsJson { get; set; } = "{}";
 }
 
 /// <summary>
@@ -438,6 +443,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(k => k.IsActive);
             // DB-level default backfills existing rows when the column is added.
             e.Property(k => k.AccessJson).IsRequired().HasDefaultValue("{}").HasMaxLength(8192);
+            e.Property(k => k.PermissionsJson).IsRequired().HasDefaultValue("{}").HasMaxLength(4096);
         });
 
         modelBuilder.Entity<CloudProviderEntity>(e =>

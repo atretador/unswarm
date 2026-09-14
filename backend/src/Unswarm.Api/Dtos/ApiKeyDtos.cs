@@ -22,6 +22,15 @@ internal sealed class CamelCaseEnumJsonConverter : JsonStringEnumConverter
 /// </summary>
 public record CreateApiKeyRequest(string Name, string? BoundAgentName = null);
 
+/// <summary>Request body for creating a ControlPlane (CLI) API key.</summary>
+public record CreateControlPlaneKeyRequest(string Name, Dictionary<string, string>? Permissions = null);
+
+/// <summary>Fine-grained permission matrix for ControlPlane keys.</summary>
+public sealed class ApiKeyPermissionsDto
+{
+    public Dictionary<string, string> Permissions { get; set; } = [];
+}
+
 public sealed class ApiKeyCreateResponse
 {
     public string Id { get; set; } = string.Empty;

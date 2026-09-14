@@ -14,6 +14,7 @@ import type {
   Model,
   Prompt,
   PromptVersion,
+  PermissionMatrix,
   QueueSnapshot,
   RegisterRuntimePayload,
   RegisteredRuntime,
@@ -68,6 +69,15 @@ function randomSecret(): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
   let out = "";
   for (let i = 0; i < 43; i++) {
+    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return out;
+}
+
+function randomHex(length: number): string {
+  const alphabet = "0123456789abcdef";
+  let out = "";
+  for (let i = 0; i < length; i++) {
     out += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return out;
@@ -360,6 +370,16 @@ const API_KEYS: ApiKeyItem[] = [
     isActive: true,
     createdAt: new Date(Date.now() - 7 * 86400_000).toISOString(),
     lastUsedAt: null,
+  },
+  {
+    id: "ak-seed-0003",
+    name: "CLI read-only",
+    keyPrefix: "ck_a1b2c3",
+    scope: "control-plane",
+    isActive: true,
+    createdAt: "2026-09-10T12:00:00Z",
+    lastUsedAt: null,
+    permissions: { models: "r", metrics: "r", stats: "r", logs: "r" },
   },
 ];
 
@@ -1820,6 +1840,39 @@ export const mockClient: UnswarmClient = {
     };
     API_KEYS.push(created);
     return { ...created };
+  },
+
+  async createControlPlaneApiKey(name: string, permissions: PermissionMatrix): Promise<ApiKeyCreateResponse> {
+    await delay(rand(60, 180));
+    const id = `ak-mock-${Date.now()}`;
+    const secret = `ck_${randomHex(24)}`;
+    const key: ApiKeyItem & { permissions: PermissionMatrix } = {
+      id,
+      name,
+      keyPrefix: secret.slice(0, 8),
+      scope: "control-plane",
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      lastUsedAt: null,
+      permissions,
+    };
+    API_KEYS.push(key);
+    return { ...key, secret };
+  },
+
+  async getApiKeyPermissions(id: string): Promise<PermissionMatrix> {
+    await delay(rand(60, 180));
+    const key = API_KEYS.find((k) => k.id === id);
+    if (!key) throw new Error("Key not found");
+    return key.permissions ?? {};
+  },
+
+  async updateApiKeyPermissions(id: string, permissions: PermissionMatrix): Promise<PermissionMatrix> {
+    await delay(rand(60, 180));
+    const key = API_KEYS.find((k) => k.id === id);
+    if (!key) throw new Error("Key not found");
+    key.permissions = permissions;
+    return permissions;
   },
 
   async listApiKeys() {

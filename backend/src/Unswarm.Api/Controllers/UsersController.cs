@@ -17,7 +17,7 @@ namespace Unswarm.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = "ControlPlaneAccess")]
 public class UsersController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;

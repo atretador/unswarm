@@ -17,6 +17,7 @@ namespace Unswarm.Api.Middleware;
 ///
 ///   /v1                       → Inference key
 ///   /api/agents, /ws/agent    → Agent key
+///   /api (except /api/agents) → ControlPlane key
 ///
 /// Three design rules keep the authentication surfaces strictly separate:
 ///  1. A key carries a <see cref="ApiKeyScope"/> claim set by ApiKeyAuthMiddleware.
@@ -46,6 +47,7 @@ public sealed class ApiKeyAuthMiddleware
         ["/api/agents"] = ApiKeyScope.Agent,
         ["/ws/agent"] = ApiKeyScope.Agent,
         ["/v1"] = ApiKeyScope.Inference,
+        ["/api"] = ApiKeyScope.ControlPlane,
     };
 
     /// <summary>
@@ -74,8 +76,14 @@ public sealed class ApiKeyAuthMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // Control-plane (cookie) principals are governed by [Authorize] policies
-        // on the controllers, not here. Let them through to the authorization layer.
+        // Cookie-authenticated principals (dashboard admins) bypass API-key
+        // authentication entirely. They are governed by [Authorize] policies
+        // on the controllers. This is intentional: the dashboard must work
+        // before any API keys are created (bootstrap scenario), and cookie
+        // auth carries its own role-based authorization (Admin role). Note:
+        // a valid admin cookie + invalid API key on the same request still
+        // succeeds — this is acceptable because the cookie identity carries
+        // full admin privileges already.
         if (context.User.Identity?.IsAuthenticated == true)
         {
             await _next(context);
@@ -84,15 +92,63 @@ public sealed class ApiKeyAuthMiddleware
 
         string path = context.Request.Path.Value ?? "";
 
-        if (!TryResolveScope(path, out ApiKeyScope scope))
+        // Strict paths (/v1, /api/agents, /ws/agent) require a matching API key.
+        // For /api/agents specifically, fall through to ControlPlane opt-in if
+        // the presented key is ControlPlane scope (allows CLI access).
+        if (TryResolveScope(path, out ApiKeyScope scope))
         {
+            string? presented = ReadPresentedKey(context.Request);
+            if (!string.IsNullOrEmpty(presented))
+            {
+                var entity = await _store.AuthenticateAsync(presented, context.RequestAborted);
+                if (entity is not null && entity.Scope == scope)
+                {
+                    // Exact scope match → strict auth
+                    await ThrottledLastUsedWrite(entity);
+                    context.User = WithKeyIdentity(context.User, entity);
+                    await _next(context);
+                    return;
+                }
+                // Scope mismatch on /api/agents → try ControlPlane fallback
+                if (scope == ApiKeyScope.Agent && entity is not null && entity.Scope == ApiKeyScope.ControlPlane)
+                {
+                    await AuthenticateControlPlaneKey(context, path, presented);
+                    return;
+                }
+                // Other scope mismatch → deny
+                await DenyAsync(context, hasAnyKeys: true);
+                return;
+            }
+            // No key presented on strict path → deny
+            await DenyAsync(context, await _store.HasAnyAsync(scope, context.RequestAborted));
+            return;
+        }
+
+        // /api/* paths (except strict paths handled above): if a key IS
+        // presented, validate it as ControlPlane; if not, pass through and let
+        // the controller's [Authorize] handle cookie-based auth.
+        if (path.StartsWith("/api", StringComparison.OrdinalIgnoreCase))
+        {
+            string? presented = ReadPresentedKey(context.Request);
+            if (!string.IsNullOrEmpty(presented))
+            {
+                await AuthenticateControlPlaneKey(context, path, presented);
+                return;
+            }
+            // No key → pass through to controller [Authorize].
             await _next(context);
             return;
         }
 
-        // Fail-closed: a protected path requires a valid API key of the required
-        // scope. There is no opt-in bypass — an empty key store must never leave
-        // the surface anonymous-accessible.
+        await _next(context);
+    }
+
+    /// <summary>
+    /// Strict key authentication: the path REQUIRES a key of the matching scope.
+    /// Fail-closed — anonymous access is rejected.
+    /// </summary>
+    private async Task AuthenticateRequiredKey(HttpContext context, string path, ApiKeyScope scope)
+    {
         string? presented = ReadPresentedKey(context.Request);
         if (string.IsNullOrEmpty(presented))
         {
@@ -115,8 +171,40 @@ public sealed class ApiKeyAuthMiddleware
             return;
         }
 
-        // Throttled, fire-and-forget LastUsedAt write: at most one UPDATE per key
-        // per <see cref="LastUsedWriteInterval"/>. Never awaited on the request path.
+        await ThrottledLastUsedWrite(entity);
+        context.User = WithKeyIdentity(context.User, entity);
+        await _next(context);
+    }
+
+    /// <summary>
+    /// Opt-in ControlPlane key authentication: a key presented on /api/* is
+    /// validated as ControlPlane scope. If the key is invalid or wrong scope,
+    /// reject with 401 — do not silently pass through to cookie auth.
+    /// </summary>
+    private async Task AuthenticateControlPlaneKey(HttpContext context, string path, string presented)
+    {
+        var entity = await _store.AuthenticateAsync(presented, context.RequestAborted);
+        if (entity is null)
+        {
+            _logger.LogWarning("Invalid API key for {Path} from {Ip}", path, context.Connection.RemoteIpAddress);
+            await DenyAsync(context, hasAnyKeys: true);
+            return;
+        }
+
+        if (entity.Scope != ApiKeyScope.ControlPlane)
+        {
+            _logger.LogWarning("API key scope {KeyScope} is not ControlPlane for {Path} from {Ip}", entity.Scope, path, context.Connection.RemoteIpAddress);
+            await DenyAsync(context, hasAnyKeys: true);
+            return;
+        }
+
+        await ThrottledLastUsedWrite(entity);
+        context.User = WithKeyIdentity(context.User, entity);
+        await _next(context);
+    }
+
+    private async Task ThrottledLastUsedWrite(Core.Persistence.ApiKeyEntity entity)
+    {
         var nowUtc = DateTimeOffset.UtcNow;
         if (!_lastUsedWriteAt.TryGetValue(entity.Id, out var lastWrite)
             || nowUtc - lastWrite >= LastUsedWriteInterval)
@@ -134,24 +222,23 @@ public sealed class ApiKeyAuthMiddleware
                 }
             });
         }
-
-        context.User = WithKeyIdentity(context.User, entity);
-
-        await _next(context);
     }
 
     private bool TryResolveScope(string path, out ApiKeyScope scope)
     {
-        foreach (var prefix in _options.Value.ProtectedPaths)
+        // Use the hardcoded PathScope map directly — strict paths (/v1, /api/agents,
+        // /ws/agent) are invariant and must not depend on configuration.
+        foreach (var (prefix, mappedScope) in PathScope.OrderByDescending(e => e.Key.Length))
         {
-            if (string.IsNullOrEmpty(prefix))
+            // /api is the ControlPlane opt-in branch — handled in InvokeAsync, not here.
+            if (prefix.Equals("/api", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (path.Equals(prefix, StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase)
                 || path.StartsWith(prefix + "?", StringComparison.OrdinalIgnoreCase))
             {
-                scope = PathScope.TryGetValue(prefix, out var s) ? s : ApiKeyScope.Inference;
+                scope = mappedScope;
                 return true;
             }
         }
@@ -194,6 +281,12 @@ public sealed class ApiKeyAuthMiddleware
         };
         if (entity.BoundAgentName is not null)
             claims.Add(new Claim(BoundAgentClaimType, entity.BoundAgentName));
+
+        if (entity.Scope == ApiKeyScope.ControlPlane)
+        {
+            if (!string.IsNullOrWhiteSpace(entity.PermissionsJson) && entity.PermissionsJson != "{}")
+                claims.Add(new Claim("unswarm:permissions", entity.PermissionsJson));
+        }
 
         identities.Add(new ClaimsIdentity(claims, authenticationType: "ApiKey"));
 

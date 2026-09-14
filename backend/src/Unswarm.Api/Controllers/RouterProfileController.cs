@@ -26,7 +26,7 @@ namespace Unswarm.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/router-profiles")]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = "ControlPlaneAccess")]
 public sealed class RouterProfileController : ControllerBase
 {
     private readonly IRouterProfileStore _profiles;

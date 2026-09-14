@@ -42,7 +42,7 @@ public sealed class PromptsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> Create([FromBody] PromptUpsertRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
@@ -63,7 +63,7 @@ public sealed class PromptsController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> Update(string id, [FromBody] PromptUpsertRequest request, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Text))
@@ -77,7 +77,7 @@ public sealed class PromptsController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
         var deleted = await _prompts.DeleteAsync(id, ct);
@@ -86,7 +86,7 @@ public sealed class PromptsController : ControllerBase
     }
 
     [HttpPost("{id}/default")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> SetDefault(string id, CancellationToken ct)
     {
         var entry = await _prompts.SetDefaultAsync(id, ct);
@@ -116,7 +116,7 @@ public sealed class PromptsController : ControllerBase
     }
 
     [HttpPost("{id}/rollback")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> Rollback(string id, [FromBody] PromptRollbackRequest request, CancellationToken ct)
     {
         var entry = await _prompts.GetAsync(id, ct);

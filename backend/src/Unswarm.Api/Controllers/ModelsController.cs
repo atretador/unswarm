@@ -127,7 +127,7 @@ public sealed class ModelsController : ControllerBase
         return Ok(ModelResponse.FromDefinition(model, last is null ? null : LastBenchmarkResponse.From(last)));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] ModelCreateRequest request, CancellationToken ct)
     {
@@ -150,7 +150,7 @@ public sealed class ModelsController : ControllerBase
         return CreatedAtAction(nameof(Get), new { id = created.Id }, ModelResponse.FromDefinition(created));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPut("{*id}")]
     public async Task<IActionResult> Update(string id, [FromBody] ModelUpdateRequest request, CancellationToken ct)
     {
@@ -243,7 +243,7 @@ public sealed class ModelsController : ControllerBase
         return Ok(ModelResponse.FromDefinition(result));
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpDelete("{*id}")]
     public async Task<IActionResult> Delete(string id, CancellationToken ct)
     {
@@ -269,7 +269,7 @@ public sealed class ModelsController : ControllerBase
     /// triggers real inference (and real cloud spend), mirroring benchmark runs.
     /// Cookie-authenticated by design: the dashboard cannot hold inference API keys.
     /// </summary>
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost("test-chat")]
     public async Task<IActionResult> TestChat([FromBody] TestChatRequest? request, CancellationToken ct)
     {

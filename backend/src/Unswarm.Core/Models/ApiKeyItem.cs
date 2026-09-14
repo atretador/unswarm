@@ -12,6 +12,7 @@ public enum ApiKeyScope
 {
     Inference = 0,
     Agent = 1,
+    ControlPlane = 2,
 }
 
 /// <summary>

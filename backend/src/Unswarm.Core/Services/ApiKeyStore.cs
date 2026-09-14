@@ -26,7 +26,7 @@ public sealed class ApiKeyStore : IApiKeyStore
         _dbFactory = dbFactory;
     }
 
-    public async Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, CancellationToken ct = default)
+    public async Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, string? permissionsJson = null, CancellationToken ct = default)
     {
         if (boundAgentName is not null && string.IsNullOrWhiteSpace(boundAgentName))
             throw new ArgumentException("Bound agent name must be a non-empty string when provided.", nameof(boundAgentName));
@@ -47,6 +47,7 @@ public sealed class ApiKeyStore : IApiKeyStore
             IsActive = true,
             BoundAgentName = string.IsNullOrWhiteSpace(boundAgentName) ? null : boundAgentName.Trim(),
             CreatedAt = now,
+            PermissionsJson = scope == ApiKeyScope.ControlPlane ? (permissionsJson ?? "{}") : "{}",
         };
         db.ApiKeys.Add(entity);
         await db.SaveChangesAsync(ct);
@@ -208,6 +209,26 @@ public sealed class ApiKeyStore : IApiKeyStore
         return access;
     }
 
+    public async Task<Dictionary<string, string>?> GetPermissionsAsync(string keyId, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var json = await db.ApiKeys.Where(k => k.Id == keyId).Select(k => k.PermissionsJson).FirstOrDefaultAsync(ct);
+        if (json is null) return null;
+        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
+    public async Task<Dictionary<string, string>?> SavePermissionsAsync(string keyId, string permissionsJson, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.ApiKeys.FindAsync([keyId], ct);
+        if (entity is null) return null;
+        entity.PermissionsJson = permissionsJson;
+        await db.SaveChangesAsync(ct);
+        try { return JsonSerializer.Deserialize<Dictionary<string, string>>(permissionsJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? []; }
+        catch (JsonException) { return []; }
+    }
+
     public async Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default)
     {
         await using var db = _dbFactory();
@@ -272,7 +293,12 @@ public sealed class ApiKeyStore : IApiKeyStore
     {
         var bytes = new byte[32];
         RandomNumberGenerator.Fill(bytes);
-        var prefix = scope == ApiKeyScope.Agent ? "ak_" : "usk_";
+        var prefix = scope switch
+        {
+            ApiKeyScope.Agent => "ak_",
+            ApiKeyScope.ControlPlane => "ck_",
+            _ => "usk_",
+        };
         // base64url, no padding — safe in headers, query strings, and env files.
         return prefix + Convert.ToBase64String(bytes).Replace("+", "-").Replace("/", "_").TrimEnd('=');
     }

@@ -20,3 +20,4 @@ unswarm-agent
 !.env.example
 unswarm.db
 .tmp-ddcheck/
+cli/unswarm

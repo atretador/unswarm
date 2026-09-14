@@ -138,7 +138,7 @@ public sealed class AgentsController : ControllerBase
     // agent's UNFILTERED container list (raw "docker ps") which can include
     // unrelated containers on the host.
     [HttpGet("{name}/containers")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> ListAgentContainers(string name, CancellationToken ct)
     {
         var target = string.Equals(name, ExecutionTarget.HostId, StringComparison.OrdinalIgnoreCase)

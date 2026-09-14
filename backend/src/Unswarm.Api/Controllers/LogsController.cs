@@ -18,7 +18,7 @@ namespace Unswarm.Api.Controllers;
 /// GET /api/logs/stream — Live log stream (SSE)
 /// </remarks>
 [ApiController]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = "ControlPlaneAccess")]
 [Route("api/[controller]")]
 public sealed class LogsController : ControllerBase
 {

@@ -288,4 +288,35 @@ public sealed class ApiKeyAuthMiddlewareTests
         Assert.False(tracker.Called);
         Assert.Equal(401, context.Response.StatusCode);
     }
+
+    [Fact]
+    public async Task ControlPlaneKey_ApiPath_PassesAndDoesNotSetAdminRole()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("cli", ApiKeyScope.ControlPlane, "cli-secret");
+        var (middleware, context, tracker, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/api/agents", "/api"] }, store,
+            path: "/api/models", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(tracker.Called);
+        Assert.True(HasScopeClaim(context, ApiKeyScope.ControlPlane));
+        Assert.DoesNotContain(context.User.Claims, c => c.Type == ClaimTypes.Role && c.Value == "Admin");
+    }
+
+    [Fact]
+    public async Task ControlPlaneKey_Permissions_AreAttachedAsClaim()
+    {
+        var store = TestApiKeyStore.Create();
+        var created = await store.CreateAsync("cli", ApiKeyScope.ControlPlane, "cli-secret",
+            permissionsJson: "{\"models\":\"rw\"}");
+        var (middleware, context, _, _) = CreateSut(
+            new AuthOptions { ProtectedPaths = ["/api"] }, store,
+            path: "/api/models", apiKeyHeader: created.Secret);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.Equal("{\"models\":\"rw\"}", context.User.FindFirst("unswarm:permissions")?.Value);
+    }
 }

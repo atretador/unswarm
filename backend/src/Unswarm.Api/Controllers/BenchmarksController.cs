@@ -55,7 +55,7 @@ public sealed class BenchmarksController : ControllerBase
         _cloudForwarding = cloudForwarding;
     }
 
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     [HttpPost]
     public async Task<IActionResult> Run([FromQuery] string modelId, [FromBody] BenchmarkRunRequest? body, CancellationToken ct)
     {

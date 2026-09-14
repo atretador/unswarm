@@ -450,7 +450,22 @@ export interface User {
 // Managed keys authenticate to the inference proxy (/v1) and the agent
 // channel (/api/agents + /ws/agent). They are NOT login credentials — the
 // two auth surfaces are strictly separate. Login cookies never carry a scope.
-export type ApiKeyScope = "inference" | "agent";
+export type ApiKeyScope = "inference" | "agent" | "control-plane";
+
+/** Access level for a CLI key domain permission. */
+export type PermissionLevel = "none" | "r" | "rw";
+
+/** Permission matrix mapping domain names to access levels. */
+export type PermissionMatrix = Record<string, PermissionLevel>;
+
+/** The 15 domains that CLI keys can grant access to. */
+export const CLI_DOMAINS = [
+  "models", "runtimes", "agents", "queue", "benchmarks", "prompts",
+  "settings", "users", "apikeys", "routerprofiles", "cloudproviders",
+  "metrics", "logs", "scripts", "stats",
+] as const;
+
+export type CliDomain = typeof CLI_DOMAINS[number];
 
 export interface ApiKeyItem {
   id: string;
@@ -461,6 +476,8 @@ export interface ApiKeyItem {
   isActive: boolean;
   createdAt: string;
   lastUsedAt: string | null;
+  /** Present only for control-plane keys. */
+  permissions?: PermissionMatrix;
 }
 
 /** Returned exactly once at create/rotate. Carries the raw `secret`. */

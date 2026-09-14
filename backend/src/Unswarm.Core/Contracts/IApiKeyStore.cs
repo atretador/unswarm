@@ -18,7 +18,7 @@ public interface IApiKeyStore
     /// <paramref name="boundAgentName"/> is non-empty the key is permanently bound
     /// to that agent name (agent keys); it must be null/empty for unbound keys.
     /// </summary>
-    Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, CancellationToken ct = default);
+    Task<CreateApiKeyResponse> CreateAsync(string name, ApiKeyScope scope = ApiKeyScope.Inference, string? explicitKey = null, string? boundAgentName = null, string? permissionsJson = null, CancellationToken ct = default);
 
     /// <summary>All keys, secret-free (prefix only). Ordered newest first.</summary>
     Task<IReadOnlyList<ApiKeyItem>> ListAsync(CancellationToken ct = default);
@@ -73,6 +73,12 @@ public interface IApiKeyStore
     /// Returns the stored value, or null when the key does not exist.
     /// </summary>
     Task<KeyAccess?> SaveAccessAsync(string keyId, KeyAccess access, CancellationToken ct = default);
+
+    /// <summary>Read the parsed permissions for a ControlPlane key, or null if not found.</summary>
+    Task<Dictionary<string, string>?> GetPermissionsAsync(string keyId, CancellationToken ct = default);
+
+    /// <summary>Save permissions JSON for a ControlPlane key. Returns the parsed dict or null.</summary>
+    Task<Dictionary<string, string>?> SavePermissionsAsync(string keyId, string permissionsJson, CancellationToken ct = default);
 
     /// <summary>
     /// Removes <paramref name="providerName"/> from every key's access provider list.

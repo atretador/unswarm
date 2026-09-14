@@ -10,7 +10,7 @@
 // deployed yet (404/error), the affected section degrades to a non-blocking
 // notice instead of crashing. If the usage endpoint 404s, that section hides.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -34,9 +34,13 @@ import { client } from "../../lib/query-client";
 import type {
   ApiKeyAccess,
   ApiKeyItem,
+  CliDomain,
+  PermissionLevel,
+  PermissionMatrix,
   Model,
   ProviderModelCatalogEntry,
 } from "../../lib/api/types";
+import { CLI_DOMAINS } from "../../lib/api/types";
 import {
   getApiKeyAccess,
   getApiKeyUsage,
@@ -159,6 +163,60 @@ function NoticeBanner({ children }: { children: React.ReactNode }) {
       <TriangleAlert className="size-4 shrink-0 mt-0.5 text-[var(--color-status-warning)]" />
       <div className="text-xs text-[var(--color-text-muted)] leading-relaxed space-y-1">
         {children}
+      </div>
+    </div>
+  );
+}
+
+/** Shared, compact editor for Control Plane/CLI permissions. */
+export function PermissionMatrixEditor({
+  permissions,
+  onChange,
+  disabled = false,
+}: {
+  permissions: PermissionMatrix;
+  onChange: (next: PermissionMatrix) => void;
+  disabled?: boolean;
+}) {
+  const { t } = useTranslation("api-keys");
+  const groups: Array<[string, CliDomain[]]> = [
+    [t("cli.groups.infrastructure"), ["models", "runtimes", "agents", "queue"]],
+    [t("cli.groups.configuration"), ["settings", "users", "apikeys", "routerprofiles", "cloudproviders", "prompts"]],
+    [t("cli.groups.observability"), ["metrics", "logs", "stats", "benchmarks", "scripts"]],
+  ];
+  const level = (domain: CliDomain) => permissions[domain] ?? "none";
+  const setLevel = (domain: CliDomain, next: PermissionLevel) =>
+    onChange({ ...permissions, [domain]: next });
+
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-[var(--color-bg-muted)]/50 border-b border-[var(--color-border-subtle)]">
+        <div>
+          <p className="text-xs font-medium text-[var(--color-text-heading)]">{t("cli.permissions")}</p>
+          <p className="text-[10px] text-[var(--color-text-muted)]">{t("cli.permissionHint")}</p>
+        </div>
+        <div className="flex gap-1.5">
+          <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onChange(Object.fromEntries(CLI_DOMAINS.map((d) => [d, "rw"])) as PermissionMatrix)}>{t("cli.selectAll")}</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={disabled} onClick={() => onChange(Object.fromEntries(CLI_DOMAINS.map((d) => [d, "none"])) as PermissionMatrix)}>{t("cli.clearAll")}</Button>
+        </div>
+      </div>
+      <div className="grid grid-cols-[1fr_72px_72px] text-xs">
+        <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{t("cli.domain")}</div>
+        <div className="px-2 py-2 text-center text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{t("cli.read")}</div>
+        <div className="px-2 py-2 text-center text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{t("cli.write")}</div>
+        {groups.map(([group, domains]) => (
+          <Fragment key={group}>
+            <div className="col-span-3 px-3 py-1.5 bg-[var(--color-bg-muted)]/35 border-y border-[var(--color-border-subtle)] text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{group}</div>
+            {domains.map((domain, index) => {
+              const current = level(domain);
+              return <div key={domain} className={`contents ${index % 2 ? "bg-[var(--color-bg-muted)]/20" : ""}`}>
+                <div className="px-3 py-2 text-[var(--color-text)] font-mono">{domain}</div>
+                <div className="flex justify-center items-center py-2"><Switch checked={current !== "none"} disabled={disabled} onCheckedChange={(checked) => setLevel(domain, checked ? "r" : "none")} aria-label={`${domain} ${t("cli.read")}`} /></div>
+                <div className="flex justify-center items-center py-2"><Switch checked={current === "rw"} disabled={disabled} onCheckedChange={(checked) => setLevel(domain, checked ? "rw" : "r")} aria-label={`${domain} ${t("cli.write")}`} /></div>
+              </div>;
+            })}
+          </Fragment>
+        ))}
       </div>
     </div>
   );
@@ -335,11 +393,14 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const [expandedProviders, setExpandedProviders] = useState<Set<string>>(new Set());
   const [modelSearch, setModelSearch] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [cliPermissions, setCliPermissions] = useState<PermissionMatrix | null>(null);
+  const [cliInitial, setCliInitial] = useState<string | null>(null);
   const expandedInit = useRef(false);
 
   // AccessJson grants are only enforced on /v1 inference; agent-scope keys
   // can't call /v1, so the access editor is hidden for them entirely.
   const isAgentKey = apiKey.scope === "agent";
+  const isCliKey = apiKey.scope === "control-plane";
 
   function toggleExpand(name: string) {
     setExpandedProviders((prev) => {
@@ -353,15 +414,21 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
   const catalogQuery = useQuery({
     queryKey: ["provider-model-catalog"],
     queryFn: () => getProviderModelCatalog(),
-    enabled: open && !isAgentKey,
+    enabled: open && !isAgentKey && !isCliKey,
     staleTime: 5 * 60 * 1000,
   });
 
   const accessQuery = useQuery({
     queryKey: ["api-key-access", apiKey.id],
     queryFn: () => getApiKeyAccess(apiKey.id),
-    enabled: open && !isAgentKey,
+    enabled: open && !isAgentKey && !isCliKey,
   });
+  const cliQuery = useQuery({ queryKey: ["api-key-permissions", apiKey.id], queryFn: () => client.getApiKeyPermissions(apiKey.id), enabled: open && isCliKey });
+  useEffect(() => {
+    if (open && cliQuery.data) { setCliPermissions(cliQuery.data); setCliInitial(JSON.stringify(cliQuery.data)); }
+    if (!open) { setCliPermissions(null); setCliInitial(null); }
+  }, [open, cliQuery.data]);
+  const cliSave = useMutation({ mutationFn: (permissions: PermissionMatrix) => client.updateApiKeyPermissions(apiKey.id, permissions), onSuccess: (saved) => { setCliPermissions(saved); setCliInitial(JSON.stringify(saved)); }, onError: (e: Error) => setSaveError(e.message) });
 
   // Model registry — for resolving user-managed display names.
   const { data: registryModels } = useQuery({
@@ -489,7 +556,12 @@ export function ManageKeyModal({ open, onOpenChange, apiKey }: ManageKeyModalPro
           {/* ── Access control ───────────────────────────────── */}
           {/* Hidden for agent-scope keys: AccessJson is only enforced on
               /v1 inference, which agent keys cannot call. */}
-          {!isAgentKey && (
+          {isCliKey && cliPermissions && (
+            <section className="space-y-4"><SectionHeader icon={ShieldCheck} title={t("cli.permissions")} /><PermissionMatrixEditor permissions={cliPermissions} onChange={setCliPermissions} disabled={cliSave.isPending} />
+              <div className="flex justify-end"><Button variant="primary" size="sm" disabled={JSON.stringify(cliPermissions) === cliInitial} loading={cliSave.isPending} onClick={() => cliSave.mutate(cliPermissions)}>{t("manage.saveAccess")}</Button></div>
+            </section>
+          )}
+          {!isAgentKey && !isCliKey && (
           <section className="space-y-4">
             <SectionHeader icon={ShieldCheck} title={t("manage.accessControl")} />
 

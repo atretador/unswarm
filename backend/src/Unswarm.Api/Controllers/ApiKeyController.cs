@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
@@ -25,7 +26,7 @@ namespace Unswarm.Api.Controllers;
 // Explicit route — ASP.NET lowercases the [controller] token to "apikeys",
 // which would not match the frontend wire contract at "/api/api-keys".
 [Route("api/api-keys")]
-[Authorize(Roles = "Admin")]
+[Authorize(Policy = "ControlPlaneAccess")]
 public sealed class ApiKeyController : ControllerBase
 {
     private readonly IApiKeyStore _keys;
@@ -42,6 +43,19 @@ public sealed class ApiKeyController : ControllerBase
         _routerProfiles = routerProfiles;
         _logger = logger;
     }
+
+    /// <summary>
+    /// Canonical set of permission domains accepted by ControlPlane keys.
+    /// Must match the frontend CLI_DOMAINS array. A key with an unknown domain
+    /// gains no access — but rejecting unknowns at write time prevents confusion
+    /// and keeps the backend as the single source of truth.
+    /// </summary>
+    private static readonly HashSet<string> ValidDomains = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "models", "runtimes", "agents", "queue", "benchmarks", "prompts",
+        "settings", "users", "apikeys", "routerprofiles", "cloudproviders",
+        "metrics", "logs", "scripts", "stats",
+    };
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateApiKeyRequest request, CancellationToken ct)
@@ -71,6 +85,30 @@ public sealed class ApiKeyController : ControllerBase
         return Ok(Map(created));
     }
 
+    /// <remarks>
+    /// SECURITY NOTE: A key with "apikeys:rw" permission can create other
+    /// ControlPlane keys with arbitrary permissions, enabling privilege
+    /// delegation. This is by design for administrative workflows but should
+    /// be documented and monitored. Consider restricting "apikeys" domain
+    /// access to trusted operators.
+    /// </remarks>
+    [HttpPost("control-plane")]
+    public async Task<IActionResult> CreateControlPlane([FromBody] CreateControlPlaneKeyRequest request, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return BadRequest(LocalizedError.Create("apiKeys.nameRequired"));
+        var permissions = request.Permissions ?? [];
+        var validLevels = new HashSet<string> { "none", "r", "rw" };
+        if (permissions.Any(p => !validLevels.Contains(p.Value)))
+            return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionLevel"));
+        var unknownDomains = permissions.Keys.Where(k => !ValidDomains.Contains(k)).ToList();
+        if (unknownDomains.Count > 0)
+            return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionDomain"));
+        var permissionsJson = JsonSerializer.Serialize(permissions, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.ControlPlane, permissionsJson: permissionsJson, ct: ct);
+        return Ok(Map(created));
+    }
+
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
     {
@@ -88,6 +126,9 @@ public sealed class ApiKeyController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Revoke(string id, CancellationToken ct)
     {
+        if (User?.FindFirst("unswarm:key-id")?.Value == id)
+            return Forbid();
+
         var ok = await _keys.RevokeAsync(id, ct);
         return ok ? NoContent() : NotFound(LocalizedError.Create("apiKeys.notFound"));
     }
@@ -95,6 +136,9 @@ public sealed class ApiKeyController : ControllerBase
     [HttpPost("{id}/rotate")]
     public async Task<IActionResult> Rotate(string id, CancellationToken ct)
     {
+        if (User?.FindFirst("unswarm:key-id")?.Value == id)
+            return Forbid();
+
         try
         {
             var rotated = await _keys.RotateAsync(id, ct);
@@ -163,6 +207,38 @@ public sealed class ApiKeyController : ControllerBase
             return NotFound(LocalizedError.Create("apiKeys.notFound"));
 
         return Ok(new KeyAccessDto { Providers = [.. saved.Providers], Models = [.. saved.Models] });
+    }
+
+    [HttpGet("{id}/permissions")]
+    public async Task<IActionResult> GetPermissions(string id, CancellationToken ct)
+    {
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null) return NotFound(LocalizedError.Create("apiKeys.notFound"));
+        if (item.Scope != ApiKeyScope.ControlPlane) return BadRequest(LocalizedError.Create("apiKeys.notControlPlaneKey"));
+        var permissions = await _keys.GetPermissionsAsync(id, ct);
+        return Ok(new ApiKeyPermissionsDto { Permissions = permissions ?? [] });
+    }
+
+    [HttpPut("{id}/permissions")]
+    public async Task<IActionResult> SavePermissions(string id, [FromBody] ApiKeyPermissionsDto request, CancellationToken ct)
+    {
+        if (User?.FindFirst("unswarm:key-id")?.Value == id)
+            return Forbid();
+
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null) return NotFound(LocalizedError.Create("apiKeys.notFound"));
+        if (item.Scope != ApiKeyScope.ControlPlane) return BadRequest(LocalizedError.Create("apiKeys.notControlPlaneKey"));
+        var validLevels = new HashSet<string> { "none", "r", "rw" };
+        if (request.Permissions.Any(p => !validLevels.Contains(p.Value)))
+            return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionLevel"));
+        var unknownDomains = request.Permissions.Keys.Where(k => !ValidDomains.Contains(k)).ToList();
+        if (unknownDomains.Count > 0)
+            return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionDomain"));
+        var json = JsonSerializer.Serialize(request.Permissions, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var saved = await _keys.SavePermissionsAsync(id, json, ct);
+        return saved is null
+            ? NotFound(LocalizedError.Create("apiKeys.notFound"))
+            : Ok(new ApiKeyPermissionsDto { Permissions = request.Permissions });
     }
 
     private static ApiKeyCreateResponse Map(CreateApiKeyResponse r) => new()

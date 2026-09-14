@@ -91,6 +91,7 @@ builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyDir));
 
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<ControlPlanePermissionFilter>();
 
 // ── Identity + Auth ────────────────────────────────────────────────────────
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
@@ -283,25 +284,6 @@ builder.Services.AddSingleton<SchedulerWorker>();
 builder.Services.AddSingleton<ISchedulerQueue, SchedulerQueue>();
 builder.Services.AddSingleton<ISchedulerDrainer>(sp => sp.GetRequiredService<SchedulerWorker>());
 
-// ── Auto-benchmark ────────────────────────────────────────────────────────
-// Singleton so it can be captured by ContainerRegistrationService's fire-and-forget
-// background runner (which outlives the request scope that triggered registration).
-// The scoped stores it depends on are stateless Func<UnswarmDbContext> holders, so
-// resolving them once from a scope here is safe for long-lived background use.
-builder.Services.AddSingleton<Unswarm.Core.Services.Benchmarks.AutoBenchmarkService>(sp =>
-{
-    var scopeFactory = sp.GetRequiredService<IServiceScopeFactory>();
-    using var scope = scopeFactory.CreateScope();
-    return new Unswarm.Core.Services.Benchmarks.AutoBenchmarkService(
-        scope.ServiceProvider.GetRequiredService<ISettingsStore>(),
-        scope.ServiceProvider.GetRequiredService<IPromptStore>(),
-        sp.GetRequiredService<ISchedulerQueue>(),
-        scope.ServiceProvider.GetRequiredService<IBenchmarkHistory>(),
-        sp.GetRequiredService<IClock>(),
-        sp.GetRequiredService<ILogStore>(),
-        sp.GetRequiredService<ILogger<Unswarm.Core.Services.Benchmarks.AutoBenchmarkService>>());
-});
-
 // ── OpenTelemetry ─────────────────────────────────────────────────────────
 // Traces + metrics for ASP.NET Core and HttpClient, plus Unswarm's custom
 // "Unswarm" meter. OTLP export is enabled only when OTEL_EXPORTER_OTLP_ENDPOINT
@@ -349,6 +331,7 @@ builder.Services.AddOpenTelemetry()
 
 // ── Controllers ───────────────────────────────────────────────────────────
 builder.Services.AddControllers()
+    .AddMvcOptions(options => options.Filters.AddService<ControlPlanePermissionFilter>())
     .AddJsonOptions(o =>
     {
         // Frontend wire contract for statuses is lowercase (AgentsController
@@ -370,6 +353,12 @@ builder.Services.AddAuthorization(options =>
         policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.Inference.ToString()));
     options.AddPolicy("AgentKey", policy =>
         policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.Agent.ToString()));
+    options.AddPolicy("ControlPlaneKey", policy =>
+        policy.RequireClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.ControlPlane.ToString()));
+    options.AddPolicy("ControlPlaneAccess", policy =>
+        policy.RequireAuthenticatedUser().RequireAssertion(context =>
+            context.User.IsInRole("Admin")
+            || context.User.HasClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.ControlPlane.ToString())));
 });
 
 // ── Background services ──────────────────────────────────────────────────

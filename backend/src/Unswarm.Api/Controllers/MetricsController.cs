@@ -741,7 +741,7 @@ public sealed class MetricsController : ControllerBase
     /// <param name="olderThanDays">Optional override for the retention window in days (0 deletes everything).</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpDelete("usage/purge")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Policy = "ControlPlaneAccess")]
     public async Task<IActionResult> PurgeUsage([FromQuery] int? olderThanDays = null, CancellationToken ct = default)
     {
         int days = olderThanDays ?? (await _settingsStore.GetAsync(ct)).UsageRetentionDays;
