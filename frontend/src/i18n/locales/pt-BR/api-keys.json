@@ -4,13 +4,15 @@
   "info": "API keys autenticam em endpoints específicos — chaves de inferência para o proxy <1>{{proxy}}</1>, chaves de agente para o canal de agente. O login usa uma sessão de cookie separada — uma credencial de login não é uma API key, e vice-versa.",
   "tabs": {
     "inference": "Inferência",
-    "agent": "Agente"
+    "agent": "Agente", "cli": "CLI"
   },
   "noKeys": "Nenhuma chave de {{scope}} ainda",
   "noKeysAgent": "Crie uma chave de agente para autenticar no canal do agente.",
   "noKeysInference": "Crie uma chave de inferência para autenticar clientes contra o proxy /v1.",
   "agentKeys": "Chaves de Agente",
   "inferenceKeys": "Chaves de Inferência",
+  "cliKeys": "Chaves de CLI",
+  "cli": { "newKey":"Nova chave CLI", "createKey":"Criar chave CLI", "createDesc":"Gerencie recursos do ControlPlane com permissões precisas.", "secretTitle":"Chave CLI criada", "done":"Concluído", "cancel":"Cancelar", "namePlaceholder":"ex. Automação", "permissions":"Permissões", "permissionHint":"Escrita inclui leitura.", "domain":"Domínio", "read":"Ler", "write":"Escrever", "selectAll":"Selecionar tudo", "clearAll":"Limpar tudo", "noKeys":"Crie uma chave CLI para gerenciar recursos.", "groups":{"infrastructure":"Infraestrutura", "configuration":"Configuração", "observability":"Observabilidade"} },
   "retired": "Aposentadas ({{count}})",
   "newAgentKey": "Nova Chave de Agente",
   "newInferenceKey": "Nova Chave de Inferência",

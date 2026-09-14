@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot, SlidersHorizontal } from "lucide-react";
+import { Key, Copy, RefreshCw, Trash2, Check, ShieldAlert, KeySquare, Bot, SlidersHorizontal, Terminal, Plus } from "lucide-react";
 import { client } from "../../lib/query-client";
-import { Card, Skeleton, Button, Badge, EmptyState, Input, ConfirmDialog } from "../../components/ui";
-import type { ApiKeyCreateResponse, ApiKeyItem } from "../../lib/api/types";
-import { ManageKeyModal } from "./manage-key-modal";
+import { Card, Skeleton, Button, Badge, EmptyState, Input, ConfirmDialog, Dialog } from "../../components/ui";
+import type { ApiKeyCreateResponse, ApiKeyItem, PermissionMatrix } from "../../lib/api/types";
+import { CLI_DOMAINS } from "../../lib/api/types";
+import { ManageKeyModal, PermissionMatrixEditor } from "./manage-key-modal";
 import { formatRelativeTime } from "../../i18n/format";
 
 // ─── Copy-to-clipboard helper ──────────────────────────────────────────
@@ -43,10 +44,59 @@ function formatRelative(ts: string | null): string {
   return formatRelativeTime(ts);
 }
 
-function scopeLabel(scope: "inference" | "agent", t: (key: string) => string) {
+function scopeLabel(scope: "inference" | "agent" | "control-plane", t: (key: string) => string) {
+  if (scope === "control-plane") return { text: t("tabs.cli"), variant: "info" as const };
   return scope === "inference"
     ? { text: t("tabs.inference"), variant: "info" as const }
     : { text: t("tabs.agent"), variant: "outline" as const };
+}
+
+function emptyPermissions(): PermissionMatrix {
+  return Object.fromEntries(CLI_DOMAINS.map((domain) => [domain, "none"])) as PermissionMatrix;
+}
+
+function permissionSummary(permissions: PermissionMatrix | undefined): string {
+  if (!permissions) return "—";
+  return CLI_DOMAINS.filter((d) => permissions[d] && permissions[d] !== "none")
+    .map((d) => `${d}:${permissions[d] === "rw" ? "rw" : "r"}`).join(", ") || "—";
+}
+
+function CreateCliKeySection({ queryClient }: { queryClient: ReturnType<typeof useQueryClient> }) {
+  const { t } = useTranslation("api-keys");
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [permissions, setPermissions] = useState<PermissionMatrix>(emptyPermissions);
+  const [created, setCreated] = useState<ApiKeyCreateResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const mutation = useMutation({
+    mutationFn: () => client.createControlPlaneApiKey(name.trim(), permissions),
+    onSuccess: (res) => { queryClient.invalidateQueries({ queryKey: ["api-keys"] }); setCreated(res); setError(null); },
+    onError: (err: Error) => setError(err.message),
+  });
+  const close = () => { setOpen(false); setCreated(null); setName(""); setPermissions(emptyPermissions()); setError(null); mutation.reset(); };
+  return <>
+    <Card padding="lg">
+      <div className="flex items-center gap-2 mb-2"><Terminal className="size-4 text-[var(--color-primary)]" /><p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{t("cli.newKey")}</p></div>
+      <p className="text-sm text-[var(--color-text)] mb-4">{t("cli.createDesc")}</p>
+      <Button type="button" variant="primary" size="md" onClick={() => setOpen(true)}><Plus className="size-3.5" />{t("cli.createKey")}</Button>
+    </Card>
+    <Dialog open={open} onOpenChange={(next) => !mutation.isPending && setOpen(next)} title={created ? t("cli.secretTitle") : t("cli.createKey")} className="sm:max-w-[680px]">
+      <div className="px-5 py-4 space-y-4">
+        {created ? <>
+          <div className="rounded-[var(--radius-lg)] bg-[color-mix(in_srgb,var(--color-status-running)_12%,transparent)] border border-[color-mix(in_srgb,var(--color-status-running)_30%,transparent)] px-4 py-3 space-y-2">
+            <p className="text-sm font-medium text-[var(--color-status-running)]">{t("keyCreated")}</p><p className="text-[10px] text-[var(--color-text-muted)]">{t("keyCreatedDesc")}</p>
+            <div className="flex gap-2 items-center"><code className="flex-1 min-w-0 truncate bg-[var(--color-bg-muted)] rounded px-2 py-1 text-xs font-mono">{created.secret}</code><CopyButton value={created.secret} /></div>
+            <code className="block text-[11px] text-[var(--color-text-muted)] break-all">export UNSWARM_API_KEY={created.secret}</code>
+          </div><Button type="button" variant="primary" size="sm" onClick={close}>{t("cli.done")}</Button>
+        </> : <form onSubmit={(e) => { e.preventDefault(); if (!name.trim()) { setError(t("validate.nameRequired")); return; } mutation.mutate(); }} className="space-y-4">
+          <Input label={t("keyName")} value={name} onChange={(e) => setName(e.target.value)} placeholder={t("cli.namePlaceholder")} disabled={mutation.isPending} />
+          <PermissionMatrixEditor permissions={permissions} onChange={setPermissions} disabled={mutation.isPending} />
+          {error && <p className="text-sm text-[var(--color-status-error)]">{error}</p>}
+          <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setOpen(false)}>{t("cli.cancel")}</Button><Button type="submit" variant="primary" loading={mutation.isPending}>{t("cli.createKey")}</Button></div>
+        </form>}
+      </div>
+    </Dialog>
+  </>;
 }
 
 // ─── Create Key form ────────────────────────────────────────────────────
@@ -56,7 +106,7 @@ function CreateKeySection({
   scope,
 }: {
   queryClient: ReturnType<typeof useQueryClient>;
-  scope: "inference" | "agent";
+  scope: "inference" | "agent" | "control-plane";
 }) {
   const { t } = useTranslation("api-keys");
   const [name, setName] = useState("");
@@ -178,7 +228,7 @@ function KeyRow({
   id: string;
   name: string;
   keyPrefix: string;
-  scope: "inference" | "agent";
+  scope: "inference" | "agent" | "control-plane";
   isActive: boolean;
   lastUsedAt: string | null;
   createdAt: string;
@@ -220,6 +270,7 @@ function KeyRow({
   });
 
   const scopeStyle = scopeLabel(scope, t);
+  const permissionsQuery = useQuery({ queryKey: ["api-key-permissions", id], queryFn: () => client.getApiKeyPermissions(id), enabled: scope === "control-plane" });
 
   const handleRotate = () => {
     setRotated(null);
@@ -251,6 +302,11 @@ function KeyRow({
           <p className="text-xs font-mono text-[var(--color-text-muted)] mt-1 truncate">
             {keyPrefix}…
           </p>
+          {scope === "control-plane" && permissionsQuery.data && (
+            <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
+              {permissionSummary(permissionsQuery.data)}
+            </p>
+          )}
           <p className="text-[10px] text-[var(--color-text-muted)] mt-0.5">
             {t("createdPrefix")} {formatRelative(createdAt)} · {formatRelative(lastUsedAt)}
           </p>
@@ -346,7 +402,7 @@ function KeyList({
   scope,
 }: {
   queryClient: ReturnType<typeof useQueryClient>;
-  scope: "inference" | "agent";
+  scope: "inference" | "agent" | "control-plane";
 }) {
   const { t } = useTranslation("api-keys");
   const { data, isLoading, error } = useQuery({
@@ -376,7 +432,7 @@ function KeyList({
       <div className="flex items-center gap-2 mb-3">
         <ShieldAlert className="size-4 text-[var(--color-text-muted)]" />
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">
-          {scope === "agent" ? t("agentKeys") : t("inferenceKeys")}
+          {scope === "agent" ? t("agentKeys") : scope === "control-plane" ? t("cliKeys") : t("inferenceKeys")}
         </p>
       </div>
 
@@ -393,6 +449,8 @@ function KeyList({
           description={
             scope === "agent"
               ? t("noKeysAgent")
+              : scope === "control-plane"
+              ? t("cli.noKeys")
               : t("noKeysInference")
           }
         />
@@ -440,7 +498,7 @@ function KeyList({
 
 // ─── Main Page ──────────────────────────────────────────────────────────
 
-type Tab = "inference" | "agent";
+type Tab = "inference" | "agent" | "control-plane";
 
 export default function ApiKeys() {
   const { t } = useTranslation("api-keys");
@@ -450,6 +508,7 @@ export default function ApiKeys() {
   const tabs: { key: Tab; label: string; icon: typeof Key }[] = [
     { key: "inference", label: t("tabs.inference"), icon: Key },
     { key: "agent", label: t("tabs.agent"), icon: Bot },
+    { key: "control-plane", label: t("tabs.cli"), icon: Terminal },
   ];
 
   return (
@@ -506,7 +565,7 @@ export default function ApiKeys() {
 
       {/* Tab content */}
       <div role="tabpanel" id="apikeys-panel" aria-labelledby={`apikeys-tab-${activeTab}`}>
-        <CreateKeySection queryClient={queryClient} scope={activeTab} />
+        {activeTab === "control-plane" ? <CreateCliKeySection queryClient={queryClient} /> : <CreateKeySection queryClient={queryClient} scope={activeTab} />}
         <div className="mt-6">
           <KeyList queryClient={queryClient} scope={activeTab} />
         </div>

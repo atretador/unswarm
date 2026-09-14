@@ -21,6 +21,7 @@ import type {
   Prompt,
   PromptInput,
   PromptVersion,
+  PermissionMatrix,
   ProviderCatalogEntry,
   QueueSnapshot,
   RegisterRuntimePayload,
@@ -861,12 +862,38 @@ export const httpClient: UnswarmClient = {
     });
   },
 
-  listApiKeys() {
-    return request<ApiKeyItem[]>("/api/api-keys");
+  async createControlPlaneApiKey(name: string, permissions: PermissionMatrix): Promise<ApiKeyCreateResponse> {
+    const res = await request<ApiKeyCreateResponse>("/api/api-keys/control-plane", {
+      method: "POST",
+      body: JSON.stringify({ name, permissions }),
+    });
+    return { ...res, scope: res.scope === "controlPlane" ? "control-plane" : res.scope };
   },
 
-  getApiKey(id: string) {
-    return request<ApiKeyItem>(`/api/api-keys/${encodeURIComponent(id)}`);
+  async getApiKeyPermissions(id: string): Promise<PermissionMatrix> {
+    const res = await request<{ permissions: PermissionMatrix }>(
+      `/api/api-keys/${encodeURIComponent(id)}/permissions`,
+    );
+    return res.permissions;
+  },
+
+  async updateApiKeyPermissions(id: string, permissions: PermissionMatrix): Promise<PermissionMatrix> {
+    const res = await request<{ permissions: PermissionMatrix }>(
+      `/api/api-keys/${encodeURIComponent(id)}/permissions`,
+      { method: "PUT", body: JSON.stringify({ permissions }) },
+    );
+    return res.permissions;
+  },
+
+  async listApiKeys() {
+    const items = await request<ApiKeyItem[]>("/api/api-keys");
+    // Normalise backend camelCase scope ("controlPlane") to frontend kebab-case ("control-plane")
+    return items.map((k) => ({ ...k, scope: k.scope === "controlPlane" ? "control-plane" : k.scope }));
+  },
+
+  async getApiKey(id: string) {
+    const item = await request<ApiKeyItem>(`/api/api-keys/${encodeURIComponent(id)}`);
+    return { ...item, scope: item.scope === "controlPlane" ? "control-plane" : item.scope };
   },
 
   revokeApiKey(id: string) {
@@ -875,11 +902,12 @@ export const httpClient: UnswarmClient = {
     });
   },
 
-  rotateApiKey(id: string) {
-    return request<ApiKeyCreateResponse>(
+  async rotateApiKey(id: string) {
+    const res = await request<ApiKeyCreateResponse>(
       `/api/api-keys/${encodeURIComponent(id)}/rotate`,
       { method: "POST" },
     );
+    return { ...res, scope: res.scope === "controlPlane" ? "control-plane" : res.scope };
   },
 
   // ── Router Profiles ─────────────────────────────────────────

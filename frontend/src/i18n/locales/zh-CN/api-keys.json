@@ -4,13 +4,15 @@
   "info": "API 密钥用于认证特定端点——推理密钥用于 <1>{{proxy}}</1> 代理，Agent 密钥用于 Agent 通道。登录使用独立的 Cookie 会话——登录凭据不是 API 密钥，反之亦然。",
   "tabs": {
     "inference": "推理",
-    "agent": "Agent"
+    "agent": "Agent", "cli": "CLI"
   },
   "noKeys": "暂无 {{scope}} 密钥",
   "noKeysAgent": "创建一个 Agent 密钥以认证 Agent 通道。",
   "noKeysInference": "创建一个推理密钥以认证客户端访问 /v1 代理。",
   "agentKeys": "Agent 密钥",
   "inferenceKeys": "推理密钥",
+  "cliKeys": "CLI 密钥",
+  "cli": { "newKey":"新建 CLI 密钥", "createKey":"创建 CLI 密钥", "createDesc":"使用精确权限管理 ControlPlane 资源。", "secretTitle":"CLI 密钥已创建", "done":"完成", "cancel":"取消", "namePlaceholder":"例如：部署自动化", "permissions":"权限", "permissionHint":"写入包含读取。", "domain":"域", "read":"读取", "write":"写入", "selectAll":"全选", "clearAll":"清除全部", "noKeys":"创建 CLI 密钥以管理资源。", "groups":{"infrastructure":"基础设施", "configuration":"配置", "observability":"可观测性"} },
   "retired": "已退役（{{count}}）",
   "newAgentKey": "新建 Agent 密钥",
   "newInferenceKey": "新建推理密钥",

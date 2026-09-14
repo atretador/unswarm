@@ -4,13 +4,15 @@
   "info": "Las claves API autentican en endpoints específicos — claves de inferencia para el proxy <1>{{proxy}}</1>, claves de agente para el canal de agentes. El acceso utiliza una sesión de cookies separada — una credencial de acceso no es una clave API, y viceversa.",
   "tabs": {
     "inference": "Inferencia",
-    "agent": "Agente"
+    "agent": "Agente", "cli": "CLI"
   },
   "noKeys": "No hay claves de {{scope}} aún",
   "noKeysAgent": "Cree una clave de agente para autenticar contra el canal de agentes.",
   "noKeysInference": "Cree una clave de inferencia para autenticar clientes contra el proxy /v1.",
   "agentKeys": "Claves de agente",
   "inferenceKeys": "Claves de inferencia",
+  "cliKeys": "Claves CLI",
+  "cli": { "newKey":"Nueva clave CLI", "createKey":"Crear clave CLI", "createDesc":"Administre recursos de ControlPlane con permisos precisos.", "secretTitle":"Clave CLI creada", "done":"Listo", "cancel":"Cancelar", "namePlaceholder":"p. ej. Automatización", "permissions":"Permisos", "permissionHint":"Escribir incluye leer.", "domain":"Dominio", "read":"Leer", "write":"Escribir", "selectAll":"Seleccionar todo", "clearAll":"Borrar todo", "noKeys":"Cree una clave CLI para administrar recursos.", "groups":{"infrastructure":"Infraestructura", "configuration":"Configuración", "observability":"Observabilidad"} },
   "retired": "Retiradas ({{count}})",
   "newAgentKey": "Nueva clave de agente",
   "newInferenceKey": "Nueva clave de inferencia",
