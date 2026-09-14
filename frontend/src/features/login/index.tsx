@@ -4,6 +4,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   Activity,
   ArrowRight,
+  ArrowUpRight,
   Eye,
   EyeOff,
   Route,
@@ -14,6 +15,7 @@ import { useAuth } from "../../lib/auth-context";
 import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
 import { Logo } from "../../components/ui/Logo";
+import { LocaleSwitcher } from "../../components/LocaleSwitcher";
 
 /* ── Motion vocabulary (matches --ease-out token) ── */
 const EASE_OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
@@ -256,7 +258,12 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen bg-[var(--color-bg-base)]">
+    <div className="relative flex min-h-screen bg-[var(--color-bg-base)]">
+      {/* Locale switcher — top right */}
+      <div className="absolute right-4 top-4 z-20">
+        <LocaleSwitcher />
+      </div>
+
       {/* ── Left: atmospheric brand panel (desktop only) ── */}
       <aside className="relative hidden w-[52%] shrink-0 overflow-hidden border-r border-[var(--color-border-subtle)] bg-[var(--color-bg-surface)] lg:block xl:w-[56%]">
         {/* Gradient wash + grid + swarm */}
@@ -296,12 +303,14 @@ export default function LoginPage() {
             <motion.h2
               variants={reduceMotion ? itemStatic : item}
               className="font-heading text-3xl font-semibold leading-tight tracking-tight text-[var(--color-text-heading)] xl:text-4xl"
+              style={{ textShadow: "0 1px 4px rgba(0,0,0,0.2)" }}
             >
               {t("marketing.headline")}
             </motion.h2>
             <motion.p
               variants={reduceMotion ? itemStatic : item}
-              className="mt-4 text-base leading-relaxed text-[var(--color-text-muted)]"
+              className="mt-4 text-base leading-relaxed text-[var(--color-text)]"
+              style={{ textShadow: "0 1px 4px rgba(0,0,0,0.25)" }}
             >
               {t("marketing.description")}
             </motion.p>
@@ -316,6 +325,7 @@ export default function LoginPage() {
                   key={label}
                   variants={reduceMotion ? itemStatic : item}
                   className="flex items-center gap-3 text-sm text-[var(--color-text)]"
+                  style={{ textShadow: "0 1px 3px rgba(0,0,0,0.2)" }}
                 >
                   <span className="flex size-7 shrink-0 items-center justify-center rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] text-[var(--color-primary)]">
                     <Icon size={14} strokeWidth={2} />
@@ -326,9 +336,15 @@ export default function LoginPage() {
             </ul>
           </motion.div>
 
-          <p className="text-2xs tracking-wide text-[var(--color-text-muted)]">
-            unswarm · swarm control plane
-          </p>
+          <a
+            href="https://unswarm.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-xs font-medium tracking-wide text-[var(--color-text)] transition-colors duration-[var(--duration-fast)] hover:text-[var(--color-primary)]"
+          >
+            unswarm.dev
+            <ArrowUpRight size={12} aria-hidden="true" />
+          </a>
         </div>
       </aside>
 
@@ -459,6 +475,7 @@ export default function LoginPage() {
           >
             {t("needAccess")}
           </motion.p>
+
         </motion.div>
       </main>
     </div>
