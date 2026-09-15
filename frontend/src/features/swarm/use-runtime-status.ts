@@ -83,7 +83,7 @@ export function useRuntimeStatus(enabled: boolean): RuntimeStatusStatus {
       es.onmessage = (event) => {
         if (disposed || typeof event.data !== "string") return;
         try {
-          const data = JSON.parse(event.data) as RuntimeStatusEvent;
+          JSON.parse(event.data) as RuntimeStatusEvent;
           // Invalidate relevant queries so React Query refetches with fresh data
           queryClientRef.current.invalidateQueries({ queryKey: ["agents"] });
           queryClientRef.current.invalidateQueries({ queryKey: ["registered-containers"] });
