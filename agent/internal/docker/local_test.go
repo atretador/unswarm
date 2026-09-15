@@ -121,13 +121,13 @@ func TestHealthCheck_UnreachablePort(t *testing.T) {
 func TestHealthCheck_HealthyServer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "ok")
+		_, _ = fmt.Fprintln(w, "ok")
 	}))
 	defer srv.Close()
 
 	// Extract port from srv.URL (http://127.0.0.1:PORT)
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	r := HealthCheck(ctx, nil, port)
@@ -198,12 +198,12 @@ func TestDiscoverModels_Success(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(expected)
+		_ = json.NewEncoder(w).Encode(expected)
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	r := DiscoverModels(ctx, nil, port)
@@ -222,12 +222,12 @@ func TestDiscoverModels_Success(t *testing.T) {
 func TestDiscoverModels_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, "internal error")
+		_, _ = fmt.Fprintln(w, "internal error")
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	r := DiscoverModels(ctx, nil, port)
@@ -311,12 +311,12 @@ func TestChatCompletion_Success(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		// Echo the request body back as response
-		w.Write(body)
+		_, _ = w.Write(body)
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	reqBody := json.RawMessage(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
@@ -336,12 +336,12 @@ func TestChatCompletion_Success(t *testing.T) {
 func TestChatCompletion_Server500(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintln(w, `{"error":"internal server error"}`)
+		_, _ = fmt.Fprintln(w, `{"error":"internal server error"}`)
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	r := ChatCompletion(ctx, nil, port, json.RawMessage(`{"model":"gpt-4"}`))
@@ -361,7 +361,7 @@ func TestChatCompletion_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
@@ -427,7 +427,7 @@ func TestChatCompletionStream_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		// Write several chunks to simulate streaming
 		for i := 0; i < 3; i++ {
-			fmt.Fprintf(w, "chunk-%d\n", i)
+			_, _ = fmt.Fprintf(w, "chunk-%d\n", i)
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
@@ -436,7 +436,7 @@ func TestChatCompletionStream_Success(t *testing.T) {
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	var chunks []string
@@ -463,12 +463,12 @@ func TestChatCompletionStream_Success(t *testing.T) {
 func TestChatCompletionStream_ServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintln(w, `{"error":"bad request"}`)
+		_, _ = fmt.Fprintln(w, `{"error":"bad request"}`)
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	err := ChatCompletionStream(ctx, nil, port, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
@@ -487,7 +487,7 @@ func TestChatCompletionStream_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -504,12 +504,12 @@ func TestChatCompletionStream_ContextCancelled(t *testing.T) {
 func TestChatCompletionStream_EmitError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintln(w, "data")
+		_, _ = fmt.Fprintln(w, "data")
 	}))
 	defer srv.Close()
 
 	var port int
-	fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
+	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
 	emitErr := errors.New("emit failed")

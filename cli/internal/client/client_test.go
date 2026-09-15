@@ -740,7 +740,7 @@ func TestSSEAPIKeyHeader(t *testing.T) {
 	}
 }
 
-func TestBodyTruncation(t *testing.T) {
+func TestBodyNoTruncation(t *testing.T) {
 	largeBody := strings.Repeat("x", maxBodyDisplay+100)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -763,7 +763,8 @@ func TestBodyTruncation(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(resp.Body) != maxBodyDisplay {
-		t.Errorf("expected body truncated to %d bytes, got %d", maxBodyDisplay, len(resp.Body))
+	expectedLen := maxBodyDisplay + 100
+	if len(resp.Body) != expectedLen {
+		t.Errorf("expected full body of %d bytes, got %d", expectedLen, len(resp.Body))
 	}
 }

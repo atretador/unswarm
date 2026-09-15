@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { ThemeProvider } from "../lib/theme";
 import { AuthProvider } from "../lib/auth-context";
+import { LocaleProvider } from "../i18n/LocaleContext";
+import "../i18n";
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function createTestQueryClient() {
@@ -26,7 +28,9 @@ export function TestWrapper({
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={initialEntries}>
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            <LocaleProvider>{children}</LocaleProvider>
+          </AuthProvider>
         </ThemeProvider>
       </MemoryRouter>
     </QueryClientProvider>
