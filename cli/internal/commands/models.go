@@ -3,8 +3,11 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/unswarm/cli/internal/client"
@@ -548,11 +551,12 @@ var modelsTestChatCmd = &cobra.Command{
 		system, _ := cmd.Flags().GetString("system")
 		maxTokens, _ := cmd.Flags().GetInt("max-tokens")
 		temperature, _ := cmd.Flags().GetFloat64("temperature")
+		stream, _ := cmd.Flags().GetBool("stream")
 
 		body := map[string]any{
 			"model":   model,
 			"messages": messages,
-			"stream":  false,
+			"stream":  stream,
 		}
 		if system != "" {
 			body["system"] = system
@@ -564,6 +568,13 @@ var modelsTestChatCmd = &cobra.Command{
 			body["temperature"] = temperature
 		}
 
+		isJSON := w.GetFormat() == output.FormatJSON
+
+		if stream {
+			return runTestChatStream(cmd, c, w, body, isJSON)
+		}
+
+		// Buffered (non-streaming) path
 		resp, err := c.Do(cmd.Context(), "POST", "/api/models/test-chat", body)
 		if err != nil {
 			return FormatErrorResponse(w, err)
@@ -579,6 +590,95 @@ var modelsTestChatCmd = &cobra.Command{
 		}
 		return w.Print(result)
 	},
+}
+
+// openaiChunk represents a chunk in OpenAI-style SSE streaming
+type openaiChunk struct {
+	Choices []struct {
+		Delta struct {
+			Content string `json:"content"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
+}
+
+func runTestChatStream(cmd *cobra.Command, c *client.Client, w *output.Writer, body map[string]any, isJSON bool) error {
+	start := time.Now()
+
+	reader, err := c.DoSSE(cmd.Context(), "POST", "/api/models/test-chat", body)
+	if err != nil {
+		// DoSSE already parsed the API error
+		return FormatErrorResponse(w, err)
+	}
+	defer reader.Close()
+
+	var allContent strings.Builder
+	var lastChunk openaiChunk
+
+	for {
+		ev, err := reader.ReadEvent()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return FormatErrorResponse(w, err)
+		}
+
+		// Parse each event's Data as JSON
+		var chunk openaiChunk
+		if err := json.Unmarshal([]byte(ev.Data), &chunk); err != nil {
+			continue // skip non-JSON events (e.g. empty data)
+		}
+
+		// Print content deltas to stderr incrementally
+		if len(chunk.Choices) > 0 {
+			content := chunk.Choices[0].Delta.Content
+			if content != "" {
+				fmt.Fprint(os.Stderr, content)
+				allContent.WriteString(content)
+			}
+		}
+
+		// Track usage from the last chunk that has it
+		if chunk.Usage != nil {
+			lastChunk = chunk
+		}
+	}
+
+	latency := time.Since(start)
+
+	if isJSON {
+		// In JSON mode, output the collected text as a structured result
+		result := map[string]any{
+			"content": allContent.String(),
+		}
+		if lastChunk.Usage != nil {
+			result["usage"] = map[string]any{
+				"promptTokens":     lastChunk.Usage.PromptTokens,
+				"completionTokens": lastChunk.Usage.CompletionTokens,
+				"totalTokens":      lastChunk.Usage.TotalTokens,
+			}
+		}
+		return w.Print(result)
+	}
+
+	// In human-readable mode, print summary to stderr
+	if lastChunk.Usage != nil {
+		tps := float64(0)
+		if latency.Seconds() > 0 {
+			tps = float64(lastChunk.Usage.CompletionTokens) / latency.Seconds()
+		}
+		fmt.Fprintf(os.Stderr, "\n[%d tokens, %dms, %.1f tok/s]\n",
+			lastChunk.Usage.TotalTokens, latency.Milliseconds(), tps)
+	} else {
+		fmt.Fprintf(os.Stderr, "\n[%dms]\n", latency.Milliseconds())
+	}
+
+	return nil
 }
 
 func init() {
@@ -611,6 +711,7 @@ func init() {
 	modelsTestChatCmd.Flags().String("system", "", "System prompt")
 	modelsTestChatCmd.Flags().Int("max-tokens", 32768, "Maximum tokens")
 	modelsTestChatCmd.Flags().Float64("temperature", 0.0, "Temperature")
+	modelsTestChatCmd.Flags().Bool("stream", true, "Stream response using SSE")
 
 	modelsCmd.AddCommand(modelsListCmd)
 	modelsCmd.AddCommand(modelsGetCmd)

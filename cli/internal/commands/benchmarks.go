@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/unswarm/cli/internal/client"
@@ -57,7 +60,70 @@ var benchmarksRunCmd = &cobra.Command{
 		if err := json.Unmarshal(resp.Body, &result); err != nil {
 			return w.Error("parse_error", "failed to parse response", nil, "", 1)
 		}
-		return w.Print(result)
+
+		// If --wait is not set, print and return.
+		wait, _ := cmd.Flags().GetBool("wait")
+		if !wait {
+			return w.Print(result)
+		}
+
+		// Extract benchmark ID from response.
+		id, _ := result["id"].(string)
+		if id == "" {
+			return w.Error("missing_id", "benchmark response did not contain an id", nil, "", 1)
+		}
+
+		// Poll until completed or error, with 5-minute timeout.
+		ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+		defer cancel()
+
+		fmt.Fprint(os.Stderr, "Benchmarking")
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				fmt.Fprintln(os.Stderr)
+				return w.Error("timeout", "benchmark timed out after 5 minutes", nil, "", 1)
+			case <-ticker.C:
+				fmt.Fprint(os.Stderr, ".")
+
+				getResp, err := c.Do(ctx, "GET", "/api/benchmarks/"+id, nil)
+				if err != nil {
+					fmt.Fprintln(os.Stderr)
+					return FormatErrorResponse(w, err)
+				}
+				if getResp.StatusCode >= 400 {
+					fmt.Fprintln(os.Stderr)
+					apiErr := client.ParseError(getResp)
+					return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+				}
+
+				var bm Benchmark
+				if err := json.Unmarshal(getResp.Body, &bm); err != nil {
+					fmt.Fprintln(os.Stderr)
+					return w.Error("parse_error", "failed to parse benchmark response", nil, "", 1)
+				}
+
+				switch bm.Status {
+				case "completed":
+					fmt.Fprintln(os.Stderr)
+					return w.Print(map[string]any{
+						"id":              bm.ID,
+						"modelId":         bm.ModelID,
+						"modelName":       bm.ModelName,
+						"tokensPerSecond": bm.TokensPerSecond,
+						"latencyMs":       bm.LatencyMs,
+						"tokensGenerated": bm.TotalTokens,
+						"status":          bm.Status,
+					})
+				case "error":
+					fmt.Fprintln(os.Stderr)
+					return w.Error("benchmark_error", bm.ErrorMessage, nil, "", 1)
+				}
+			}
+		}
 	},
 }
 
@@ -253,6 +319,7 @@ var benchmarksCompareCmd = &cobra.Command{
 func init() {
 	benchmarksRunCmd.Flags().String("prompt", "", "Benchmark prompt text (optional)")
 	benchmarksRunCmd.Flags().String("prompt-id", "", "Prompt ID to use (optional)")
+	benchmarksRunCmd.Flags().Bool("wait", false, "Wait for benchmark to complete and show results")
 
 	benchmarksListCmd.Flags().String("model", "", "Filter by model name or ID")
 	benchmarksListCmd.Flags().String("status", "", "Filter by status (completed, error)")

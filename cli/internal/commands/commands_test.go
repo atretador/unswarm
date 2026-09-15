@@ -436,6 +436,7 @@ func TestModelsTestChat(t *testing.T) {
 	capture := setupTest(modelsTestChatCmd, server.URL)
 	modelsTestChatCmd.Flags().Set("model", testHexID)
 	modelsTestChatCmd.Flags().Set("messages", `[{"role":"user","content":"Hi"}]`)
+	modelsTestChatCmd.Flags().Set("stream", "false")
 
 	err := modelsTestChatCmd.RunE(modelsTestChatCmd, nil)
 	if err != nil {
@@ -445,6 +446,72 @@ func TestModelsTestChat(t *testing.T) {
 	out := capture()
 	if !strings.Contains(out, "Hello from model") {
 		t.Errorf("expected model response, got: %s", out)
+	}
+
+	// Reset stream flag for other tests
+	modelsTestChatCmd.Flags().Set("stream", "true")
+}
+
+func TestModelsTestChatStreaming(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["stream"] != true {
+			t.Errorf("expected stream=true, got %v", body["stream"])
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("streaming not supported")
+		}
+
+		// Send SSE events
+		events := []string{
+			`{"choices":[{"delta":{"content":"Hello"}}]}`,
+			`{"choices":[{"delta":{"content":" from"}}]}`,
+			`{"choices":[{"delta":{"content":" model!"}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8}}`,
+		}
+		for _, ev := range events {
+			fmt.Fprintf(w, "data: %s\n\n", ev)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	capture := setupTest(modelsTestChatCmd, server.URL)
+	modelsTestChatCmd.Flags().Set("model", testHexID)
+	modelsTestChatCmd.Flags().Set("messages", `[{"role":"user","content":"Hi"}]`)
+	modelsTestChatCmd.Flags().Set("stream", "true")
+
+	err := modelsTestChatCmd.RunE(modelsTestChatCmd, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := capture()
+	// In JSON mode, the streaming result is collected and printed as JSON
+	if !strings.Contains(out, "Hello from model!") {
+		t.Errorf("expected streamed content in output, got: %s", out)
+	}
+	if !strings.Contains(out, "totalTokens") || !strings.Contains(out, "8") {
+		t.Errorf("expected usage data in output, got: %s", out)
+	}
+
+	// Reset for other tests
+	modelsTestChatCmd.Flags().Set("stream", "true")
+}
+
+func TestModelsTestChatStreamFlag(t *testing.T) {
+	// Verify the --stream flag is registered and defaults to true
+	flag := modelsTestChatCmd.Flags().Lookup("stream")
+	if flag == nil {
+		t.Fatal("expected --stream flag to be registered")
+	}
+	if flag.DefValue != "true" {
+		t.Errorf("expected --stream default to be 'true', got '%s'", flag.DefValue)
 	}
 }
 
@@ -3922,6 +3989,10 @@ func TestRouterProfilesSetActiveEntry(t *testing.T) {
 			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
 			return
 		}
+		if r.URL.Path == "/api/models" {
+			fmt.Fprint(w, `[{"id": "m2", "displayName": "m2"}]`)
+			return
+		}
 		if r.Method != "PATCH" {
 			t.Errorf("expected PATCH, got %s", r.Method)
 		}
@@ -3953,6 +4024,10 @@ func TestRouterProfilesSetThinkingEffort(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/router-profiles" && r.Method == "GET" {
 			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
+			return
+		}
+		if r.URL.Path == "/api/models" {
+			fmt.Fprint(w, `[{"id": "m1", "displayName": "m1"}]`)
 			return
 		}
 		if r.Method != "PATCH" {
@@ -4025,6 +4100,153 @@ func TestRouterProfilesSubcommandsRegistered(t *testing.T) {
 		if !names[name] {
 			t.Errorf("expected subcommand %q to be registered", name)
 		}
+	}
+}
+
+// ==================== Router Profile Name Resolution Tests ====================
+
+func TestRouterProfileSetActiveEntryResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/router-profiles":
+			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
+		case "/api/models":
+			fmt.Fprint(w, `[{"id": "`+testHexID+`", "displayName": "Llama 7B"}]`)
+		case "/api/router-profiles/rp1/active-entry":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			if body["activeModelId"] != testHexID {
+				t.Errorf("expected activeModelId=%s, got %v", testHexID, body["activeModelId"])
+			}
+			fmt.Fprint(w, `{"id": "rp1", "activeModelId": "`+testHexID+`"}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	capture := setupTest(routerProfilesSetActiveEntryCmd, server.URL)
+	routerProfilesSetActiveEntryCmd.Flags().Set("model-id", "Llama 7B")
+
+	err := routerProfilesSetActiveEntryCmd.RunE(routerProfilesSetActiveEntryCmd, []string{"default"})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := capture()
+	if !strings.Contains(out, testHexID) {
+		t.Errorf("expected resolved model ID %s in output, got: %s", testHexID, out)
+	}
+}
+
+func TestRouterProfileSetThinkingEffortValidation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Handle profile resolver
+		if r.URL.Path == "/api/router-profiles" {
+			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
+			return
+		}
+		// Default: empty list (model resolver won't be called for hex IDs)
+		fmt.Fprint(w, `[]`)
+	}))
+	defer server.Close()
+
+	// Test with invalid effort value — use a hex ID to bypass model name resolution
+	capture := setupTest(routerProfilesSetThinkingEffortCmd, server.URL)
+	routerProfilesSetThinkingEffortCmd.Flags().Set("model-id", testHexID)
+	routerProfilesSetThinkingEffortCmd.Flags().Set("effort", "invalid-value")
+
+	err := routerProfilesSetThinkingEffortCmd.RunE(routerProfilesSetThinkingEffortCmd, []string{"default"})
+	if err == nil {
+		t.Fatal("expected error for invalid effort value")
+	}
+
+	_ = capture()
+	if !strings.Contains(err.Error(), "invalid_effort") {
+		t.Errorf("expected invalid_effort error, got: %s", err.Error())
+	}
+}
+
+func TestRouterProfileSetThinkingEffortValidValues(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/router-profiles":
+			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
+		case "/api/models":
+			fmt.Fprint(w, `[{"id": "`+testHexID+`", "displayName": "Llama 7B"}]`)
+		case "/api/router-profiles/rp1/thinking-effort":
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			fmt.Fprintf(w, `{"id": "rp1", "thinkingEffortOverride": "%v"}`, body["thinkingEffortOverride"])
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	for _, effort := range []string{"low", "medium", "high"} {
+		capture := setupTest(routerProfilesSetThinkingEffortCmd, server.URL)
+		routerProfilesSetThinkingEffortCmd.Flags().Set("model-id", "Llama 7B")
+		routerProfilesSetThinkingEffortCmd.Flags().Set("effort", effort)
+
+		err := routerProfilesSetThinkingEffortCmd.RunE(routerProfilesSetThinkingEffortCmd, []string{"default"})
+		if err != nil {
+			t.Fatalf("expected no error for effort=%s, got: %v", effort, err)
+		}
+
+		out := capture()
+		if !strings.Contains(out, effort) {
+			t.Errorf("expected effort %s in output, got: %s", effort, out)
+		}
+	}
+}
+
+func TestRouterProfileAddEntryThinkingEffort(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Handle profile name resolution
+		if r.URL.Path == "/api/router-profiles" && r.Method == "GET" {
+			fmt.Fprint(w, `[{"id": "rp1", "name": "default"}]`)
+			return
+		}
+		// Handle profile fetch
+		if r.URL.Path == "/api/router-profiles/rp1" && r.Method == "GET" {
+			fmt.Fprint(w, `{"id": "rp1", "name": "default", "entries": []}`)
+			return
+		}
+		// Handle profile update
+		if r.URL.Path == "/api/router-profiles/rp1" && r.Method == "PUT" {
+			var body map[string]any
+			json.NewDecoder(r.Body).Decode(&body)
+			entries, _ := body["entries"].([]any)
+			if len(entries) == 1 {
+				entry, _ := entries[0].(map[string]any)
+				if entry["thinkingEffortOverride"] != "high" {
+					t.Errorf("expected thinkingEffortOverride=high, got %v", entry["thinkingEffortOverride"])
+				}
+			}
+			fmt.Fprint(w, `{"id": "rp1", "name": "default", "entries": [{"modelId": "`+testHexID+`", "thinkingEffortOverride": "high"}]}`)
+			return
+		}
+		w.WriteHeader(404)
+	}))
+	defer server.Close()
+
+	capture := setupTest(routerProfilesAddEntryCmd, server.URL)
+	routerProfilesAddEntryCmd.Flags().Set("model", testHexID)
+	routerProfilesAddEntryCmd.Flags().Set("thinking-effort", "high")
+
+	err := routerProfilesAddEntryCmd.RunE(routerProfilesAddEntryCmd, []string{"default"})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := capture()
+	if !strings.Contains(out, "thinkingEffortOverride") {
+		t.Errorf("expected thinkingEffortOverride in output, got: %s", out)
 	}
 }
 
@@ -5236,5 +5458,388 @@ func TestQueueListJSONOutput(t *testing.T) {
 	out := capture()
 	if !strings.Contains(out, "item-1") || !strings.Contains(out, "waiting") {
 		t.Errorf("expected queue item data in output, got: %s", out)
+	}
+}
+
+// ==================== Benchmarks Wait Tests ====================
+
+func TestBenchmarksRunWaitFlag(t *testing.T) {
+	flag := benchmarksRunCmd.Flags().Lookup("wait")
+	if flag == nil {
+		t.Fatal("expected --wait flag to be registered")
+	}
+	if flag.DefValue != "false" {
+		t.Errorf("expected --wait default to be 'false', got '%s'", flag.DefValue)
+	}
+}
+
+func TestBenchmarksRunWait(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		callCount++
+		switch r.URL.Path {
+		case "/api/benchmarks/run":
+			fmt.Fprint(w, `{"id": "bm-wait-1", "status": "running"}`)
+		case "/api/benchmarks/bm-wait-1":
+			// First poll: still running, second poll: completed
+			if callCount <= 2 {
+				fmt.Fprint(w, `{"id": "bm-wait-1", "modelId": "m1", "modelName": "gpt-4o", "tokensPerSecond": 55.3, "latencyMs": 800, "totalTokens": 340, "status": "running"}`)
+			} else {
+				fmt.Fprint(w, `{"id": "bm-wait-1", "modelId": "m1", "modelName": "gpt-4o", "tokensPerSecond": 55.3, "latencyMs": 800, "totalTokens": 340, "status": "completed"}`)
+			}
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	// Use a fresh command to avoid flag state leaking.
+	cmd := &cobra.Command{
+		Use:  "run",
+		RunE: benchmarksRunCmd.RunE,
+	}
+	cmd.Flags().String("prompt", "", "")
+	cmd.Flags().String("prompt-id", "", "")
+	cmd.Flags().Bool("wait", false, "")
+
+	capture := setupTest(cmd, server.URL)
+	cmd.Flags().Set("wait", "true")
+
+	err := cmd.RunE(cmd, []string{testHexID})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := capture()
+	if !strings.Contains(out, "bm-wait-1") {
+		t.Errorf("expected benchmark ID in output, got: %s", out)
+	}
+	if !strings.Contains(out, "completed") {
+		t.Errorf("expected completed status in output, got: %s", out)
+	}
+}
+
+// ==================== Agent Stats Tests ====================
+
+func TestAgentStats(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{
+			"name": "agent-1",
+			"telemetry": {
+				"host": {"cpuPercent": 45.2, "ramPercent": 62.1, "ramUsedMb": 20000, "ramTotalMb": 32768},
+				"gpus": [{"index": 0, "name": "RTX 4090", "corePercent": 78.0, "memoryPercent": 50.2, "memoryUsedMb": 12345, "memoryTotalMb": 24564}],
+				"containers": {"abc12345": {"cpuPercent": 45.0, "ramPercent": 33.0, "ramUsedMb": 2048, "ramTotalMb": 6144}}
+			}
+		}]`)
+	}))
+	defer server.Close()
+
+	capture := setupTestFmt(agentsStatsCmd, server.URL, output.FormatTable)
+	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"agent-1"})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	out := capture()
+	if !strings.Contains(out, "CPU") {
+		t.Errorf("expected CPU resource in output, got: %s", out)
+	}
+	if !strings.Contains(out, "RAM") {
+		t.Errorf("expected RAM resource in output, got: %s", out)
+	}
+	if !strings.Contains(out, "RTX 4090") {
+		t.Errorf("expected GPU name in output, got: %s", out)
+	}
+	if !strings.Contains(out, "45.2%") {
+		t.Errorf("expected CPU percent in output, got: %s", out)
+	}
+	if !strings.Contains(out, "abc12345") {
+		t.Errorf("expected container ID in output, got: %s", out)
+	}
+}
+
+func TestAgentStatsNotFound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"name": "agent-1"}]`)
+	}))
+	defer server.Close()
+
+	capture := setupTest(agentsStatsCmd, server.URL)
+	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"nonexistent"})
+	if err == nil {
+		t.Fatal("expected error for nonexistent agent")
+	}
+
+	_ = capture()
+}
+
+func TestAgentStatsNoTelemetry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"name": "agent-no-tel"}]`)
+	}))
+	defer server.Close()
+
+	capture := setupTest(agentsStatsCmd, server.URL)
+	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"agent-no-tel"})
+	if err == nil {
+		t.Fatal("expected error for agent with no telemetry")
+	}
+
+	_ = capture()
+}
+
+func TestAgentStatsSubcommandRegistered(t *testing.T) {
+	cmds := agentsCmd.Commands()
+	names := make(map[string]bool)
+	for _, c := range cmds {
+		names[c.Name()] = true
+	}
+	if !names["stats"] {
+		t.Error("expected 'stats' subcommand to be registered")
+	}
+}
+
+// ==================== Metrics Cost Tests ====================
+
+func TestMetricsCost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items": [
+			{"model": "gpt-4o", "promptTokens": 1000, "completionTokens": 500, "provider": "openai"},
+			{"model": "gpt-4o", "promptTokens": 2000, "completionTokens": 1000, "provider": "openai"},
+			{"model": "llama-7b", "promptTokens": 5000, "completionTokens": 3000, "provider": "local"}
+		]}`)
+	}))
+	defer server.Close()
+
+	capture := setupTestFmt(metricsCostCmd, server.URL, output.FormatTable)
+	metricsCostCmd.Flags().Set("rates", `{"gpt-4o":{"prompt":0.0025,"completion":0.01}}`)
+
+	err := metricsCostCmd.RunE(metricsCostCmd, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	metricsCostCmd.Flags().Set("rates", "")
+
+	out := capture()
+	if !strings.Contains(out, "gpt-4o") {
+		t.Errorf("expected gpt-4o in output, got: %s", out)
+	}
+	if !strings.Contains(out, "llama-7b") {
+		t.Errorf("expected llama-7b in output, got: %s", out)
+	}
+	// gpt-4o: (3000 * 0.0025 + 1500 * 0.01) / 1000 = (7.5 + 15) / 1000 = 0.0225
+	if !strings.Contains(out, "$0.02") {
+		t.Errorf("expected cost calculation in output, got: %s", out)
+	}
+	if !strings.Contains(out, "TOTAL") {
+		t.Errorf("expected TOTAL row in output, got: %s", out)
+	}
+}
+
+func TestMetricsCostRequiresRates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"items": []}`)
+	}))
+	defer server.Close()
+
+	capture := setupTest(metricsCostCmd, server.URL)
+	// Make sure rates is not set.
+	metricsCostCmd.Flags().Set("rates", "")
+	err := metricsCostCmd.RunE(metricsCostCmd, nil)
+	if err == nil {
+		t.Fatal("expected error when --rates not provided")
+	}
+
+	_ = capture()
+}
+
+func TestMetricsCostSubcommandRegistered(t *testing.T) {
+	cmds := metricsCmd.Commands()
+	names := make(map[string]bool)
+	for _, c := range cmds {
+		names[c.Name()] = true
+	}
+	if !names["cost"] {
+		t.Error("expected 'cost' subcommand to be registered")
+	}
+}
+
+// ==================== Logs Follow SSE Tests ====================
+
+func TestLogsFollowSSE(t *testing.T) {
+	// Start a mock SSE server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/logs/stream" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				t.Fatal("streaming not supported")
+			}
+
+			// Send two SSE events then close
+			events := []string{
+				`{"id":"1","timestamp":"2025-06-01T00:00:00Z","level":"Info","source":"router","message":"first log line"}`,
+				`{"id":"2","timestamp":"2025-06-01T00:00:01Z","level":"Error","source":"auth","message":"second log line"}`,
+			}
+			for _, ev := range events {
+				fmt.Fprintf(w, "data: %s\n\n", ev)
+				flusher.Flush()
+			}
+			// Signal done
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+		} else {
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	capture := setupTestFmt(logsFollowCmd, server.URL, output.FormatJSON)
+	// Override output format to non-JSON to test formatted output
+	cfg := &client.Config{BaseURL: server.URL, OutputFmt: "", Color: false}
+	c := client.New(cfg, client.WithAPIKey("test-key"))
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, clientKey, c)
+	w := output.NewWriter(output.FormatTable, true, false)
+	ctx = context.WithValue(ctx, outputKey, w)
+	logsFollowCmd.SetContext(ctx)
+
+	// Set short interval for fallback
+	logsFollowCmd.Flags().Set("interval", "1")
+
+	// The SSE path returns [DONE] which makes the reader return io.EOF,
+	// so it should break out of the SSE loop and try polling fallback.
+	// With the server still up, it'll hit /api/logs for polling too.
+	done := make(chan error, 1)
+	go func() {
+		done <- logsFollowCmd.RunE(logsFollowCmd, nil)
+	}()
+
+	// Let it run briefly then close server to force exit
+	time.Sleep(2 * time.Second)
+	server.Close()
+	time.Sleep(2 * time.Second)
+
+	_ = capture()
+
+	select {
+	case <-done:
+	default:
+		// Command may still be running polling fallback - that's ok
+	}
+}
+
+func TestLogsFollowFallback(t *testing.T) {
+	// Server returns 404 for SSE endpoint, but serves polling endpoint
+	pollCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/logs/stream" {
+			w.WriteHeader(404)
+			return
+		}
+		pollCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"timestamp":"2025-06-01T00:00:00Z","level":"info","source":"router","message":"poll entry"}]`)
+	}))
+	defer server.Close()
+
+	capture := setupTestFmt(logsFollowCmd, server.URL, output.FormatJSON)
+	cfg := &client.Config{BaseURL: server.URL, OutputFmt: "", Color: false}
+	c := client.New(cfg, client.WithAPIKey("test-key"))
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, clientKey, c)
+	w := output.NewWriter(output.FormatTable, true, false)
+	ctx = context.WithValue(ctx, outputKey, w)
+	logsFollowCmd.SetContext(ctx)
+
+	logsFollowCmd.Flags().Set("interval", "1")
+
+	done := make(chan error, 1)
+	go func() {
+		done <- logsFollowCmd.RunE(logsFollowCmd, nil)
+	}()
+
+	// Let it poll once
+	time.Sleep(2 * time.Second)
+	server.Close()
+	time.Sleep(2 * time.Second)
+
+	_ = capture()
+
+	if !pollCalled {
+		t.Error("expected polling fallback to be used when SSE returns 404")
+	}
+}
+
+// ==================== Health Summary Tests ====================
+
+func TestHealthSummaryFlag(t *testing.T) {
+	flag := healthCmd.Flags().Lookup("summary")
+	if flag == nil {
+		t.Fatal("expected --summary flag to be registered on health command")
+	}
+	if flag.DefValue != "false" {
+		t.Errorf("expected --summary default to be 'false', got '%s'", flag.DefValue)
+	}
+}
+
+func TestHealthSummaryOutput(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/containers/registered":
+			fmt.Fprint(w, `[{"id":"rt1","status":"ready","displayName":"GPU RT"},{"id":"rt2","status":"error","displayName":"CPU RT"}]`)
+		case "/api/containers":
+			fmt.Fprint(w, `[{"id":"c1","runtimeId":"rt1","status":"running"},{"id":"c2","runtimeId":"rt1","status":"running"},{"id":"c3","runtimeId":"rt2","status":"stopped"}]`)
+		case "/api/stats":
+			fmt.Fprint(w, `{"totalRequests":100,"containersRunning":2,"avgLatencyMs":450,"requestsPerMinute":12.5}`)
+		case "/api/queue/snapshot":
+			fmt.Fprint(w, `{"depth":2,"pending":1,"holding":0,"processing":1}`)
+		default:
+			w.WriteHeader(404)
+		}
+	}))
+	defer server.Close()
+
+	capture := setupTest(healthCmd, server.URL)
+	healthCmd.Flags().Set("summary", "true")
+
+	err := healthCmd.RunE(healthCmd, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	healthCmd.Flags().Set("summary", "false")
+
+	out := capture()
+	// Verify the summary line contains expected sections
+	if !strings.Contains(out, "Runtimes:") {
+		t.Errorf("expected 'Runtimes:' section in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "Containers:") {
+		t.Errorf("expected 'Containers:' section in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "Queue:") {
+		t.Errorf("expected 'Queue:' section in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "Latency:") {
+		t.Errorf("expected 'Latency:' section in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "RPM:") {
+		t.Errorf("expected 'RPM:' section in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "450") {
+		t.Errorf("expected latency value '450' in summary, got: %s", out)
+	}
+	if !strings.Contains(out, "12.5") {
+		t.Errorf("expected RPM value '12.5' in summary, got: %s", out)
 	}
 }

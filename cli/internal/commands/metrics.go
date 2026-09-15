@@ -204,6 +204,29 @@ var metricsSummaryCmd = &cobra.Command{
 				helpers.IntStr(b["avgLatencyMs"]),
 			})
 		}
+
+		// Add a sparkline row for totalTokens across buckets in table mode
+		if w.GetFormat() == output.FormatTable && len(buckets) > 1 {
+			tokenVals := make([]float64, 0, len(buckets))
+			for _, b := range buckets {
+				if v, ok := b["totalTokens"]; ok {
+					tokenVals = append(tokenVals, float64(costToInt(v)))
+				}
+			}
+			if len(tokenVals) > 0 {
+				headers = append(headers, "TREND")
+				spark := SparkLine(tokenVals, len(buckets))
+				// Pad spark to match row count — add trend to each row
+				for i := range rows {
+					if i == 0 {
+						rows[i] = append(rows[i], spark)
+					} else {
+						rows[i] = append(rows[i], "")
+					}
+				}
+			}
+		}
+
 		return w.PrintTable(headers, rows)
 	},
 }
@@ -330,6 +353,22 @@ var metricsTotalsCmd = &cobra.Command{
 			{"Completion Tokens", helpers.IntStr(totals["completionTokens"])},
 			{"Avg Latency", helpers.IntStr(totals["avgLatencyMs"])},
 		}
+
+		// Add sparkline for requestsPerMinute if available and in table mode
+		if w.GetFormat() == output.FormatTable {
+			if rpmArr, ok := totals["requestsPerMinute"].([]any); ok && len(rpmArr) > 0 {
+				vals := make([]float64, 0, len(rpmArr))
+				for _, v := range rpmArr {
+					if f, ok := v.(float64); ok {
+						vals = append(vals, f)
+					}
+				}
+				if len(vals) > 0 {
+					rows = append(rows, []string{"RPM Spark", SparkLine(vals, 0)})
+				}
+			}
+		}
+
 		return w.PrintTable(headers, rows)
 	},
 }
@@ -531,6 +570,184 @@ var metricsPurgeCmd = &cobra.Command{
 	},
 }
 
+// --- metrics cost ---
+
+var metricsCostCmd = &cobra.Command{
+	Use:   "cost",
+	Short: "Estimate cost of usage based on token rates",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c := GetClient(cmd)
+		w := GetOutput(cmd)
+
+		// --rates is required.
+		if !cmd.Flags().Changed("rates") {
+			return w.Error("missing_rates", "--rates flag is required", nil, "provide a JSON object mapping model names to rates", 1)
+		}
+		ratesJSON, _ := cmd.Flags().GetString("rates")
+		var rates map[string]struct {
+			Prompt     float64 `json:"prompt"`
+			Completion float64 `json:"completion"`
+		}
+		if err := json.Unmarshal([]byte(ratesJSON), &rates); err != nil {
+			return w.Error("invalid_rates", "failed to parse --rates JSON: "+err.Error(), nil, "ensure valid JSON with model rates (USD per 1000 tokens)", 1)
+		}
+
+		// Fetch usage.
+		path := "/api/metrics/usage"
+		params := buildQueryString(cmd, "from", "to", "provider", "model")
+		if params != "" {
+			path += "?" + params
+		}
+		resp, err := c.Do(cmd.Context(), "GET", path, nil)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if resp.StatusCode >= 400 {
+			apiErr := client.ParseError(resp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+
+		var result map[string]any
+		if err := json.Unmarshal(resp.Body, &result); err != nil {
+			return w.Error("parse_error", "failed to parse response", nil, "", 1)
+		}
+
+		items, _ := result["items"].([]any)
+		if items == nil {
+			items = []any{}
+		}
+
+		// Aggregate by model.
+		type modelAgg struct {
+			Requests         int
+			PromptTokens     int
+			CompletionTokens int
+			Cost             float64
+		}
+		aggs := make(map[string]*modelAgg)
+		var modelOrder []string
+		totalCost := 0.0
+		totalPrompt := 0
+		totalCompletion := 0
+		totalRequests := 0
+
+		for _, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			model := helpers.StrOrDash(m, "model")
+			if model == "-" {
+				model = "(unknown)"
+			}
+			promptTokens := costToInt(m["promptTokens"])
+			completionTokens := costToInt(m["completionTokens"])
+
+			agg, exists := aggs[model]
+			if !exists {
+				agg = &modelAgg{}
+				aggs[model] = agg
+				modelOrder = append(modelOrder, model)
+			}
+			agg.Requests++
+			agg.PromptTokens += promptTokens
+			agg.CompletionTokens += completionTokens
+
+			// Compute cost if rate is available.
+			if rate, ok := rates[model]; ok {
+				cost := (float64(promptTokens)*rate.Prompt + float64(completionTokens)*rate.Completion) / 1000.0
+				agg.Cost += cost
+				totalCost += cost
+			}
+			totalPrompt += promptTokens
+			totalCompletion += completionTokens
+			totalRequests++
+		}
+
+		// Build JSON output if requested.
+		if w.GetFormat() == output.FormatJSON {
+			modelCosts := make([]map[string]any, 0, len(modelOrder))
+			for _, model := range modelOrder {
+				agg := aggs[model]
+				entry := map[string]any{
+					"model":            model,
+					"requests":         agg.Requests,
+					"promptTokens":     agg.PromptTokens,
+					"completionTokens": agg.CompletionTokens,
+					"estimatedCost":    agg.Cost,
+				}
+				modelCosts = append(modelCosts, entry)
+			}
+			return w.Print(map[string]any{
+				"models": modelCosts,
+				"totals": map[string]any{
+					"requests":         totalRequests,
+					"promptTokens":     totalPrompt,
+					"completionTokens": totalCompletion,
+					"estimatedCost":    totalCost,
+				},
+			})
+		}
+
+		// Table mode.
+		headers := []string{"MODEL", "REQUESTS", "PROMPT TKNS", "COMPL TKNS", "EST. COST"}
+		rows := make([][]string, 0, len(modelOrder)+1)
+		for _, model := range modelOrder {
+			agg := aggs[model]
+			rows = append(rows, []string{
+				model,
+				strconv.Itoa(agg.Requests),
+				costFormatTokenCount(agg.PromptTokens),
+				costFormatTokenCount(agg.CompletionTokens),
+				fmt.Sprintf("$%.2f", agg.Cost),
+			})
+		}
+		// Totals row
+		rows = append(rows, []string{
+			"TOTAL",
+			strconv.Itoa(totalRequests),
+			costFormatTokenCount(totalPrompt),
+			costFormatTokenCount(totalCompletion),
+			fmt.Sprintf("$%.2f", totalCost),
+		})
+		return w.PrintTable(headers, rows)
+	},
+}
+
+// costToInt extracts an int from various numeric types.
+func costToInt(v any) int {
+	if v == nil {
+		return 0
+	}
+	switch val := v.(type) {
+	case float64:
+		return int(val)
+	case int:
+		return val
+	case json.Number:
+		n, _ := val.Int64()
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+// costFormatTokenCount formats an int with comma separators.
+func costFormatTokenCount(n int) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	result := make([]byte, 0, len(s)+(len(s)-1)/3)
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			result = append(result, ',')
+		}
+		result = append(result, byte(c))
+	}
+	return string(result)
+}
+
 func init() {
 	// Usage flags
 	metricsUsageCmd.Flags().String("from", "", "Start time (ISO 8601)")
@@ -586,6 +803,13 @@ func init() {
 	// Purge flags
 	metricsPurgeCmd.Flags().Int("older-days", 0, "Purge data older than N days")
 
+	// Cost flags
+	metricsCostCmd.Flags().String("from", "", "Start time (ISO 8601)")
+	metricsCostCmd.Flags().String("to", "", "End time (ISO 8601)")
+	metricsCostCmd.Flags().String("provider", "", "Filter by provider")
+	metricsCostCmd.Flags().String("model", "", "Filter by model")
+	metricsCostCmd.Flags().String("rates", "", "JSON rates per model (USD per 1000 tokens)")
+
 	metricsCmd.AddCommand(metricsUsageCmd)
 	metricsCmd.AddCommand(metricsTodayCmd)
 	metricsCmd.AddCommand(metricsLastCmd)
@@ -598,6 +822,7 @@ func init() {
 	metricsCmd.AddCommand(metricsApiKeyUsageCmd)
 	metricsCmd.AddCommand(metricsProviderCatalogCmd)
 	metricsCmd.AddCommand(metricsPurgeCmd)
+	metricsCmd.AddCommand(metricsCostCmd)
 
 	rootCmd.AddCommand(metricsCmd)
 }

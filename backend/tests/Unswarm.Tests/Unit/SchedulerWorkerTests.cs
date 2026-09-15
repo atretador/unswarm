@@ -295,12 +295,14 @@ public sealed class SchedulerWorkerTests : IDisposable
         await channel.Writer.WriteAsync(req1);
         await channel.Writer.WriteAsync(req2);
 
-        // Both should fail with InvalidOperationException
+        // Both should fail with InvalidOperationException containing the detailed error
         var ex1 = await Assert.ThrowsAsync<InvalidOperationException>(() => req1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Contains("not available", ex1.Message);
+        Assert.Contains("Container start failed", ex1.Message);
+        Assert.Contains("Image not found", ex1.Message);
 
         var ex2 = await Assert.ThrowsAsync<InvalidOperationException>(() => req2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(5)));
-        Assert.Contains("not available", ex2.Message);
+        Assert.Contains("Container start failed", ex2.Message);
+        Assert.Contains("Image not found", ex2.Message);
 
         cts.Cancel();
         await worker.WaitForShutdownAsync();

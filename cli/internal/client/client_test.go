@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -412,6 +413,330 @@ func TestMaxRetriesExhausted(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Errorf("expected status 502, got %d", resp.StatusCode)
+	}
+}
+
+// ==================== SSE Tests ====================
+
+func TestSSEBasicEvent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		fmt.Fprint(w, "event: message\ndata: Hello, World!\nid: 1\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", map[string]string{"prompt": "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error reading event: %v", err)
+	}
+	if ev.Event != "message" {
+		t.Errorf("expected event type 'message', got '%s'", ev.Event)
+	}
+	if ev.Data != "Hello, World!" {
+		t.Errorf("expected data 'Hello, World!', got '%s'", ev.Data)
+	}
+	if ev.ID != "1" {
+		t.Errorf("expected id '1', got '%s'", ev.ID)
+	}
+
+	// Next read should be EOF (stream ended)
+	_, err = reader.ReadEvent()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+}
+
+func TestSSEMultipleEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: first\n\n")
+		fmt.Fprint(w, "data: second\n\n")
+		fmt.Fprint(w, "event: done\ndata: finished\nid: 3\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	// First event
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Data != "first" {
+		t.Errorf("expected 'first', got '%s'", ev.Data)
+	}
+
+	// Second event
+	ev, err = reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Data != "second" {
+		t.Errorf("expected 'second', got '%s'", ev.Data)
+	}
+
+	// Third event
+	ev, err = reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Event != "done" {
+		t.Errorf("expected event 'done', got '%s'", ev.Event)
+	}
+	if ev.Data != "finished" {
+		t.Errorf("expected 'finished', got '%s'", ev.Data)
+	}
+	if ev.ID != "3" {
+		t.Errorf("expected id '3', got '%s'", ev.ID)
+	}
+
+	// Stream ended
+	_, err = reader.ReadEvent()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+}
+
+func TestSSEMultilineData(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: line1\ndata: line2\ndata: line3\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Data != "line1\nline2\nline3" {
+		t.Errorf("expected multiline data 'line1\\nline2\\nline3', got '%s'", ev.Data)
+	}
+}
+
+func TestSSECommentSkipped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": this is a comment\ndata: real data\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Data != "real data" {
+		t.Errorf("expected 'real data', got '%s'", ev.Data)
+	}
+}
+
+func TestSSEDoneSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: hello\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	// First event should succeed
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Data != "hello" {
+		t.Errorf("expected 'hello', got '%s'", ev.Data)
+	}
+
+	// [DONE] sentinel should return io.EOF
+	_, err = reader.ReadEvent()
+	if err != io.EOF {
+		t.Errorf("expected io.EOF for [DONE], got %v", err)
+	}
+}
+
+func TestSSERetryField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "retry: 5000\ndata: with retry\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer reader.Close()
+
+	ev, err := reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.Retry != 5000 {
+		t.Errorf("expected retry 5000, got %d", ev.Retry)
+	}
+}
+
+func TestSSEClose(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		flusher := w.(http.Flusher)
+		fmt.Fprint(w, "data: partial\n\n")
+		flusher.Flush()
+		// Block until client disconnects
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg, WithTimeout(5*time.Second))
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Read one event
+	_, err = reader.ReadEvent()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Close should succeed
+	if err := reader.Close(); err != nil {
+		t.Errorf("expected no error on close, got %v", err)
+	}
+}
+
+func TestSSEError4xxReturnsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":"unauthorized","message":"invalid API key","hint":"check your key"}`)
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err == nil {
+		reader.Close()
+		t.Fatal("expected error for 401 response")
+	}
+
+	var apiErr *APIError
+	if !errorAs(err, &apiErr) {
+		// Try direct type assertion
+		if ae, ok := err.(*APIError); ok {
+			apiErr = ae
+		} else {
+			t.Fatalf("expected APIError, got %T: %v", err, err)
+		}
+	}
+	if apiErr.ErrCode != "unauthorized" {
+		t.Errorf("expected error code 'unauthorized', got '%s'", apiErr.ErrCode)
+	}
+}
+
+func TestSSE5xxReturnsAPIError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"internal_error","message":"server crashed"}`)
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg)
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err == nil {
+		reader.Close()
+		t.Fatal("expected error for 500 response")
+	}
+
+	if !strings.Contains(err.Error(), "server crashed") {
+		t.Errorf("expected error message to contain 'server crashed', got '%s'", err.Error())
+	}
+}
+
+func TestSSEAPIKeyHeader(t *testing.T) {
+	var receivedKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedKey = r.Header.Get("X-Api-Key")
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: ok\n\n")
+	}))
+	defer server.Close()
+
+	cfg := &Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
+	c := New(cfg, WithAPIKey("sse-test-key"))
+	ctx := context.Background()
+
+	reader, err := c.DoSSE(ctx, "POST", "/", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	reader.Close()
+
+	if receivedKey != "sse-test-key" {
+		t.Errorf("expected API key 'sse-test-key', got '%s'", receivedKey)
 	}
 }
 

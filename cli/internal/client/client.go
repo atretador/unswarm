@@ -507,6 +507,210 @@ func (c *Client) DoMultipart(ctx context.Context, method, path, fieldName, fileP
 	}, nil
 }
 
+// SSEEvent represents a single Server-Sent Event.
+type SSEEvent struct {
+	Event string // event type (from "event:" field)
+	Data  string // payload (from "data:" field, multi-line concatenated with \n)
+	ID    string // event ID (from "id:" field)
+	Retry int    // reconnection time in ms (from "retry:" field), 0 if not set
+}
+
+// SSEReader wraps an http.Response.Body to read SSE events incrementally.
+type SSEReader struct {
+	resp     *http.Response
+	body     io.ReadCloser
+	buf      []byte
+	event    *SSEEvent // current event being parsed
+}
+
+// ReadEvent reads the next SSE event from the stream.
+// Returns the parsed event or io.EOF when the stream ends.
+func (r *SSEReader) ReadEvent() (*SSEEvent, error) {
+	for {
+		// Read more data from the body into the buffer
+		if len(r.buf) == 0 {
+			chunk := make([]byte, 4096)
+			n, err := r.body.Read(chunk)
+			if n > 0 {
+				r.buf = append(r.buf, chunk[:n]...)
+			}
+			if err == io.EOF && n == 0 {
+				// If we have a partial event, flush it
+				if r.event != nil {
+					ev := r.event
+					r.event = nil
+					return ev, nil
+				}
+				return nil, io.EOF
+			}
+			if err != nil && err != io.EOF {
+				return nil, err
+			}
+		}
+
+		// Find the next newline
+		idx := bytes.IndexByte(r.buf, '\n')
+		if idx == -1 {
+			// No complete line yet; try reading more if buffer is getting large
+			if len(r.buf) > 64*1024 {
+				return nil, fmt.Errorf("SSE line too long")
+			}
+			continue
+		}
+
+		// Extract the line (strip \r\n or \n)
+		line := string(r.buf[:idx])
+		if idx+1 <= len(r.buf) {
+			r.buf = r.buf[idx+1:]
+		} else {
+			r.buf = r.buf[:0]
+		}
+		// Strip trailing \r if present
+		line = strings.TrimRight(line, "\r")
+
+		// Empty line = event boundary
+		if line == "" {
+			if r.event != nil {
+				ev := r.event
+				r.event = nil
+				// Check for [DONE] sentinel
+				if ev.Data == "[DONE]" {
+					return ev, io.EOF
+				}
+				return ev, nil
+			}
+			continue
+		}
+
+		// Comment line — skip
+		if strings.HasPrefix(line, ":") {
+			continue
+		}
+
+		// Initialize event if needed
+		if r.event == nil {
+			r.event = &SSEEvent{}
+		}
+
+		// Parse field
+		if strings.HasPrefix(line, "event:") {
+			r.event.Event = strings.TrimSpace(line[6:])
+		} else if strings.HasPrefix(line, "data:") {
+			data := strings.TrimSpace(line[5:])
+			if r.event.Data != "" {
+				r.event.Data += "\n" + data
+			} else {
+				r.event.Data = data
+			}
+		} else if strings.HasPrefix(line, "id:") {
+			r.event.ID = strings.TrimSpace(line[3:])
+		} else if strings.HasPrefix(line, "retry:") {
+			val := strings.TrimSpace(line[6:])
+			var ms int
+			if _, err := fmt.Sscanf(val, "%d", &ms); err == nil {
+				r.event.Retry = ms
+			}
+		}
+	}
+}
+
+// Response returns the underlying HTTP response (headers, status code).
+func (r *SSEReader) Response() *http.Response {
+	return r.resp
+}
+
+// Close closes the response body.
+func (r *SSEReader) Close() error {
+	return r.body.Close()
+}
+
+// DoSSE makes an HTTP request and returns an SSEReader for streaming responses.
+// The caller MUST call Close() on the returned SSEReader when done.
+// Unlike Do, this does NOT buffer the response body.
+func (c *Client) DoSSE(ctx context.Context, method, path string, body any) (*SSEReader, error) {
+	rawURL := c.baseURL + path
+
+	// Validate URL safety
+	if err := c.validateURLSafety(rawURL); err != nil {
+		return nil, fmt.Errorf("%w", ErrUnsafeHTTP)
+	}
+
+	var bodyReader io.Reader
+	if body != nil {
+		jsonBytes, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request body: %w", err)
+		}
+		bodyReader = strings.NewReader(string(jsonBytes))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	if c.apiKey != "" {
+		req.Header.Set("X-Api-Key", c.apiKey)
+	}
+
+	// Redirect policy: follow within same host+port, allow HTTP→HTTPS, never HTTPS→HTTP
+	c.httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many redirects")
+		}
+		prev := via[len(via)-1]
+		prevURL := prev.URL
+		newURL := req.URL
+		if prevURL.Hostname() != newURL.Hostname() || prevURL.Port() != newURL.Port() {
+			return fmt.Errorf("redirect to different host blocked: %s -> %s", prevURL.Host, newURL.Host)
+		}
+		if prevURL.Scheme == "https" && newURL.Scheme == "http" {
+			return fmt.Errorf("redirect from HTTPS to HTTP blocked")
+		}
+		if c.apiKey != "" {
+			req.Header.Set("X-Api-Key", c.apiKey)
+		}
+		return nil
+	}
+
+	if c.insecure {
+		c.httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, &TransportError{Err: err}
+	}
+
+	// Check for error responses (4xx, 5xx)
+	if resp.StatusCode >= 400 {
+		// Read the body to parse error, then close
+		var bodyBytes []byte
+		bodyBytes, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, &TransportError{Err: fmt.Errorf("failed to read error response: %w", err)}
+		}
+		wrappedResp := &Response{
+			StatusCode: resp.StatusCode,
+			Body:       bodyBytes,
+			Headers:    resp.Header,
+		}
+		return nil, ParseError(wrappedResp)
+	}
+
+	return &SSEReader{
+		resp: resp,
+		body: resp.Body,
+		buf:  make([]byte, 0, 4096),
+	}, nil
+}
+
 // DoText executes an HTTP request expecting a text/plain response (no JSON parsing).
 func (c *Client) DoText(ctx context.Context, method, path string) (*Response, error) {
 	rawURL := c.baseURL + path

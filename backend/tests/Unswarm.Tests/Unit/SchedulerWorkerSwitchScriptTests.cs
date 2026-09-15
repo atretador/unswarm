@@ -192,11 +192,11 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
             var req = MakeRequest("script-broken", "r1");
             await EnqueueAsync(req);
 
-            // Script start returned an ErrorMessage → switch returns without setting
-            // residency → the lane runner fails the request as "not available".
+            // Script start returned an ErrorMessage → switch throws with detailed
+            // error which propagates up to the lane runner.
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => req.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.Contains("not available", ex.Message);
+            Assert.Contains("Script start failed", ex.Message);
 
             await Eventually.UntilAsync(() =>
                 HasLog(m => m.Contains("Script start failed") && m.Contains("does-not-exist.sh")));
@@ -407,7 +407,7 @@ public sealed class SchedulerWorkerSwitchScriptTests : IDisposable
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => req.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(10)));
-        Assert.Contains("not available", ex.Message);
+        Assert.Contains("Script start failed", ex.Message);
 
         await Eventually.UntilAsync(() =>
             HasLog(m => m.Contains("does not have a connected RemoteAgentDockerController")));

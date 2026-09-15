@@ -1684,14 +1684,15 @@ public sealed class SchedulerWorker : ISchedulerDrainer
 
                         if (scriptResult.ErrorMessage is not null)
                         {
+                            var msg = $"Script start failed: {scriptResult.ErrorMessage}";
                             _logStore.Enqueue(LogLevel.Error, "Scheduler",
                                 $"Script start failed on {lane.TargetId} for model {targetModel}: {scriptResult.ErrorMessage}");
 
-                            FailAllForModel(targetModel, lane.TargetId, $"Script start failed: {scriptResult.ErrorMessage}");
+                            FailAllForModel(targetModel, lane.TargetId, msg);
 
                             transition = transition with { Status = "complete" };
                             _activeTransitions[transitionId] = transition;
-                            return;
+                            throw new InvalidOperationException(msg);
                         }
 
                         scriptPid = scriptResult.Pid ?? 0;
@@ -1699,14 +1700,15 @@ public sealed class SchedulerWorker : ISchedulerDrainer
                 }
                 catch (Exception ex)
                 {
+                    var msg = $"Script start failed: {ex.Message}";
                     _logStore.Enqueue(LogLevel.Error, "Scheduler",
                         $"Script start failed on {lane.TargetId} for model {targetModel}: {ex.Message}");
 
-                    FailAllForModel(targetModel, lane.TargetId, $"Script start failed: {ex.Message}");
+                    FailAllForModel(targetModel, lane.TargetId, msg);
 
                     transition = transition with { Status = "complete" };
                     _activeTransitions[transitionId] = transition;
-                    return;
+                    throw new InvalidOperationException(msg, ex);
                 }
 
                 var scriptKey = $"script:{targetRuntime.Id}";
@@ -1792,14 +1794,15 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             {
                 // All retries exhausted
                 var errorMsg = lastException?.Message ?? "Unknown error";
+                var fullMsg = $"Container start failed after {maxRetries} attempts: {errorMsg}";
                 _logStore.Enqueue(LogLevel.Error, "Scheduler",
                     $"Container start failed after {maxRetries} attempts on {lane.TargetId} for model {targetModel}: {errorMsg}");
 
-                FailAllForModel(targetModel, lane.TargetId, $"Container start failed after {maxRetries} attempts: {errorMsg}");
+                FailAllForModel(targetModel, lane.TargetId, fullMsg);
 
                 transition = transition with { Status = "complete" };
                 _activeTransitions[transitionId] = transition;
-                return;
+                throw new InvalidOperationException(fullMsg);
             }
 
             // Wait for health (tunnels through agent WebSocket for remote targets)

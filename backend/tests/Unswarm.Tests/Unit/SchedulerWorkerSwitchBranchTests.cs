@@ -108,17 +108,19 @@ public sealed class SchedulerWorkerSwitchBranchTests : IDisposable
         await EnqueueAsync(r1, r2);
 
         // Retry schedule: attempt 1 fails → 4s backoff → attempt 2 fails → exhausted.
-        // The request-facing exception is the generic "not available" message; the
-        // detailed retry-exhaustion reason goes to the log store and failed rows.
+        // The request-facing exception carries the detailed retry-exhaustion reason
+        // which is now thrown from the switch path and propagated to the caller.
         var ex1 = await Assert.ThrowsAsync<InvalidOperationException>(
             () => r1.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(20)));
-        Assert.Contains("not available", ex1.Message);
+        Assert.Contains("Container start failed", ex1.Message);
+        Assert.Contains("Image not found", ex1.Message);
 
         // Fan-out: FailAllForModel marks the queued sibling Failed while it waits;
         // when it reaches the lane head it re-runs the switch and exhausts too.
         var ex2 = await Assert.ThrowsAsync<InvalidOperationException>(
             () => r2.Tcs.Task.WaitAsync(TimeSpan.FromSeconds(25)));
-        Assert.Contains("not available", ex2.Message);
+        Assert.Contains("Container start failed", ex2.Message);
+        Assert.Contains("Image not found", ex2.Message);
 
         // Each request drove its own 2-attempt switch: 4 starts total.
         await Eventually.UntilAsync(() => host.StartedModels.Count >= 4, TimeSpan.FromSeconds(20));

@@ -32,6 +32,7 @@ var healthCmd = &cobra.Command{
 		}
 
 		watch, _ := cmd.Flags().GetBool("watch")
+		summary, _ := cmd.Flags().GetBool("summary")
 		intervalStr, _ := cmd.Flags().GetString("interval")
 
 		if watch {
@@ -72,6 +73,10 @@ var healthCmd = &cobra.Command{
 					_ = renderFunc()
 				}
 			}
+		}
+
+		if summary {
+			return renderHealthSummary(cmd, format)
 		}
 
 		return renderHealthDashboard(cmd, format, false)
@@ -294,8 +299,176 @@ func renderHealthDashboard(cmd *cobra.Command, format output.Format, watch bool)
 	return w.PrintTable(summaryHeaders, summaryRows)
 }
 
+// formatWithCommas formats an integer with comma separators for thousands.
+func formatWithCommas(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return formatWithCommas(n/1000) + fmt.Sprintf(",%03d", n%1000)
+}
+
+// renderHealthSummary prints a single-line health summary.
+func renderHealthSummary(cmd *cobra.Command, format output.Format) error {
+	c := GetClient(cmd)
+	w := GetOutput(cmd)
+
+	// Fetch all endpoints in parallel
+	type fetchResult struct {
+		data json.RawMessage
+		err  error
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	endpoints := map[string]string{
+		"runtimes":   "/api/containers/registered",
+		"containers": "/api/containers",
+		"stats":      "/api/stats",
+		"queue":      "/api/queue/snapshot",
+	}
+
+	results := make(map[string]fetchResult)
+	for name, path := range endpoints {
+		wg.Add(1)
+		go func(name, path string) {
+			defer wg.Done()
+			resp, err := c.Do(cmd.Context(), "GET", path, nil)
+			if err != nil {
+				mu.Lock()
+				results[name] = fetchResult{err: err}
+				mu.Unlock()
+				return
+			}
+			if resp.StatusCode >= 400 {
+				apiErr := client.ParseError(resp)
+				mu.Lock()
+				results[name] = fetchResult{err: fmt.Errorf("%s: %s", apiErr.ErrCode, apiErr.Message)}
+				mu.Unlock()
+				return
+			}
+			mu.Lock()
+			results[name] = fetchResult{data: resp.Body}
+			mu.Unlock()
+		}(name, path)
+	}
+	wg.Wait()
+
+	// Parse results
+	var runtimes []map[string]any
+	var containers []map[string]any
+	var stats map[string]any
+	var queue map[string]any
+
+	if r, ok := results["runtimes"]; ok && r.err == nil && r.data != nil {
+		_ = json.Unmarshal(r.data, &runtimes)
+	}
+	if r, ok := results["containers"]; ok && r.err == nil && r.data != nil {
+		_ = json.Unmarshal(r.data, &containers)
+	}
+	if r, ok := results["stats"]; ok && r.err == nil && r.data != nil {
+		_ = json.Unmarshal(r.data, &stats)
+	}
+	if r, ok := results["queue"]; ok && r.err == nil && r.data != nil {
+		_ = json.Unmarshal(r.data, &queue)
+	}
+
+	// Count runtimes by status
+	totalRuntimes := len(runtimes)
+	runtimesOK := 0
+	runtimesErr := 0
+	for _, r := range runtimes {
+		status := strings.ToLower(helpers.StrOrDash(r, "status"))
+		if status == "ready" || status == "running" {
+			runtimesOK++
+		} else {
+			runtimesErr++
+		}
+	}
+
+	// Count containers by status
+	totalContainers := len(containers)
+	containersRunning := 0
+	containersStopped := 0
+	for _, ct := range containers {
+		status := strings.ToLower(helpers.StrOrDash(ct, "status"))
+		if status == "running" || status == "ready" {
+			containersRunning++
+		} else {
+			containersStopped++
+		}
+	}
+
+	// Queue metrics
+	queueDepth := helpers.IntOrDash(queue, "depth")
+	queuePending := helpers.IntOrDash(queue, "pending")
+
+	// Stats metrics
+	avgLatency := "-"
+	if v, ok := stats["avgLatencyMs"]; ok && v != nil {
+		avgLatency = helpers.IntStr(v) + "ms"
+	}
+	rpm := "-"
+	if v, ok := stats["requestsPerMinute"]; ok && v != nil {
+		if fv, ok := v.(float64); ok {
+			rpm = fmt.Sprintf("%.1f", fv)
+		}
+	}
+
+	if format == output.FormatJSON {
+		outputData := map[string]any{
+			"runtimesTotal":    totalRuntimes,
+			"runtimesOK":       runtimesOK,
+			"runtimesErr":      runtimesErr,
+			"containersTotal":  totalContainers,
+			"containersRunning": containersRunning,
+			"containersStopped": containersStopped,
+			"queueDepth":       queueDepth,
+			"queuePending":     queuePending,
+			"avgLatency":       avgLatency,
+			"rpm":              rpm,
+			"summary": fmt.Sprintf("Runtimes: %s (%s ok, %s err) | Containers: %s (%s running, %s stopped) | Queue: depth=%s pending=%s | Latency: %s | RPM: %s",
+				formatWithCommas(totalRuntimes), formatWithCommas(runtimesOK), formatWithCommas(runtimesErr),
+				formatWithCommas(totalContainers), formatWithCommas(containersRunning), formatWithCommas(containersStopped),
+				queueDepth, queuePending, avgLatency, rpm),
+		}
+		// Add any fetch errors
+		errs := make(map[string]string)
+		for name, r := range results {
+			if r.err != nil {
+				errs[name] = r.err.Error()
+			}
+		}
+		if len(errs) > 0 {
+			outputData["fetchErrors"] = errs
+		}
+		return w.Print(outputData)
+	}
+
+	// Table/CSV mode: single line
+	line := fmt.Sprintf("Runtimes: %s (%s ok, %s err) | Containers: %s (%s running, %s stopped) | Queue: depth=%s pending=%s | Latency: %s | RPM: %s",
+		formatWithCommas(totalRuntimes), formatWithCommas(runtimesOK), formatWithCommas(runtimesErr),
+		formatWithCommas(totalContainers), formatWithCommas(containersRunning), formatWithCommas(containersStopped),
+		queueDepth, queuePending, avgLatency, rpm)
+
+	// Colorize: green for the runtimes/containers OK counts, red for errors/stopped
+	if !noColor {
+		// Highlight the entire line based on whether there are errors
+		if runtimesErr > 0 || containersStopped > 0 {
+			line = "\033[33m" + line + "\033[0m" // yellow for warnings
+		} else {
+			line = "\033[32m" + line + "\033[0m" // green for all OK
+		}
+	}
+
+	fmt.Fprintln(cmd.OutOrStdout(), line)
+	return nil
+}
+
 func init() {
 	healthCmd.Flags().Bool("watch", false, "Auto-refresh every 5s (min 2s)")
 	healthCmd.Flags().String("interval", "", "Refresh interval for --watch (e.g. 5s, 10s)")
+	healthCmd.Flags().Bool("summary", false, "Print a single-line health summary")
+	healthCmd.MarkFlagsMutuallyExclusive("watch", "summary")
 	rootCmd.AddCommand(healthCmd)
 }

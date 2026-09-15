@@ -317,7 +317,7 @@ If running inside Docker (e.g. `docker compose --profile agent`), the container 
 
 ## CLI
 
-Unswarm includes a full-featured command-line interface for managing your swarm without the dashboard. The CLI talks directly to the backend REST API and supports interactive prompts, name resolution, live monitoring, and scriptable output.
+Unswarm includes a full-featured command-line interface for managing your swarm without the dashboard. The CLI talks directly to the backend REST API and supports streaming, interactive prompts, name resolution, live monitoring, and scriptable output.
 
 ### Install
 
@@ -333,7 +333,7 @@ go install ./cmd/unswarm
 ```bash
 unswarm config init                          # create ~/.config/unswarm/cli.yaml
 unswarm config set url http://localhost:22301  # point to your backend
-unswarm config test                           # verify connectivity
+unswarm config test                           # verify connectivity + latency
 ```
 
 Or use environment variables: `UNSWARM_URL` and `UNSWARM_API_KEY`.
@@ -350,14 +350,15 @@ unswarm config use staging  # switch context
 
 ### Usage
 
-Commands accept **names or IDs** everywhere — no need to copy-paste UUIDs:
+Commands accept **names or IDs** everywhere — no need to copy-paste UUIDs. Fuzzy matching finds resources by partial name with "did you mean?" suggestions:
 
 ```bash
 unswarm models list
-unswarm models get llama-7b
+unswarm models get "Qwen 3.6 35B A3B"
 unswarm runtimes start "GPU Runtime"
 unswarm benchmarks run mistral-7b
 unswarm prompts get summarize-code
+unswarm agents stats host
 ```
 
 #### Interactive Wizards
@@ -369,28 +370,80 @@ unswarm runtimes register    # prompts for name, image, port, kind, agent...
 unswarm models create        # prompts for name, family, size, quantization...
 ```
 
+#### Streaming Test Chat
+
+Test models with real-time token-by-token streaming:
+
+```bash
+unswarm models test-chat llama-7b "Hello, what model are you?"
+unswarm models test-chat llama-7b --system "You are a helpful assistant" --temperature 0.7
+unswarm models test-chat llama-7b --stream=false    # buffered mode (default was streaming)
+```
+
+Streaming prints content to stderr as tokens arrive, then shows a summary with token count, latency, and throughput.
+
 #### Live Monitoring
 
 ```bash
-unswarm health --watch                    # auto-refreshing dashboard (5s default)
-unswarm health --watch --interval 10s     # custom interval
-unswarm stats --watch                     # live stats
-unswarm logs follow                       # streaming log tail
-unswarm logs follow --source runtime-1    # filtered follow
+unswarm health                        # dashboard: runtimes, containers, queue
+unswarm health --summary              # single-line: "7 runtimes (5 ok), 46 containers, queue 0"
+unswarm health --watch                # auto-refreshing dashboard (5s default)
+unswarm stats --watch                 # live stats with screen clear
+unswarm logs follow                   # SSE streaming with polling fallback
+unswarm logs follow --source runtime-1  # filtered follow
 unswarm logs search "connection timeout"  # client-side grep
-unswarm logs last 50                      # last N entries
+unswarm logs last 50                  # last N entries (default 20)
+```
+
+#### Agent Resource Stats
+
+View live CPU, RAM, and GPU telemetry per agent:
+
+```bash
+unswarm agents stats host             # host agent: CPU, RAM
+unswarm agents stats caf-agent        # remote agent: CPU, RAM, GPU core%, VRAM
+```
+
+#### Benchmarks
+
+```bash
+unswarm benchmarks run mistral-7b --wait        # poll until complete (5min timeout)
+unswarm benchmarks compare llama-7b mistral-7b  # side-by-side: tokens/s, latency
+unswarm benchmarks list --model llama-7b --status completed
+```
+
+#### Router Profile Management
+
+Manage routing entries with name resolution and thinking effort control:
+
+```bash
+unswarm router-profiles add-entry my-profile --model "Qwen 3.6 35B" --priority 1
+unswarm router-profiles add-entry my-profile --model gpt-4o --thinking-effort high
+unswarm router-profiles remove-entry my-profile --model "Qwen 3.6 35B"
+unswarm router-profiles set-active-entry my-profile --model-id "Qwen 3.6 35B"
+unswarm router-profiles set-thinking-effort my-profile --model-id gpt-4o --effort medium
+```
+
+#### Cloud Provider OAuth
+
+Interactive device-code OAuth flow:
+
+```bash
+unswarm cloud-providers oauth openai   # start → display code → poll → done
+unswarm cloud-providers save-models openai  # interactive model selection
 ```
 
 #### Comparisons & Shortcuts
 
 ```bash
 unswarm models compare llama-7b mistral-7b    # side-by-side model comparison
-unswarm benchmarks compare llama-7b mistral-7b  # compare benchmark results
 unswarm metrics today                          # today's usage
 unswarm metrics last 7d                        # last 7 days
-unswarm queue list                             # list queued items
-unswarm queue list --status pending            # filter by status
+unswarm metrics cost --rates '{"gpt-4o":{"prompt":2.5,"completion":10}}'  # cost estimation
+unswarm queue list --status pending            # filter queued items
 ```
+
+Metrics summaries include sparkline trends (▁▂▃▄▅▆▇█) for visual pattern recognition in terminal.
 
 #### File I/O
 
@@ -405,7 +458,7 @@ unswarm scripts upload my-script.py --stdin < script.py      # upload from pipe
 
 ```bash
 unswarm prompts versions my-prompt              # version history
-unswarm prompts diff my-prompt --from 1 --to 3  # diff two versions
+unswarm prompts diff my-prompt --from 1 --to 3  # unified diff
 unswarm prompts rollback my-prompt --version 2  # rollback
 ```
 
@@ -414,7 +467,7 @@ unswarm prompts rollback my-prompt --version 2  # rollback
 ```bash
 unswarm config get url              # read single setting
 unswarm config set output json      # change output format
-unswarm settings get                # show all settings as table
+unswarm settings get                # all settings as key/value table
 unswarm settings get request-timeout  # single setting
 unswarm settings set request-timeout 30  # update a setting
 ```
@@ -449,6 +502,7 @@ unswarm models list --output table  # force table (default for TTY)
 | `--dry-run` | Show what would happen without executing |
 | `--quiet` | Non-interactive mode (errors on prompts) |
 | `--no-color` | Disable colorized output |
+| `--insecure` | Allow plaintext HTTP to non-loopback hosts |
 
 ### Destructive Operations
 

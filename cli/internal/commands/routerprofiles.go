@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/unswarm/cli/internal/client"
@@ -289,6 +290,18 @@ var routerProfilesAddEntryCmd = &cobra.Command{
 
 		priority, _ := cmd.Flags().GetInt("priority")
 		enabled, _ := cmd.Flags().GetBool("enabled")
+		effort, _ := cmd.Flags().GetString("thinking-effort")
+		effort = strings.ToLower(strings.TrimSpace(effort))
+
+		// Validate thinking effort if provided
+		if effort != "" && effort != "none" {
+			switch effort {
+			case "low", "medium", "high":
+				// valid
+			default:
+				return w.Error("invalid_effort", fmt.Sprintf("invalid thinking-effort %q", effort), nil, "valid values: low, medium, high, or none to omit", 1)
+			}
+		}
 
 		// Fetch current profile
 		resp, err := c.Do(cmd.Context(), "GET", "/api/router-profiles/"+profileID, nil)
@@ -323,6 +336,9 @@ var routerProfilesAddEntryCmd = &cobra.Command{
 		}
 		if runtimeID != "" {
 			newEntry["runtimeId"] = runtimeID
+		}
+		if effort != "" && effort != "none" {
+			newEntry["thinkingEffortOverride"] = effort
 		}
 
 		entries = append(entries, newEntry)
@@ -502,83 +518,116 @@ var routerProfilesRemoveEntryCmd = &cobra.Command{
 
 // --- router-profiles set-active-entry ---
 
-var routerProfilesSetActiveEntryCmd = &cobra.Command{
-	Use:   "set-active-entry <name-or-id>",
-	Short: "Set the active model entry in a router profile",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c := GetClient(cmd)
-		w := GetOutput(cmd)
+	var routerProfilesSetActiveEntryCmd = &cobra.Command{
+		Use:   "set-active-entry <profile-name-or-id>",
+		Short: "Set the active model entry in a router profile",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := GetClient(cmd)
+			w := GetOutput(cmd)
 
-		resolver := resolve.New(newResolveAdapter(c), "/api/router-profiles", "name")
-		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
-		if err != nil {
-			return w.Error("not_found", err.Error(), nil, "use 'router-profiles list' to see available profiles", 1)
-		}
+			resolver := resolve.New(newResolveAdapter(c), "/api/router-profiles", "name")
+			resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
+			if err != nil {
+				return w.Error("not_found", err.Error(), nil, "use 'router-profiles list' to see available profiles", 1)
+			}
 
-		modelID, _ := cmd.Flags().GetString("model-id")
+			modelInput, _ := cmd.Flags().GetString("model-id")
+			if modelInput == "" {
+				return w.Error("missing_flag", "--model-id is required", nil, "provide a model name or ID", 1)
+			}
+			modelResolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
+			modelID, err := modelResolver.Resolve(cmd.Context(), modelInput)
+			if err != nil {
+				return w.Error("not_found", fmt.Sprintf("model: %s", err.Error()), nil, "use 'models list' to see available models", 1)
+			}
 
-		body := map[string]any{
-			"activeModelId": modelID,
-		}
+			body := map[string]any{
+				"activeModelId": modelID,
+			}
 
-		resp, err := c.Do(cmd.Context(), "PATCH", "/api/router-profiles/"+resolvedID+"/active-entry", body)
-		if err != nil {
-			return FormatErrorResponse(w, err)
-		}
-		if resp.StatusCode >= 400 {
-			apiErr := client.ParseError(resp)
-			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
-		}
+			resp, err := c.Do(cmd.Context(), "PATCH", "/api/router-profiles/"+resolvedID+"/active-entry", body)
+			if err != nil {
+				return FormatErrorResponse(w, err)
+			}
+			if resp.StatusCode >= 400 {
+				apiErr := client.ParseError(resp)
+				return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+			}
 
-		var profile map[string]any
-		if err := json.Unmarshal(resp.Body, &profile); err != nil {
-			return w.Error("parse_error", "failed to parse response", nil, "", 1)
-		}
-		return w.Print(profile)
-	},
-}
+			var profile map[string]any
+			if err := json.Unmarshal(resp.Body, &profile); err != nil {
+				return w.Error("parse_error", "failed to parse response", nil, "", 1)
+			}
+			return w.Print(profile)
+		},
+	}
 
 // --- router-profiles set-thinking-effort ---
 
-var routerProfilesSetThinkingEffortCmd = &cobra.Command{
-	Use:   "set-thinking-effort <name-or-id>",
-	Short: "Set thinking effort override for a model in a router profile",
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		c := GetClient(cmd)
-		w := GetOutput(cmd)
+	var routerProfilesSetThinkingEffortCmd = &cobra.Command{
+		Use:   "set-thinking-effort <profile-name-or-id>",
+		Short: "Set thinking effort override for a model in a router profile",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := GetClient(cmd)
+			w := GetOutput(cmd)
 
-		resolver := resolve.New(newResolveAdapter(c), "/api/router-profiles", "name")
-		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
-		if err != nil {
-			return w.Error("not_found", err.Error(), nil, "use 'router-profiles list' to see available profiles", 1)
-		}
+			resolver := resolve.New(newResolveAdapter(c), "/api/router-profiles", "name")
+			resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
+			if err != nil {
+				return w.Error("not_found", err.Error(), nil, "use 'router-profiles list' to see available profiles", 1)
+			}
 
-		modelID, _ := cmd.Flags().GetString("model-id")
-		effort, _ := cmd.Flags().GetString("effort")
+			modelInput, _ := cmd.Flags().GetString("model-id")
+			if modelInput == "" {
+				return w.Error("missing_flag", "--model-id is required", nil, "provide a model name or ID", 1)
+			}
+			modelResolver := resolve.New(newResolveAdapter(c), "/api/models", "displayName")
+			modelID, err := modelResolver.Resolve(cmd.Context(), modelInput)
+			if err != nil {
+				return w.Error("not_found", fmt.Sprintf("model: %s", err.Error()), nil, "use 'models list' to see available models", 1)
+			}
 
-		body := map[string]any{
-			"modelId":              modelID,
-			"thinkingEffortOverride": effort,
-		}
+			effort, _ := cmd.Flags().GetString("effort")
+			effort = strings.ToLower(strings.TrimSpace(effort))
 
-		resp, err := c.Do(cmd.Context(), "PATCH", "/api/router-profiles/"+resolvedID+"/thinking-effort", body)
-		if err != nil {
-			return FormatErrorResponse(w, err)
-		}
-		if resp.StatusCode >= 400 {
-			apiErr := client.ParseError(resp)
-			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
-		}
+			// Validate effort value
+			switch effort {
+			case "low", "medium", "high":
+				// valid
+			case "", "none":
+				// empty or "none" → send null to clear the override
+				effort = ""
+			default:
+				return w.Error("invalid_effort", fmt.Sprintf("invalid effort %q", effort), nil, "valid values: low, medium, high, or none to clear", 1)
+			}
 
-		var profile map[string]any
-		if err := json.Unmarshal(resp.Body, &profile); err != nil {
-			return w.Error("parse_error", "failed to parse response", nil, "", 1)
-		}
-		return w.Print(profile)
-	},
-}
+			body := map[string]any{
+				"modelId": modelID,
+			}
+			if effort == "" {
+				body["thinkingEffortOverride"] = nil
+			} else {
+				body["thinkingEffortOverride"] = effort
+			}
+
+			resp, err := c.Do(cmd.Context(), "PATCH", "/api/router-profiles/"+resolvedID+"/thinking-effort", body)
+			if err != nil {
+				return FormatErrorResponse(w, err)
+			}
+			if resp.StatusCode >= 400 {
+				apiErr := client.ParseError(resp)
+				return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+			}
+
+			var profile map[string]any
+			if err := json.Unmarshal(resp.Body, &profile); err != nil {
+				return w.Error("parse_error", "failed to parse response", nil, "", 1)
+			}
+			return w.Print(profile)
+		},
+	}
 
 // --- router-profiles status ---
 
@@ -633,6 +682,7 @@ func init() {
 	routerProfilesAddEntryCmd.Flags().String("runtime", "", "Runtime name or ID (optional)")
 	routerProfilesAddEntryCmd.Flags().Int("priority", 1, "Entry priority")
 	routerProfilesAddEntryCmd.Flags().Bool("enabled", true, "Enable this entry")
+	routerProfilesAddEntryCmd.Flags().String("thinking-effort", "", "Thinking effort override: low, medium, high, or none")
 	_ = routerProfilesAddEntryCmd.MarkFlagRequired("model")
 
 	// Remove-entry flags
@@ -641,12 +691,12 @@ func init() {
 	_ = routerProfilesRemoveEntryCmd.MarkFlagRequired("model")
 
 	// Set-active-entry flags
-	routerProfilesSetActiveEntryCmd.Flags().String("model-id", "", "Model ID to set as active")
+	routerProfilesSetActiveEntryCmd.Flags().String("model-id", "", "Model name or ID to set as active")
 	_ = routerProfilesSetActiveEntryCmd.MarkFlagRequired("model-id")
 
 	// Set-thinking-effort flags
-	routerProfilesSetThinkingEffortCmd.Flags().String("model-id", "", "Model ID")
-	routerProfilesSetThinkingEffortCmd.Flags().String("effort", "", "Thinking effort override")
+	routerProfilesSetThinkingEffortCmd.Flags().String("model-id", "", "Model name or ID")
+	routerProfilesSetThinkingEffortCmd.Flags().String("effort", "", "Thinking effort: low, medium, high, or none to clear")
 	_ = routerProfilesSetThinkingEffortCmd.MarkFlagRequired("model-id")
 	_ = routerProfilesSetThinkingEffortCmd.MarkFlagRequired("effort")
 

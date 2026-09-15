@@ -73,10 +73,10 @@ var logsListCmd = &cobra.Command{
 
 var logsFollowCmd = &cobra.Command{
 	Use:   "follow",
-	Short: "Stream log entries (poll-based tail)",
-	Long: `Poll the server for new log entries at a regular interval.
+	Short: "Stream log entries via SSE with polling fallback",
+	Long: `Connect to the server's SSE stream for real-time log entries.
 
-Shows recent entries first, then polls for new ones.
+Falls back to polling if the SSE endpoint is unavailable.
 Press Ctrl+C to stop.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c := GetClient(cmd)
@@ -92,53 +92,30 @@ Press Ctrl+C to stop.`,
 		}
 		interval := time.Duration(intervalSec) * time.Second
 
+		outputFmt := cmd.Flags().Lookup("output")
+		isJSON := outputFmt != nil && outputFmt.Value.String() == "json"
+
 		// Signal handling for clean exit
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		defer signal.Stop(sigCh)
 
-		// Seen entries tracker for deduplication (key: timestamp+source+message)
-		seen := make(map[string]bool)
-
-		outputFmt := cmd.Flags().Lookup("output")
-		isJSON := outputFmt != nil && outputFmt.Value.String() == "json"
-
-		// Suppress noisy headers for follow output
-		if !isJSON {
-			fmt.Fprintf(os.Stderr, "Following logs (Ctrl+C to stop, interval: %s)...\n", interval)
+		// Try SSE first
+		ssePath := "/api/logs/stream"
+		sseParams := buildQueryString(cmd, "source", "level", "since")
+		if sseParams != "" {
+			ssePath += "?" + sseParams
 		}
 
-		firstFetch := true
-		fetchLimit := limit
-
-		for {
-			// Check for cancellation
-			select {
-			case <-cmd.Context().Done():
-				return nil
-			case <-sigCh:
-				if !isJSON {
-					fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
-				}
-				return nil
-			default:
+		reader, err := c.DoSSE(cmd.Context(), "GET", ssePath, nil)
+		if err == nil {
+			defer reader.Close()
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "Following logs via SSE (Ctrl+C to stop)...\n")
 			}
 
-			// Build request path
-			path := "/api/logs"
-			params := buildQueryString(cmd, "source", "level", "since")
-			if params != "" {
-				path += "?" + params + "&limit=" + strconv.Itoa(fetchLimit)
-			} else {
-				path += "?limit=" + strconv.Itoa(fetchLimit)
-			}
-
-			resp, err := c.Do(cmd.Context(), "GET", path, nil)
-			if err != nil {
-				// On error, wait and retry
+			for {
 				select {
-				case <-time.After(interval):
-					continue
 				case <-cmd.Context().Done():
 					return nil
 				case <-sigCh:
@@ -146,68 +123,84 @@ Press Ctrl+C to stop.`,
 						fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
 					}
 					return nil
+				default:
 				}
-			}
-			if resp.StatusCode >= 400 {
-				select {
-				case <-time.After(interval):
-					continue
-				case <-cmd.Context().Done():
-					return nil
-				case <-sigCh:
-					if !isJSON {
-						fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
-					}
-					return nil
-				}
-			}
 
-			var logs []map[string]any
-			if err := json.Unmarshal(resp.Body, &logs); err != nil {
-				select {
-				case <-time.After(interval):
-					continue
-				case <-cmd.Context().Done():
-					return nil
-				case <-sigCh:
-					if !isJSON {
-						fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
+				event, readErr := reader.ReadEvent()
+				if readErr != nil {
+					// Context cancellation is expected
+					if cmd.Context().Err() != nil {
+						return nil
 					}
-					return nil
+					// Fall through to polling fallback
+					break
 				}
-			}
 
-			// Output new entries
-			for _, l := range logs {
-				key := helpers.StrOrDash(l, "timestamp") + "|" + helpers.StrOrDash(l, "source") + "|" + helpers.StrOrDash(l, "message")
-				if seen[key] {
+				var entry map[string]any
+				if err := json.Unmarshal([]byte(event.Data), &entry); err != nil {
 					continue
 				}
-				seen[key] = true
 
 				if isJSON {
-					line, _ := json.Marshal(l)
+					line, _ := json.Marshal(entry)
 					fmt.Println(string(line))
 				} else {
-					ts := helpers.StrOrDash(l, "timestamp")
-					level := strings.ToUpper(helpers.StrOrDash(l, "level"))
-					source := helpers.StrOrDash(l, "source")
-					msg := helpers.StrOrDash(l, "message")
+					ts := helpers.StrOrDash(entry, "timestamp")
+					level := strings.ToUpper(helpers.StrOrDash(entry, "level"))
+					source := helpers.StrOrDash(entry, "source")
+					msg := helpers.StrOrDash(entry, "message")
 
 					line := fmt.Sprintf("[%s] [%s] [%s] %s", ts, level, source, msg)
 					fmt.Println(colorizeLogLine(line, level))
 				}
 			}
+		}
 
-			// After first fetch, use smaller limit for polling
-			if firstFetch {
-				firstFetch = false
-				fetchLimit = 10
+		// SSE failed — fall back to polling
+		return logsFollowPoll(cmd, c, sigCh, isJSON, limit, interval)
+	},
+}
+
+// logsFollowPoll implements the polling-based fallback for logs follow.
+func logsFollowPoll(cmd *cobra.Command, c *client.Client, sigCh chan os.Signal, isJSON bool, limit int, interval time.Duration) error {
+	// Seen entries tracker for deduplication (key: timestamp+source+message)
+	seen := make(map[string]bool)
+
+	if !isJSON {
+		fmt.Fprintf(os.Stderr, "Following logs via polling (Ctrl+C to stop, interval: %s)...\n", interval)
+	}
+
+	firstFetch := true
+	fetchLimit := limit
+
+	for {
+		// Check for cancellation
+		select {
+		case <-cmd.Context().Done():
+			return nil
+		case <-sigCh:
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
 			}
+			return nil
+		default:
+		}
 
-			// Wait before next poll
+		// Build request path
+		path := "/api/logs"
+		params := buildQueryString(cmd, "source", "level", "since")
+		if params != "" {
+			path += "?" + params + "&limit=" + strconv.Itoa(fetchLimit)
+		} else {
+			path += "?limit=" + strconv.Itoa(fetchLimit)
+		}
+
+		resp, err := c.Do(cmd.Context(), "GET", path, nil)
+		if err != nil {
+			// On error, wait and retry
 			select {
 			case <-time.After(interval):
+				continue
 			case <-cmd.Context().Done():
 				return nil
 			case <-sigCh:
@@ -217,7 +210,75 @@ Press Ctrl+C to stop.`,
 				return nil
 			}
 		}
-	},
+		if resp.StatusCode >= 400 {
+			select {
+			case <-time.After(interval):
+				continue
+			case <-cmd.Context().Done():
+				return nil
+			case <-sigCh:
+				if !isJSON {
+					fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
+				}
+				return nil
+			}
+		}
+
+		var logs []map[string]any
+		if err := json.Unmarshal(resp.Body, &logs); err != nil {
+			select {
+			case <-time.After(interval):
+				continue
+			case <-cmd.Context().Done():
+				return nil
+			case <-sigCh:
+				if !isJSON {
+					fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
+				}
+				return nil
+			}
+		}
+
+		// Output new entries
+		for _, l := range logs {
+			key := helpers.StrOrDash(l, "timestamp") + "|" + helpers.StrOrDash(l, "source") + "|" + helpers.StrOrDash(l, "message")
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+
+			if isJSON {
+				line, _ := json.Marshal(l)
+				fmt.Println(string(line))
+			} else {
+				ts := helpers.StrOrDash(l, "timestamp")
+				level := strings.ToUpper(helpers.StrOrDash(l, "level"))
+				source := helpers.StrOrDash(l, "source")
+				msg := helpers.StrOrDash(l, "message")
+
+				line := fmt.Sprintf("[%s] [%s] [%s] %s", ts, level, source, msg)
+				fmt.Println(colorizeLogLine(line, level))
+			}
+		}
+
+		// After first fetch, use smaller limit for polling
+		if firstFetch {
+			firstFetch = false
+			fetchLimit = 10
+		}
+
+		// Wait before next poll
+		select {
+		case <-time.After(interval):
+		case <-cmd.Context().Done():
+			return nil
+		case <-sigCh:
+			if !isJSON {
+				fmt.Fprintf(os.Stderr, "\nStopped following logs.\n")
+			}
+			return nil
+		}
+	}
 }
 
 // colorizeLogLine applies ANSI color codes to a log line based on level.
