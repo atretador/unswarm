@@ -4,17 +4,20 @@ import "strconv"
 
 // Model represents a model from the API.
 type Model struct {
-	ID             string   `json:"id"`
-	Name           string   `json:"name"`
-	Family         string   `json:"family"`
-	ParameterSize  string   `json:"parameterSize"`
-	Quantization   string   `json:"quantization"`
-	Status         string   `json:"status"`
-	ContextWindow  int      `json:"contextWindow"`
-	Origin         string   `json:"origin"`
-	DisplayName    string   `json:"displayName"`
-	CreatedAt      string   `json:"createdAt"`
-	UpdatedAt      string   `json:"updatedAt"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Family              string   `json:"family"`
+	ParameterSize       string   `json:"parameterSize"`
+	Quantization        string   `json:"quantization"`
+	Status              string   `json:"status"`
+	ContextWindow       int      `json:"contextWindow"`
+	Origin              string   `json:"origin"`
+	DisplayName         string   `json:"displayName"`
+	ProviderName        string   `json:"providerName"`
+	SourceRuntimeAgent  string   `json:"sourceRuntimeAgent"`
+	SourceRuntimeName   string   `json:"sourceRuntimeName"`
+	CreatedAt           string   `json:"createdAt"`
+	UpdatedAt           string   `json:"updatedAt"`
 }
 
 // Runtime represents a runtime/container registration.

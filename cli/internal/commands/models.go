@@ -45,14 +45,40 @@ var modelsListCmd = &cobra.Command{
 			return w.Error("parse_error", "failed to parse response", nil, "", 1)
 		}
 
-		// Client-side status filtering
+		// Client-side filtering
 		statusFilter, _ := cmd.Flags().GetString("status")
-		if statusFilter != "" {
+		originFilter, _ := cmd.Flags().GetString("origin")
+		providerFilter, _ := cmd.Flags().GetString("provider")
+		agentFilter, _ := cmd.Flags().GetString("agent")
+		if statusFilter != "" || originFilter != "" || providerFilter != "" || agentFilter != "" {
 			filtered := models[:0]
 			for _, m := range models {
-				if strings.EqualFold(m.Status, statusFilter) {
-					filtered = append(filtered, m)
+				if statusFilter != "" && !strings.EqualFold(m.Status, statusFilter) {
+					continue
 				}
+				if originFilter != "" {
+					switch strings.ToLower(originFilter) {
+					case "cloud":
+						if !strings.HasPrefix(m.ID, "cloud/") {
+							continue
+						}
+					case "hosted":
+						if strings.HasPrefix(m.ID, "cloud/") {
+							continue
+						}
+					default:
+						if !strings.EqualFold(m.Origin, originFilter) {
+							continue
+						}
+					}
+				}
+				if providerFilter != "" && !strings.Contains(strings.ToLower(m.ProviderName), strings.ToLower(providerFilter)) {
+					continue
+				}
+				if agentFilter != "" && !strings.EqualFold(m.SourceRuntimeAgent, agentFilter) {
+					continue
+				}
+				filtered = append(filtered, m)
 			}
 			models = filtered
 		}
@@ -704,6 +730,9 @@ func init() {
 
 	// List filters
 	modelsListCmd.Flags().String("status", "", "Filter by status (ready, validating, etc.)")
+	modelsListCmd.Flags().String("origin", "", "Filter by origin: 'hosted' or 'cloud'")
+	modelsListCmd.Flags().String("provider", "", "Filter cloud models by provider name")
+	modelsListCmd.Flags().String("agent", "", "Filter hosted models by agent name")
 
 	// Test-chat flags
 	modelsTestChatCmd.Flags().String("model", "", "Model name or ID")
