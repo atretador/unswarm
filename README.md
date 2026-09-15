@@ -472,6 +472,53 @@ unswarm settings get request-timeout  # single setting
 unswarm settings set request-timeout 30  # update a setting
 ```
 
+#### Config Generation for Coding Agents
+
+Generate configuration files for external coding agents (opencode, pi.dev) from your Unswarm model/provider data. This eliminates manual config maintenance — the command reads your key's access grants, fetches the provider model catalog, and writes a ready-to-use config file.
+
+**How it works:**
+1. Resolves the API key by name and verifies it's an inference-scope key
+2. Rotates the key to capture a fresh secret (old key invalidated)
+3. Fetches access grants to determine which models/ providers are allowed
+4. Queries the provider model catalog and fetches context windows from `/v1/models`
+5. Builds the config file and writes it (with `.bak` backup of any existing file)
+
+```bash
+# Generate opencode config (global: ~/.config/opencode/opencode.jsonc)
+unswarm config generate-opencode --key my-inference-key
+
+# Generate pi.dev config (global: ~/.pi/agent/models.json)
+unswarm config generate-pi --key my-inference-key
+
+# Preview without rotating or writing (dry-run)
+unswarm config generate-opencode --key my-inference-key --dry-run
+unswarm config generate-pi --key my-inference-key --dry-run
+
+# Project-local target
+unswarm config generate-opencode --key my-inference-key --target project
+```
+
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--key` | API key name (inference-scope only, `usk_` prefix) |
+| `--target global` | Write to global config location (default) |
+| `--target project` | Write to project-local config location |
+| `--dry-run` | Preview output without rotating key or writing files |
+| `-y`, `--yes` | Skip rotation confirmation prompt |
+
+**Output locations:**
+
+| Agent | Global | Project |
+|-------|--------|---------|
+| opencode | `~/.config/opencode/opencode.jsonc` | `./opencode.jsonc` |
+| pi.dev | `~/.pi/agent/models.json` | (not applicable) |
+
+**Access grants:** The command respects your key's access restrictions. If the key has specific providers or models in its grants, only those models appear in the generated config. If grants are empty (unrestricted), all available models are included.
+
+**Model IDs:** The generated config uses the exact model IDs from Unswarm's catalog (e.g., `cloud/openai/gpt-4o`, `router/Explorer`, or local model names). These IDs match what `GET /v1/models` returns, so requests route correctly through the Unswarm proxy.
+
 ### Shell Completion
 
 ```bash
