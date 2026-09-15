@@ -24,6 +24,7 @@ import type {
 } from "../../lib/api/types";
 import { AgentSection } from "./AgentSection";
 import { ManageRuntimesModal } from "./ManageRuntimesModal";
+import { useRuntimeStatus } from "./use-runtime-status";
 
 export type { RuntimeSignal } from "./helpers";
 
@@ -284,6 +285,9 @@ export default function Swarm() {
     queryFn: () => client.getSettings(),
   });
 
+  // Real-time runtime status via SSE — invalidates queries when statuses change
+  useRuntimeStatus(true);
+
   const anyExpanded = expandedAgents.size > 0;
   const pollInterval = anyExpanded
     ? (settings?.telemetryPollInterval ?? 10) * 1000
@@ -304,6 +308,7 @@ export default function Swarm() {
   const { data: registeredContainers } = useQuery({
     queryKey: ["registered-containers"],
     queryFn: () => client.listRegisteredRuntimes(),
+    refetchInterval: 10_000,
   });
 
   if (isLoading) {

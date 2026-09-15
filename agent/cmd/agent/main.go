@@ -259,12 +259,40 @@ func runSession(
 		commandQueueSize      = 64
 	)
 	cmdQueue := make(chan protocol.Envelope, commandQueueSize)
+
+	// sendTelemetry sends an immediate telemetry snapshot so the backend
+	// gets updated container/script statuses right after a lifecycle command.
+	sendTelemetry := func(ctx context.Context) {
+		payload := telemCollector.Collect(func(ctx context.Context) []protocol.ContainerTelemetry {
+			if dockerHandler != nil {
+				return dockerHandler.ListContainerStatuses(ctx)
+			}
+			return nil
+		})
+		if scriptMgr != nil && scriptMgr.IsEnabled() {
+			for _, s := range scriptMgr.GetStatuses() {
+				payload.Scripts = append(payload.Scripts, protocol.ScriptTelemetry{
+					Path:           s.Path,
+					PID:            s.PID,
+					Status:         s.Status,
+					Port:           s.Port,
+					RegistrationId: s.RegistrationId,
+					StartTime:      s.StartTime,
+				})
+			}
+		}
+		env := protocol.MustEnvelope(protocol.TypeTelemetry, nil, strPtr(cfg.AgentName), payload)
+		if err := wsClient.Send(ctx, env); err != nil {
+			logger.Error("send immediate telemetry", "error", err)
+		}
+	}
+
 	for i := 0; i < maxConcurrentCommands; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for env := range cmdQueue {
-				handleCommand(sessionCtx, env, disp, wsClient, cfg, logger)
+				handleCommand(sessionCtx, env, disp, wsClient, cfg, logger, sendTelemetry)
 			}
 		}()
 	}
@@ -377,6 +405,7 @@ func handleCommand(
 	wsClient *client.WSClient,
 	cfg config.Config,
 	logger *slog.Logger,
+	onLifecycleCommand func(ctx context.Context),
 ) {
 	if env.Payload == nil {
 		logger.Warn("command with nil payload", "id", derefStr(env.ID))
@@ -407,6 +436,20 @@ func handleCommand(
 
 	// Send result back
 	sendCommandResult(ctx, wsClient, cfg, env.ID, result, logger)
+
+	// Send immediate telemetry after lifecycle commands so status
+	// changes are visible to the backend/frontend without waiting
+	// for the next periodic telemetry tick.
+	lifecycleCommands := map[string]bool{
+		"start_container":   true,
+		"stop_container":    true,
+		"restart_container": true,
+		"start_script":      true,
+		"stop_script":       true,
+	}
+	if lifecycleCommands[cmdPayload.Command] && onLifecycleCommand != nil {
+		onLifecycleCommand(ctx)
+	}
 }
 
 // handleStreamCommand dispatches a streaming command: each chunk emitted by the

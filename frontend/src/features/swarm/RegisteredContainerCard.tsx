@@ -274,27 +274,69 @@ export function RegisteredContainerCard({
 
   const startMutation = useMutation({
     mutationFn: (id: string) => client.startRegisteredRuntime(id),
-    onMutate: () => {
+    onMutate: async (id) => {
       setStartError(null);
+      // Optimistically set status to "starting" so the UI reflects the transition immediately.
+      await queryClient.cancelQueries({ queryKey: ["registered-containers"] });
+      const previous = queryClient.getQueryData<RegisteredRuntime[]>(["registered-containers"]);
+      queryClient.setQueryData<RegisteredRuntime[]>(["registered-containers"], (old) =>
+        old?.map((rc) => (rc.id === id ? { ...rc, status: "starting" as const } : rc)),
+      );
+      return { previous };
     },
     onSuccess: () => {
       setStartError(null);
       invalidate();
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _id, context) => {
       setStartError(err.message || t('container.startFailed'));
+      // Rollback optimistic update on failure.
+      if (context?.previous) {
+        queryClient.setQueryData(["registered-containers"], context.previous);
+      }
       invalidate();
     },
   });
 
   const stopMutation = useMutation({
     mutationFn: (runtimeContainerId: string) => client.stopContainer(runtimeContainerId),
+    onMutate: async (_runtimeContainerId) => {
+      await queryClient.cancelQueries({ queryKey: ["registered-containers"] });
+      const previous = queryClient.getQueryData<RegisteredRuntime[]>(["registered-containers"]);
+      // Mark the backend status so the signal logic shows "down" immediately.
+      queryClient.setQueryData<RegisteredRuntime[]>(["registered-containers"], (old) =>
+        old?.map((rc) =>
+          rc.runtimeContainerId === _runtimeContainerId ? { ...rc, status: "registered" as const } : rc,
+        ),
+      );
+      return { previous };
+    },
     onSuccess: invalidate,
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["registered-containers"], context.previous);
+      }
+    },
   });
 
   const restartMutation = useMutation({
     mutationFn: (runtimeContainerId: string) => client.restartContainer(runtimeContainerId),
+    onMutate: async (_runtimeContainerId) => {
+      await queryClient.cancelQueries({ queryKey: ["registered-containers"] });
+      const previous = queryClient.getQueryData<RegisteredRuntime[]>(["registered-containers"]);
+      queryClient.setQueryData<RegisteredRuntime[]>(["registered-containers"], (old) =>
+        old?.map((rc) =>
+          rc.runtimeContainerId === _runtimeContainerId ? { ...rc, status: "starting" as const } : rc,
+        ),
+      );
+      return { previous };
+    },
     onSuccess: invalidate,
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["registered-containers"], context.previous);
+      }
+    },
   });
 
   const rediscoverMutation = useMutation({
@@ -316,7 +358,20 @@ export function RegisteredContainerCard({
 
   const stopScriptMutation = useMutation({
     mutationFn: (id: string) => client.stopRegisteredRuntime(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ["registered-containers"] });
+      const previous = queryClient.getQueryData<RegisteredRuntime[]>(["registered-containers"]);
+      queryClient.setQueryData<RegisteredRuntime[]>(["registered-containers"], (old) =>
+        old?.map((rc) => (rc.id === id ? { ...rc, status: "registered" as const } : rc)),
+      );
+      return { previous };
+    },
     onSuccess: invalidate,
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["registered-containers"], context.previous);
+      }
+    },
   });
 
   const healthCheckMutation = useMutation({
@@ -350,21 +405,32 @@ export function RegisteredContainerCard({
   const firstModel = container.discoveredModels[0];
   const canBenchmark = !!firstModel && firstModel.status === "ready";
   const transitional = REG_TRANSITIONAL.has(container.status);
-  // For scripts, the backend DB status is the authoritative lifecycle signal.
-  // Agent telemetry is polled every 30s and may be stale during startup/shutdown.
   const isScript = container.runtimeKind === "script";
-  const signal = isScript
-    ? (() => {
-        const backendStatus = (container.status ?? "").toLowerCase();
-        if (backendStatus === "starting") return "transitional" as RuntimeSignal;
-        if (backendStatus === "error") return "down" as RuntimeSignal;
-        if (backendStatus === "registered") return "down" as RuntimeSignal;
-        // For "ready": prefer agent telemetry when available, fallback to "running"
-        const ts = runtimeSignal(runtimeStatus);
-        if (ts === "running" || ts === "down") return ts;
-        return "running" as RuntimeSignal;
-      })()
-    : runtimeSignal(runtimeStatus);
+  // Backend DB status is the authoritative lifecycle signal for transitions.
+  // Agent telemetry is polled periodically and may be stale during startup/shutdown.
+  // By checking backend status for ALL runtime kinds (not just scripts), the UI
+  // immediately reflects "starting", "error", or "registered" without waiting for telemetry.
+  const signal = (() => {
+    const backendStatus = (container.status ?? "").toLowerCase();
+    const ts = runtimeSignal(runtimeStatus);
+
+    // Backend transitional/error states override telemetry.
+    if (backendStatus === "starting") return "transitional" as RuntimeSignal;
+    if (backendStatus === "error") return "down" as RuntimeSignal;
+
+    if (isScript) {
+      if (backendStatus === "registered") return "down" as RuntimeSignal;
+      // For "ready" scripts: prefer agent telemetry when available, fallback to "running".
+      if (ts === "running" || ts === "down") return ts;
+      return "running" as RuntimeSignal;
+    }
+
+    // For containers: prefer agent telemetry when available.
+    if (ts !== "unknown") return ts;
+    // No telemetry yet — fall back to backend status.
+    if (backendStatus === "registered") return "down" as RuntimeSignal;
+    return "unknown" as RuntimeSignal;
+  })();
   const busy =
     startMutation.isPending ||
     stopMutation.isPending ||

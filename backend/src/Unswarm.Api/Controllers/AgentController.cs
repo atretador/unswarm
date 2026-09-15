@@ -36,19 +36,22 @@ public sealed class AgentController : ControllerBase
     private readonly IDockerControllerRouter? _router;
     private readonly IApiKeyStore? _keys;
     private readonly IContainerRegistry? _containers;
+    private readonly IRuntimeStatusBroadcaster? _runtimeStatusBroadcaster;
 
     public AgentController(
         IAgentRegistry registry,
         ILogger<AgentController> logger,
         IDockerControllerRouter? router = null,
         IApiKeyStore? keys = null,
-        IContainerRegistry? containers = null)
+        IContainerRegistry? containers = null,
+        IRuntimeStatusBroadcaster? runtimeStatusBroadcaster = null)
     {
         _registry = registry;
         _logger = logger;
         _router = router;
         _keys = keys;
         _containers = containers;
+        _runtimeStatusBroadcaster = runtimeStatusBroadcaster;
     }
 
     [HttpGet("/ws/agent")]
@@ -299,7 +302,10 @@ public sealed class AgentController : ControllerBase
                     break;
 
                 case "telemetry":
+                    var prevContainers = conn?.Containers?.Select(c => (c.ContainerId, c.Status)).ToList();
+                    var prevScripts = conn?.Scripts?.Select(s => (s.Path, s.Status, s.RegistrationId)).ToList();
                     ParseTelemetry(conn, msg.Payload);
+                    BroadcastStatusChanges(agentName, conn, prevContainers, prevScripts);
                     break;
 
                 case "command_result":
@@ -415,6 +421,54 @@ public sealed class AgentController : ControllerBase
                     RamTotalMb = cm.TryGetProperty("ramTotalMb", out var crt) && crt.TryGetInt64(out var crtVal) ? crtVal : 0,
                 };
             }
+        }
+    }
+
+    /// <summary>
+    /// Compares previous and current container/script statuses and broadcasts
+    /// any changes to SSE subscribers. Only publishes when there are actual changes.
+    /// </summary>
+    private void BroadcastStatusChanges(
+        string agentName,
+        AgentConnection? connection,
+        List<(string ContainerId, string Status)>? prevContainers,
+        List<(string Path, string Status, string? RegistrationId)>? prevScripts)
+    {
+        if (connection is null || _runtimeStatusBroadcaster is null)
+            return;
+
+        var containerChanges = new List<ContainerStatusUpdate>();
+        var currentContainers = connection.Containers ?? [];
+        var prevContainerMap = prevContainers?.ToDictionary(c => c.ContainerId, c => c.Status) ?? new Dictionary<string, string>();
+
+        foreach (var c in currentContainers)
+        {
+            if (!prevContainerMap.TryGetValue(c.ContainerId, out var prevStatus) || prevStatus != c.Status)
+            {
+                containerChanges.Add(new ContainerStatusUpdate(c.ContainerId, c.ModelName, c.Status, c.Port));
+            }
+        }
+
+        var scriptChanges = new List<ScriptStatusUpdate>();
+        var currentScripts = connection.Scripts ?? [];
+        var prevScriptMap = prevScripts?.ToDictionary(s => $"{s.Path}:{s.RegistrationId}", s => s.Status) ?? new Dictionary<string, string>();
+
+        foreach (var s in currentScripts)
+        {
+            var key = $"{s.Path}:{s.RegistrationId}";
+            if (!prevScriptMap.TryGetValue(key, out var prevStatus) || prevStatus != s.Status)
+            {
+                scriptChanges.Add(new ScriptStatusUpdate(s.Path, s.Status, s.RegistrationId, s.Port));
+            }
+        }
+
+        if (containerChanges.Count > 0 || scriptChanges.Count > 0)
+        {
+            _runtimeStatusBroadcaster.Publish(new RuntimeStatusEvent(
+                agentName,
+                DateTimeOffset.UtcNow,
+                containerChanges,
+                scriptChanges));
         }
     }
 

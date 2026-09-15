@@ -191,6 +191,7 @@ builder.Services.AddScoped<IApiKeyAccessService>(sp => new ApiKeyAccessService(
 // Singleton: usage records are fanned out to /ws/metrics live-tail subscribers
 // from UsageRecorder's throwaway scopes.
 builder.Services.AddSingleton<IUsageLiveTailBroadcaster, UsageLiveTailBroadcaster>();
+builder.Services.AddSingleton<IRuntimeStatusBroadcaster, RuntimeStatusBroadcaster>();
 
 // Cloud providers: scoped store (Func<UnswarmDbContext> holder, like other scoped stores)
 builder.Services.AddSingleton<IApiKeyEncryptor, DataProtectionEncryptor>();
