@@ -160,4 +160,13 @@ public sealed class FakeRemoteDockerController : IRemoteDockerController
 
     public Task<string> GetScriptContentAsync(string path, CancellationToken ct = default)
         => Task.FromResult("");
+
+    public Task DeleteScriptAsync(string path, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task<string> PullImageAsync(string image, CancellationToken ct = default)
+        => Task.FromResult(image);
+
+    public Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
+        => Task.FromResult(new ContainerCreateResult { ContainerId = "remote-created-1" });
 }

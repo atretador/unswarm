@@ -164,7 +164,8 @@
     "hostScriptsDockerDesc": "Gerenciamento de scripts do host requer acesso direto ao metal. Execute com dotnet run ou use um agente com um diretório de scripts configurado.",
     "uploadManageHost": "Envie e gerencie scripts launcher no host.",
     "uploadManageAgent": "Envie e gerencie scripts launcher em {{agentName}}.",
-    "uploadThenSelect": "Envie arquivos .sh, depois selecione um para registrar como runtime."
+    "uploadThenSelect": "Envie arquivos .sh, depois selecione um para registrar como runtime.",
+    "newScript": "Novo Script"
   },
   "metrics": {
     "gpu0": "GPU0",
@@ -195,5 +196,33 @@
     "deprecated": "{{name}} está descontinuado — não é possível fazer benchmark",
     "conflict": "{{name}} tem conflito de nome — renomeie para resolver",
     "notReady": "{{name}} não está pronto para benchmark"
+  },
+  "create": {
+    "title": "Criar a partir da Imagem",
+    "toggle": "Criar Contêiner",
+    "image": "Imagem Docker",
+    "imagePlaceholder": "docker.io/org/imagem:tag",
+    "name": "Nome",
+    "namePlaceholder": "meu-contêiner",
+    "displayName": "Nome de Exibição",
+    "containerPort": "Porta do Contêiner",
+    "hostPort": "Porta do Host (opcional)",
+    "devices": "Dispositivos",
+    "devicesHint": "Caminhos de dispositivos GPU, um por linha",
+    "volumes": "Volumes",
+    "volumesHint": "host:container:ro — um por linha",
+    "envVars": "Variáveis de Ambiente",
+    "envVarsHint": "KEY=valor — um por linha",
+    "shmSize": "Memória Compartilhada (MB)",
+    "ipcMode": "Modo IPC",
+    "network": "Rede",
+    "restartPolicy": "Política de Reinicialização",
+    "serverArgs": "Argumentos do Servidor",
+    "serverArgsHint": "Um argumento por linha",
+    "creating": "Criando contêiner…",
+    "success": "Contêiner criado",
+    "error": "Falha ao criar contêiner",
+    "cancel": "Cancelar",
+    "submit": "Criar em {{agentName}}"
   }
 }

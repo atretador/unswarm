@@ -164,7 +164,8 @@
     "hostScriptsDockerDesc": "主机脚本管理需要裸机访问。请使用 dotnet run 运行，或使用配置了脚本目录的 Agent。",
     "uploadManageHost": "在主机上上传和管理启动脚本。",
     "uploadManageAgent": "在 {{agentName}} 上上传和管理启动脚本。",
-    "uploadThenSelect": "上传 .sh 文件，然后选择一个注册为运行时。"
+    "uploadThenSelect": "上传 .sh 文件，然后选择一个注册为运行时。",
+    "newScript": "新建脚本"
   },
   "metrics": {
     "gpu0": "G0",
@@ -195,5 +196,33 @@
     "deprecated": "{{name}} 已弃用——无法进行基准测试",
     "conflict": "{{name}} 存在名称冲突——请重命名以解决",
     "notReady": "{{name}} 尚未准备好进行基准测试"
+  },
+  "create": {
+    "title": "从镜像创建",
+    "toggle": "创建容器",
+    "image": "Docker 镜像",
+    "imagePlaceholder": "docker.io/org/image:tag",
+    "name": "名称",
+    "namePlaceholder": "my-container",
+    "displayName": "显示名称",
+    "containerPort": "容器端口",
+    "hostPort": "主机端口（可选）",
+    "devices": "设备",
+    "devicesHint": "GPU 设备路径，每行一个",
+    "volumes": "卷",
+    "volumesHint": "host:container:ro — 每行一个",
+    "envVars": "环境变量",
+    "envVarsHint": "KEY=value — 每行一个",
+    "shmSize": "共享内存 (MB)",
+    "ipcMode": "IPC 模式",
+    "network": "网络",
+    "restartPolicy": "重启策略",
+    "serverArgs": "服务器参数",
+    "serverArgsHint": "每行一个参数",
+    "creating": "正在创建容器…",
+    "success": "容器已创建",
+    "error": "创建容器失败",
+    "cancel": "取消",
+    "submit": "在 {{agentName}} 上创建"
   }
 }

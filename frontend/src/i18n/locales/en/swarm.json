@@ -164,7 +164,8 @@
     "hostScriptsDockerDesc": "Host script management requires bare-metal access. Run with dotnet run or use an agent with a configured scripts directory.",
     "uploadManageHost": "Upload and manage launcher scripts on host.",
     "uploadManageAgent": "Upload and manage launcher scripts on {{agentName}}.",
-    "uploadThenSelect": "Upload .sh files, then select one to register as a runtime."
+    "uploadThenSelect": "Upload .sh files, then select one to register as a runtime.",
+    "newScript": "New Script"
   },
   "metrics": {
     "gpu0": "G0",
@@ -195,5 +196,33 @@
     "deprecated": "{{name}} is deprecated — cannot benchmark",
     "conflict": "{{name}} has a name conflict — rename to resolve",
     "notReady": "{{name}} is not ready to benchmark"
+  },
+  "create": {
+    "title": "Create from Image",
+    "toggle": "Create Container",
+    "image": "Docker Image",
+    "imagePlaceholder": "docker.io/org/image:tag",
+    "name": "Name",
+    "namePlaceholder": "my-container",
+    "displayName": "Display Name",
+    "containerPort": "Container Port",
+    "hostPort": "Host Port (optional)",
+    "devices": "Devices",
+    "devicesHint": "GPU device paths, one per line",
+    "volumes": "Volumes",
+    "volumesHint": "host:container:ro — one per line",
+    "envVars": "Environment Variables",
+    "envVarsHint": "KEY=value — one per line",
+    "shmSize": "Shared Memory (MB)",
+    "ipcMode": "IPC Mode",
+    "network": "Network",
+    "restartPolicy": "Restart Policy",
+    "serverArgs": "Server Args",
+    "serverArgsHint": "One argument per line",
+    "creating": "Creating container…",
+    "success": "Container created",
+    "error": "Failed to create container",
+    "cancel": "Cancel",
+    "submit": "Create on {{agentName}}"
   }
 }

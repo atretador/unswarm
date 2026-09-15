@@ -15,6 +15,7 @@ public sealed class ContainersControllerTests
     private readonly FakeContainerRegistrationService _registrationService = new();
     private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly FakeBenchmarkHistory _benchmarks = new();
+    private readonly FakeContainerCreationService _creationService = new();
 
     private ContainersController CreateController() => new(
         _docker,
@@ -22,7 +23,8 @@ public sealed class ContainersControllerTests
         _clock,
         _registrationService,
         _containerRegistry,
-        _benchmarks);
+        _benchmarks,
+        _creationService);
 
     private static RegisteredRuntime MakeContainer(string id, string image = "test:latest") => new()
     {

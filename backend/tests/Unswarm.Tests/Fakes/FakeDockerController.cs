@@ -145,4 +145,18 @@ public sealed class FakeDockerController : IDockerController
 
     public Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
         => Task.FromResult<int?>(MappedPortOverride);
+
+    public Task<string> PullImageAsync(string image, CancellationToken ct = default)
+        => Task.FromResult(image);
+
+    public Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
+    {
+        var id = NextId();
+        StartedContainerIds.Add(id);
+        return Task.FromResult(new ContainerCreateResult
+        {
+            ContainerId = id,
+            MappedPort = config.HostPort
+        });
+    }
 }

@@ -423,6 +423,175 @@ public sealed class DockerController : IDockerController
         }
     }
 
+    public async Task<string> PullImageAsync(string image, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Pulling image {Image}", image);
+
+        // Check if image already exists locally
+        try
+        {
+            var inspect = await _client.Images.InspectImageAsync(image, ct).ConfigureAwait(false);
+            _logger.LogInformation("Image {Image} already local (ID: {Id})", image, inspect.ID[..12]);
+            return image;
+        }
+        catch (DockerImageNotFoundException)
+        {
+            // Image not found locally, need to pull
+        }
+
+        // Pull the image
+        var progress = new Progress<JSONMessage>(msg =>
+        {
+            if (!string.IsNullOrEmpty(msg.Status))
+                _logger.LogDebug("Pull progress: {Status}", msg.Status);
+        });
+
+        await _client.Images.CreateImageAsync(
+            new ImagesCreateParameters { FromImage = image },
+            new AuthConfig(),
+            progress,
+            ct).ConfigureAwait(false);
+
+        _logger.LogInformation("Image {Image} pulled successfully", image);
+        return image;
+    }
+
+    public async Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
+    {
+        _logger.LogInformation("Creating container {Name} from image {Image}", config.ContainerName, config.Image);
+
+        // Check name uniqueness
+        var existing = await _client.Containers.ListContainersAsync(new ContainersListParameters
+        {
+            All = true,
+            Filters = new Dictionary<string, IDictionary<string, bool>>
+            {
+                ["name"] = new Dictionary<string, bool> { [config.ContainerName] = true }
+            }
+        }, ct).ConfigureAwait(false);
+
+        if (existing.Any(c => c.Names.Any(n =>
+            n.TrimStart('/').Equals(config.ContainerName, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException(
+                $"Container with name '{config.ContainerName}' already exists. " +
+                $"Remove it first or use a different name.");
+        }
+
+        // Build port bindings
+        var portBindings = new Dictionary<string, IList<PortBinding>>();
+        var exposedPorts = new Dictionary<string, EmptyStruct>();
+
+        var containerPortKey = $"{config.ContainerPort}/tcp";
+        exposedPorts[containerPortKey] = default;
+
+        if (config.HostPort.HasValue)
+        {
+            portBindings[containerPortKey] = new List<PortBinding>
+            {
+                new PortBinding { HostPort = config.HostPort.Value.ToString() }
+            };
+        }
+        else
+        {
+            // Auto-assign host port
+            portBindings[containerPortKey] = new List<PortBinding>
+            {
+                new PortBinding { HostPort = "0" }
+            };
+        }
+
+        // Build host config
+        var hostConfig = new HostConfig
+        {
+            PortBindings = portBindings,
+            IpcMode = config.IpcMode,
+            NetworkMode = config.NetworkMode,
+            ShmSize = config.ShmSizeMb * 1024L * 1024L,
+        };
+
+        // Restart policy
+        hostConfig.RestartPolicy = config.RestartPolicy?.ToLowerInvariant() switch
+        {
+            "always" => new RestartPolicy { Name = RestartPolicyKind.Always },
+            "unless-stopped" => new RestartPolicy { Name = RestartPolicyKind.UnlessStopped },
+            "on-failure" => new RestartPolicy { Name = RestartPolicyKind.OnFailure, MaximumRetryCount = 3 },
+            _ => new RestartPolicy { Name = RestartPolicyKind.No }
+        };
+
+        // Device mappings (AMD GPU passthrough)
+        if (config.Devices is { Count: > 0 })
+        {
+            hostConfig.Devices = config.Devices.Select(d => new DeviceMapping
+            {
+                PathOnHost = d,
+                PathInContainer = d,
+                CgroupPermissions = "rwm"
+            }).ToList();
+        }
+
+        // Volume bindings
+        var binds = new List<string>();
+        if (config.Volumes is { Count: > 0 })
+        {
+            foreach (var v in config.Volumes)
+            {
+                var mode = v.Readonly ? "ro" : "rw";
+                binds.Add($"{v.Host}:{v.Container}:{mode}");
+            }
+            hostConfig.Binds = binds;
+        }
+
+        // Environment variables
+        var env = config.Env?.Select(e => $"{e.Key}={e.Value}").ToList();
+
+        // Entrypoint args (server args)
+        string[]? entrypoint = config.ServerArgs is { Count: > 0 }
+            ? config.ServerArgs.ToArray()
+            : null;
+
+        var createParams = new CreateContainerParameters
+        {
+            Image = config.Image,
+            Name = config.ContainerName,
+            ExposedPorts = exposedPorts,
+            HostConfig = hostConfig,
+            Env = env,
+            Entrypoint = entrypoint,
+            Labels = new Dictionary<string, string>
+            {
+                ["app"] = "unswarm",
+                ["unswarm.managed"] = "true"
+            }
+        };
+
+        var response = await _client.Containers.CreateContainerAsync(createParams, ct).ConfigureAwait(false);
+
+        _logger.LogInformation("Container created: {Id} (name: {Name})", response.ID[..12], config.ContainerName);
+
+        // Resolve mapped port
+        int? mappedPort = null;
+        try
+        {
+            var inspect = await _client.Containers.InspectContainerAsync(response.ID, ct).ConfigureAwait(false);
+            if (inspect.NetworkSettings.Ports.TryGetValue(containerPortKey, out var bindings) && bindings is { Count: > 0 })
+            {
+                if (int.TryParse(bindings[0].HostPort, out var hp))
+                    mappedPort = hp;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve mapped port for new container {Id}", response.ID[..12]);
+        }
+
+        return new ContainerCreateResult
+        {
+            ContainerId = response.ID,
+            MappedPort = mappedPort
+        };
+    }
+
     private static ContainerStatus MapContainerStatus(string state) => state.ToLowerInvariant() switch
     {
         "running" => ContainerStatus.Running,

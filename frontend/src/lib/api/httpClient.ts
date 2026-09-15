@@ -11,6 +11,8 @@ import type {
   CloudProviderRead,
   CloudProviderUpdateInput,
   Container,
+  CreateContainerPayload,
+  CreateContainerResponse,
   FetchModelsResult,
   LogEntry,
   MetricsAnalyticsParams,
@@ -571,6 +573,13 @@ export const httpClient: UnswarmClient = {
     );
   },
 
+  createContainer(data: CreateContainerPayload) {
+    return request<CreateContainerResponse>("/api/containers/create", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
   // ── Swarm / Containers ────────────────────────────────────────
   listContainers() {
     return request<Container[]>("/api/containers");
@@ -660,6 +669,13 @@ export const httpClient: UnswarmClient = {
   getAgentScriptContent(agentName: string, fileName: string) {
     return fetchText(
       `/api/scripts/agent/${encodeURIComponent(agentName)}/${encodeURIComponent(fileName)}/content`,
+    );
+  },
+
+  deleteAgentScript(agentName: string, fileName: string) {
+    return request<void>(
+      `/api/scripts/agent/${encodeURIComponent(agentName)}/${encodeURIComponent(fileName)}`,
+      { method: "DELETE" },
     );
   },
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
@@ -1826,5 +1826,144 @@ describe("Swarm", () => {
     expect(result.status).toBe("registered");
     expect(result.runtimeKind).toBe("script");
     expect(result.launcherPath).toBe("/tmp/test.sh");
+  });
+
+  // ─── CreateContainerForm dialog ─────────────────────────────────
+
+  it("plus button opens the Create Container dialog", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Swarm />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    // Open the manage modal for host
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    // Click the "+" button to open create dialog
+    const plusButton = within(dialog).getByRole("button", { name: /create container/i });
+    await user.click(plusButton);
+
+    // The create dialog should appear
+    const createDialog = await screen.findByRole("dialog", { name: /create from image/i });
+    expect(createDialog).toBeInTheDocument();
+    expect(within(createDialog).getByLabelText(/docker image/i)).toBeInTheDocument();
+  });
+
+  it("create container form auto-derives name from image", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Swarm />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    await user.click(within(dialog).getByRole("button", { name: /create container/i }));
+    const createDialog = await screen.findByRole("dialog", { name: /create from image/i });
+
+    // Set image value in a single change event so auto-derive fires with the full value
+    const imageInput = within(createDialog).getByLabelText(/docker image/i);
+    fireEvent.change(imageInput, { target: { value: "docker.io/org/my-model:latest" } });
+
+    // Name should auto-derive from image slug
+    const nameInput = within(createDialog).getByLabelText(/^name$/i) as HTMLInputElement;
+    await waitFor(() => {
+      expect(nameInput.value).toBe("my-model");
+    });
+  });
+
+  it("create container form calls createContainer with correct payload", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    const createSpy = vi.spyOn(mockClient, "createContainer").mockResolvedValueOnce({
+      runtimeId: "new-rt-1",
+      status: "Starting",
+      message: "Container created and starting",
+      containerId: "c-new-1",
+    });
+
+    render(
+      <TestWrapper>
+        <Swarm />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    await user.click(within(dialog).getByRole("button", { name: /create container/i }));
+    const createDialog = await screen.findByRole("dialog", { name: /create from image/i });
+
+    // Fill required image field
+    const imageInput = within(createDialog).getByLabelText(/docker image/i);
+    await user.type(imageInput, "docker.io/test/llama:latest");
+
+    // Submit
+    const submitBtn = within(createDialog).getByRole("button", { name: /create on host/i });
+    await user.click(submitBtn);
+
+    await waitFor(() => {
+      expect(createSpy).toHaveBeenCalledTimes(1);
+    });
+    const payload = createSpy.mock.calls[0][0];
+    expect(payload.image).toBe("docker.io/test/llama:latest");
+    expect(payload.agent).toBe("host");
+  });
+
+  it("create container dialog closes on Escape", async () => {
+    seedRegisteredRuntimes(HOST_RCS);
+    const user = userEvent.setup();
+    render(
+      <TestWrapper>
+        <Swarm />
+      </TestWrapper>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("llama-server")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Manage runtimes host" }));
+    const dialog = await screen.findByRole("dialog", { name: /manage runtimes on host/i });
+    await waitFor(() => {
+      expect(within(dialog).getByText("llama-3.1-70b")).toBeInTheDocument();
+    });
+
+    await user.click(within(dialog).getByRole("button", { name: /create container/i }));
+    const createDialog = await screen.findByRole("dialog", { name: /create from image/i });
+    expect(createDialog).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(createDialog).not.toBeInTheDocument();
+    });
   });
 });

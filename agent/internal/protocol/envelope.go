@@ -34,6 +34,7 @@ const (
 	CmdListContainers   = "list_containers"
 	CmdGetContainerLogs = "get_container_logs"
 	CmdRemoveContainer  = "remove_container"
+	CmdCreateContainer  = "create_container"
 	CmdHealthCheck      = "health_check"
 	CmdDiscoverModels   = "discover_models"
 	CmdChatCompletion       = "chat_completion"
@@ -47,6 +48,7 @@ const (
 	CmdUploadScript     = "upload_script"
 	CmdUpdateScript     = "update_script"
 	CmdGetScriptContent = "get_script_content"
+	CmdDeleteScript     = "delete_script"
 )
 
 // Envelope is the top-level JSON structure for every message.
@@ -103,6 +105,30 @@ type CommandPayload struct {
 	ScriptContent       string            `json:"scriptContent,omitempty"`
 	PID                 int               `json:"pid,omitempty"`
 	RegistrationId      string            `json:"registrationId,omitempty"`
+}
+
+// CreateContainerPayload carries the parameters for creating a new container.
+type CreateContainerPayload struct {
+	Image               string            `json:"image"`
+	ContainerName       string            `json:"containerName"`
+	ContainerPort       int               `json:"containerPort,omitempty"`
+	HostPort            int               `json:"hostPort,omitempty"`
+	Devices             []string          `json:"devices,omitempty"`
+	Volumes             []VolumeMount     `json:"volumes,omitempty"`
+	Env                 map[string]string `json:"env,omitempty"`
+	ShmSizeMb           int               `json:"shmSizeMb,omitempty"`
+	IpcMode             string            `json:"ipcMode,omitempty"`
+	NetworkMode         string            `json:"networkMode,omitempty"`
+	RestartPolicy       string            `json:"restartPolicy,omitempty"`
+	ServerArgs          []string          `json:"serverArgs,omitempty"`
+	RegisteredRuntimeID string            `json:"registeredRuntimeId,omitempty"`
+}
+
+// VolumeMount represents a host:container volume binding.
+type VolumeMount struct {
+	Host      string `json:"host"`
+	Container string `json:"container"`
+	Readonly  bool   `json:"readonly"`
 }
 
 // CommandResultPayload is sent by the agent in response to a command.

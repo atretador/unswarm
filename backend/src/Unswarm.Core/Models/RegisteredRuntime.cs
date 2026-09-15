@@ -10,6 +10,12 @@ public enum ContainerRegistrationStatus
     Error
 }
 
+public enum CreationMode
+{
+    PreProvisioned = 0,
+    Created = 1
+}
+
 public sealed record RegisteredRuntime
 {
     public required string Id { get; init; }
@@ -43,4 +49,12 @@ public sealed record RegisteredRuntime
     public DateTimeOffset UpdatedAt { get; init; }
     public DateTimeOffset? LastDiscoveredAt { get; init; }
     public int MaxConcurrentInferences { get; init; } = 1;
+    /// <summary>How this runtime was created: PreProvisioned (manual) or Created (by unswarm).</summary>
+    public CreationMode CreationMode { get; init; } = CreationMode.PreProvisioned;
+    /// <summary>JSON-serialized DockerCreateParams. Null for pre-provisioned runtimes.</summary>
+    public string? CreationConfigJson { get; init; }
+    /// <summary>Structured error info on creation failure (JSON: stage, message, timestamp).</summary>
+    public string? ErrorDetail { get; init; }
+    /// <summary>Raw container stdout/stderr tail from failed creation (last 200 lines).</summary>
+    public string? ErrorLogs { get; init; }
 }

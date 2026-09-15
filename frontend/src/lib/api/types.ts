@@ -64,6 +64,38 @@ export interface Model {
   supportedThinkingEfforts?: string[] | null;
 }
 
+// ─── Container Creation ─────────────────────────────────────────
+
+export interface CreateContainerDockerParams {
+  containerName: string;
+  containerPort: number;
+  hostPort?: number;
+  devices?: string[];
+  volumes?: Array<{ host: string; container: string; readonly?: boolean }>;
+  env?: Array<{ key: string; value: string }>;
+  shmSizeMb?: number;
+  ipcMode?: string;
+  networkMode?: string;
+  restartPolicy?: string;
+  serverArgs?: string[];
+}
+
+export interface CreateContainerPayload {
+  image: string;
+  name: string;
+  displayName?: string;
+  dockerParams: CreateContainerDockerParams;
+  agent?: string;
+  detach?: boolean;
+}
+
+export interface CreateContainerResponse {
+  runtimeId: string;
+  status: string;
+  message: string;
+  containerId: string | null;
+}
+
 // ─── Container Registration ───────────────────────────────────────
 
 export type ContainerRegistrationStatus =

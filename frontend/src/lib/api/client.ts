@@ -12,6 +12,8 @@ import type {
   CloudProviderRead,
   CloudProviderUpdateInput,
   Container,
+  CreateContainerPayload,
+  CreateContainerResponse,
   FetchModelsResult,
   LogEntry,
   MetricsAnalyticsParams,
@@ -87,6 +89,9 @@ export interface UnswarmClient {
   healthCheckRuntime(id: string): Promise<RegisteredRuntime>;
   deleteRuntime(id: string, deleteModels?: boolean): Promise<void>;
 
+  /** Create a new Docker container from an image. */
+  createContainer(data: CreateContainerPayload): Promise<CreateContainerResponse>;
+
   /** Update a registered runtime's display name. */
   updateRuntime(id: string, payload: UpdateRuntimePayload): Promise<RegisteredRuntime>;
 
@@ -122,6 +127,7 @@ export interface UnswarmClient {
   uploadAgentScript(agentName: string, file: File): Promise<ScriptInfo>;
   updateAgentScript(agentName: string, fileName: string, file: File): Promise<ScriptInfo>;
   getAgentScriptContent(agentName: string, fileName: string): Promise<string>;
+  deleteAgentScript(agentName: string, fileName: string): Promise<void>;
 
   /** Run a benchmark against a model. Optional promptId resolves server-side. */
   runBenchmark(modelId: string, opts?: { promptId?: string }): Promise<BenchmarkResult>;

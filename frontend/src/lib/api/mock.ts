@@ -16,6 +16,8 @@ import type {
   PromptVersion,
   PermissionMatrix,
   QueueSnapshot,
+  CreateContainerPayload,
+  CreateContainerResponse,
   RegisterRuntimePayload,
   RegisteredRuntime,
   ScriptInfo,
@@ -1232,6 +1234,15 @@ export const mockClient: UnswarmClient = {
   },
 
   // ── Container Registration ──────────────────────────────────
+  async createContainer(_data: CreateContainerPayload): Promise<CreateContainerResponse> {
+    await delay(rand(200, 500));
+    return {
+      runtimeId: id(),
+      status: "creating",
+      message: "Container creation in progress",
+      containerId: null,
+    };
+  },
   async registerRuntime(data: RegisterRuntimePayload) {
     await delay(rand(100, 300));
     const agentName = data.agent ?? "host";
@@ -1478,6 +1489,10 @@ export const mockClient: UnswarmClient = {
   async getAgentScriptContent(_agentName: string, _fileName: string): Promise<string> {
     await delay(rand(60, 150));
     return "#!/bin/bash\necho 'Hello from agent script'";
+  },
+
+  async deleteAgentScript(_agentName: string, _fileName: string): Promise<void> {
+    await delay(rand(60, 150));
   },
 
   async runBenchmark(modelId: string, opts?: { promptId?: string }) {

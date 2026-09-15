@@ -68,14 +68,18 @@ public sealed class ContainerRegistry : IContainerRegistry
             RuntimeKind = container.RuntimeKind.ToString(),
             LauncherPath = container.LauncherPath,
             RuntimeProcessId = container.RuntimeProcessId,
-            Status = nameof(ContainerRegistrationStatus.Registered),
+            Status = container.Status.ToString(),
             RuntimeContainerId = container.RuntimeContainerId,
             MappedPort = container.MappedPort,
             ErrorMessage = container.ErrorMessage,
             CreatedAt = now,
             UpdatedAt = now,
             LastDiscoveredAt = container.LastDiscoveredAt,
-            MaxConcurrentInferences = container.MaxConcurrentInferences
+            MaxConcurrentInferences = container.MaxConcurrentInferences,
+            CreationMode = (int)container.CreationMode,
+            CreationConfigJson = container.CreationConfigJson,
+            ErrorDetail = container.ErrorDetail,
+            ErrorLogs = container.ErrorLogs
         };
         db.RegisteredRuntimes.Add(entity);
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -106,6 +110,10 @@ public sealed class ContainerRegistry : IContainerRegistry
         entity.ErrorMessage = container.ErrorMessage;
         entity.LastDiscoveredAt = container.LastDiscoveredAt;
         entity.MaxConcurrentInferences = container.MaxConcurrentInferences;
+        entity.CreationMode = (int)container.CreationMode;
+        entity.CreationConfigJson = container.CreationConfigJson;
+        entity.ErrorDetail = container.ErrorDetail;
+        entity.ErrorLogs = container.ErrorLogs;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -278,6 +286,10 @@ public sealed class ContainerRegistry : IContainerRegistry
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt,
         LastDiscoveredAt = e.LastDiscoveredAt,
-        MaxConcurrentInferences = e.MaxConcurrentInferences
+        MaxConcurrentInferences = e.MaxConcurrentInferences,
+        CreationMode = Enum.TryParse<CreationMode>(e.CreationMode.ToString(), out var cm) ? cm : CreationMode.PreProvisioned,
+        CreationConfigJson = e.CreationConfigJson,
+        ErrorDetail = e.ErrorDetail,
+        ErrorLogs = e.ErrorLogs
     };
 }

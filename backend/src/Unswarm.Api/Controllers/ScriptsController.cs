@@ -22,6 +22,7 @@ namespace Unswarm.Api.Controllers;
 ///   POST   /api/scripts/agent/{agentName}/upload             — Upload .sh to agent
 ///   PUT    /api/scripts/agent/{agentName}/{fileName}         — Update script on agent
 ///   GET    /api/scripts/agent/{agentName}/{fileName}/content — Read script content from agent
+///   DELETE /api/scripts/agent/{agentName}/{fileName}         — Delete script on agent
 /// </summary>
 [ApiController]
 [Authorize]
@@ -270,6 +271,32 @@ public sealed class ScriptsController : ControllerBase
         catch (AgentCommandException ex)
         {
             _logger.LogWarning(ex, "Agent '{Agent}' failed to read script content", agentName);
+            return StatusCode(502, LocalizedError.Create("scripts.agentRejected", new { name = agentName, detail = ex.Message }));
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)
+        {
+            return StatusCode(503, LocalizedError.Create("scripts.agentFailed", new { name = agentName, detail = ex.Message }));
+        }
+    }
+
+    /// <summary>
+    /// Deletes a script from a remote agent's scripts directory.
+    /// </summary>
+    [HttpDelete("agent/{agentName}/{fileName}")]
+    public async Task<IActionResult> AgentDelete(string agentName, string fileName, CancellationToken ct)
+    {
+        var (remote, remoteError) = ResolveRemoteAgent(agentName);
+        if (remote is null)
+            return remoteError!;
+
+        try
+        {
+            await remote.DeleteScriptAsync(fileName, ct).ConfigureAwait(false);
+            return Ok(new { deleted = fileName });
+        }
+        catch (AgentCommandException ex)
+        {
+            _logger.LogWarning(ex, "Agent '{Agent}' rejected script deletion", agentName);
             return StatusCode(502, LocalizedError.Create("scripts.agentRejected", new { name = agentName, detail = ex.Message }));
         }
         catch (Exception ex) when (ex is InvalidOperationException or TimeoutException)

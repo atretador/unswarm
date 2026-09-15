@@ -754,6 +754,17 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         return content;
     }
 
+    /// <summary>Deletes a script from the remote agent's scripts directory.</summary>
+    public async Task DeleteScriptAsync(string path, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "delete_script",
+            scriptPath = path
+        }, JsonOptions);
+        await SendCommandAsync(payload, ct).ConfigureAwait(false);
+    }
+
     private async Task<ContainerStartResult> ExecuteStartAsync(string command, string containerName, int containerPort, CancellationToken ct)
     {
         var payload = JsonSerializer.SerializeToElement(new
@@ -1032,6 +1043,50 @@ public sealed class RemoteAgentDockerController : IRemoteDockerController
         // Remote agents handle their own port resolution during start;
         // if MappedPort is null the agent likely doesn't expose port mapping info.
         return Task.FromResult<int?>(null);
+    }
+
+    public Task<string> PullImageAsync(string image, CancellationToken ct = default)
+    {
+        // Remote agents pull images themselves during create_container;
+        // no pull command needed on the backend side.
+        return Task.FromResult(image);
+    }
+
+    public async Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
+    {
+        // Build the CreateContainerPayload as a raw JSON element matching the
+        // agent's protocol.CreateContainerPayload struct. The agent reads from
+        // CommandPayload.JsonBody (serialized as "json" on the wire).
+        var createPayload = JsonSerializer.SerializeToElement(new
+        {
+            image = config.Image,
+            containerName = config.ContainerName,
+            containerPort = config.ContainerPort,
+            hostPort = config.HostPort ?? 0,
+            devices = config.Devices ?? Array.Empty<string>(),
+            volumes = config.Volumes?.Select(v => new { host = v.Host, container = v.Container, @readonly = v.Readonly }).ToList(),
+            env = config.Env?.ToDictionary(e => e.Key, e => e.Value),
+            shmSizeMb = config.ShmSizeMb,
+            ipcMode = config.IpcMode,
+            networkMode = config.NetworkMode,
+            restartPolicy = config.RestartPolicy,
+            serverArgs = config.ServerArgs ?? Array.Empty<string>()
+        }, JsonOptions);
+
+        var payload = JsonSerializer.SerializeToElement(new
+        {
+            command = "create_container",
+            json = createPayload
+        }, JsonOptions);
+
+        var response = await SendCommandAsync(payload, ct).ConfigureAwait(false);
+        var p = RequireResultData(response, "create_container");
+
+        return new ContainerCreateResult
+        {
+            ContainerId = GetString(p, "containerId") ?? "",
+            MappedPort = GetInt(p, "mappedPort")
+        };
     }
 
     private ContainerStartResult MapStartResult(AgentMessage response)

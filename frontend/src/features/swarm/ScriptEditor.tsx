@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   FileCode,
   Pencil,
+  Plus,
   Terminal,
   Trash2,
   Upload,
@@ -648,6 +649,15 @@ export function HostScriptUpload({
     [uploadMutation],
   );
 
+  const handleNewScript = useCallback(async () => {
+    const ts = Date.now();
+    const name = `untitled-${ts}.sh`;
+    const blob = new Blob(["#!/bin/bash\n# New script\n"], { type: "text/x-shellscript" });
+    const file = new File([blob], name, { type: "text/x-shellscript" });
+    await uploadMutation.mutateAsync(file);
+    setEditingScript(name);
+  }, [uploadMutation]);
+
   const handleSelectScript = useCallback(
     (name: string) => {
       if (selectedScript === name) {
@@ -717,6 +727,16 @@ export function HostScriptUpload({
             onFilesSelected={handleFilesSelected}
             disabled={uploadMutation.isPending}
           />
+
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={uploadMutation.isPending}
+            onClick={handleNewScript}
+          >
+            <Plus className="size-3" />
+            {t('script.newScript')}
+          </Button>
 
           {uploadMutation.isPending && (
             <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
@@ -899,6 +919,15 @@ export function AgentScriptUpload({
     [uploadMutation],
   );
 
+  const handleNewScript = useCallback(async () => {
+    const ts = Date.now();
+    const name = `untitled-${ts}.sh`;
+    const blob = new Blob(["#!/bin/bash\n# New script\n"], { type: "text/x-shellscript" });
+    const file = new File([blob], name, { type: "text/x-shellscript" });
+    await uploadMutation.mutateAsync(file);
+    setEditingScript(name);
+  }, [uploadMutation]);
+
   const handleSelectScript = useCallback(
     (path: string) => {
       if (selectedScript === path) {
@@ -960,6 +989,16 @@ export function AgentScriptUpload({
         onFilesSelected={handleFilesSelected}
         disabled={uploadMutation.isPending}
       />
+
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={uploadMutation.isPending}
+        onClick={handleNewScript}
+      >
+        <Plus className="size-3" />
+        {t('script.newScript')}
+      </Button>
 
       {uploadMutation.isPending && (
         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">

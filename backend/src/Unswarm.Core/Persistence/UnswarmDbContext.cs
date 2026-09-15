@@ -159,6 +159,10 @@ public sealed class RegisteredRuntimeEntity
     public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset? LastDiscoveredAt { get; set; }
     public int MaxConcurrentInferences { get; set; } = 1;
+    public int CreationMode { get; set; } = 0;
+    public string? CreationConfigJson { get; set; }
+    public string? ErrorDetail { get; set; }
+    public string? ErrorLogs { get; set; }
 
     public ICollection<ContainerModelMappingEntity> ContainerModelMappings { get; set; } = [];
 }

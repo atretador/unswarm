@@ -123,6 +123,9 @@ public sealed class RegisteredRuntimeResponse
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastDiscoveredAt { get; set; }
     public int MaxConcurrentInferences { get; set; } = 1;
+    public string CreationMode { get; set; } = "preProvisioned";
+    public string? ErrorDetail { get; set; }
+    public string? ErrorLogs { get; set; }
     public List<ModelResponse> DiscoveredModels { get; set; } = [];
 
     public static RegisteredRuntimeResponse From(
@@ -145,6 +148,61 @@ public sealed class RegisteredRuntimeResponse
         CreatedAt = container.CreatedAt,
         LastDiscoveredAt = container.LastDiscoveredAt,
         MaxConcurrentInferences = container.MaxConcurrentInferences,
+        CreationMode = container.CreationMode.ToString().ToLowerInvariant(),
+        ErrorDetail = container.ErrorDetail,
+        ErrorLogs = container.ErrorLogs,
         DiscoveredModels = discoveredModels.Select(ModelResponse.FromDefinition).ToList()
     };
+}
+
+/// <summary>
+/// DTO for creating a new container from a Docker image.
+/// </summary>
+public sealed class CreateContainerRequestDto
+{
+    public required string Image { get; set; }
+    public string Name { get; set; } = "";
+    public DockerCreateParamsDto? DockerParams { get; set; }
+    public string Agent { get; set; } = "host";
+    public bool Detach { get; set; }
+}
+
+public sealed class DockerCreateParamsDto
+{
+    public string? ContainerName { get; set; }
+    public int ContainerPort { get; set; } = 8080;
+    public int? HostPort { get; set; }
+    public List<string>? Devices { get; set; }
+    public List<VolumeMountDto>? Volumes { get; set; }
+    public List<EnvVarDto>? Env { get; set; }
+    public int ShmSizeMb { get; set; } = 16384;
+    public string IpcMode { get; set; } = "host";
+    public string NetworkMode { get; set; } = "bridge";
+    public string RestartPolicy { get; set; } = "unless-stopped";
+    public List<string>? ServerArgs { get; set; }
+}
+
+public sealed class VolumeMountDto
+{
+    public string Host { get; set; } = "";
+    public string Container { get; set; } = "";
+    public bool Readonly { get; set; }
+}
+
+public sealed class EnvVarDto
+{
+    public string Key { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
+/// <summary>
+/// Response DTO for container creation requests.
+/// </summary>
+public sealed class CreateContainerResponseDto
+{
+    public string RuntimeId { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string? Message { get; set; }
+    public string? ContainerId { get; set; }
+    public string? ErrorDetail { get; set; }
 }

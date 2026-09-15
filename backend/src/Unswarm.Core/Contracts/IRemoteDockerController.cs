@@ -40,4 +40,7 @@ public interface IRemoteDockerController : IDockerController
 
     /// <summary>Reads the text content of a script on the remote agent.</summary>
     Task<string> GetScriptContentAsync(string path, CancellationToken ct = default);
+
+    /// <summary>Deletes a script from the remote agent's scripts directory.</summary>
+    Task DeleteScriptAsync(string path, CancellationToken ct = default);
 }

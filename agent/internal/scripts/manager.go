@@ -191,6 +191,42 @@ func (m *Manager) ReadScript(name string) (string, error) {
 	return string(data), nil
 }
 
+// DeleteScript removes a script file and its associated PID file. Returns an
+// error if the script is currently running (must be stopped first).
+func (m *Manager) DeleteScript(name string) (ScriptInfo, error) {
+	if m.scriptsDir == "" {
+		return ScriptInfo{}, fmt.Errorf("script support is not configured")
+	}
+
+	name, err := validateScriptName(name)
+	if err != nil {
+		return ScriptInfo{}, err
+	}
+
+	resolved, err := m.resolveWithinScriptsDir(filepath.Join(m.scriptsDir, name))
+	if err != nil {
+		return ScriptInfo{}, err
+	}
+
+	// Refuse to delete a running script.
+	m.mu.Lock()
+	proc, running := m.processes[resolved]
+	m.mu.Unlock()
+	if running && proc.isOurs() {
+		return ScriptInfo{}, fmt.Errorf("script is running, stop it first")
+	}
+
+	if err := os.Remove(resolved); err != nil {
+		return ScriptInfo{}, fmt.Errorf("delete script: %w", err)
+	}
+
+	// Best-effort removal of the PID file.
+	_ = os.Remove(m.pidPath(resolved))
+
+	abs, _ := filepath.Abs(resolved)
+	return ScriptInfo{Path: abs, Name: name}, nil
+}
+
 // chmodPlusX sets the executable bit on a file using an argument array
 // (avoids shell interpretation of filenames with spaces or special chars).
 func chmodPlusX(path string) error {

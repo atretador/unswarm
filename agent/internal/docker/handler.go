@@ -10,12 +10,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -82,6 +85,133 @@ func (h *Handler) RemoveContainer(ctx context.Context, name string) protocol.Com
 		return containerErrorResult("remove", name, err)
 	}
 	return okResult(map[string]string{"status": "removed", "name": name})
+}
+
+// CreateContainer pulls a Docker image and creates+starts a new container.
+func (h *Handler) CreateContainer(ctx context.Context, payload protocol.CreateContainerPayload) protocol.CommandResultPayload {
+	// 1. Pull image
+	logger := slog.Default()
+	logger.Info("pulling image", "image", payload.Image)
+
+	pullReader, err := h.client.ImagePull(ctx, payload.Image, image.PullOptions{})
+	if err != nil {
+		return errorResult(fmt.Sprintf("pull image %q: %v", payload.Image, err))
+	}
+	defer func() { _ = pullReader.Close() }()
+	// Consume the pull output to completion
+	if _, err := io.Copy(io.Discard, pullReader); err != nil {
+		return errorResult(fmt.Sprintf("pull image %q: %v", payload.Image, err))
+	}
+
+	// 2. Build port bindings
+	portBindings := nat.PortMap{}
+	exposedPorts := nat.PortSet{}
+	if payload.ContainerPort > 0 {
+		containerPort := nat.Port(fmt.Sprintf("%d/tcp", payload.ContainerPort))
+		exposedPorts[containerPort] = struct{}{}
+		if payload.HostPort > 0 {
+			portBindings[containerPort] = []nat.PortBinding{
+				{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", payload.HostPort)},
+			}
+		}
+	}
+
+	// 3. Build device mappings
+	var deviceMappings []container.DeviceMapping
+	for _, d := range payload.Devices {
+		deviceMappings = append(deviceMappings, container.DeviceMapping{
+			PathOnHost:        d,
+			PathInContainer:   d,
+			CgroupPermissions: "rwm",
+		})
+	}
+
+	// 4. Build volume bindings
+	var binds []string
+	for _, v := range payload.Volumes {
+		mode := "rw"
+		if v.Readonly {
+			mode = "ro"
+		}
+		binds = append(binds, fmt.Sprintf("%s:%s:%s", v.Host, v.Container, mode))
+	}
+
+	// 5. Build env vars
+	var env []string
+	for k, v := range payload.Env {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	// 6. Build host config
+	hostConfig := &container.HostConfig{
+		PortBindings:  portBindings,
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyMode(payload.RestartPolicy)},
+		Binds:         binds,
+		NetworkMode:   container.NetworkMode(payload.NetworkMode),
+	}
+	if len(deviceMappings) > 0 {
+		hostConfig.Devices = deviceMappings
+	}
+	if payload.ShmSizeMb > 0 {
+		hostConfig.ShmSize = int64(payload.ShmSizeMb) * 1024 * 1024
+	}
+	if payload.IpcMode != "" {
+		hostConfig.IpcMode = container.IpcMode(payload.IpcMode)
+	}
+
+	// 7. Build container config
+	config := &container.Config{
+		Image:        payload.Image,
+		ExposedPorts: exposedPorts,
+		Env:          env,
+	}
+	if len(payload.ServerArgs) > 0 {
+		config.Cmd = payload.ServerArgs
+	}
+
+	// 8. Add unswarm label
+	labels := map[string]string{
+		"app": "unswarm",
+	}
+	config.Labels = labels
+
+	// 9. Create container
+	logger.Info("creating container", "name", payload.ContainerName, "image", payload.Image)
+	resp, err := h.client.ContainerCreate(ctx, config, hostConfig, nil, nil, payload.ContainerName)
+	if err != nil {
+		return errorResult(fmt.Sprintf("create container %q: %v", payload.ContainerName, err))
+	}
+
+	// 10. Start container
+	logger.Info("starting container", "id", resp.ID[:12], "name", payload.ContainerName)
+	if err := h.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
+		return errorResult(fmt.Sprintf("start container %q: %v", payload.ContainerName, err))
+	}
+
+	// 11. Inspect to get mapped port
+	mappedPort := 0
+	if info, ierr := h.client.ContainerInspect(ctx, resp.ID); ierr == nil {
+		mappedPort = firstPublicPortFromNat(info.NetworkSettings.Ports)
+	}
+
+	return okResult(map[string]interface{}{
+		"status":      "created",
+		"containerId": resp.ID,
+		"name":        payload.ContainerName,
+		"mappedPort":  mappedPort,
+	})
+}
+
+// firstPublicPortFromNat extracts the first public port from nat.PortMap.
+func firstPublicPortFromNat(ports nat.PortMap) int {
+	for _, bindings := range ports {
+		if len(bindings) > 0 {
+			if p, err := strconv.Atoi(bindings[0].HostPort); err == nil {
+				return p
+			}
+		}
+	}
+	return 0
 }
 
 // InspectContainer returns detailed info about a pre-provisioned container.

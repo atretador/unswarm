@@ -564,6 +564,12 @@ public sealed class InferenceProxyErrorPathTests
             => _inner.UpdateScriptAsync(name, content, ct);
         public Task<string> GetScriptContentAsync(string path, CancellationToken ct = default)
             => _inner.GetScriptContentAsync(path, ct);
+        public Task DeleteScriptAsync(string path, CancellationToken ct = default)
+            => _inner.DeleteScriptAsync(path, ct);
+        public Task<string> PullImageAsync(string image, CancellationToken ct = default)
+            => _inner.PullImageAsync(image, ct);
+        public Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
+            => _inner.CreateContainerAsync(config, ct);
     }
 
     [Fact]

@@ -250,6 +250,54 @@ func TestFormatInspectPorts_Empty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// firstPublicPortFromNat
+// ---------------------------------------------------------------------------
+
+func TestFirstPublicPortFromNat_WithBinding(t *testing.T) {
+	ports := nat.PortMap{
+		"80/tcp": []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: "9090"},
+		},
+	}
+	got := firstPublicPortFromNat(ports)
+	if got != 9090 {
+		t.Errorf("firstPublicPortFromNat = %d, want 9090", got)
+	}
+}
+
+func TestFirstPublicPortFromNat_NoBindings(t *testing.T) {
+	ports := nat.PortMap{
+		"443/tcp": nil,
+	}
+	got := firstPublicPortFromNat(ports)
+	if got != 0 {
+		t.Errorf("firstPublicPortFromNat = %d, want 0", got)
+	}
+}
+
+func TestFirstPublicPortFromNat_Empty(t *testing.T) {
+	got := firstPublicPortFromNat(nat.PortMap{})
+	if got != 0 {
+		t.Errorf("firstPublicPortFromNat(empty) = %d, want 0", got)
+	}
+}
+
+func TestFirstPublicPortFromNat_MultipleEntries(t *testing.T) {
+	ports := nat.PortMap{
+		"80/tcp": []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: "8080"},
+		},
+		"443/tcp": []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: "8443"},
+		},
+	}
+	got := firstPublicPortFromNat(ports)
+	if got != 8080 {
+		t.Errorf("firstPublicPortFromNat = %d, want 8080", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // okResult / errorResult
 // ---------------------------------------------------------------------------
 

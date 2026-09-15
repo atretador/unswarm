@@ -177,6 +177,7 @@ builder.Services.AddSingleton<IContainerRegistry, ContainerRegistry>();
 builder.Services.AddSingleton<HostScriptRuntimeController>();
 builder.Services.AddSingleton<HostScriptDirectoryService>();
 builder.Services.AddScoped<IContainerRegistrationService, ContainerRegistrationService>();
+builder.Services.AddScoped<IContainerCreationService, ContainerCreationService>();
 builder.Services.AddSingleton<IAgentRegistry, AgentRegistry>();
 builder.Services.AddSingleton<IDockerControllerRouter, DockerControllerRouter>();
 builder.Services.AddSingleton<IModelTargetResolver, ModelTargetResolver>();

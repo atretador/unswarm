@@ -444,6 +444,7 @@ func handleCommand(
 		"start_container":   true,
 		"stop_container":    true,
 		"restart_container": true,
+		"create_container":  true,
 		"start_script":      true,
 		"stop_script":       true,
 	}
@@ -589,6 +590,32 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		return dh.RemoveContainer(ctx, name)
 	}))
 
+	// create_container
+	d.Register(protocol.CmdCreateContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		var payload protocol.CreateContainerPayload
+		if p.JsonBody != nil {
+			if err := json.Unmarshal(p.JsonBody, &payload); err != nil {
+				return errorResult(fmt.Sprintf("decode create_container payload: %v", err))
+			}
+		} else {
+			// Fallback: use image field as container name for backward compat
+			payload.ContainerName = p.ContainerName()
+			payload.Image = p.Image
+		}
+
+		if payload.Image == "" {
+			return errorResult("image is required for create_container")
+		}
+		if payload.ContainerName == "" {
+			return errorResult("containerName is required for create_container")
+		}
+
+		logger.Info("creating container", "image", payload.Image, "name", payload.ContainerName)
+		ctx, cancel := commandContext()
+		defer cancel()
+		return dh.CreateContainer(ctx, payload)
+	})
+
 	// health_check
 	d.Register(protocol.CmdHealthCheck, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("health check", "port", p.Port)
@@ -713,6 +740,21 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 			return errorResult(err.Error())
 		}
 		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"content": content}}
+	})
+
+	// delete_script — removes a script file
+	d.Register(protocol.CmdDeleteScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if scriptMgr == nil || !scriptMgr.IsEnabled() {
+			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if p.ScriptPath == "" {
+			return errorResult("scriptPath is required")
+		}
+		info, err := scriptMgr.DeleteScript(p.ScriptPath)
+		if err != nil {
+			return errorResult(err.Error())
+		}
+		return protocol.CommandResultPayload{OK: true, Data: info}
 	})
 
 	return d

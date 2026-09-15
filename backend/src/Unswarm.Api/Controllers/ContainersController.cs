@@ -40,6 +40,7 @@ public sealed class ContainersController : ControllerBase
     private readonly IContainerRegistrationService _registrationService;
     private readonly IContainerRegistry _containerRegistry;
     private readonly IBenchmarkHistory _benchmarks;
+    private readonly IContainerCreationService _creationService;
 
     public ContainersController(
         IDockerController docker,
@@ -47,7 +48,8 @@ public sealed class ContainersController : ControllerBase
         IClock clock,
         IContainerRegistrationService registrationService,
         IContainerRegistry containerRegistry,
-        IBenchmarkHistory benchmarks)
+        IBenchmarkHistory benchmarks,
+        IContainerCreationService creationService)
     {
         _docker = docker;
         _registry = registry;
@@ -55,6 +57,7 @@ public sealed class ContainersController : ControllerBase
         _registrationService = registrationService;
         _containerRegistry = containerRegistry;
         _benchmarks = benchmarks;
+        _creationService = creationService;
     }
 
     [HttpGet]
@@ -93,6 +96,54 @@ public sealed class ContainersController : ControllerBase
         };
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Creates a new container from a Docker image.
+    /// </summary>
+    [Authorize(Policy = "ControlPlaneAccess")]
+    [HttpPost("create")]
+    public async Task<IActionResult> CreateContainer(
+        [FromBody] CreateContainerRequestDto dto,
+        CancellationToken ct)
+    {
+        try
+        {
+            var dockerParams = new DockerCreateParams(
+                dto.DockerParams?.ContainerName,
+                dto.DockerParams?.ContainerPort ?? 8080,
+                dto.DockerParams?.HostPort,
+                dto.DockerParams?.Devices,
+                dto.DockerParams?.Volumes?.Select(v => new VolumeMount { Host = v.Host, Container = v.Container, Readonly = v.Readonly }).ToList(),
+                dto.DockerParams?.Env?.Select(e => new EnvVar { Key = e.Key, Value = e.Value }).ToList(),
+                dto.DockerParams?.ShmSizeMb ?? 16384,
+                dto.DockerParams?.IpcMode ?? "host",
+                dto.DockerParams?.NetworkMode ?? "bridge",
+                dto.DockerParams?.RestartPolicy ?? "unless-stopped",
+                dto.DockerParams?.ServerArgs);
+
+            var request = new CreateContainerRequest(
+                dto.Image,
+                string.IsNullOrWhiteSpace(dto.Name) ? dto.Image : dto.Name,
+                dockerParams,
+                dto.Agent,
+                dto.Detach);
+
+            var result = await _creationService.CreateContainerAsync(request, ct).ConfigureAwait(false);
+
+            return Ok(new CreateContainerResponseDto
+            {
+                RuntimeId = result.RuntimeId,
+                Status = result.Status.ToString(),
+                Message = result.Message,
+                ContainerId = result.ContainerId,
+                ErrorDetail = result.ErrorDetail
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message });
+        }
     }
 
     [Authorize(Policy = "ControlPlaneAccess")]
