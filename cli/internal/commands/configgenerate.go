@@ -149,47 +149,51 @@ func runConfigGenerate(cmd *cobra.Command, kind string) error {
 		}
 	}
 
-	// 5. Get access grants
-	resp, err = c.Do(cmd.Context(), "GET", "/api/api-keys/"+keyID+"/access", nil)
-	if err != nil {
-		return FormatErrorResponse(w, err)
-	}
-	if resp.StatusCode >= 400 {
-		apiErr := client.ParseError(resp)
-		return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
-	}
-
-	var grants accessGrants
-	if err := json.Unmarshal(resp.Body, &grants); err != nil {
-		return w.Error("parse_error", "failed to parse access grants", nil, "", 1)
-	}
-
-	// 6. Get full catalog
-	resp, err = c.Do(cmd.Context(), "GET", "/api/provider-model-catalog", nil)
-	if err != nil {
-		return FormatErrorResponse(w, err)
-	}
-	if resp.StatusCode >= 400 {
-		apiErr := client.ParseError(resp)
-		return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
-	}
-
-	var catalog []catalogEntry
-	if err := json.Unmarshal(resp.Body, &catalog); err != nil {
-		return w.Error("parse_error", "failed to parse provider-model-catalog", nil, "", 1)
-	}
-
-	// 6b. Fetch context windows from /v1/models
-	var contextWindows map[string]int
+	// 5. Fetch models from /v1/models (source of truth for what the key can access)
+	var v1Models []v1ModelData
 	if !dryRun {
-		contextWindows = fetchContextWindows(cmd, newSecret)
+		v1Models = fetchV1Models(cmd, newSecret)
 	} else {
-		contextWindows = make(map[string]int)
+		// In dry-run, we can't call /v1/models (no real secret), so fall back to catalog
+		resp, err = c.Do(cmd.Context(), "GET", "/api/provider-model-catalog", nil)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if resp.StatusCode >= 400 {
+			apiErr := client.ParseError(resp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+		var catalog []catalogEntry
+		if err := json.Unmarshal(resp.Body, &catalog); err != nil {
+			return w.Error("parse_error", "failed to parse provider-model-catalog", nil, "", 1)
+		}
+		// Convert catalog entries to v1ModelData for dry-run
+		for _, entry := range catalog {
+			if strings.EqualFold(entry.Kind, "router") {
+				v1Models = append(v1Models, v1ModelData{ID: "router/" + entry.Name, OwnedBy: "router"})
+			} else {
+				for _, modelID := range entry.Models {
+					v1Models = append(v1Models, v1ModelData{ID: modelID, OwnedBy: entry.Name})
+				}
+			}
+		}
 	}
 
-	// 7. Filter catalog based on access grants
-	filtered := filterCatalog(catalog, grants)
-	filtered = dedupCatalogEntries(filtered)
+	// 7. Optionally fetch catalog for display names
+	displayNameMap := make(map[string]string)
+	resp, err = c.Do(cmd.Context(), "GET", "/api/provider-model-catalog", nil)
+	if err == nil && resp.StatusCode < 400 {
+		var catalog []catalogEntry
+		if err := json.Unmarshal(resp.Body, &catalog); err == nil {
+			for _, entry := range catalog {
+				if entry.ModelDisplayNames != nil {
+					for k, v := range entry.ModelDisplayNames {
+						displayNameMap[k] = v
+					}
+				}
+			}
+		}
+	}
 
 	// 8. Determine backend URL
 	backendURL := resolveBackendURL()
@@ -197,9 +201,9 @@ func runConfigGenerate(cmd *cobra.Command, kind string) error {
 	// 9. Build and write config file
 	switch kind {
 	case "opencode":
-		return writeOpenCodeConfig(cmd, w, target, backendURL, newSecret, filtered, contextWindows)
+		return writeOpenCodeConfig(cmd, w, target, backendURL, newSecret, v1Models, displayNameMap)
 	case "pi":
-		return writePiConfig(cmd, w, target, backendURL, newSecret, filtered, contextWindows)
+		return writePiConfig(cmd, w, target, backendURL, newSecret, v1Models, displayNameMap)
 	default:
 		return fmt.Errorf("unknown config kind: %s", kind)
 	}
@@ -290,6 +294,7 @@ func resolveBackendURL() string {
 // v1ModelData represents a single model from the /v1/models endpoint.
 type v1ModelData struct {
 	ID      string              `json:"id"`
+	OwnedBy string              `json:"owned_by"`
 	Unswarm *v1ModelUnswarmInfo `json:"unswarm"`
 }
 
@@ -298,16 +303,14 @@ type v1ModelUnswarmInfo struct {
 	ContextWindow int `json:"contextWindow"`
 }
 
-// fetchContextWindows calls GET /v1/models to get context window sizes.
-func fetchContextWindows(cmd *cobra.Command, secret string) map[string]int {
-	result := make(map[string]int)
-
+// fetchV1Models calls GET /v1/models to get the full model list the key can access.
+func fetchV1Models(cmd *cobra.Command, secret string) []v1ModelData {
 	baseURL := resolveBackendURL()
 	modelURL := baseURL + "/v1/models"
 
 	req, err := http.NewRequest("GET", modelURL, nil)
 	if err != nil {
-		return result
+		return nil
 	}
 	req.Header.Set("Authorization", "Bearer "+secret)
 
@@ -320,28 +323,22 @@ func fetchContextWindows(cmd *cobra.Command, secret string) map[string]int {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return result
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return result
+		return nil
 	}
 
 	var body struct {
 		Data []v1ModelData `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return result
+		return nil
 	}
 
-	for _, m := range body.Data {
-		if m.Unswarm != nil && m.Unswarm.ContextWindow > 0 {
-			result[m.ID] = m.Unswarm.ContextWindow
-		}
-	}
-
-	return result
+	return body.Data
 }
 
 // resolveTargetPath returns the target file path for the given kind and scope.
@@ -407,33 +404,35 @@ type openCodeOptions struct {
 	APIKey  string `json:"apiKey"`
 }
 
-func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secret string, filtered []catalogEntry, contextWindows map[string]int) error {
+func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secret string, v1Models []v1ModelData, displayNames map[string]string) error {
 	targetPath, err := resolveTargetPath("opencode", target)
 	if err != nil {
 		return err
 	}
 
-	// Build the models map
+	// Build the models map directly from /v1/models
 	models := make(map[string]openCodeModel)
-	for _, entry := range filtered {
-		for _, modelID := range entry.Models {
-			displayName := modelID
-			if entry.ModelDisplayNames != nil {
-				if dn, ok := entry.ModelDisplayNames[modelID]; ok && dn != "" {
-					displayName = dn
-				}
-			}
-			m := openCodeModel{
-				Name: displayName,
-			}
-			if cw, ok := contextWindows[modelID]; ok && cw > 0 {
-				m.Limit.Context = cw
-			} else {
-				m.Limit.Context = 131072
-			}
-			m.Limit.Output = 32768
-			models[modelID] = m
+	for _, m := range v1Models {
+		name := m.ID
+		if dn, ok := displayNames[m.ID]; ok && dn != "" {
+			name = dn
+		} else if strings.HasPrefix(m.ID, "router/") {
+			name = strings.TrimPrefix(m.ID, "router/")
 		}
+		entry := openCodeModel{
+			Name: name,
+			Limit: struct {
+				Context int `json:"context"`
+				Output  int `json:"output"`
+			}{
+				Context: 131072,
+				Output:  32768,
+			},
+		}
+		if m.Unswarm != nil && m.Unswarm.ContextWindow > 0 {
+			entry.Limit.Context = m.Unswarm.ContextWindow
+		}
+		models[m.ID] = entry
 	}
 
 	provider := openCodeProvider{
@@ -506,33 +505,31 @@ type piProvider struct {
 	Models  []piModelEntry `json:"models"`
 }
 
-func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secret string, filtered []catalogEntry, contextWindows map[string]int) error {
+func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secret string, v1Models []v1ModelData, displayNames map[string]string) error {
 	targetPath, err := resolveTargetPath("pi", target)
 	if err != nil {
 		return err
 	}
 
-	// Build the models list
+	// Build the models list directly from /v1/models
 	var models []piModelEntry
-	for _, entry := range filtered {
-		for _, modelID := range entry.Models {
-			displayName := modelID
-			if entry.ModelDisplayNames != nil {
-				if dn, ok := entry.ModelDisplayNames[modelID]; ok && dn != "" {
-					displayName = dn
-				}
-			}
-			cw := 131072
-			if ctxW, ok := contextWindows[modelID]; ok && ctxW > 0 {
-				cw = ctxW
-			}
-			models = append(models, piModelEntry{
-				ID:            modelID,
-				Name:          displayName,
-				ContextWindow: cw,
-				MaxTokens:     32768,
-			})
+	for _, m := range v1Models {
+		name := m.ID
+		if dn, ok := displayNames[m.ID]; ok && dn != "" {
+			name = dn
+		} else if strings.HasPrefix(m.ID, "router/") {
+			name = strings.TrimPrefix(m.ID, "router/")
 		}
+		cw := 131072
+		if m.Unswarm != nil && m.Unswarm.ContextWindow > 0 {
+			cw = m.Unswarm.ContextWindow
+		}
+		models = append(models, piModelEntry{
+			ID:            m.ID,
+			Name:          name,
+			ContextWindow: cw,
+			MaxTokens:     32768,
+		})
 	}
 
 	provider := piProvider{

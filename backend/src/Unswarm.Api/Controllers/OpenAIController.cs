@@ -113,6 +113,17 @@ public sealed class OpenAIController : ControllerBase
         var routerProfiles = await _routerProfile.ListProfilesAsync(ct);
         foreach (var profile in routerProfiles)
         {
+            // Compute context window as the minimum of all enabled entries' context windows (> 0 only)
+            int minCtx = 0;
+            foreach (var entry in profile.Entries.Where(e => e.IsEnabled))
+            {
+                var def = await _registry.GetAsync(entry.ModelId, ct);
+                if (def is { ContextWindow: > 0 })
+                {
+                    minCtx = minCtx == 0 ? def.ContextWindow : Math.Min(minCtx, def.ContextWindow);
+                }
+            }
+
             data.Add(new OpenAiModelData
             {
                 Id = $"router/{profile.Name}",
@@ -120,9 +131,9 @@ public sealed class OpenAIController : ControllerBase
                 OwnedBy = "router",
                 Unswarm = new OpenAiModelUnswarmInfo
                 {
-                    // Indicate profile mode in a custom field
                     Family = $"router-{profile.Mode.ToString().ToLowerInvariant()}",
-                    Status = profile.Entries.Any(e => e.IsEnabled) ? "active" : "empty"
+                    Status = profile.Entries.Any(e => e.IsEnabled) ? "active" : "empty",
+                    ContextWindow = minCtx
                 }
             });
         }

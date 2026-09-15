@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "motion/react";
@@ -703,15 +703,17 @@ function ManageScriptsBody({
   agentName,
   onClose,
   registered,
+  newScriptRef,
 }: {
   agentName: string;
   onClose: () => void;
   registered: RegisteredRuntime[];
+  newScriptRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const isHost = agentName === "host";
 
   if (isHost) {
-    return <HostScriptUpload registered={registered} onClose={onClose} />;
+    return <HostScriptUpload registered={registered} onClose={onClose} newScriptRef={newScriptRef} />;
   }
 
   return (
@@ -719,6 +721,7 @@ function ManageScriptsBody({
       agentName={agentName}
       registered={registered}
       onClose={onClose}
+      newScriptRef={newScriptRef}
     />
   );
 }
@@ -739,6 +742,7 @@ export function ManageRuntimesModal({
   const { t } = useTranslation('swarm');
   const [activeTab, setActiveTab] = useState<ManageTab>("containers");
   const [createOpen, setCreateOpen] = useState(false);
+  const newScriptRef = useRef<(() => void) | null>(null);
   const queryClient = useQueryClient();
   // Remount the body whenever the modal opens (or targets a different agent)
   // so filter/page/selection always start fresh.
@@ -789,8 +793,15 @@ export function ManageRuntimesModal({
         <div className="mr-2 flex items-center gap-1">
           <button
             type="button"
-            onClick={() => setCreateOpen(true)}
-            aria-label={t('create.toggle')}
+            onClick={() => {
+              if (activeTab === "scripts" && newScriptRef.current) {
+                // eslint-disable-next-line @typescript-eslint/no-floating-promises
+                newScriptRef.current();
+              } else {
+                setCreateOpen(true);
+              }
+            }}
+            aria-label={activeTab === "scripts" ? t('script.newScript') : t('create.toggle')}
             className="flex size-7 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-muted)] hover:text-[var(--color-text)]"
           >
             <Plus className="size-3.5" />
@@ -824,6 +835,7 @@ export function ManageRuntimesModal({
             agentName={agentName}
             onClose={onClose}
             registered={registered}
+            newScriptRef={newScriptRef}
           />
         </div>
       )}

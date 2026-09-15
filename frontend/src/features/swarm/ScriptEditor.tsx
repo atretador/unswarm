@@ -567,9 +567,11 @@ export function ScriptEditorDialog({
 export function HostScriptUpload({
   registered,
   onClose,
+  newScriptRef,
 }: {
   registered: RegisteredRuntime[];
   onClose: () => void;
+  newScriptRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const { t } = useTranslation('swarm');
   const { t: tc } = useTranslation('common');
@@ -654,9 +656,16 @@ export function HostScriptUpload({
     const name = `untitled-${ts}.sh`;
     const blob = new Blob(["#!/bin/bash\n# New script\n"], { type: "text/x-shellscript" });
     const file = new File([blob], name, { type: "text/x-shellscript" });
-    await uploadMutation.mutateAsync(file);
+    try {
+      await uploadMutation.mutateAsync(file);
+    } catch {
+      // Upload may fail (e.g. agent offline) — open editor anyway
+    }
     setEditingScript(name);
   }, [uploadMutation]);
+
+  // Expose handleNewScript to parent via ref (for tab bar + button)
+  if (newScriptRef) newScriptRef.current = handleNewScript;
 
   const handleSelectScript = useCallback(
     (name: string) => {
@@ -861,10 +870,12 @@ export function AgentScriptUpload({
   agentName,
   registered,
   onClose,
+  newScriptRef,
 }: {
   agentName: string;
   registered: RegisteredRuntime[];
   onClose: () => void;
+  newScriptRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const { t } = useTranslation('swarm');
   const { t: tc } = useTranslation('common');
@@ -924,9 +935,16 @@ export function AgentScriptUpload({
     const name = `untitled-${ts}.sh`;
     const blob = new Blob(["#!/bin/bash\n# New script\n"], { type: "text/x-shellscript" });
     const file = new File([blob], name, { type: "text/x-shellscript" });
-    await uploadMutation.mutateAsync(file);
+    try {
+      await uploadMutation.mutateAsync(file);
+    } catch {
+      // Upload may fail (e.g. agent offline) — open editor anyway
+    }
     setEditingScript(name);
   }, [uploadMutation]);
+
+  // Expose handleNewScript to parent via ref (for tab bar + button)
+  if (newScriptRef) newScriptRef.current = handleNewScript;
 
   const handleSelectScript = useCallback(
     (path: string) => {
