@@ -16,6 +16,7 @@ import { Button, Badge, Tooltip, Dialog, Input } from "../../components/ui";
 import { getProviderModelCatalog } from "../api-keys/api-keys-api";
 import { client } from "../../lib/query-client";
 import type { Model } from "../../lib/api/types";
+import { InputModalitiesField, normalizeInputModalities } from "./input-modalities-field";
 
 /**
  * Curates which cloud models are active. Model selection is saved per-provider
@@ -118,6 +119,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter, cloudModels }
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [editCtxWindow, setEditCtxWindow] = useState("");
   const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
+  const [editInputModalities, setEditInputModalities] = useState<string[]>(["text"]);
   const [editError, setEditError] = useState<string | null>(null);
 
   const cloudEditMutation = useMutation({
@@ -446,6 +448,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter, cloudModels }
                             const existing = (cloudModels ?? []).find((m) => m.id === compositeId);
                             setEditCtxWindow(existing?.contextWindow?.toString() ?? "");
                             setEditMaxOutputTokens(existing?.maxOutputTokens?.toString() ?? "");
+                            setEditInputModalities(normalizeInputModalities(existing?.inputModalities));
                             setEditError(null);
                             setEditingModelId(compositeId);
                           }}
@@ -497,6 +500,11 @@ export function CloudModelSelector({ onSaved, onChatModel, filter, cloudModels }
               max={10000000}
             />
           </div>
+          <InputModalitiesField
+            value={editInputModalities}
+            onChange={setEditInputModalities}
+            disabled={cloudEditMutation.isPending}
+          />
           {editError && (
             <p className="text-sm text-[var(--color-status-error)]">{editError}</p>
           )}
@@ -531,6 +539,7 @@ export function CloudModelSelector({ onSaved, onChatModel, filter, cloudModels }
                   data: {
                     contextWindow: ctxWindow,
                     maxOutputTokens: maxOut,
+                    inputModalities: normalizeInputModalities(editInputModalities),
                   },
                 });
               }}

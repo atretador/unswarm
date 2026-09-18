@@ -310,4 +310,52 @@ public sealed class CloudProviderModelsJsonHelperTests
         Assert.Equal("new-model", result[1].Id);
         Assert.Equal(100000, result[1].ContextWindow);
     }
+
+    // ── Input modalities ──────────────────────────────────────────────
+
+    [Fact]
+    public void Parse_ObjectFormat_InputModalities_NormalizesToCanonicalOrder()
+    {
+        var json = """[{"id":"m","inputModalities":["pdf","bogus","image"]}]""";
+
+        var result = CloudProviderModelsJsonHelper.Parse(json);
+
+        Assert.Single(result);
+        Assert.Equal(["text", "image", "pdf"], result[0].InputModalities);
+    }
+
+    [Fact]
+    public void Parse_LegacyBareString_InputModalities_DefaultsToTextOnly()
+    {
+        var result = CloudProviderModelsJsonHelper.Parse("""["legacy-model"]""");
+
+        Assert.Single(result);
+        Assert.Equal(["text"], result[0].InputModalities);
+    }
+
+    [Fact]
+    public void Parse_ObjectWithoutInputModalities_DefaultsToTextOnly()
+    {
+        var result = CloudProviderModelsJsonHelper.Parse("""[{"id":"old-object","contextWindow":128000}]""");
+
+        Assert.Single(result);
+        Assert.Equal(["text"], result[0].InputModalities);
+    }
+
+    [Fact]
+    public void Roundtrip_InputModalities_PreservesValues()
+    {
+        var original = new List<CloudProviderModelMeta>
+        {
+            new() { Id = "vision", InputModalities = ["text", "image", "video"] },
+            new() { Id = "text-only", InputModalities = ["text"] },
+        };
+
+        var json = CloudProviderModelsJsonHelper.Serialize(original);
+        var parsed = CloudProviderModelsJsonHelper.Parse(json);
+
+        Assert.Equal(2, parsed.Count);
+        Assert.Equal(original[0].InputModalities, parsed[0].InputModalities);
+        Assert.Equal(original[1].InputModalities, parsed[1].InputModalities);
+    }
 }

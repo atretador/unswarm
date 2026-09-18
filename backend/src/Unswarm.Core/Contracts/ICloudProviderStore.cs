@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Unswarm.Core.Models;
 
 namespace Unswarm.Core.Contracts;
 
@@ -100,6 +101,8 @@ public sealed class CloudProviderModelMeta
     public string Quantization { get; set; } = "";
     [System.Text.Json.Serialization.JsonPropertyName("displayName")]
     public string DisplayName { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("inputModalities")]
+    public string[] InputModalities { get; set; } = [ModelModalities.Text];
 
     /// <summary>Create a meta entry from a bare model ID (all metadata zero/empty).</summary>
     public static CloudProviderModelMeta FromId(string id) => new() { Id = id };
@@ -172,6 +175,16 @@ public static class CloudProviderModelsJsonHelper
                         meta.Quantization = q.GetString() ?? "";
                     if (item.TryGetProperty("displayName", out var dn) && dn.ValueKind == JsonValueKind.String)
                         meta.DisplayName = dn.GetString() ?? "";
+                    if (item.TryGetProperty("inputModalities", out var imod) && imod.ValueKind == JsonValueKind.Array)
+                    {
+                        var tokens = new List<string>();
+                        foreach (var token in imod.EnumerateArray())
+                        {
+                            if (token.ValueKind == JsonValueKind.String)
+                                tokens.Add(token.GetString() ?? "");
+                        }
+                        meta.InputModalities = ModelModalities.Normalize(tokens);
+                    }
 
                     if (!string.IsNullOrEmpty(meta.Id))
                         result.Add(meta);

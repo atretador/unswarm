@@ -48,6 +48,11 @@ type accessGrants struct {
 	Models    []string `json:"models"`
 }
 
+// openCodeModalities represents the input modalities block in opencode.jsonc.
+type openCodeModalities struct {
+	Input []string `json:"input"`
+}
+
 // openCodeModel represents a model block in opencode.jsonc.
 type openCodeModel struct {
 	Name  string `json:"name"`
@@ -55,14 +60,57 @@ type openCodeModel struct {
 		Context int `json:"context"`
 		Output  int `json:"output"`
 	} `json:"limit"`
+	Modalities openCodeModalities `json:"modalities"`
 }
 
 // piModelEntry represents a model entry in PI's models.json.
 type piModelEntry struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	ContextWindow int    `json:"contextWindow"`
-	MaxTokens     int    `json:"maxTokens"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	ContextWindow int      `json:"contextWindow"`
+	MaxTokens     int      `json:"maxTokens"`
+	Input         []string `json:"input,omitempty"`
+}
+
+// inputModalityOrder is the canonical ordering of input modalities supported
+// by the Unswarm wire contract.
+var inputModalityOrder = []string{"text", "image", "video", "audio", "pdf"}
+
+// piInputModalities is the set of input modalities accepted by the PI agent.
+var piInputModalities = map[string]bool{"text": true, "image": true}
+
+// openCodeInputModalities is the set of input modalities accepted by opencode.
+var openCodeInputModalities = map[string]bool{
+	"text": true, "image": true, "video": true, "audio": true, "pdf": true,
+}
+
+// filterInputModalities returns the subset of a model's modalities present in
+// allowed, in canonical order, and always including "text".
+func filterInputModalities(mods []string, allowed map[string]bool) []string {
+	present := make(map[string]bool, len(mods))
+	for _, m := range mods {
+		present[strings.ToLower(strings.TrimSpace(m))] = true
+	}
+	result := make([]string, 0, len(allowed))
+	for _, m := range inputModalityOrder {
+		if allowed[m] && present[m] {
+			result = append(result, m)
+		}
+	}
+	if !present["text"] {
+		result = append([]string{"text"}, result...)
+	}
+	return result
+}
+
+// modelInputModalities resolves the input modalities for a model from the
+// /v1/models Unswarm metadata, filtered to allowed. Missing or empty metadata
+// defaults to text-only.
+func modelInputModalities(m v1ModelData, allowed map[string]bool) []string {
+	if m.Unswarm == nil {
+		return filterInputModalities(nil, allowed)
+	}
+	return filterInputModalities(m.Unswarm.InputModalities, allowed)
 }
 
 func init() {
@@ -300,8 +348,9 @@ type v1ModelData struct {
 
 // v1ModelUnswarmInfo holds Unswarm-specific metadata from /v1/models.
 type v1ModelUnswarmInfo struct {
-	ContextWindow   int `json:"contextWindow"`
-	MaxOutputTokens int `json:"maxOutputTokens"`
+	ContextWindow   int      `json:"contextWindow"`
+	MaxOutputTokens int      `json:"maxOutputTokens"`
+	InputModalities []string `json:"inputModalities"`
 }
 
 // fetchV1Models calls GET /v1/models to get the full model list the key can access.
@@ -429,6 +478,9 @@ func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL,
 				Context: 131072,
 				Output:  32768,
 			},
+			Modalities: openCodeModalities{
+				Input: modelInputModalities(m, openCodeInputModalities),
+			},
 		}
 		if m.Unswarm != nil {
 			if m.Unswarm.ContextWindow > 0 {
@@ -535,6 +587,7 @@ func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secre
 			Name:          name,
 			ContextWindow: cw,
 			MaxTokens:     32768,
+			Input:         modelInputModalities(m, piInputModalities),
 		})
 	}
 

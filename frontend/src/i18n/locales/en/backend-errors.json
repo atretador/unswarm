@@ -39,6 +39,7 @@
   "inference.routerRequestFailed": "Router inference request failed",
   "inference.requestFailed": "Inference request failed",
   "models.contextWindowInvalid": "contextWindow must be between 1 and 10,000,000",
+  "models.inputModalitiesInvalid": "inputModalities contains an invalid value '{{token}}'. Allowed values: text, image, video, audio, pdf",
   "models.messagesRequired": "'messages' must contain at least one non-empty message",
   "models.notFound": "Model {{modelId}} not found",
   "agents.notFound": "Agent '{{name}}' not found",

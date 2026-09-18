@@ -34,6 +34,7 @@ public sealed class ModelResponse
     public string? SourceRuntimeAgent { get; set; }
     public string? DisplayName { get; set; }
     public string[]? SupportedThinkingEfforts { get; set; }
+    public string[] InputModalities { get; set; } = ["text"];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public string Origin { get; set; } = "swarm";
@@ -56,6 +57,7 @@ public sealed class ModelResponse
         SourceRuntimeId = d.SourceRuntimeId,
         DisplayName = d.DisplayName,
         SupportedThinkingEfforts = ParseThinkingEfforts(d.SupportedThinkingEffortsJson),
+        InputModalities = ModelModalities.ParseJson(d.InputModalitiesJson),
         CreatedAt = d.CreatedAt,
         UpdatedAt = d.UpdatedAt,
         Origin = "swarm"
@@ -79,6 +81,7 @@ public sealed class ModelCreateRequest
     public int MaxOutputTokens { get; set; }
     public string ContainerImage { get; set; } = "";
     public string? SupportedThinkingEffortsJson { get; set; }
+    public string[]? InputModalities { get; set; }
 }
 
 public sealed class ModelUpdateRequest
@@ -93,6 +96,7 @@ public sealed class ModelUpdateRequest
     public string? ContainerImage { get; set; }
     public string? DisplayName { get; set; }
     public string? SupportedThinkingEffortsJson { get; set; }
+    public string[]? InputModalities { get; set; }
 }
 
 /// <summary>

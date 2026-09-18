@@ -46,7 +46,17 @@
     "family": "系列",
     "parameterSize": "参数大小",
     "quantization": "量化",
-    "contextWindow": "上下文窗口"
+    "contextWindow": "上下文窗口",
+    "inputModalities": "输入模态",
+    "inputModalitiesHint": "文本始终受支持。请开启该模型支持的其他格式。",
+    "modalityTextLocked": "文本始终受支持",
+    "modalities": {
+      "text": "文本",
+      "image": "图片",
+      "video": "视频",
+      "audio": "音频",
+      "pdf": "PDF"
+    }
   },
   "errors": {
     "contextWindowInvalid": "上下文窗口必须是不超过 1000 万的正整数"

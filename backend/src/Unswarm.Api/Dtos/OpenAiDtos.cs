@@ -54,6 +54,8 @@ public sealed class OpenAiModelUnswarmInfo
     public string Status { get; set; } = "";
     [JsonPropertyName("supportedThinkingEfforts")]
     public string[]? SupportedThinkingEfforts { get; set; }
+    [JsonPropertyName("inputModalities")]
+    public string[] InputModalities { get; set; } = ["text"];
 }
 
 /// <summary>

@@ -46,7 +46,17 @@
     "family": "Familia",
     "parameterSize": "Tamaño de parámetro",
     "quantization": "Cuantización",
-    "contextWindow": "Ventana de contexto"
+    "contextWindow": "Ventana de contexto",
+    "inputModalities": "Modalidades de entrada",
+    "inputModalitiesHint": "El texto siempre está soportado. Active los demás formatos que acepta este modelo.",
+    "modalityTextLocked": "El texto siempre está soportado",
+    "modalities": {
+      "text": "Texto",
+      "image": "Imagen",
+      "video": "Video",
+      "audio": "Audio",
+      "pdf": "PDF"
+    }
   },
   "errors": {
     "contextWindowInvalid": "La ventana de contexto debe ser un número positivo hasta 10M"

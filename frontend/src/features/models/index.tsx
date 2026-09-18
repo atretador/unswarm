@@ -36,6 +36,7 @@ import { enumLabel } from "../../i18n/enum-map";
 import { formatTokensPerSec, formatLatency, formatTokens } from "../../i18n/format";
 import { TestChatDrawer } from "./test-chat-drawer";
 import { CloudModelSelector } from "./cloud-model-selector";
+import { InputModalitiesField, normalizeInputModalities } from "./input-modalities-field";
 
 // ─── Status semantics — identical to the Swarm page palette ───────
 
@@ -137,10 +138,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editCtxWindow, setEditCtxWindow] = useState("");
   const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
   const [editThinkingEfforts, setEditThinkingEfforts] = useState("");
+  const [editInputModalities, setEditInputModalities] = useState<string[]>(["text"]);
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; maxOutputTokens?: number | null; supportedThinkingEffortsJson: string | null }) =>
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; maxOutputTokens?: number | null; supportedThinkingEffortsJson: string | null; inputModalities: string[] }) =>
       client.updateModel(model.id, data as unknown as Partial<Model>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -158,6 +160,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     setEditCtxWindow(model.contextWindow?.toString() ?? "");
     setEditMaxOutputTokens(model.maxOutputTokens?.toString() ?? "");
     setEditThinkingEfforts(model.supportedThinkingEfforts?.join(", ") ?? "");
+    setEditInputModalities(normalizeInputModalities(model.inputModalities));
     setEditError(null);
     setEditing(true);
   };
@@ -184,6 +187,7 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       supportedThinkingEffortsJson: editThinkingEfforts.trim()
         ? JSON.stringify(editThinkingEfforts.split(",").map(s => s.trim()).filter(Boolean))
         : null,
+      inputModalities: normalizeInputModalities(editInputModalities),
     });
   };
 
@@ -409,6 +413,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               max={10000000}
             />
           </div>
+          <InputModalitiesField
+            value={editInputModalities}
+            onChange={setEditInputModalities}
+            disabled={updateMutation.isPending}
+          />
           <div className="grid gap-2">
             <Input
               label="Supported Thinking Efforts"

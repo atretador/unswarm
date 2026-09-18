@@ -433,6 +433,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                         ContainerImage = model.ContainerImage,
                         SourceRuntimeId = null,
                         DisplayName = model.DisplayName,
+                        SupportedThinkingEffortsJson = model.SupportedThinkingEffortsJson,
+                        InputModalitiesJson = model.InputModalitiesJson,
                         CreatedAt = model.CreatedAt,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -867,6 +869,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             Status = ModelStatus.Ready,
             ContextWindow = discoveredModel.ContextWindow,
             MaxOutputTokens = 0,
+            InputModalitiesJson = ModelModalities.SerializeJson(null),
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -913,6 +916,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 ContainerImage = existing.ContainerImage,
                 SourceRuntimeId = registeredContainerId,
                 DisplayName = existing.DisplayName ?? Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
+                // Admin-set modalities always win; unset defaults to text-only.
+                InputModalitiesJson = existing.InputModalitiesJson,
                 CreatedAt = existing.CreatedAt,
                 UpdatedAt = now
             };
@@ -1398,6 +1403,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         ContainerImage = model.ContainerImage,
         SourceRuntimeId = model.SourceRuntimeId,
         DisplayName = model.DisplayName,
+        SupportedThinkingEffortsJson = model.SupportedThinkingEffortsJson,
+        InputModalitiesJson = model.InputModalitiesJson,
         CreatedAt = model.CreatedAt,
         UpdatedAt = model.UpdatedAt
     };

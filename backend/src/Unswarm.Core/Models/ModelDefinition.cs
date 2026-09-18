@@ -14,6 +14,7 @@ public sealed class ModelDefinition
     public string? SourceRuntimeId { get; init; }
     public string? DisplayName { get; init; }
     public string? SupportedThinkingEffortsJson { get; init; }
+    public string? InputModalitiesJson { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
 }

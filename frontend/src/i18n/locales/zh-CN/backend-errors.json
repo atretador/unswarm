@@ -39,6 +39,7 @@
   "inference.routerRequestFailed": "路由器推理请求失败",
   "inference.requestFailed": "推理请求失败",
   "models.contextWindowInvalid": "contextWindow 必须在 1 到 10,000,000 之间",
+  "models.inputModalitiesInvalid": "inputModalities 包含无效值 '{{token}}'。允许的值：text、image、video、audio、pdf",
   "models.messagesRequired": "'messages' 必须包含至少一条非空消息",
   "models.notFound": "未找到模型 {{modelId}}",
   "agents.notFound": "未找到 Agent '{{name}}'",

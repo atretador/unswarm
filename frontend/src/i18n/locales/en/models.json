@@ -47,7 +47,17 @@
     "parameterSize": "Parameter Size",
     "quantization": "Quantization",
     "contextWindow": "Context Window",
-    "maxOutputTokens": "Max Output Tokens"
+    "maxOutputTokens": "Max Output Tokens",
+    "inputModalities": "Input Modalities",
+    "inputModalitiesHint": "Text is always supported. Turn on any other formats this model accepts.",
+    "modalityTextLocked": "Text is always supported",
+    "modalities": {
+      "text": "Text",
+      "image": "Image",
+      "video": "Video",
+      "audio": "Audio",
+      "pdf": "PDF"
+    }
   },
   "errors": {
     "contextWindowInvalid": "Context window must be a positive number up to 10M",

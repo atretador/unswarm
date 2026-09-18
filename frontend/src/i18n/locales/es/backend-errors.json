@@ -39,6 +39,7 @@
   "inference.routerRequestFailed": "Solicitud de inferencia del enrutador fallida",
   "inference.requestFailed": "Solicitud de inferencia fallida",
   "models.contextWindowInvalid": "contextWindow debe estar entre 1 y 10,000,000",
+  "models.inputModalitiesInvalid": "inputModalities contiene un valor no válido '{{token}}'. Valores permitidos: text, image, video, audio, pdf",
   "models.messagesRequired": "'messages' debe contener al menos un mensaje no vacío",
   "models.notFound": "Modelo {{modelId}} no encontrado",
   "agents.notFound": "Agente '{{name}}' no encontrado",

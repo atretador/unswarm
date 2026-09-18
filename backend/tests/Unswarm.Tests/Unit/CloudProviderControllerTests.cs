@@ -33,12 +33,14 @@ public sealed class CloudProviderControllerTests
     {
         private readonly Dictionary<string, CloudProviderReadItem> _items = new();
         private readonly Dictionary<string, IReadOnlyList<string>> _modelIds = new();
+        private readonly Dictionary<string, IReadOnlyList<CloudProviderModelMeta>> _modelMetas = new();
         private readonly Dictionary<string, OAuthTokenSet?> _oauthTokens = new();
         private int _nextId = 1;
 
         public List<string> CreatedNames { get; } = [];
         public List<string> DeletedIds { get; } = [];
         public List<(string Id, IReadOnlyList<string> ModelIds)> SavedModels { get; } = [];
+        public List<(string Id, IReadOnlyList<CloudProviderModelMeta> Metas)> SavedModelMetas { get; } = [];
         public List<(string Id, string AccessToken, string RefreshToken, DateTimeOffset? ExpiresAt, string? AccountId)> SavedOAuthTokens { get; } = [];
 
         public void SeedProvider(string id, string name, string baseUrl = "https://api.openai.com/v1", int authType = 0, string? chatgptAccountId = null, DateTimeOffset? tokenExpiresAt = null)
@@ -62,6 +64,12 @@ public sealed class CloudProviderControllerTests
         public void SeedOAuthTokens(string id)
         {
             _oauthTokens[id] = new OAuthTokenSet("encrypted-access", "encrypted-refresh", DateTimeOffset.UtcNow.AddHours(1), "acct-123");
+        }
+
+        public void SeedModelMetas(string id, IReadOnlyList<CloudProviderModelMeta> metas)
+        {
+            _modelMetas[id] = metas;
+            _modelIds[id] = metas.Select(m => m.Id).ToList();
         }
 
         public Task CreateAsync(string name, string baseUrl, string apiKeyPlaintext, string apiKeyHint, CancellationToken ct = default)
@@ -196,6 +204,8 @@ public sealed class CloudProviderControllerTests
         public Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default)
         {
             SavedModels.Add((id, models.Select(m => m.Id).ToList()));
+            SavedModelMetas.Add((id, models));
+            _modelMetas[id] = models;
             if (_items.TryGetValue(id, out var item))
             {
                 _items[id] = new CloudProviderReadItem
@@ -218,7 +228,9 @@ public sealed class CloudProviderControllerTests
         }
 
         public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
+            => Task.FromResult(_modelMetas.TryGetValue(id, out var metas)
+                ? metas
+                : (IReadOnlyList<CloudProviderModelMeta>)[]);
 
         public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default)
         {
@@ -525,6 +537,76 @@ public sealed class CloudProviderControllerTests
         var result = await ctrl.SaveModels("nonexistent", request, CancellationToken.None);
 
         Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task SaveModels_UnknownInputModality_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "openai");
+
+        var ctrl = CreateController();
+        var request = new CloudProviderModelListDto
+        {
+            Models = [new() { Id = "gpt-4o", InputModalities = ["hologram"] }]
+        };
+
+        var result = await ctrl.SaveModels("cp-1", request, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Empty(_store.SavedModelMetas);
+    }
+
+    [Fact]
+    public async Task SaveModels_OmittedInputModalities_PreservesStoredModalities()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _store.SeedModelMetas("cp-1",
+            [new CloudProviderModelMeta { Id = "gpt-4o", InputModalities = ["text", "image"] }]);
+
+        var ctrl = CreateController();
+        // InputModalities omitted (null) — must preserve the stored selection.
+        var request = new CloudProviderModelListDto { Models = [new() { Id = "gpt-4o" }] };
+
+        var result = await ctrl.SaveModels("cp-1", request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var saved = Assert.Single(Assert.Single(_store.SavedModelMetas).Metas);
+        Assert.Equal(["text", "image"], saved.InputModalities);
+    }
+
+    [Fact]
+    public async Task SaveModels_ExplicitInputModalities_OverwritesStoredModalities()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _store.SeedModelMetas("cp-1",
+            [new CloudProviderModelMeta { Id = "gpt-4o", InputModalities = ["text", "image"] }]);
+
+        var ctrl = CreateController();
+        var request = new CloudProviderModelListDto
+        {
+            Models = [new() { Id = "gpt-4o", InputModalities = ["text", "audio"] }]
+        };
+
+        var result = await ctrl.SaveModels("cp-1", request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var saved = Assert.Single(Assert.Single(_store.SavedModelMetas).Metas);
+        Assert.Equal(["text", "audio"], saved.InputModalities);
+    }
+
+    [Fact]
+    public async Task SaveModels_NewModelWithoutModalities_DefaultsToTextOnly()
+    {
+        _store.SeedProvider("cp-1", "openai");
+
+        var ctrl = CreateController();
+        var request = new CloudProviderModelListDto { Models = [new() { Id = "brand-new" }] };
+
+        var result = await ctrl.SaveModels("cp-1", request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var saved = Assert.Single(Assert.Single(_store.SavedModelMetas).Metas);
+        Assert.Equal(["text"], saved.InputModalities);
     }
 
     // ── FetchModels (with upstream metadata) ─────────────────────────

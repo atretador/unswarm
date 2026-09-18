@@ -52,6 +52,7 @@ public sealed class CloudProviderModelMetaDto
     public string ParameterSize { get; set; } = "";
     public string Quantization { get; set; } = "";
     public string DisplayName { get; set; } = "";
+    public string[]? InputModalities { get; set; }
 }
 
 public record TestAndFetchRequest(

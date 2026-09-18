@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
+using Unswarm.Core.Models;
 
 namespace Unswarm.Api.Controllers;
 
@@ -229,9 +230,24 @@ public sealed class CloudProviderController : ControllerBase
         if (existing is null)
             return NotFound(LocalizedError.Create("cloudProviders.notFound"));
 
+        // Validate before mapping: explicit unknown tokens are a client error,
+        // matching the local model create/update contract. A null/omitted list is
+        // allowed and means "keep the stored selection" (see merge below).
+        foreach (var dto in request.Models)
+        {
+            if (ModelModalities.FindUnknownToken(dto.InputModalities) is { } badModality)
+                return BadRequest(LocalizedError.Create("models.inputModalitiesInvalid", new { token = badModality }));
+        }
+
         try
         {
-            var metas = request.Models.Select(MapFromDto).ToList();
+            // Merge with stored metadata so an omitted inputModalities preserves the
+            // admin's existing selection; only explicitly provided lists overwrite.
+            var storedById = new Dictionary<string, CloudProviderModelMeta>(StringComparer.Ordinal);
+            foreach (var stored in await _store.GetModelMetasAsync(id, ct).ConfigureAwait(false))
+                storedById[stored.Id] = stored;
+
+            var metas = request.Models.Select(d => MapFromDto(d, storedById)).ToList();
             await _store.SaveModelsAsync(id, metas, ct);
         }
         catch (ArgumentException ex)
@@ -478,6 +494,25 @@ public sealed class CloudProviderController : ControllerBase
                         meta.ContextWindow = tpCtx;
                 }
 
+                // Input modalities: OpenRouter exposes architecture.input_modalities
+                // (array of tokens) or architecture.modality ("text+image->text").
+                if (item.TryGetProperty("architecture", out var architecture) && architecture.ValueKind == JsonValueKind.Object)
+                {
+                    if (architecture.TryGetProperty("input_modalities", out var inputModalities)
+                        && inputModalities.ValueKind == JsonValueKind.Array)
+                    {
+                        var tokens = inputModalities.EnumerateArray()
+                            .Where(t => t.ValueKind == JsonValueKind.String)
+                            .Select(t => t.GetString() ?? "");
+                        meta.InputModalities = ModelModalities.Normalize(tokens);
+                    }
+                    else if (architecture.TryGetProperty("modality", out var modality)
+                        && modality.ValueKind == JsonValueKind.String)
+                    {
+                        meta.InputModalities = ModelModalities.ParseModalityString(modality.GetString());
+                    }
+                }
+
                 models.Add(meta);
             }
 
@@ -593,16 +628,31 @@ public sealed class CloudProviderController : ControllerBase
         ParameterSize = m.ParameterSize,
         Quantization = m.Quantization,
         DisplayName = m.DisplayName,
+        InputModalities = ModelModalities.Normalize(m.InputModalities),
     };
 
-    private static CloudProviderModelMeta MapFromDto(CloudProviderModelMetaDto d) => new()
+    private static CloudProviderModelMeta MapFromDto(
+        CloudProviderModelMetaDto d,
+        IReadOnlyDictionary<string, CloudProviderModelMeta> storedById)
     {
-        Id = d.Id,
-        ContextWindow = d.ContextWindow,
-        MaxOutputTokens = d.MaxOutputTokens,
-        Family = d.Family,
-        ParameterSize = d.ParameterSize,
-        Quantization = d.Quantization,
-        DisplayName = d.DisplayName,
-    };
+        // Explicit list wins; omitted (null) preserves the stored selection, and a
+        // brand-new model defaults to text-only.
+        var modalities = d.InputModalities is not null
+            ? ModelModalities.Normalize(d.InputModalities)
+            : storedById.TryGetValue(d.Id, out var stored)
+                ? ModelModalities.Normalize(stored.InputModalities)
+                : ModelModalities.TextOnly();
+
+        return new()
+        {
+            Id = d.Id,
+            ContextWindow = d.ContextWindow,
+            MaxOutputTokens = d.MaxOutputTokens,
+            Family = d.Family,
+            ParameterSize = d.ParameterSize,
+            Quantization = d.Quantization,
+            DisplayName = d.DisplayName,
+            InputModalities = modalities,
+        };
+    }
 }

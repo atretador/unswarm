@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -5842,4 +5843,200 @@ func TestHealthSummaryOutput(t *testing.T) {
 	if !strings.Contains(out, "12.5") {
 		t.Errorf("expected RPM value '12.5' in summary, got: %s", out)
 	}
+}
+
+// ==================== Config Generate: Input Modalities ====================
+
+// discardStdout redirects os.Stdout to /dev/null for the duration of the test
+// so config writers do not write their summary to a pipe left closed by an
+// earlier test. Returns a function that restores the previous stdout.
+func discardStdout(t *testing.T) func() {
+	t.Helper()
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("failed to open %s: %v", os.DevNull, err)
+	}
+	old := os.Stdout
+	os.Stdout = devNull
+	return func() {
+		os.Stdout = old
+		devNull.Close()
+	}
+}
+
+// writeAndReadPiConfig runs writePiConfig against an isolated HOME and returns
+// the parsed models.json.
+func writeAndReadPiConfig(t *testing.T, models []v1ModelData) piConfig {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+
+	restoreStdout := discardStdout(t)
+	defer restoreStdout()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	if err := writePiConfig(nil, w, "global", "http://localhost:22301", "test-secret", models, nil); err != nil {
+		t.Fatalf("writePiConfig failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".pi", "agent", "models.json"))
+	if err != nil {
+		t.Fatalf("failed to read generated pi config: %v", err)
+	}
+	var cfg piConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse generated pi config: %v", err)
+	}
+	return cfg
+}
+
+// writeAndReadOpenCodeConfig runs writeOpenCodeConfig against an isolated HOME
+// and returns the parsed opencode.jsonc.
+func writeAndReadOpenCodeConfig(t *testing.T, models []v1ModelData) openCodeConfig {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+
+	restoreStdout := discardStdout(t)
+	defer restoreStdout()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	if err := writeOpenCodeConfig(nil, w, "global", "http://localhost:22301", "test-secret", models, nil); err != nil {
+		t.Fatalf("writeOpenCodeConfig failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("failed to read generated opencode config: %v", err)
+	}
+	var cfg openCodeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse generated opencode config: %v", err)
+	}
+	return cfg
+}
+
+func assertModalities(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("%s: got %v, want %v", label, got, want)
+		return
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%s: got %v, want %v", label, got, want)
+			return
+		}
+	}
+}
+
+func modalityTestModels() []v1ModelData {
+	return []v1ModelData{
+		{
+			ID:      "multi",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{
+				InputModalities: []string{"text", "image", "video", "audio", "pdf"},
+			},
+		},
+		{
+			ID:      "text-only",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{
+				InputModalities: []string{"text"},
+			},
+		},
+		{
+			ID:      "no-unswarm",
+			OwnedBy: "provider",
+		},
+		{
+			ID:      "empty-modalities",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{},
+		},
+	}
+}
+
+func TestConfigGeneratePiInputModalities(t *testing.T) {
+	cfg := writeAndReadPiConfig(t, modalityTestModels())
+
+	provider, ok := cfg.Providers["unswarm"]
+	if !ok {
+		t.Fatal("expected unswarm provider in generated pi config")
+	}
+	byID := make(map[string]piModelEntry, len(provider.Models))
+	for _, m := range provider.Models {
+		byID[m.ID] = m
+	}
+
+	assertModalities(t, "pi multi", byID["multi"].Input, []string{"text", "image"})
+	assertModalities(t, "pi text-only", byID["text-only"].Input, []string{"text"})
+	assertModalities(t, "pi no-unswarm", byID["no-unswarm"].Input, []string{"text"})
+	assertModalities(t, "pi empty-modalities", byID["empty-modalities"].Input, []string{"text"})
+
+	// pi must never advertise video/audio/pdf.
+	for _, m := range provider.Models {
+		for _, in := range m.Input {
+			if in != "text" && in != "image" {
+				t.Errorf("pi model %s emitted unsupported input modality %q", m.ID, in)
+			}
+		}
+	}
+}
+
+func TestConfigGenerateOpenCodeInputModalities(t *testing.T) {
+	cfg := writeAndReadOpenCodeConfig(t, modalityTestModels())
+
+	provider, ok := cfg.Provider["unswarm"]
+	if !ok {
+		t.Fatal("expected unswarm provider in generated opencode config")
+	}
+
+	assertModalities(
+		t,
+		"opencode multi",
+		provider.Models["multi"].Modalities.Input,
+		[]string{"text", "image", "video", "audio", "pdf"},
+	)
+	assertModalities(t, "opencode text-only", provider.Models["text-only"].Modalities.Input, []string{"text"})
+	assertModalities(t, "opencode no-unswarm", provider.Models["no-unswarm"].Modalities.Input, []string{"text"})
+	assertModalities(t, "opencode empty-modalities", provider.Models["empty-modalities"].Modalities.Input, []string{"text"})
+}
+
+func TestV1ModelDataParsesInputModalities(t *testing.T) {
+	raw := `{"id":"m","owned_by":"p","unswarm":{"contextWindow":8192,"maxOutputTokens":1024,"inputModalities":["text","image"]}}`
+	var m v1ModelData
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	if m.Unswarm == nil {
+		t.Fatal("expected unswarm info to be parsed")
+	}
+	assertModalities(t, "parsed inputModalities", m.Unswarm.InputModalities, []string{"text", "image"})
+
+	// Missing inputModalities must default to text-only through helpers.
+	raw = `{"id":"m","owned_by":"p","unswarm":{"contextWindow":8192}}`
+	var m2 v1ModelData
+	if err := json.Unmarshal([]byte(raw), &m2); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	assertModalities(t, "default pi modalities", modelInputModalities(m2, piInputModalities), []string{"text"})
+	assertModalities(t, "default opencode modalities", modelInputModalities(m2, openCodeInputModalities), []string{"text"})
+
+	// An entirely absent unswarm block must also default to text-only.
+	var m3 v1ModelData
+	if err := json.Unmarshal([]byte(`{"id":"m","owned_by":"p"}`), &m3); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	assertModalities(t, "absent unswarm pi modalities", modelInputModalities(m3, piInputModalities), []string{"text"})
+	assertModalities(t, "absent unswarm opencode modalities", modelInputModalities(m3, openCodeInputModalities), []string{"text"})
 }

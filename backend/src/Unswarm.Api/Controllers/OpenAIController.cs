@@ -88,13 +88,16 @@ public sealed class OpenAIController : ControllerBase
                 ContextWindow = m.ContextWindow,
                 ContainerImage = m.ContainerImage,
                 Status = m.Status.ToString().ToLowerInvariant(),
-                SupportedThinkingEfforts = DeserializeThinkingEfforts(m.SupportedThinkingEffortsJson)
+                SupportedThinkingEfforts = DeserializeThinkingEfforts(m.SupportedThinkingEffortsJson),
+                InputModalities = ModelModalities.ParseJson(m.InputModalitiesJson)
             }
         }).ToList();
 
-        // Cloud provider models (also indexed by id for router context-window math below)
+        // Cloud provider models (also indexed by id for router context-window and
+        // modality math below)
         var providers = await _cloudProviderStore.ListAsync(ct);
         var cloudContextById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var cloudModalitiesById = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in providers)
         {
             var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
@@ -102,6 +105,7 @@ public sealed class OpenAIController : ControllerBase
             {
                 var cloudModelId = $"cloud/{provider.Name}/{meta.Id}";
                 cloudContextById[cloudModelId] = meta.ContextWindow;
+                cloudModalitiesById[cloudModelId] = ModelModalities.Normalize(meta.InputModalities);
                 data.Add(new OpenAiModelData
                 {
                     Id = cloudModelId,
@@ -114,6 +118,7 @@ public sealed class OpenAIController : ControllerBase
                         Quantization = meta.Quantization,
                         ContextWindow = meta.ContextWindow,
                         MaxOutputTokens = meta.MaxOutputTokens,
+                        InputModalities = ModelModalities.Normalize(meta.InputModalities),
                     }
                 });
             }
@@ -138,7 +143,8 @@ public sealed class OpenAIController : ControllerBase
                 {
                     Family = $"router-{profile.Mode.ToString().ToLowerInvariant()}",
                     Status = profile.Entries.Any(e => e.IsEnabled) ? "active" : "empty",
-                    ContextWindow = minCtx
+                    ContextWindow = minCtx,
+                    InputModalities = ComputeRouterModalities(profile.Entries, cloudModalitiesById, models)
                 }
             });
         }
@@ -221,6 +227,80 @@ public sealed class OpenAIController : ControllerBase
             return bare;
 
         return null;
+    }
+
+    /// <summary>
+    /// Effective input modalities advertised for a router profile: the
+    /// intersection across its enabled entries. An entry that is unresolvable
+    /// (or has no known modalities) contributes text-only, so an unknown entry
+    /// conservatively narrows the profile to text. The result always contains
+    /// text; no enabled entries yields text-only. Cloud entries resolve from
+    /// <paramref name="cloudModalitiesById"/>; local entries from
+    /// <paramref name="localModels"/> matched by registry id, name, or display
+    /// name (with composite "&lt;runtimeId&gt;:&lt;modelName&gt;" stripping).
+    /// </summary>
+    public static string[] ComputeRouterModalities(
+        IEnumerable<RouterProfileEntry> entries,
+        IReadOnlyDictionary<string, string[]> cloudModalitiesById,
+        IEnumerable<ModelDefinition> localModels)
+    {
+        var localModalities = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in localModels)
+        {
+            var modalities = ModelModalities.ParseJson(model.InputModalitiesJson);
+            RegisterModalities(localModalities, model.Id, modalities);
+            RegisterModalities(localModalities, model.Name, modalities);
+            RegisterModalities(localModalities, model.DisplayName, modalities);
+        }
+
+        string[]? intersection = null;
+        foreach (var entry in entries.Where(e => e.IsEnabled))
+        {
+            string[] entryModalities;
+            if (entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal))
+                entryModalities = cloudModalitiesById.TryGetValue(entry.ModelId, out var cloudMods)
+                    ? ModelModalities.Normalize(cloudMods)
+                    : ModelModalities.TextOnly();
+            else
+                entryModalities = ResolveLocalModalities(localModalities, entry.ModelId) ?? ModelModalities.TextOnly();
+
+            intersection = intersection is null
+                ? entryModalities
+                : Intersect(intersection, entryModalities);
+        }
+
+        return intersection is null ? ModelModalities.TextOnly() : ModelModalities.Normalize(intersection);
+    }
+
+    private static void RegisterModalities(Dictionary<string, string[]> modalities, string? key, string[] values)
+    {
+        if (string.IsNullOrEmpty(key))
+            return;
+
+        // Conservative: when two models share an alias, keep the narrower set.
+        modalities[key] = modalities.TryGetValue(key, out var existing)
+            ? Intersect(existing, values)
+            : values;
+    }
+
+    private static string[]? ResolveLocalModalities(IReadOnlyDictionary<string, string[]> modalities, string modelId)
+    {
+        if (modalities.TryGetValue(modelId, out var found))
+            return found;
+
+        // Local registry ids are composite ("<runtimeId>:<modelName>"); router
+        // entries may reference the bare model name/display name instead.
+        var colon = modelId.LastIndexOf(':');
+        if (colon >= 0 && modalities.TryGetValue(modelId[(colon + 1)..], out var bare))
+            return bare;
+
+        return null;
+    }
+
+    private static string[] Intersect(string[] a, string[] b)
+    {
+        var setB = new HashSet<string>(b, StringComparer.OrdinalIgnoreCase);
+        return ModelModalities.Normalize(a.Where(setB.Contains));
     }
 
     /// <summary>

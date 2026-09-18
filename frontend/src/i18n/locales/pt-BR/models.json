@@ -46,7 +46,17 @@
     "family": "Família",
     "parameterSize": "Tamanho do parâmetro",
     "quantization": "Quantização",
-    "contextWindow": "Janela de contexto"
+    "contextWindow": "Janela de contexto",
+    "inputModalities": "Modalidades de entrada",
+    "inputModalitiesHint": "Texto é sempre suportado. Ative os outros formatos que este modelo aceita.",
+    "modalityTextLocked": "Texto é sempre suportado",
+    "modalities": {
+      "text": "Texto",
+      "image": "Imagem",
+      "video": "Vídeo",
+      "audio": "Áudio",
+      "pdf": "PDF"
+    }
   },
   "errors": {
     "contextWindowInvalid": "A janela de contexto deve ser um número positivo de até 10M"

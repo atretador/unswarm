@@ -63,6 +63,11 @@ export interface Model {
   displayName?: string | null;
   /** Effort levels this model supports (e.g. ["none","low","medium","high"]). */
   supportedThinkingEfforts?: string[] | null;
+  /**
+   * Input formats this model accepts (e.g. ["text","image"]).
+   * Always includes "text"; absent/empty is treated as text-only.
+   */
+  inputModalities?: string[];
 }
 
 // ─── Container Creation ─────────────────────────────────────────
