@@ -92,16 +92,19 @@ public sealed class OpenAIController : ControllerBase
             }
         }).ToList();
 
-        // Cloud provider models
+        // Cloud provider models (also indexed by id for router context-window math below)
         var providers = await _cloudProviderStore.ListAsync(ct);
+        var cloudContextById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in providers)
         {
             var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
             foreach (var meta in modelMetas)
             {
+                var cloudModelId = $"cloud/{provider.Name}/{meta.Id}";
+                cloudContextById[cloudModelId] = meta.ContextWindow;
                 data.Add(new OpenAiModelData
                 {
-                    Id = $"cloud/{provider.Name}/{meta.Id}",
+                    Id = cloudModelId,
                     Created = provider.CreatedAt.ToUnixTimeSeconds(),
                     OwnedBy = provider.Name,
                     Unswarm = new OpenAiModelUnswarmInfo
@@ -120,16 +123,11 @@ public sealed class OpenAIController : ControllerBase
         var routerProfiles = await _routerProfile.ListProfilesAsync(ct);
         foreach (var profile in routerProfiles)
         {
-            // Compute context window as the minimum of all enabled entries' context windows (> 0 only)
-            int minCtx = 0;
-            foreach (var entry in profile.Entries.Where(e => e.IsEnabled))
-            {
-                var def = await _registry.GetAsync(entry.ModelId, ct);
-                if (def is { ContextWindow: > 0 })
-                {
-                    minCtx = minCtx == 0 ? def.ContextWindow : Math.Min(minCtx, def.ContextWindow);
-                }
-            }
+            // A profile can fan out to any enabled entry, so the context window
+            // it advertises must fit the smallest entry: a client sized for a
+            // larger entry overruns a smaller one and hard-fails instead of
+            // compacting in time. Resolve both local and cloud entries.
+            int minCtx = ComputeRouterContextWindow(profile.Entries, cloudContextById, models);
 
             data.Add(new OpenAiModelData
             {
@@ -160,6 +158,69 @@ public sealed class OpenAIController : ControllerBase
         }
 
         return Ok(new OpenAiModelListResponse { Data = data });
+    }
+
+    /// <summary>
+    /// Effective context window advertised for a router profile: the minimum
+    /// known context window across its enabled entries. A profile can fan out
+    /// to any entry, so a client sized for a larger entry would overrun a
+    /// smaller one and hard-fail instead of compacting in time.
+    /// Cloud entries resolve from <paramref name="cloudContextById"/>; local
+    /// entries from <paramref name="localModels"/> matched by registry id,
+    /// name, or display name (entries may reference any of them).
+    /// Entries with an unknown window (0) are ignored; returns 0 when none is known.
+    /// </summary>
+    public static int ComputeRouterContextWindow(
+        IEnumerable<RouterProfileEntry> entries,
+        IReadOnlyDictionary<string, int> cloudContextById,
+        IEnumerable<ModelDefinition> localModels)
+    {
+        var localContexts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in localModels)
+        {
+            RegisterContext(localContexts, model.Id, model.ContextWindow);
+            RegisterContext(localContexts, model.Name, model.ContextWindow);
+            RegisterContext(localContexts, model.DisplayName, model.ContextWindow);
+        }
+
+        int minCtx = 0;
+        foreach (var entry in entries.Where(e => e.IsEnabled))
+        {
+            int? ctx = entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal)
+                ? cloudContextById.TryGetValue(entry.ModelId, out var cloudCtx) ? cloudCtx : null
+                : ResolveLocalContext(localContexts, entry.ModelId);
+
+            if (ctx is > 0)
+                minCtx = minCtx == 0 ? ctx.Value : Math.Min(minCtx, ctx.Value);
+        }
+
+        return minCtx;
+    }
+
+    private static void RegisterContext(Dictionary<string, int> contexts, string? key, int contextWindow)
+    {
+        if (string.IsNullOrEmpty(key) || contextWindow <= 0)
+            return;
+
+        // Keep the smallest value when two models share an alias (e.g. the same
+        // model name registered on different runtimes).
+        contexts[key] = contexts.TryGetValue(key, out var existing)
+            ? Math.Min(existing, contextWindow)
+            : contextWindow;
+    }
+
+    private static int? ResolveLocalContext(IReadOnlyDictionary<string, int> contexts, string modelId)
+    {
+        if (contexts.TryGetValue(modelId, out var ctx))
+            return ctx;
+
+        // Local registry ids are composite ("<runtimeId>:<modelName>"); router
+        // entries may reference the bare model name/display name instead.
+        var colon = modelId.LastIndexOf(':');
+        if (colon >= 0 && contexts.TryGetValue(modelId[(colon + 1)..], out var bare))
+            return bare;
+
+        return null;
     }
 
     /// <summary>
