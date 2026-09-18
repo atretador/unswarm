@@ -46,17 +46,20 @@
     "family": "Family",
     "parameterSize": "Parameter Size",
     "quantization": "Quantization",
-    "contextWindow": "Context Window"
+    "contextWindow": "Context Window",
+    "maxOutputTokens": "Max Output Tokens"
   },
   "errors": {
-    "contextWindowInvalid": "Context window must be a positive number up to 10M"
+    "contextWindowInvalid": "Context window must be a positive number up to 10M",
+    "maxOutputTokensInvalid": "Max output tokens must be a positive number up to 10M"
   },
   "placeholders": {
     "displayName": "Filename shown in UI (auto-filled from model name)",
     "family": "e.g. Llama",
     "parameterSize": "e.g. 8B",
     "quantization": "e.g. Q4_K_M",
-    "contextWindow": "e.g. 128000"
+    "contextWindow": "e.g. 128000",
+    "maxOutputTokens": "e.g. 4096"
   },
   "tooltips": {
     "tokensPerSecond": "Speed: tokens per second",

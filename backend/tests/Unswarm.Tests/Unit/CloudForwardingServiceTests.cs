@@ -425,6 +425,12 @@ public sealed class CloudForwardingServiceTests : IAsyncLifetime
         public Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<string>>([]);
 
+        public Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
+
         public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default)
             => throw new NotImplementedException();
 

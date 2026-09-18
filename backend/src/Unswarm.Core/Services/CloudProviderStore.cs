@@ -142,18 +142,24 @@ public sealed class CloudProviderStore : ICloudProviderStore
         }
     }
 
-    public async Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default)
+    public async Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default)
     {
-        ValidateModelIds(modelIds);
+        ValidateModelMetas(models);
 
         await using var db = _dbFactory();
         var entity = await db.CloudProviders.FindAsync([id], ct)
             ?? throw new KeyNotFoundException($"Cloud provider '{id}' not found.");
 
-        entity.ModelsJson = JsonSerializer.Serialize(modelIds);
+        entity.ModelsJson = CloudProviderModelsJsonHelper.Serialize(models);
         entity.UpdatedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(ct);
-        _logger.LogInformation("Saved {Count} models for provider {Id}", modelIds.Count, id);
+        _logger.LogInformation("Saved {Count} models for provider {Id}", models.Count, id);
+    }
+
+    public async Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default)
+    {
+        var metas = modelIds.Select(CloudProviderModelMeta.FromId).ToList();
+        await SaveModelsAsync(id, metas, ct);
     }
 
     public async Task<CloudProviderReadItem?> GetByNameAsync(string name, CancellationToken ct = default)
@@ -175,18 +181,16 @@ public sealed class CloudProviderStore : ICloudProviderStore
         var entity = await db.CloudProviders.FindAsync([id], ct);
         if (entity is null) return [];
 
-        try
-        {
-            using var doc = JsonDocument.Parse(entity.ModelsJson);
-            return doc.RootElement.EnumerateArray()
-                .Select(e => e.GetString() ?? "")
-                .Where(s => !string.IsNullOrEmpty(s))
-                .ToList();
-        }
-        catch
-        {
-            return [];
-        }
+        return CloudProviderModelsJsonHelper.ParseIds(entity.ModelsJson);
+    }
+
+    public async Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default)
+    {
+        await using var db = _dbFactory();
+        var entity = await db.CloudProviders.FindAsync([id], ct);
+        if (entity is null) return [];
+
+        return CloudProviderModelsJsonHelper.Parse(entity.ModelsJson);
     }
 
     public async Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct)
@@ -229,16 +233,16 @@ public sealed class CloudProviderStore : ICloudProviderStore
         return await db.CloudProviders.AnyAsync(cp => cp.Name == name, ct);
     }
 
-    /// <summary>Validate model id entries per the design spec.</summary>
-    private static void ValidateModelIds(IReadOnlyList<string> modelIds)
+    /// <summary>Validate model metadata entries per the design spec.</summary>
+    private static void ValidateModelMetas(IReadOnlyList<CloudProviderModelMeta> models)
     {
-        if (modelIds.Count > 500)
-            throw new ArgumentException($"Too many models: {modelIds.Count} (max 500).");
+        if (models.Count > 500)
+            throw new ArgumentException($"Too many models: {models.Count} (max 500).");
 
         var totalBytes = 0;
-        for (var i = 0; i < modelIds.Count; i++)
+        for (var i = 0; i < models.Count; i++)
         {
-            var id = modelIds[i];
+            var id = models[i].Id;
             if (string.IsNullOrWhiteSpace(id))
                 throw new ArgumentException($"Model id at index {i} is empty.");
             if (id.StartsWith("cloud/", StringComparison.Ordinal))

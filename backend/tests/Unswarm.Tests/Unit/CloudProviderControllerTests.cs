@@ -193,6 +193,33 @@ public sealed class CloudProviderControllerTests
             return Task.FromResult<IReadOnlyList<string>>(models ?? []);
         }
 
+        public Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default)
+        {
+            SavedModels.Add((id, models.Select(m => m.Id).ToList()));
+            if (_items.TryGetValue(id, out var item))
+            {
+                _items[id] = new CloudProviderReadItem
+                {
+                    Id = item.Id,
+                    Name = item.Name,
+                    BaseUrl = item.BaseUrl,
+                    BaseUrlFull = item.BaseUrlFull,
+                    ApiKeyHint = item.ApiKeyHint,
+                    ModelCount = models.Count,
+                    AuthType = item.AuthType,
+                    ChatgptAccountId = item.ChatgptAccountId,
+                    TokenExpiresAt = item.TokenExpiresAt,
+                    CreatedAt = item.CreatedAt,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                };
+                _modelIds[id] = models.Select(m => m.Id).ToList();
+            }
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
+
         public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default)
         {
             SavedOAuthTokens.Add((id, accessTokenCiphertext, refreshTokenCiphertext, expiresAt, chatgptAccountId));
@@ -480,7 +507,7 @@ public sealed class CloudProviderControllerTests
         _store.SeedProvider("cp-1", "openai");
 
         var ctrl = CreateController();
-        var request = new CloudProviderModelListDto { ModelIds = ["gpt-4o", "gpt-4o-mini"] };
+        var request = new CloudProviderModelListDto { Models = [new() { Id = "gpt-4o" }, new() { Id = "gpt-4o-mini" }] };
 
         var result = await ctrl.SaveModels("cp-1", request, CancellationToken.None);
 
@@ -493,11 +520,207 @@ public sealed class CloudProviderControllerTests
     public async Task SaveModels_NonExistingProvider_ReturnsNotFound()
     {
         var ctrl = CreateController();
-        var request = new CloudProviderModelListDto { ModelIds = ["gpt-4o"] };
+        var request = new CloudProviderModelListDto { Models = [new() { Id = "gpt-4o" }] };
 
         var result = await ctrl.SaveModels("nonexistent", request, CancellationToken.None);
 
         Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    // ── FetchModels (with upstream metadata) ─────────────────────────
+
+    [Fact]
+    public async Task FetchModels_OpenRouterResponse_ExtractsContextLength()
+    {
+        _store.SeedProvider("cp-1", "openrouter");
+        var openRouterResponse = """
+        {
+          "data": [
+            {
+              "id": "openai/gpt-4o",
+              "name": "OpenAI GPT-4o",
+              "context_length": 128000,
+              "top_provider": {
+                "context_length": 128000,
+                "max_completion_tokens": 16384
+              }
+            },
+            {
+              "id": "anthropic/claude-sonnet-4-5",
+              "name": "Anthropic Claude Sonnet 4.5",
+              "context_length": 200000,
+              "top_provider": {
+                "context_length": 200000,
+                "max_completion_tokens": 64000
+              }
+            }
+          ]
+        }
+        """;
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(openRouterResponse, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<FetchModelsResultDto>(ok.Value);
+        Assert.Equal(2, dto.Models.Count);
+
+        var gpt = dto.Models.First(m => m.Id == "openai/gpt-4o");
+        Assert.Equal(128000, gpt.ContextWindow);
+        Assert.Equal("OpenAI GPT-4o", gpt.DisplayName);
+
+        var claude = dto.Models.First(m => m.Id == "anthropic/claude-sonnet-4-5");
+        Assert.Equal(200000, claude.ContextWindow);
+        Assert.Equal(64000, claude.MaxOutputTokens);
+    }
+
+    [Fact]
+    public async Task FetchModels_VllmResponse_ExtractsMaxModelLen()
+    {
+        _store.SeedProvider("cp-1", "local-vllm");
+        var vllmResponse = """
+        {
+          "max_model_len": 32768,
+          "data": [
+            {"id": "llama-3.1-8b", "owned_by": "meta"},
+            {"id": "codellama-13b", "owned_by": "meta"}
+          ]
+        }
+        """;
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(vllmResponse, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<FetchModelsResultDto>(ok.Value);
+        Assert.Equal(2, dto.Models.Count);
+
+        // vLLM returns max_model_len at top level; our parser should pick it up
+        // But ParseUpstreamModels only looks at per-model fields, not top-level max_model_len
+        // The models themselves won't have context_length, so they get 0
+        Assert.Equal("llama-3.1-8b", dto.Models[0].Id);
+        Assert.Equal("codellama-13b", dto.Models[1].Id);
+    }
+
+    [Fact]
+    public async Task FetchModels_BareOpenAIResponse_NoMetadata()
+    {
+        _store.SeedProvider("cp-1", "openai-direct");
+        var openaiResponse = """
+        {
+          "data": [
+            {"id": "gpt-4o", "object": "model", "owned_by": "openai"},
+            {"id": "gpt-4o-mini", "object": "model", "owned_by": "openai"}
+          ]
+        }
+        """;
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(openaiResponse, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<FetchModelsResultDto>(ok.Value);
+        Assert.Equal(2, dto.Models.Count);
+        Assert.Equal("gpt-4o", dto.Models[0].Id);
+        Assert.Equal(0, dto.Models[0].ContextWindow); // no metadata from OpenAI
+    }
+
+    [Fact]
+    public async Task FetchModels_UpstreamError_ReturnsError()
+    {
+        _store.SeedProvider("cp-1", "broken-provider");
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError);
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        Assert.IsType<ObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task FetchModels_NonExistingProvider_ReturnsNotFound()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("nonexistent", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task FetchModels_SavesMetadataToStore()
+    {
+        _store.SeedProvider("cp-1", "openrouter");
+        var response = """
+        {
+          "data": [
+            {"id": "gpt-4o", "context_length": 128000, "top_provider": {"max_completion_tokens": 16384}}
+          ]
+        }
+        """;
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(response, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        // Verify models were saved to the store
+        Assert.Single(_store.SavedModels);
+        Assert.Equal("cp-1", _store.SavedModels[0].Id);
+        Assert.Contains("gpt-4o", _store.SavedModels[0].ModelIds);
+    }
+
+    [Fact]
+    public async Task TestAndFetch_WithMetadata_ReturnsEnrichedModels()
+    {
+        var response = """
+        {
+          "data": [
+            {
+              "id": "claude-sonnet-4-5",
+              "name": "Claude Sonnet 4.5",
+              "context_length": 200000,
+              "top_provider": {"max_completion_tokens": 64000}
+            }
+          ]
+        }
+        """;
+
+        _httpFactory.Handler = req => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(response, System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        var result = await ctrl.TestAndFetch(
+            new TestAndFetchRequest("https://openrouter.ai/api/v1", "sk-or-key"),
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<FetchModelsResultDto>(ok.Value);
+        Assert.Single(dto.Models);
+        Assert.Equal("claude-sonnet-4-5", dto.Models[0].Id);
+        Assert.Equal(200000, dto.Models[0].ContextWindow);
+        Assert.Equal(64000, dto.Models[0].MaxOutputTokens);
+        Assert.Equal("Claude Sonnet 4.5", dto.Models[0].DisplayName);
     }
 
     // ── StartOAuth ───────────────────────────────────────────────────

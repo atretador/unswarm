@@ -96,15 +96,22 @@ public sealed class OpenAIController : ControllerBase
         var providers = await _cloudProviderStore.ListAsync(ct);
         foreach (var provider in providers)
         {
-            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
-            foreach (var modelId in modelIds)
+            var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
+            foreach (var meta in modelMetas)
             {
                 data.Add(new OpenAiModelData
                 {
-                    Id = $"cloud/{provider.Name}/{modelId}",
+                    Id = $"cloud/{provider.Name}/{meta.Id}",
                     Created = provider.CreatedAt.ToUnixTimeSeconds(),
                     OwnedBy = provider.Name,
-                    Unswarm = new OpenAiModelUnswarmInfo() // empty defaults for cloud models
+                    Unswarm = new OpenAiModelUnswarmInfo
+                    {
+                        Family = meta.Family,
+                        ParameterSize = meta.ParameterSize,
+                        Quantization = meta.Quantization,
+                        ContextWindow = meta.ContextWindow,
+                        MaxOutputTokens = meta.MaxOutputTokens,
+                    }
                 });
             }
         }

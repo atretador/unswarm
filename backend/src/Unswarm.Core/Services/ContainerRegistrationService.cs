@@ -429,6 +429,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                         Quantization = model.Quantization,
                         Status = ModelStatus.Deprecated,
                         ContextWindow = model.ContextWindow,
+                        MaxOutputTokens = model.MaxOutputTokens,
                         ContainerImage = model.ContainerImage,
                         SourceRuntimeId = null,
                         DisplayName = model.DisplayName,
@@ -865,6 +866,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             DisplayName = Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
             Status = ModelStatus.Ready,
             ContextWindow = discoveredModel.ContextWindow,
+            MaxOutputTokens = 0,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -907,6 +909,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 ContextWindow = existing.ContextWindow != 0
                     ? existing.ContextWindow
                     : discoveredModel.ContextWindow,
+                MaxOutputTokens = existing.MaxOutputTokens,
                 ContainerImage = existing.ContainerImage,
                 SourceRuntimeId = registeredContainerId,
                 DisplayName = existing.DisplayName ?? Path.GetFileNameWithoutExtension(discoveredModel.ModelId),
@@ -1391,6 +1394,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         Quantization = model.Quantization,
         Status = status,
         ContextWindow = model.ContextWindow,
+        MaxOutputTokens = model.MaxOutputTokens,
         ContainerImage = model.ContainerImage,
         SourceRuntimeId = model.SourceRuntimeId,
         DisplayName = model.DisplayName,

@@ -48,6 +48,7 @@ export interface Model {
   status: ModelStatus;
   lastBenchmark: LastBenchmarkResult | null;
   contextWindow: number;
+  maxOutputTokens?: number;
   containerImage: string;
   sourceRuntimeId: string | null;
   sourceRuntimeName: string | null;

@@ -9,6 +9,7 @@ public sealed class ModelDefinition
     public string Quantization { get; init; } = string.Empty;
     public ModelStatus Status { get; init; } = ModelStatus.Validating;
     public int ContextWindow { get; init; }
+    public int MaxOutputTokens { get; init; }
     public string ContainerImage { get; init; } = string.Empty;
     public string? SourceRuntimeId { get; init; }
     public string? DisplayName { get; init; }

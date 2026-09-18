@@ -176,6 +176,8 @@ public sealed class ApiKeyControllerControlPlaneTests
         public Task<CloudProviderReadItem?> GetByNameAsync(string n, CancellationToken c = default) => Task.FromResult<CloudProviderReadItem?>(null);
         public Task<bool> NameExistsAsync(string n, CancellationToken c = default) => Task.FromResult(false);
         public Task<IReadOnlyList<string>> GetModelIdsAsync(string i, CancellationToken c = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task SaveModelsAsync(string i, IReadOnlyList<CloudProviderModelMeta> m, CancellationToken c = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string i, CancellationToken c = default) => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
         public Task SaveOAuthTokensAsync(string i, string a, string r, DateTimeOffset? e, string? c, CancellationToken ct = default) => Task.CompletedTask;
         public Task<OAuthTokenSet?> GetOAuthTokensAsync(string i, CancellationToken c = default) => Task.FromResult<OAuthTokenSet?>(null);
         public Task<int> GetAuthTypeAsync(string i, CancellationToken c = default) => Task.FromResult(0);

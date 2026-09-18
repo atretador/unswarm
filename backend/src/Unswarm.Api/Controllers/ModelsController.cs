@@ -96,16 +96,18 @@ public sealed class ModelsController : ControllerBase
         var providers = await _cloudProviderStore.ListAsync(ct);
         foreach (var provider in providers)
         {
-            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
-            foreach (var modelId in modelIds)
+            var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
+            foreach (var meta in modelMetas)
             {
                 responses.Add(new ModelResponse
                 {
-                    Id = $"cloud/{provider.Name}/{modelId}",
-                    Name = modelId,
+                    Id = $"cloud/{provider.Name}/{meta.Id}",
+                    Name = meta.Id,
                     Origin = "cloud",
                     ProviderName = provider.Name,
                     Status = ModelStatus.Ready,
+                    ContextWindow = meta.ContextWindow,
+                    MaxOutputTokens = meta.MaxOutputTokens,
                     CreatedAt = provider.CreatedAt,
                     UpdatedAt = provider.UpdatedAt
                 });
@@ -142,6 +144,7 @@ public sealed class ModelsController : ControllerBase
             ParameterSize = request.ParameterSize,
             Quantization = request.Quantization,
             ContextWindow = request.ContextWindow,
+            MaxOutputTokens = request.MaxOutputTokens,
             ContainerImage = request.ContainerImage,
             SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson
         };
@@ -171,6 +174,7 @@ public sealed class ModelsController : ControllerBase
             Quantization = request.Quantization ?? existing.Quantization,
             Status = request.Status ?? existing.Status,
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
+            MaxOutputTokens = request.MaxOutputTokens ?? existing.MaxOutputTokens,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
             DisplayName = request.DisplayName ?? existing.DisplayName,
             SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson ?? existing.SupportedThinkingEffortsJson,
@@ -204,6 +208,7 @@ public sealed class ModelsController : ControllerBase
                             Quantization = model.Quantization,
                             Status = ModelStatus.Conflict,
                             ContextWindow = model.ContextWindow,
+                            MaxOutputTokens = model.MaxOutputTokens,
                             ContainerImage = model.ContainerImage,
                             SourceRuntimeId = model.SourceRuntimeId,
                             DisplayName = model.DisplayName,
@@ -229,6 +234,7 @@ public sealed class ModelsController : ControllerBase
                     Quantization = sameName[0].Quantization,
                     Status = ModelStatus.Ready,
                     ContextWindow = sameName[0].ContextWindow,
+                    MaxOutputTokens = sameName[0].MaxOutputTokens,
                     ContainerImage = sameName[0].ContainerImage,
                     SourceRuntimeId = sameName[0].SourceRuntimeId,
                     DisplayName = sameName[0].DisplayName,

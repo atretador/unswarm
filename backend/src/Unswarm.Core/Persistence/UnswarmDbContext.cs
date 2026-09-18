@@ -21,6 +21,7 @@ public sealed class ModelEntity
     public string Quantization { get; set; } = string.Empty;
     public string Status { get; set; } = nameof(ModelStatus.Validating);
     public int ContextWindow { get; set; }
+    public int MaxOutputTokens { get; set; }
     public string ContainerImage { get; set; } = string.Empty;
     public string? SourceRuntimeId { get; set; }
     public string? DisplayName { get; set; }

@@ -71,6 +71,8 @@ public sealed class ModelsControllerTestChatTests
         public Task<CloudProviderReadItem?> GetByNameAsync(string name, CancellationToken ct = default) => Task.FromResult<CloudProviderReadItem?>(null);
         public Task<bool> NameExistsAsync(string name, CancellationToken ct = default) => Task.FromResult(false);
         public Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<string>>([]);
+        public Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
         public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default) => Task.CompletedTask;
         public Task<OAuthTokenSet?> GetOAuthTokensAsync(string id, CancellationToken ct = default) => Task.FromResult<OAuthTokenSet?>(null);
         public Task<int> GetAuthTypeAsync(string id, CancellationToken ct = default) => Task.FromResult(0);

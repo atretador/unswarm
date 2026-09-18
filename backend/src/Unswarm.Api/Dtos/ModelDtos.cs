@@ -27,6 +27,7 @@ public sealed class ModelResponse
     public ModelStatus Status { get; set; }
     public LastBenchmarkResponse? LastBenchmark { get; set; }
     public int ContextWindow { get; set; }
+    public int MaxOutputTokens { get; set; }
     public string ContainerImage { get; set; } = "";
     public string? SourceRuntimeId { get; set; }
     public string? SourceRuntimeName { get; set; }
@@ -50,6 +51,7 @@ public sealed class ModelResponse
         Status = d.Status,
         LastBenchmark = lastBenchmark,
         ContextWindow = d.ContextWindow,
+        MaxOutputTokens = d.MaxOutputTokens,
         ContainerImage = d.ContainerImage,
         SourceRuntimeId = d.SourceRuntimeId,
         DisplayName = d.DisplayName,
@@ -74,6 +76,7 @@ public sealed class ModelCreateRequest
     public string ParameterSize { get; set; } = "";
     public string Quantization { get; set; } = "";
     public int ContextWindow { get; set; }
+    public int MaxOutputTokens { get; set; }
     public string ContainerImage { get; set; } = "";
     public string? SupportedThinkingEffortsJson { get; set; }
 }
@@ -86,6 +89,7 @@ public sealed class ModelUpdateRequest
     public string? Quantization { get; set; }
     public ModelStatus? Status { get; set; }
     public int? ContextWindow { get; set; }
+    public int? MaxOutputTokens { get; set; }
     public string? ContainerImage { get; set; }
     public string? DisplayName { get; set; }
     public string? SupportedThinkingEffortsJson { get; set; }

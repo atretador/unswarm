@@ -300,7 +300,8 @@ type v1ModelData struct {
 
 // v1ModelUnswarmInfo holds Unswarm-specific metadata from /v1/models.
 type v1ModelUnswarmInfo struct {
-	ContextWindow int `json:"contextWindow"`
+	ContextWindow   int `json:"contextWindow"`
+	MaxOutputTokens int `json:"maxOutputTokens"`
 }
 
 // fetchV1Models calls GET /v1/models to get the full model list the key can access.
@@ -429,8 +430,13 @@ func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL,
 				Output:  32768,
 			},
 		}
-		if m.Unswarm != nil && m.Unswarm.ContextWindow > 0 {
-			entry.Limit.Context = m.Unswarm.ContextWindow
+		if m.Unswarm != nil {
+			if m.Unswarm.ContextWindow > 0 {
+				entry.Limit.Context = m.Unswarm.ContextWindow
+			}
+			if m.Unswarm.MaxOutputTokens > 0 {
+				entry.Limit.Output = m.Unswarm.MaxOutputTokens
+			}
 		}
 		models[m.ID] = entry
 	}

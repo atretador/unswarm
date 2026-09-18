@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Dtos;
@@ -166,10 +167,10 @@ public sealed class CloudProviderController : ControllerBase
             if (result.Error is not null)
                 return result.Error;
 
-            await _store.SaveModelsAsync(id, result.ModelIds!, ct);
+            await _store.SaveModelsAsync(id, result.Models!, ct);
 
-            _logger.LogInformation("Fetched {Count} models for subscription provider {Id}", result.ModelIds!.Count, id);
-            return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+            _logger.LogInformation("Fetched {Count} models for subscription provider {Id}", result.Models!.Count, id);
+            return Ok(new FetchModelsResultDto { Models = result.Models!.Select(MapToDto).ToList() });
         }
 
         // API key provider — existing behavior
@@ -192,10 +193,10 @@ public sealed class CloudProviderController : ControllerBase
             return apiKeyResult.Error;
 
         // Save models to DB
-        await _store.SaveModelsAsync(id, apiKeyResult.ModelIds!, ct);
+        await _store.SaveModelsAsync(id, apiKeyResult.Models!, ct);
 
-        _logger.LogInformation("Fetched {Count} models for provider {Id}", apiKeyResult.ModelIds!.Count, id);
-        return Ok(new FetchModelsResultDto { ModelIds = apiKeyResult.ModelIds! });
+        _logger.LogInformation("Fetched {Count} models for provider {Id}", apiKeyResult.Models!.Count, id);
+        return Ok(new FetchModelsResultDto { Models = apiKeyResult.Models!.Select(MapToDto).ToList() });
     }
 
     /// <summary>
@@ -218,7 +219,7 @@ public sealed class CloudProviderController : ControllerBase
         if (result.Error is not null)
             return result.Error;
 
-        return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+        return Ok(new FetchModelsResultDto { Models = result.Models!.Select(MapToDto).ToList() });
     }
 
     [HttpPut("{id}/models")]
@@ -230,7 +231,8 @@ public sealed class CloudProviderController : ControllerBase
 
         try
         {
-            await _store.SaveModelsAsync(id, request.ModelIds, ct);
+            var metas = request.Models.Select(MapFromDto).ToList();
+            await _store.SaveModelsAsync(id, metas, ct);
         }
         catch (ArgumentException ex)
         {
@@ -350,7 +352,7 @@ public sealed class CloudProviderController : ControllerBase
 
     // ── Helpers ───────────────────────────────────────────────────
 
-    private async Task<(List<string>? ModelIds, IActionResult? Error)> FetchUpstreamModelsAsync(
+    private async Task<(List<CloudProviderModelMeta>? Models, IActionResult? Error)> FetchUpstreamModelsAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var httpClient = _httpFactory.CreateClient("cloud-provider");
@@ -371,16 +373,9 @@ public sealed class CloudProviderController : ControllerBase
                 return (null, StatusCode((int)response.StatusCode, LocalizedError.Create("cloudProviders.upstreamError", new { statusCode = (int)response.StatusCode })));
             }
 
-            var modelsResponse = await response.Content.ReadFromJsonAsync<OpenAiModelListResponse>(ct)
-                ?? throw new InvalidOperationException("Upstream did not return a valid model list.");
-
-            var modelIds = modelsResponse.Data
-                .Select(m => m.Id)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct()
-                .ToList();
-
-            return (modelIds, null);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            var models = ParseUpstreamModels(responseBody);
+            return (models, null);
         }
         catch (HttpRequestException ex)
         {
@@ -394,7 +389,7 @@ public sealed class CloudProviderController : ControllerBase
         }
     }
 
-    private async Task<(List<string>? ModelIds, IActionResult? Error)> FetchSubscriptionModelsAsync(
+    private async Task<(List<CloudProviderModelMeta>? Models, IActionResult? Error)> FetchSubscriptionModelsAsync(
         string accessToken, string? accountId, CancellationToken ct)
     {
         var httpClient = _httpFactory.CreateClient("cloud-provider");
@@ -423,13 +418,13 @@ public sealed class CloudProviderController : ControllerBase
             var modelsResponse = await response.Content.ReadFromJsonAsync<CodexModelsResponse>(ct)
                 ?? throw new InvalidOperationException("Upstream did not return a valid model list.");
 
-            var modelIds = modelsResponse.Models
+            var models = modelsResponse.Models
                 .Where(m => m.SupportedInApi && !string.IsNullOrWhiteSpace(m.Slug))
-                .Select(m => m.Slug)
-                .Distinct()
+                .Select(m => CloudProviderModelMeta.FromId(m.Slug))
+                .DistinctBy(m => m.Id)
                 .ToList();
 
-            return (modelIds, null);
+            return (models, null);
         }
         catch (HttpRequestException ex)
         {
@@ -441,6 +436,94 @@ public sealed class CloudProviderController : ControllerBase
             _logger.LogWarning("Timeout fetching subscription models from {Url}", modelsUrl);
             return (null, StatusCode(504, LocalizedError.Create("cloudProviders.requestTimeout")));
         }
+    }
+
+    /// <summary>
+    /// Parse upstream /v1/models response and extract model metadata.
+    /// Supports OpenAI, OpenRouter (context_length, top_provider), vLLM (max_model_len), Ollama (context_length).
+    /// </summary>
+    private List<CloudProviderModelMeta> ParseUpstreamModels(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var models = new List<CloudProviderModelMeta>();
+            foreach (var item in dataArray.EnumerateArray())
+            {
+                var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+
+                var meta = CloudProviderModelMeta.FromId(id);
+
+                // Display name
+                if (item.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
+                    meta.DisplayName = nameProp.GetString() ?? "";
+
+                // Context length: try multiple field names used by different providers
+                if (TryGetInt(item, "context_length", out var ctxLen))
+                    meta.ContextWindow = ctxLen;
+                else if (TryGetInt(item, "max_model_len", out var mml))
+                    meta.ContextWindow = mml;
+
+                // Max output tokens: try top_provider.max_completion_tokens (OpenRouter)
+                if (item.TryGetProperty("top_provider", out var topProvider) && topProvider.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryGetInt(topProvider, "max_completion_tokens", out var maxOut))
+                        meta.MaxOutputTokens = maxOut;
+                    if (meta.ContextWindow == 0 && TryGetInt(topProvider, "context_length", out var tpCtx))
+                        meta.ContextWindow = tpCtx;
+                }
+
+                models.Add(meta);
+            }
+
+            _logger.LogInformation("Parsed {Count} models with metadata from upstream", models.Count);
+            return models;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse upstream model metadata, falling back to bare IDs");
+            return ParseBareIds(responseBody);
+        }
+    }
+
+    /// <summary>Fallback: parse just model IDs from a response we couldn't enrich.</summary>
+    private List<CloudProviderModelMeta> ParseBareIds(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
+                return [];
+
+            return dataArray.EnumerateArray()
+                .Select(item => item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "")
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .Select(CloudProviderModelMeta.FromId)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool TryGetInt(JsonElement element, string propertyName, out int value)
+    {
+        value = 0;
+        if (!element.TryGetProperty(propertyName, out var prop))
+            return false;
+        if (prop.ValueKind == JsonValueKind.Number)
+        {
+            value = prop.GetInt32();
+            return value > 0;
+        }
+        return false;
     }
 
     private static string? NormalizeBaseUrl(string raw)
@@ -499,5 +582,27 @@ public sealed class CloudProviderController : ControllerBase
         TokenExpiresAt = item.TokenExpiresAt,
         CreatedAt = item.CreatedAt,
         UpdatedAt = item.UpdatedAt,
+    };
+
+    private static CloudProviderModelMetaDto MapToDto(CloudProviderModelMeta m) => new()
+    {
+        Id = m.Id,
+        ContextWindow = m.ContextWindow,
+        MaxOutputTokens = m.MaxOutputTokens,
+        Family = m.Family,
+        ParameterSize = m.ParameterSize,
+        Quantization = m.Quantization,
+        DisplayName = m.DisplayName,
+    };
+
+    private static CloudProviderModelMeta MapFromDto(CloudProviderModelMetaDto d) => new()
+    {
+        Id = d.Id,
+        ContextWindow = d.ContextWindow,
+        MaxOutputTokens = d.MaxOutputTokens,
+        Family = d.Family,
+        ParameterSize = d.ParameterSize,
+        Quantization = d.Quantization,
+        DisplayName = d.DisplayName,
     };
 }
