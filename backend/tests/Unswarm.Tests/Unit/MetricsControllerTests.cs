@@ -50,7 +50,9 @@ public sealed class MetricsControllerTests : IDisposable
         int completionTokens = 50,
         long elapsedMs = 500,
         DateTimeOffset? timestamp = null,
-        bool streaming = false)
+        bool streaming = false,
+        string? agent = null,
+        string providerKind = "local")
     {
         var ts = timestamp ?? new DateTimeOffset(2026, 1, 10, 12, 0, 0, TimeSpan.Zero);
         _db.UsageRecords.Add(new UsageRecordEntity
@@ -59,6 +61,8 @@ public sealed class MetricsControllerTests : IDisposable
             Timestamp = ts,
             TimestampTicks = ts.UtcTicks,
             Provider = provider,
+            ProviderKind = providerKind,
+            Agent = agent,
             Model = model,
             PromptTokens = promptTokens,
             CompletionTokens = completionTokens,
@@ -224,6 +228,105 @@ public sealed class MetricsControllerTests : IDisposable
         Assert.All(summaries, s => Assert.NotEqual("anthropic", s.Provider));
     }
 
+    // ─── Cost-unit attribution (local agent vs raw provider) ──────────
+
+    [Fact]
+    public async Task GetProviders_TwoLocalRuntimesWithSameAgent_CollapseIntoOneRow()
+    {
+        // Two distinct runtime display names on the same agent host must
+        // aggregate into a single cost-unit row keyed by the agent.
+        await SeedAsync("runtime-a", "llama-3", agent: "agent-x");
+        await SeedAsync("runtime-b", "llama-3", agent: "agent-x");
+        await SeedAsync("runtime-c", "llama-3", agent: "agent-y");
+
+        var controller = CreateController();
+        var result = await controller.GetProviders(
+            from: WindowStart, to: WindowEnd, ct: CancellationToken.None);
+
+        var providers = Assert.IsType<List<Unswarm.Api.Dtos.ProviderUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        Assert.Equal(2, providers.Count);
+        var collapsed = providers.Single(p => p.Provider == "agent-x");
+        Assert.Equal(2, collapsed.RequestCount);
+        Assert.Equal(200, collapsed.PromptTokens);
+        Assert.DoesNotContain(providers, p => p.Provider is "runtime-a" or "runtime-b");
+    }
+
+    [Fact]
+    public async Task GetProviders_NullAgentLocalRow_FallsBackToProviderDisplayName()
+    {
+        // Legacy local rows (recorded before the Agent column existed) have a
+        // null agent and must fall back to the raw provider display name.
+        await SeedAsync("runtime-legacy", "llama-3", agent: null);
+
+        var controller = CreateController();
+        var result = await controller.GetProviders(
+            from: WindowStart, to: WindowEnd, ct: CancellationToken.None);
+
+        var providers = Assert.IsType<List<Unswarm.Api.Dtos.ProviderUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        var row = Assert.Single(providers);
+        Assert.Equal("runtime-legacy", row.Provider);
+        Assert.Equal(1, row.RequestCount);
+    }
+
+    [Fact]
+    public async Task GetProviders_CloudRowWithAgent_IsAttributedToCloudProviderNotAgent()
+    {
+        // The cost unit only substitutes the agent for ProviderKind == "local";
+        // a stray/legacy Agent on a cloud row must be ignored.
+        await SeedAsync("openai", "gpt-4o", providerKind: "cloud", agent: "agent-x");
+        await SeedAsync("anthropic", "claude-3-5-sonnet", providerKind: "cloud", agent: "agent-x");
+
+        var controller = CreateController();
+        var result = await controller.GetProviders(
+            from: WindowStart, to: WindowEnd, ct: CancellationToken.None);
+
+        var providers = Assert.IsType<List<Unswarm.Api.Dtos.ProviderUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        Assert.Equal(2, providers.Count);
+        Assert.Contains(providers, p => p.Provider == "openai");
+        Assert.Contains(providers, p => p.Provider == "anthropic");
+        Assert.DoesNotContain(providers, p => p.Provider == "agent-x");
+    }
+
+    [Fact]
+    public async Task GetTotals_ProviderFilter_MatchesCostUnitAgent()
+    {
+        await SeedAsync("runtime-a", "llama-3", agent: "agent-x");
+        await SeedAsync("runtime-b", "llama-3", agent: "agent-x");
+        await SeedAsync("runtime-c", "llama-3", agent: null);
+
+        var controller = CreateController();
+        var result = await controller.GetTotals(
+            from: WindowStart, to: WindowEnd, provider: "agent-x", ct: CancellationToken.None);
+
+        var totals = Assert.IsType<Unswarm.Api.Dtos.UsageTotalsResponse>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(2, totals.TotalRequests);
+    }
+
+    [Fact]
+    public async Task GetModels_LocalRowsWithSameAgentAndModel_CollapseIntoOneRow()
+    {
+        await SeedAsync("runtime-a", "llama-3", agent: "agent-x");
+        await SeedAsync("runtime-b", "llama-3", agent: "agent-x");
+
+        var controller = CreateController();
+        var result = await controller.GetModels(
+            from: WindowStart, to: WindowEnd, ct: CancellationToken.None);
+
+        var summaries = Assert.IsType<List<Unswarm.Api.Dtos.ModelUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        var row = Assert.Single(summaries);
+        Assert.Equal("agent-x", row.Provider);
+        Assert.Equal(2, row.RequestCount);
+    }
+
     // ─── Summary groupBy dimension ────────────────────────────────────
 
     [Fact]
@@ -321,6 +424,72 @@ public sealed class MetricsControllerTests : IDisposable
 
         Assert.Equal(2, buckets.Length);
         Assert.DoesNotContain(buckets, b => b.Group == "local-agent");
+    }
+
+    [Fact]
+    public async Task GetSummary_GroupByProviderModel_SplitsBucketsByCostUnitAndModel()
+    {
+        // Two runtimes share agent-x (collapse to one provider); two models are
+        // used, and llama-3 is served by both runtimes so its tokens must sum.
+        await SeedAsync("runtime-a", "llama-3", promptTokens: 200, completionTokens: 100, agent: "agent-x");
+        await SeedAsync("runtime-b", "llama-3", promptTokens: 100, completionTokens: 50, agent: "agent-x");
+        await SeedAsync("runtime-c", "mistral", promptTokens: 40, completionTokens: 20, agent: "agent-x");
+        await SeedAsync("runtime-d", "llama-3", promptTokens: 10, completionTokens: 5, agent: "agent-y");
+
+        var controller = CreateController();
+        var result = await controller.GetSummary(
+            from: WindowStart,
+            to: WindowEnd,
+            groupBy: "provider_model",
+            granularity: "day",
+            ct: CancellationToken.None);
+
+        var buckets = Assert.IsType<Unswarm.Api.Dtos.MetricsTimeBucket[]>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        // 3 distinct (provider, model) pairs in the same day bucket.
+        Assert.Equal(3, buckets.Length);
+        Assert.All(buckets, b => Assert.Null(b.Group));
+        Assert.All(buckets, b => Assert.NotNull(b.Provider));
+        Assert.All(buckets, b => Assert.NotNull(b.Model));
+
+        var xLlama = buckets.Single(b => b.Provider == "agent-x" && b.Model == "llama-3");
+        Assert.Equal(2, xLlama.RequestCount);
+        Assert.Equal(300, xLlama.PromptTokens);
+        Assert.Equal(150, xLlama.CompletionTokens);
+
+        var xMistral = buckets.Single(b => b.Provider == "agent-x" && b.Model == "mistral");
+        Assert.Equal(1, xMistral.RequestCount);
+        Assert.Equal(40, xMistral.PromptTokens);
+
+        var yLlama = buckets.Single(b => b.Provider == "agent-y" && b.Model == "llama-3");
+        Assert.Equal(1, yLlama.RequestCount);
+        Assert.Equal(10, yLlama.PromptTokens);
+
+        // The runtime display names must never surface as a provider.
+        Assert.DoesNotContain(buckets, b => b.Provider is "runtime-a" or "runtime-b" or "runtime-c" or "runtime-d");
+    }
+
+    [Fact]
+    public async Task GetSummary_GroupByProviderModel_ProviderAndModelPayloadsRemainNullOnOtherBranches()
+    {
+        await SeedAsync("openai", "gpt-4o");
+
+        var controller = CreateController();
+        var result = await controller.GetSummary(
+            from: WindowStart,
+            to: WindowEnd,
+            groupBy: "provider",
+            granularity: "day",
+            ct: CancellationToken.None);
+
+        var buckets = Assert.IsType<Unswarm.Api.Dtos.MetricsTimeBucket[]>(
+            Assert.IsType<OkObjectResult>(result).Value);
+
+        var bucket = Assert.Single(buckets);
+        Assert.Equal("openai", bucket.Group);
+        Assert.Null(bucket.Provider);
+        Assert.Null(bucket.Model);
     }
 
     // ─── Latency bands ────────────────────────────────────────────────

@@ -297,6 +297,13 @@ public sealed class UsageRecordEntity
     /// or "local" (self-hosted registered runtime).
     /// </summary>
     public string ProviderKind { get; set; } = "local";
+
+    /// <summary>
+    /// Execution target agent name for local usage — the cost unit. Null for
+    /// cloud usage and for legacy local rows recorded before this column existed.
+    /// The raw runtime display name stays in <see cref="Provider"/>.
+    /// </summary>
+    public string? Agent { get; set; }
     public string Model { get; set; } = string.Empty;
     public int PromptTokens { get; set; }
     public int CompletionTokens { get; set; }
@@ -475,6 +482,7 @@ public class UnswarmDbContext : IdentityDbContext<ApplicationUser>
             e.HasIndex(u => u.ApiKeyId);
             e.Property(u => u.Provider).IsRequired().HasMaxLength(128);
             e.Property(u => u.Model).IsRequired().HasMaxLength(256);
+            e.Property(u => u.Agent).HasMaxLength(128);
             e.Property(u => u.ApiKeyName).HasMaxLength(256);
             // DB-level default backfills existing rows when the column is added;
             // the migration additionally flips Provider == 'cloud' rows to 'cloud'.

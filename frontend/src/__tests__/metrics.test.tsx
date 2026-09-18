@@ -6,7 +6,13 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { setMockLatency } from "../lib/api/mock";
+import { mockClient, setMockLatency } from "../lib/api/mock";
+import type {
+  MetricsTimeBucket,
+  ModelUsageSummary,
+  ProviderUsageSummary,
+  UsageTotalsResponse,
+} from "../lib/api/types";
 import { TestWrapper } from "./test-utils";
 import Metrics from "../features/metrics";
 
@@ -25,6 +31,85 @@ async function renderMetrics() {
   await waitFor(() => {
     expect(screen.getByText("Total requests")).toBeInTheDocument();
   });
+}
+
+// ── Controlled fixtures for the cost-engine tests ────────────────
+
+function makeBucket(
+  overrides: Partial<MetricsTimeBucket> & { bucketStart: string },
+): MetricsTimeBucket {
+  return {
+    bucketEnd: new Date(
+      new Date(overrides.bucketStart).getTime() + 86_400_000,
+    ).toISOString(),
+    group: null,
+    provider: null,
+    model: null,
+    requestCount: 1,
+    streamingRequests: 0,
+    promptTokens: 0,
+    completionTokens: 0,
+    cachedTokens: 0,
+    avgLatencyMs: 12,
+    ...overrides,
+  };
+}
+
+function makeTotals(from: string, to: string): UsageTotalsResponse {
+  return {
+    from,
+    to,
+    totalRequests: 2,
+    totalStreamingRequests: 0,
+    totalPromptTokens: 2_000_000,
+    totalCompletionTokens: 0,
+    totalCachedTokens: 0,
+    avgLatencyMs: 12,
+  };
+}
+
+function makeModel(
+  provider: string,
+  model: string,
+  promptTokens: number,
+): ModelUsageSummary {
+  return {
+    provider,
+    model,
+    requestCount: 1,
+    streamingRequests: 0,
+    promptTokens,
+    completionTokens: 0,
+    cachedTokens: 0,
+    avgLatencyMs: 12,
+  };
+}
+
+function makeProvider(provider: string, promptTokens: number): ProviderUsageSummary {
+  return {
+    provider,
+    requestCount: 1,
+    streamingRequests: 0,
+    promptTokens,
+    completionTokens: 0,
+    cachedTokens: 0,
+  };
+}
+
+/** Spy the mock client so the page sees only controlled cost fixtures. */
+function stubMetrics(
+  grouped: MetricsTimeBucket[],
+  totals: UsageTotalsResponse,
+  models: ModelUsageSummary[],
+  providers: ProviderUsageSummary[],
+  combined: MetricsTimeBucket[] = [],
+) {
+  vi.spyOn(mockClient, "getMetricsSummary").mockImplementation(async (opts) =>
+    opts?.groupBy === "provider_model" ? grouped : combined,
+  );
+  vi.spyOn(mockClient, "getMetricsTotals").mockResolvedValue(totals);
+  vi.spyOn(mockClient, "getMetricsModels").mockResolvedValue(models);
+  vi.spyOn(mockClient, "getMetricsProviders").mockResolvedValue(providers);
 }
 
 describe("Metrics page", () => {
@@ -81,7 +166,7 @@ describe("Metrics page", () => {
     ).toBeInTheDocument();
 
     // The applied selection narrows the per-model table (llama-3 belongs to
-    // local-agent, which was not selected).
+    // the host agent, which was not selected).
     await waitFor(() => {
       expect(screen.queryByText("llama-3")).not.toBeInTheDocument();
     });
@@ -157,13 +242,13 @@ describe("Metrics page", () => {
 
     await user.click(screen.getByRole("button", { name: "By provider" }));
 
-    expect(await screen.findByText("Provider comparison")).toBeInTheDocument();
+    expect(await screen.findByText("Provider / Agent comparison")).toBeInTheDocument();
     // Every seeded provider appears as a compared entity.
     expect(
       screen.getAllByText("openai").length,
     ).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("anthropic").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("local-agent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("host").length).toBeGreaterThanOrEqual(1);
 
     // Switching to model split relabels the table.
     await user.click(screen.getByRole("button", { name: "By model" }));
@@ -212,5 +297,96 @@ describe("Metrics page", () => {
     expect(
       screen.getByLabelText("Remove provider filter openai"),
     ).toBeInTheDocument();
+  });
+
+  it("prices per-model cost across a mid-window rate boundary", async () => {
+    stubMetrics(
+      [
+        makeBucket({
+          bucketStart: "2024-01-05T00:00:00.000Z",
+          group: "openai|gpt-4o",
+          provider: "openai",
+          model: "gpt-4o",
+          promptTokens: 1_000_000,
+        }),
+        makeBucket({
+          bucketStart: "2024-01-20T00:00:00.000Z",
+          group: "openai|gpt-4o",
+          provider: "openai",
+          model: "gpt-4o",
+          promptTokens: 1_000_000,
+        }),
+      ],
+      makeTotals("2024-01-01T00:00:00.000Z", "2024-02-01T00:00:00.000Z"),
+      [makeModel("openai", "gpt-4o", 2_000_000)],
+      [makeProvider("openai", 2_000_000)],
+    );
+    // $1/1M before Jan 15, $2/1M from Jan 15 → 1 + 2 = $3.00.
+    localStorage.setItem(
+      "unswarm-cost-rates:v3",
+      JSON.stringify([
+        { id: "r1", provider: "openai", model: null, from: null, to: "2024-01-15", mode: "per-token", promptPer1M: 1, completionPer1M: 0, monthlyPrice: 0, monthlyCost: 0 },
+        { id: "r2", provider: "openai", model: null, from: "2024-01-15", to: null, mode: "per-token", promptPer1M: 2, completionPer1M: 0, monthlyPrice: 0, monthlyCost: 0 },
+      ]),
+    );
+
+    await renderMetrics();
+
+    const costs = await screen.findAllByText("$3.00");
+    expect(costs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("prorates a flat monthly rate for the active window", async () => {
+    stubMetrics(
+      [
+        makeBucket({
+          bucketStart: "2024-01-10T00:00:00.000Z",
+          group: "acme|m1",
+          provider: "acme",
+          model: "m1",
+          promptTokens: 500,
+        }),
+      ],
+      makeTotals("2024-01-01T00:00:00.000Z", "2024-01-16T00:00:00.000Z"),
+      [makeModel("acme", "m1", 500)],
+      [makeProvider("acme", 500)],
+    );
+    // $200/mo over a 15-of-31-day January window → $96.77.
+    localStorage.setItem(
+      "unswarm-cost-rates:v3",
+      JSON.stringify([
+        { id: "s1", provider: "acme", model: null, from: null, to: null, mode: "subscription", promptPer1M: 0, completionPer1M: 0, monthlyPrice: 200, monthlyCost: 0 },
+      ]),
+    );
+
+    await renderMetrics();
+
+    expect(
+      await screen.findByText(/\+ \$96\.77 subscriptions/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the missing-rate hint when no periods are configured", async () => {
+    stubMetrics(
+      [
+        makeBucket({
+          bucketStart: "2024-01-10T00:00:00.000Z",
+          group: "openai|gpt-4o",
+          provider: "openai",
+          model: "gpt-4o",
+          promptTokens: 1_000,
+        }),
+      ],
+      makeTotals("2024-01-01T00:00:00.000Z", "2024-02-01T00:00:00.000Z"),
+      [makeModel("openai", "gpt-4o", 1_000)],
+      [makeProvider("openai", 1_000)],
+    );
+
+    await renderMetrics();
+
+    expect(
+      await screen.findByText(/have no cost rate set/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("open the Cost Calculator")).toBeInTheDocument();
   });
 });

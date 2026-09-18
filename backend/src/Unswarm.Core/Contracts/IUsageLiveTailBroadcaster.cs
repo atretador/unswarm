@@ -5,6 +5,9 @@ namespace Unswarm.Core.Contracts;
 /// <summary>
 /// A single persisted usage record, broadcast to live-tail subscribers
 /// (GET /ws/metrics) right after <see cref="IUsageRecorder.RecordAsync"/> commits.
+/// <see cref="Provider"/> is the cost unit (agent for local usage, cloud provider
+/// name for cloud usage); <see cref="Agent"/> carries the raw local agent when
+/// one was recorded.
 /// </summary>
 public sealed record UsageLiveTailEvent(
     string Id,
@@ -16,7 +19,8 @@ public sealed record UsageLiveTailEvent(
     int CompletionTokens,
     int CachedTokens,
     bool IsStreaming,
-    long ElapsedMs);
+    long ElapsedMs,
+    string? Agent = null);
 
 /// <summary>
 /// In-process fan-out of usage records to live-tail subscribers.

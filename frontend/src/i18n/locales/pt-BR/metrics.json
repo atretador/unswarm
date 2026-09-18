@@ -114,7 +114,7 @@
     "monthlySubscription": "Preço da assinatura mensal",
     "monthlyCost": "Custo mensal (energia, hardware, etc.)",
     "zeroPlaceholder": "0,00",
-    "description": "Defina o preço para cada provedor — taxas por uso por 1M tokens, ou uma assinatura mensal fixa. As taxas são salvas no armazenamento local do navegador e aplicadas à seleção de filtros atual."
+    "description": "Defina períodos de taxas com datas por provedor ou modelo — taxas por uso por 1M tokens, ou um custo mensal fixo de assinatura/auto-hospedado. Os períodos são salvos no armazenamento local do navegador e aplicados à janela atual."
   },
   "breakdown": {
     "key": "Chave",
@@ -215,7 +215,7 @@
   },
   "sections": {
     "perModelBreakdown": "Detalhamento por modelo",
-    "perProviderBreakdown": "Detalhamento por provedor",
+    "perProviderBreakdown": "Detalhamento por provedor/agente",
     "recentRequests": "Requisições recentes",
     "requestsByHour": "Requisições por hora"
   },
@@ -243,7 +243,7 @@
     }
   },
   "comparisonTable": {
-    "provider": "Provedor",
+    "provider": "Provedor / Agente",
     "model": "Modelo",
     "providerComparison": "Comparação por {{dim}}",
     "missingRateDisclaimer": "* Exclui uso sem taxas por token (assinaturas, auto-hospedado, modelos sem taxa).",
@@ -270,7 +270,7 @@
     "nextPage": "Próxima página"
   },
   "providerBreakdown": {
-    "noProviderUsage": "Sem dados de uso por provedor para este período."
+    "noProviderUsage": "Sem dados de uso por provedor/agente para este período."
   },
   "breakdownSection": {
     "latencyDistribution": "Distribuição de latência",
@@ -287,7 +287,19 @@
     "cached": "Cache"
   },
   "costCalcSection": {
-    "provider": "Provedor",
+    "provider": "Provedor / Agente",
+    "period": "Período",
+    "periodFrom": "De",
+    "periodTo": "Até",
+    "openEnded": "em aberto",
+    "modelScope": "Modelo",
+    "allModels": "Todos os modelos",
+    "specificModel": "Modelo específico",
+    "addPeriod": "Adicionar período de taxa",
+    "overlapWarning": "Sobreposto a outro período deste provedor/modelo.",
+    "invalidRange": "\"De\" deve ser anterior ou igual a \"Até\".",
+    "periodNotActive": "Período inativo no momento",
+    "proratedMonth": "(proporcional ao mês ativo)",
     "promptRate": "Taxa Prompt",
     "completionRate": "Taxa Conclusão",
     "promptTokens": "Tokens do Prompt",
@@ -299,6 +311,7 @@
     "monthly": "mensal",
     "selfHosted": "auto-hospedado",
     "incl": "incl.",
+    "mixed": "misto",
     "noUsageYet": "— sem uso este mês ainda",
     "unnamed": "sem nome",
     "addProvider": "Adicionar provedor",
@@ -327,7 +340,7 @@
   "clearSearch": "Limpar pesquisa",
   "apply": "Aplicar",
   "cancel": "Cancelar",
-  "allProvidersLabel": "todos os provedores",
+  "allProvidersLabel": "todos os provedores/agentes",
   "allModelsLabel": "todos os modelos",
   "byEntity": "por {{entity}}",
   "onboarding": {
@@ -338,7 +351,8 @@
   "costTooltips": {
     "subscription": "Incluído na assinatura de {{amount}}/mês para {{provider}}",
     "selfHosted": "Incluído no custo auto-hospedado de {{amount}}/mês para {{provider}}",
-    "noRate": "Nenhuma taxa definida para {{provider}}"
+    "noRate": "Nenhuma taxa definida para {{provider}}",
+    "mixed": "Preços fixos e por token misturados nesta janela para {{provider}}"
   },
   "copyToClipboard": "Copiar para a área de transferência",
   "monthlySuffix": "/mês",

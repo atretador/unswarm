@@ -475,7 +475,8 @@ public sealed class ModelsController : ControllerBase
             response.PromptTokensCached,
             isStream,
             elapsedMs,
-            providerKind: "local");
+            providerKind: "local",
+            agent: response.ServedByRuntimeAgent);
 
         return new EmptyResult();
     }

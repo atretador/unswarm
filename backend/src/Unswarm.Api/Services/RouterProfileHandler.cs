@@ -60,8 +60,12 @@ public sealed class RouterProfileHandler
         public int TokensGenerated { get; init; }
         public int PromptTokens { get; init; }
         public int PromptTokensCached { get; init; }
-        /// <summary>Runtime name for usage attribution.</summary>
+        /// <summary>Runtime name for usage attribution. For cloud models this holds the cloud provider name (e.g. "openai").</summary>
         public string? ServedByRuntimeName { get; init; }
+        /// <summary>Serving runtime id for usage attribution (local only).</summary>
+        public string? ServedByRuntimeId { get; init; }
+        /// <summary>Serving runtime agent (local cost unit) for usage attribution (local only).</summary>
+        public string? ServedByRuntimeAgent { get; init; }
         /// <summary>If all models failed, the last error message.</summary>
         public object? ErrorMessage { get; init; }
     }
@@ -263,6 +267,9 @@ public sealed class RouterProfileHandler
             ContentType = response.ContentType,
             Body = response.Body,
             IsStreaming = isStreaming,
+            // Cloud usage is attributed to the concrete cloud provider, not the
+            // synthetic "router" bucket (mirrors the non-router cloud path).
+            ServedByRuntimeName = ExtractCloudProviderName(modelId) ?? "cloud",
         }, false);
     }
 
@@ -310,7 +317,23 @@ public sealed class RouterProfileHandler
             PromptTokens = response.PromptTokens,
             PromptTokensCached = response.PromptTokensCached,
             ServedByRuntimeName = response.ServedByRuntimeName,
+            ServedByRuntimeId = response.ServedByRuntimeId,
+            ServedByRuntimeAgent = response.ServedByRuntimeAgent,
         }, false);
+    }
+
+    /// <summary>
+    /// Extracts the concrete cloud provider name from a "cloud/&lt;provider&gt;/&lt;model&gt;"
+    /// model id. Returns null for malformed ids (caller falls back to "cloud").
+    /// </summary>
+    private static string? ExtractCloudProviderName(string modelId)
+    {
+        if (!modelId.StartsWith("cloud/", StringComparison.Ordinal))
+            return null;
+
+        var rest = modelId["cloud/".Length..];
+        var slashIdx = rest.IndexOf('/');
+        return slashIdx > 0 ? rest[..slashIdx] : null;
     }
 
     /// <summary>

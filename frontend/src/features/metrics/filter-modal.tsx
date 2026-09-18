@@ -82,7 +82,7 @@ function CheckboxList<T extends string>({
               {opt.label}
             </span>
             {opt.badge && (
-              <Badge variant={opt.badge === "local" ? "outline" : "info"} size="sm">
+              <Badge variant={opt.badge === "agent" ? "outline" : "info"} size="sm">
                 {opt.badge}
               </Badge>
             )}

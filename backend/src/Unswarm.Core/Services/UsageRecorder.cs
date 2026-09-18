@@ -22,7 +22,7 @@ public sealed class UsageRecorder : IUsageRecorder
     }
 
     public async Task RecordAsync(string provider, string model, int promptTokens, int completionTokens, int cachedTokens, bool isStreaming, double? elapsedMs,
-        string? apiKeyId = null, string? apiKeyName = null, string providerKind = "local")
+        string? apiKeyId = null, string? apiKeyName = null, string providerKind = "local", string? agent = null)
     {
         try
         {
@@ -37,6 +37,7 @@ public sealed class UsageRecorder : IUsageRecorder
                 TimestampTicks = now.Ticks,
                 Provider = provider,
                 ProviderKind = providerKind,
+                Agent = agent,
                 Model = model,
                 PromptTokens = promptTokens,
                 CompletionTokens = completionTokens,
@@ -50,20 +51,28 @@ public sealed class UsageRecorder : IUsageRecorder
             db.UsageRecords.Add(entity);
             await db.SaveChangesAsync();
 
+            // Cost unit: local usage is attributed to the agent (falling back to
+            // the raw display name for legacy rows without an agent); cloud usage
+            // keeps the cloud provider name in Provider.
+            var costUnit = providerKind == "local" && !string.IsNullOrEmpty(agent)
+                ? agent
+                : provider;
+
             // Live-tail fan-out after the record is durably persisted. The
             // broadcaster is a singleton resolved from this throwaway scope;
             // absence (unit-test fakes) must never fail recording.
             scope.ServiceProvider.GetService<IUsageLiveTailBroadcaster>()?.Publish(new UsageLiveTailEvent(
                 entity.Id,
                 entity.Timestamp,
-                entity.Provider,
+                costUnit,
                 entity.ProviderKind,
                 entity.Model,
                 entity.PromptTokens,
                 entity.CompletionTokens,
                 entity.CachedTokens,
                 entity.IsStreaming,
-                entity.ElapsedMs));
+                entity.ElapsedMs,
+                entity.Agent));
         }
         catch (Exception ex)
         {

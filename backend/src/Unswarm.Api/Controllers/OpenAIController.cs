@@ -594,6 +594,8 @@ public sealed class OpenAIController : ControllerBase
                     }
                 }
 
+                var routerIsCloud = routerResult.ServedModel?.StartsWith("cloud/", StringComparison.Ordinal) == true;
+
                 _ = _usageRecorder.RecordAsync(
                     routerResult.ServedByRuntimeName ?? "router",
                     routerResult.ServedModel ?? modelName,
@@ -604,7 +606,8 @@ public sealed class OpenAIController : ControllerBase
                     routerElapsedMs,
                     apiKeyId,
                     apiKeyName,
-                    providerKind: routerResult.ServedModel?.StartsWith("cloud/", StringComparison.Ordinal) == true ? "cloud" : "local");
+                    providerKind: routerIsCloud ? "cloud" : "local",
+                    agent: routerIsCloud ? null : routerResult.ServedByRuntimeAgent);
 
                 return new EmptyResult();
             }
@@ -718,7 +721,8 @@ public sealed class OpenAIController : ControllerBase
             elapsedMs,
             apiKeyId,
             apiKeyName,
-            providerKind: "local");
+            providerKind: "local",
+            agent: inferenceResponse.ServedByRuntimeAgent);
 
         return new EmptyResult();
     }

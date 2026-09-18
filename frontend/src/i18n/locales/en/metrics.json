@@ -114,7 +114,7 @@
     "monthlySubscription": "Monthly subscription price",
     "monthlyCost": "Monthly cost (power, hardware, etc.)",
     "zeroPlaceholder": "0.00",
-    "description": "Set pricing for each provider — usage-based rates per 1M tokens, or a fixed monthly subscription. Rates are saved to your browser's local storage and applied against the current filter selection."
+    "description": "Set dated rate periods per provider or model — usage-based rates per 1M tokens, or a fixed monthly subscription/self-hosted cost. Periods are saved to your browser's local storage and applied to the current window."
   },
   "breakdown": {
     "key": "Key",
@@ -214,7 +214,7 @@
   },
   "sections": {
     "perModelBreakdown": "Per-model breakdown",
-    "perProviderBreakdown": "Per-provider breakdown",
+    "perProviderBreakdown": "Per-provider/agent breakdown",
     "recentRequests": "Recent requests",
     "requestsByHour": "Requests by hour"
   },
@@ -241,7 +241,7 @@
     }
   },
   "comparisonTable": {
-    "provider": "Provider",
+    "provider": "Provider / Agent",
     "model": "Model",
     "providerComparison": "{{dim}} comparison",
     "missingRateDisclaimer": "* Excludes usage without per-token rates (subscriptions, self-hosted, unrated models).",
@@ -268,7 +268,7 @@
     "nextPage": "Next page"
   },
   "providerBreakdown": {
-    "noProviderUsage": "No provider usage data for this time range."
+    "noProviderUsage": "No provider/agent usage data for this time range."
   },
   "breakdownSection": {
     "latencyDistribution": "Latency distribution",
@@ -285,7 +285,19 @@
     "cached": "Cached"
   },
   "costCalcSection": {
-    "provider": "Provider",
+    "provider": "Provider / Agent",
+    "period": "Period",
+    "periodFrom": "From",
+    "periodTo": "To",
+    "openEnded": "open-ended",
+    "modelScope": "Model",
+    "allModels": "All models",
+    "specificModel": "Specific model",
+    "addPeriod": "Add rate period",
+    "overlapWarning": "Overlaps another period for this provider/model.",
+    "invalidRange": "From must be on or before To.",
+    "periodNotActive": "Period not active now",
+    "proratedMonth": "(prorated for active month)",
     "promptRate": "Prompt Rate",
     "completionRate": "Completion Rate",
     "promptTokens": "Prompt Tokens",
@@ -297,6 +309,7 @@
     "monthly": "monthly",
     "selfHosted": "self-hosted",
     "incl": "incl.",
+    "mixed": "mixed",
     "noUsageYet": "— no usage this month yet",
     "unnamed": "unnamed",
     "addProvider": "Add provider",
@@ -325,7 +338,7 @@
   "clearSearch": "Clear search",
   "apply": "Apply",
   "cancel": "Cancel",
-  "allProvidersLabel": "all providers",
+  "allProvidersLabel": "all providers/agents",
   "allModelsLabel": "all models",
   "byEntity": "by {{entity}}",
   "onboarding": {
@@ -336,7 +349,8 @@
   "costTooltips": {
     "subscription": "Included in the {{amount}}/mo subscription for {{provider}}",
     "selfHosted": "Included in the {{amount}}/mo self-hosted cost for {{provider}}",
-    "noRate": "No rate set for {{provider}}"
+    "noRate": "No rate set for {{provider}}",
+    "mixed": "Mixed flat and per-token pricing in this window for {{provider}}"
   },
   "copyToClipboard": "Copy to clipboard",
   "monthlySuffix": "/mo",

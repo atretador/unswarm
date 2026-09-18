@@ -23,10 +23,6 @@ import {
   Line,
 } from "recharts";
 import type { MetricsLatencyBand, MetricsTimeBucket, ProviderUsageSummary } from "../../lib/api/types";
-import {
-  bucketCost,
-  type BlendedRates,
-} from "./cost";
 
 /** Which series the time chart renders. */
 export type TimeSeriesMetric =
@@ -67,10 +63,10 @@ interface TokenUsageChartProps {
   /** Which series to render. Defaults to the original stacked token areas. */
   metric?: TimeSeriesMetric;
   /**
-   * Token-weighted average cost rates for the current window. Required for the
-   * "cost" series; when absent that series renders nothing meaningful.
+   * Per-bucket estimated cost keyed by `bucketStart`. Required for the "cost"
+   * series; when absent that series renders as zero.
    */
-  blendedRates?: BlendedRates | null;
+  costByBucket?: Map<string, number> | null;
   /**
    * Called with the clicked bucket's time window (drill-down). The chart is
    * rendered as non-interactive when omitted.
@@ -83,7 +79,7 @@ export const TokenUsageChart = memo(TokenUsageChartImpl);
 function TokenUsageChartImpl({
   summary,
   metric = "tokens",
-  blendedRates = null,
+  costByBucket = null,
   onPointClick,
 }: TokenUsageChartProps) {
   // Memoized so parent re-renders (e.g. WS-driven table updates) don't
@@ -110,9 +106,9 @@ function TokenUsageChartImpl({
         requests: b.requestCount,
         latency: Math.round(b.avgLatencyMs),
         cached: b.cachedTokens,
-        cost: blendedRates ? bucketCost(b, blendedRates) : 0,
+        cost: costByBucket?.get(b.bucketStart) ?? 0,
       })),
-    [summary, metric, blendedRates],
+    [summary, metric, costByBucket],
   );
 
   const handleClick = (payload: unknown) => {

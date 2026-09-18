@@ -28,6 +28,8 @@ export interface RecentRequestsTableProps {
   /** Polling interval in ms; 0 disables. */
   autoRefreshMs: number;
   onClearCustomWindow: () => void;
+  /** Resolves a raw model id to its user-facing display label. */
+  modelLabel?: (model: string) => string;
 }
 
 // TODO: LIVE_STATUS_LABELS — empty string for "off" is intentional UI behavior (hides the label).
@@ -48,6 +50,7 @@ export function RecentRequestsTable({
   customWindow,
   autoRefreshMs,
   onClearCustomWindow,
+  modelLabel,
 }: RecentRequestsTableProps) {
   const { t } = useTranslation("metrics");
   const [page, setPage] = useState(0);
@@ -281,7 +284,12 @@ export function RecentRequestsTable({
                 </tr>
               )}
               {filteredLiveEvents.map((r) => (
-                <RequestRow key={r.id} record={r} fresh={freshIds.has(r.id)} />
+                <RequestRow
+                  key={r.id}
+                  record={r}
+                  fresh={freshIds.has(r.id)}
+                  modelLabel={modelLabel}
+                />
               ))}
             </tbody>
           </table>
@@ -358,7 +366,12 @@ export function RecentRequestsTable({
                   </tr>
                 )}
                 {data?.items.map((r) => (
-                  <RequestRow key={r.id} record={r} fresh={false} />
+                  <RequestRow
+                    key={r.id}
+                    record={r}
+                    fresh={false}
+                    modelLabel={modelLabel}
+                  />
                 ))}
               </tbody>
             </table>
@@ -403,11 +416,13 @@ export function RecentRequestsTable({
 interface RequestRowProps {
   record: UsageRecordResponse;
   fresh: boolean;
+  modelLabel?: (model: string) => string;
 }
 
 const RequestRow = memo(function RequestRow({
   record: r,
   fresh,
+  modelLabel = (m) => m,
 }: RequestRowProps) {
   const { t } = useTranslation("metrics");
   return (
@@ -419,8 +434,11 @@ const RequestRow = memo(function RequestRow({
       <td className="py-2.5 pr-4 whitespace-nowrap font-mono text-xs text-[var(--color-text-muted)]">
         {formatTimestamp(r.timestamp)}
       </td>
-      <td className="py-2.5 px-4 max-w-[220px] truncate" title={`${r.provider}/${r.model}`}>
-        <span className="font-medium text-[var(--color-text)]">{r.model}</span>{" "}
+      <td
+        className="py-2.5 px-4 max-w-[220px] truncate"
+        title={`${r.provider}/${modelLabel(r.model)}`}
+      >
+        <span className="font-medium text-[var(--color-text)]">{modelLabel(r.model)}</span>{" "}
         <Badge variant="outline" size="sm" className="ml-1">
           {r.provider}
         </Badge>
