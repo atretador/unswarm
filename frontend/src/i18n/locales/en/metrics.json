@@ -131,10 +131,8 @@
     "last7d": "Last 7 days",
     "less": "less",
     "more": "more",
-    "request": {
-      "one": "request",
-      "other": "requests"
-    },
+    "request_one": "request",
+    "request_other": "requests",
     "dayLabels": {
       "mon": "Mon",
       "tue": "Tue",
@@ -237,10 +235,8 @@
       "avgLatency": "Avg latency",
       "cachedTokens": "Cached tokens",
       "estCost": "Est. cost",
-      "requestCount": {
-        "one": "{{count}} request",
-        "other": "{{count}} requests"
-      },
+      "requestCount_one": "{{count}} request",
+      "requestCount_other": "{{count}} requests",
       "ofTotal": "{{pct}}% of total"
     }
   },

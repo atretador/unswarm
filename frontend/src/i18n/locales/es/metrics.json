@@ -131,10 +131,9 @@
     "last7d": "Últimos 7 días",
     "less": "menos",
     "more": "más",
-    "request": {
-      "one": "solicitud",
-      "other": "solicitudes"
-    },
+    "request_one": "solicitud",
+    "request_other": "solicitudes",
+    "request_many": "solicitudes",
     "dayLabels": {
       "mon": "Lun",
       "tue": "Mar",
@@ -237,10 +236,9 @@
       "avgLatency": "Latencia promedio",
       "cachedTokens": "Tokens en caché",
       "estCost": "Costo est.",
-      "requestCount": {
-        "one": "{{count}} solicitud",
-        "other": "{{count}} solicitudes"
-      },
+      "requestCount_one": "{{count}} solicitud",
+      "requestCount_other": "{{count}} solicitudes",
+      "requestCount_many": "{{count}} solicitudes",
       "ofTotal": "{{pct}}% del total"
     }
   },
