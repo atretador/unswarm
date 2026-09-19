@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
@@ -19,13 +20,15 @@ public sealed class CloudProviderControllerTests
         FakeCloudProviderStore? store = null,
         FakeHttpClientFactory? httpFactory = null,
         FakeOAuthService? oauthService = null,
-        FakeEncryptor? encryptor = null)
+        FakeEncryptor? encryptor = null,
+        IConfiguration? configuration = null)
         => new(
             store ?? _store,
             httpFactory ?? _httpFactory,
             new LoggerFactory().CreateLogger<CloudProviderController>(),
             oauthService ?? _oauthService,
-            encryptor ?? _encryptor);
+            encryptor ?? _encryptor,
+            configuration ?? new ConfigurationBuilder().Build());
 
     // ── Fakes ────────────────────────────────────────────────────────
 
@@ -434,6 +437,45 @@ public sealed class CloudProviderControllerTests
         var result = await ctrl.Create(request, CancellationToken.None);
 
         Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Create_PrivateLiteralIp_RejectedByDefault()
+    {
+        var ctrl = CreateController();
+        var request = new CreateCloudProviderRequest("lan", "http://10.0.0.5:8080/v1", "sk-key");
+
+        Assert.IsType<BadRequestObjectResult>(await ctrl.Create(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Create_PrivateLiteralIp_AllowedWhenPrivateEgressEnabled()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CloudProviders:AllowPrivateEgress"] = "true"
+            })
+            .Build();
+        var ctrl = CreateController(configuration: config);
+        var request = new CreateCloudProviderRequest("lan", "http://10.0.0.5:8080/v1", "sk-key");
+
+        Assert.IsType<CreatedAtActionResult>(await ctrl.Create(request, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Create_PrivateLiteralIp_AllowedWhenHostAllowlisted()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["CloudProviders:AllowedPrivateHosts:0"] = "10.0.0.5"
+            })
+            .Build();
+        var ctrl = CreateController(configuration: config);
+        var request = new CreateCloudProviderRequest("lan", "http://10.0.0.5:8080/v1", "sk-key");
+
+        Assert.IsType<CreatedAtActionResult>(await ctrl.Create(request, CancellationToken.None));
     }
 
     [Fact]

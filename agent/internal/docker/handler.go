@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -34,6 +35,11 @@ const unswarmLabel = "app=unswarm"
 type Handler struct {
 	client *client.Client
 	socket string
+
+	// createBindAddress is the host IP that create_container maps ports to.
+	// Defaults to 127.0.0.1 (never 0.0.0.0) so created model containers are
+	// not exposed on every interface.
+	createBindAddress string
 }
 
 // New creates a Docker Handler connected to the given socket.
@@ -47,7 +53,24 @@ func New(socket string) (*Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create docker client: %w", err)
 	}
-	return &Handler{client: c, socket: socket}, nil
+	return &Handler{client: c, socket: socket, createBindAddress: "127.0.0.1"}, nil
+}
+
+// SetCreateBindAddress overrides the host IP used for create_container port
+// bindings. An empty value is ignored so the safe 127.0.0.1 default holds.
+func (h *Handler) SetCreateBindAddress(addr string) {
+	if strings.TrimSpace(addr) == "" {
+		return
+	}
+	h.createBindAddress = strings.TrimSpace(addr)
+}
+
+// createHostIP returns the effective host IP for port bindings.
+func (h *Handler) createHostIP() string {
+	if strings.TrimSpace(h.createBindAddress) == "" {
+		return "127.0.0.1"
+	}
+	return h.createBindAddress
 }
 
 // Socket returns the docker socket this handler is attached to.
@@ -111,7 +134,7 @@ func (h *Handler) CreateContainer(ctx context.Context, payload protocol.CreateCo
 		exposedPorts[containerPort] = struct{}{}
 		if payload.HostPort > 0 {
 			portBindings[containerPort] = []nat.PortBinding{
-				{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", payload.HostPort)},
+				{HostIP: h.createHostIP(), HostPort: fmt.Sprintf("%d", payload.HostPort)},
 			}
 		}
 	}
@@ -202,16 +225,52 @@ func (h *Handler) CreateContainer(ctx context.Context, payload protocol.CreateCo
 	})
 }
 
-// firstPublicPortFromNat extracts the first public port from nat.PortMap.
+// firstPublicPortFromNat extracts the public host port of the lowest exposed
+// container port that has a binding. nat.PortMap is a Go map, so iteration
+// order is randomized; sorting the keys makes the result deterministic (and
+// stable across `-race`/repeated runs). Bindings with no host port or an
+// unparsable host port are skipped, falling through to the next exposed port.
 func firstPublicPortFromNat(ports nat.PortMap) int {
-	for _, bindings := range ports {
-		if len(bindings) > 0 {
-			if p, err := strconv.Atoi(bindings[0].HostPort); err == nil {
-				return p
-			}
+	keys := make([]nat.Port, 0, len(ports))
+	for k := range ports {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return natPortLess(keys[i], keys[j])
+	})
+	for _, k := range keys {
+		bindings := ports[k]
+		if len(bindings) == 0 {
+			continue
+		}
+		if p, err := strconv.Atoi(bindings[0].HostPort); err == nil {
+			return p
 		}
 	}
 	return 0
+}
+
+// natPortLess orders nat.Port keys by their numeric port first, then by
+// protocol, so "80/tcp" sorts before "443/tcp" (lower exposed container port
+// wins). Unparsable keys sort lexically after parseable ones.
+func natPortLess(a, b nat.Port) bool {
+	pa, ea := strconv.Atoi(natPortNumber(string(a)))
+	pb, eb := strconv.Atoi(natPortNumber(string(b)))
+	if ea == nil && eb == nil && pa != pb {
+		return pa < pb
+	}
+	if (ea == nil) != (eb == nil) {
+		return ea == nil
+	}
+	return string(a) < string(b)
+}
+
+// natPortNumber returns the numeric portion of a nat.Port key ("80/tcp" -> "80").
+func natPortNumber(p string) string {
+	if i := strings.IndexByte(p, '/'); i >= 0 {
+		return p[:i]
+	}
+	return p
 }
 
 // InspectContainer returns detailed info about a pre-provisioned container.
@@ -221,13 +280,13 @@ func (h *Handler) InspectContainer(ctx context.Context, name string) protocol.Co
 		return containerErrorResult("inspect", name, err)
 	}
 	data := map[string]interface{}{
-		"id":          info.ID,
-		"name":        strings.TrimPrefix(info.Name, "/"),
-		"status":      info.State.Status,
-		"running":     info.State.Running,
-		"startedAt":   info.State.StartedAt,
-		"finishedAt":  info.State.FinishedAt,
-		"image":       info.Config.Image,
+		"id":         info.ID,
+		"name":       strings.TrimPrefix(info.Name, "/"),
+		"status":     info.State.Status,
+		"running":    info.State.Running,
+		"startedAt":  info.State.StartedAt,
+		"finishedAt": info.State.FinishedAt,
+		"image":      info.Config.Image,
 	}
 	if info.State.Health != nil {
 		data["health"] = info.State.Health.Status
@@ -331,8 +390,8 @@ func (h *Handler) GetContainerLogs(ctx context.Context, name string, tailLines i
 		lines = lines[:len(lines)-1]
 	}
 	return okResult(map[string]interface{}{
-		"name":  name,
-		"logs":  lines,
+		"name": name,
+		"logs": lines,
 	})
 }
 

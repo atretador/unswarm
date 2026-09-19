@@ -2,17 +2,23 @@
 # Copy this file and modify as needed.
 
 # Backend WebSocket URL (supports ws://, wss://, http://, https://)
-# For any non-local deployment, use wss:// to encrypt the API key in transit.
+# Recommended: wss:// (e.g. wss://unswarm.example.com:8443) behind a
+# TLS-terminating reverse proxy. Plaintext ws:// is permitted to any host,
+# but the agent logs a prominent warning for non-loopback plaintext because
+# the API key would travel unencrypted.
 #
-# Precedence: a non-empty value here wins. If this field is empty, the agent
-# falls back to the UNSWARM_AGENT_BACKEND_URL environment variable.
-backend_url: "ws://backend:url"
+# Precedence (H5): the environment WINS over this file when set. If this field
+# is empty the agent also falls back to UNSWARM_AGENT_BACKEND_URL. A conflict
+# logs a warning naming the field (never the value).
+backend_url: ""
 
 # API key for authentication (empty = no auth)
 #
-# Precedence: a non-empty value here wins. If this field is empty, the agent
-# falls back to the UNSWARM_AGENT_API_KEY environment variable.
-api_key: "ak_replace_me_api_key"
+# Precedence (H5): UNSWARM_AGENT_API_KEY wins over this file when set. A
+# conflict logs a warning naming the field (never the key). Prefer the
+# environment or a 0600 config file; the compose agent profile requires
+# UNSWARM_API_KEY to be set.
+api_key: ""
 
 # Unique agent name — must be unique across all agents on the same backend
 agent_name: "machine54-agent"
@@ -20,11 +26,9 @@ agent_name: "machine54-agent"
 # Docker socket path
 docker_socket: "unix:///var/run/docker.sock"
 
-# Allow unencrypted ws:// connections to non-loopback hosts.
-# Default false: the agent will refuse ws:// to a remote host to prevent
-# the API key from being sent in plaintext. Set to true only if you accept
-# the risk (e.g. a dedicated, isolated network with no MITM threat).
-allow_insecure_ws: true
+# allow_insecure_ws was removed (H6): plaintext ws:// is allowed to any host
+# with a warning for non-loopback targets. The key is still accepted as a
+# deprecated no-op for one release so existing files load.
 
 # Optional: SHA-256 fingerprint (hex) of the backend's TLS certificate.
 # When set and backend_url uses wss://, the agent verifies the server
@@ -39,18 +43,60 @@ allow_insecure_ws: true
 # expected_server_fingerprint: ""
 
 # Optional: restrict which local (127.0.0.1) ports the agent will dial for
-# health_check / discover_models / chat_completion commands. Empty or unset =
-# unrestricted (any loopback port). When set, any other port is rejected
-# before dialing — recommended so a compromised backend cannot use the agent
-# as an SSRF pivot into arbitrary local services.
+# health_check / discover_models / chat_completion commands.
+#
+# Default: allow_unrestricted_loopback: true with an empty list = any loopback
+# port (back-compat). A NON-EMPTY allowed_loopback_ports list ALWAYS scopes the
+# agent to those ports, regardless of the flag. Set allow_unrestricted_loopback:
+# false as well so an empty list is rejected at startup instead of meaning
+# "any port". NOTE: port ranges are not supported yet, and
+# auto-assigned container ports (hostPort 0) cannot be predicted — scoping
+# requires explicit host ports on the backend.
+# allow_unrestricted_loopback: false
 # allowed_loopback_ports: [8080, 8081]
 
 # Directory containing launcher scripts (*.sh) the backend may start.
 # SECURITY: scripts_dir MUST be owned by root and NOT writable by the agent
-# user (or anyone who can influence the backend). Anything placed in this
-# directory is executed as bash by the agent — a writable scripts_dir is
-# remote code execution by design.
+# user. Anything placed in this directory is executed as bash by the agent —
+# a writable scripts_dir is remote code execution by design.
 # scripts_dir: "/opt/unswarm/scripts"
+
+# Where script log/PID files are written. MUST be inside a path listed in the
+# systemd unit's ReadWritePaths, or the agent refuses to start:
+#   script_log_dir: /var/lib/unswarm/script-logs
+# Empty derives <parent of scripts_dir>/script-logs.
+#
+# MIGRATION: with the documented scripts_dir: /opt/unswarm/scripts and no
+# script_log_dir, the derived /opt/unswarm/script-logs is outside the shipped
+# unit's ReadWritePaths=/var/lib/unswarm, so the agent now aborts at startup.
+# Set script_log_dir: /var/lib/unswarm/script-logs, or add your existing log
+# directory to ReadWritePaths.
+# script_log_dir: ""
+
+# Script trust (H8):
+#   allow_script_start (default true)  — start_script works for pre-provisioned
+#                                        launcher scripts. stop_script is never
+#                                        gated, so a running script can always
+#                                        be stopped.
+#   allow_script_upload (default false) — upload_script / update_script /
+#                                        delete_script / get_script_content.
+#                                        Only enable with a root-owned,
+#                                        agent-read-only scripts_dir.
+# allow_script_start: true
+# allow_script_upload: false
+
+# Container creation (H7): disabled by default. When enabled, create_container
+# is additionally constrained by the container_creation policy below. Empty
+# allowlists deny everything (decision 4). Mapped ports bind to 127.0.0.1 by
+# default (never 0.0.0.0).
+# allow_container_creation: false
+# container_creation:
+#   allowed_images: ["ghcr.io/ggml-org/llama.cpp:*"]
+#   allowed_host_path_prefixes: ["/srv/models"]
+#   allow_host_network: false
+#   allow_ipc_host: false
+#   allowed_device_prefixes: ["/dev/kfd", "/dev/dri/", "/dev/nvidia"]
+#   bind_address: "127.0.0.1"
 
 # Reconnection settings
 reconnect:

@@ -1,11 +1,14 @@
+using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services;
 
 namespace Unswarm.Api.Controllers;
 
@@ -34,6 +37,8 @@ public sealed class CloudProviderController : ControllerBase
     private readonly ILogger<CloudProviderController> _logger;
     private readonly IChatGptOAuthService _oauthService;
     private readonly IApiKeyEncryptor _encryptor;
+    private readonly bool _allowPrivateEgress;
+    private readonly string[] _allowedPrivateHosts;
 
     /// <summary>Semver version sent to the Codex models endpoint.</summary>
     private const string CodexClientVersion = "0.99.0";
@@ -43,13 +48,16 @@ public sealed class CloudProviderController : ControllerBase
         IHttpClientFactory httpFactory,
         ILogger<CloudProviderController> logger,
         IChatGptOAuthService oauthService,
-        IApiKeyEncryptor encryptor)
+        IApiKeyEncryptor encryptor,
+        IConfiguration configuration)
     {
         _store = store;
         _httpFactory = httpFactory;
         _logger = logger;
         _oauthService = oauthService;
         _encryptor = encryptor;
+        _allowPrivateEgress = configuration.GetValue<bool>("CloudProviders:AllowPrivateEgress");
+        _allowedPrivateHosts = configuration.GetSection("CloudProviders:AllowedPrivateHosts").Get<string[]>() ?? [];
     }
 
     [HttpGet]
@@ -561,7 +569,7 @@ public sealed class CloudProviderController : ControllerBase
         return false;
     }
 
-    private static string? NormalizeBaseUrl(string raw)
+    private string? NormalizeBaseUrl(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
@@ -570,6 +578,16 @@ public sealed class CloudProviderController : ControllerBase
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return null;
         if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+            return null;
+
+        // Early reject literal private/reserved IPs unless the operator has opted
+        // in (AllowPrivateEgress) or allow-listed the host. The ConnectCallback
+        // remains the authoritative filter (it re-checks every DNS-resolved
+        // address on connect/reconnect).
+        if (!_allowPrivateEgress
+            && !NetworkAddressPolicy.MatchesAllowedHost(uri.DnsSafeHost, _allowedPrivateHosts)
+            && IPAddress.TryParse(uri.DnsSafeHost, out var literal)
+            && NetworkAddressPolicy.IsPrivateOrReserved(literal))
             return null;
 
         var result = uri.ToString().TrimEnd('/');

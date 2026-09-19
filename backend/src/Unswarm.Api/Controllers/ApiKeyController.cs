@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using System.Text.Json;
 using Unswarm.Api.Dtos;
+using Unswarm.Api.Middleware;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
@@ -63,6 +65,11 @@ public sealed class ApiKeyController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Name))
             return BadRequest(LocalizedError.Create("apiKeys.nameRequired"));
 
+        // Inference keys are unrestricted on /v1 (empty access = unrestricted), so
+        // an apikeys:rw ControlPlane key must not be able to mint one. Admin only.
+        if (!RequireAdminForGrant("Create(Inference)", targetId: null, requestedDomains: []))
+            return Forbid();
+
         // Inference-scope key creation. Agent-scoped keys are created
         // through POST api/api-keys/agent below.
         var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.Inference, ct: ct);
@@ -78,6 +85,10 @@ public sealed class ApiKeyController : ControllerBase
         if (request.BoundAgentName is not null && string.IsNullOrWhiteSpace(request.BoundAgentName))
             return BadRequest(LocalizedError.Create("apiKeys.invalidBoundAgentName"));
 
+        // Agent keys are an agent-surface identity; apikeys:rw must not mint one.
+        if (!RequireAdminForGrant("CreateAgent", targetId: null, requestedDomains: []))
+            return Forbid();
+
         var created = await _keys.CreateAsync(
             request.Name.Trim(), ApiKeyScope.Agent,
             boundAgentName: string.IsNullOrWhiteSpace(request.BoundAgentName) ? null : request.BoundAgentName.Trim(),
@@ -86,11 +97,14 @@ public sealed class ApiKeyController : ControllerBase
     }
 
     /// <remarks>
-    /// SECURITY NOTE: A key with "apikeys:rw" permission can create other
-    /// ControlPlane keys with arbitrary permissions, enabling privilege
-    /// delegation. This is by design for administrative workflows but should
-    /// be documented and monitored. Consider restricting "apikeys" domain
-    /// access to trusted operators.
+    /// SECURITY NOTE: ControlPlane permission maps are subset-enforced via
+    /// <see cref="CallerMayGrant"/>: a non-Admin caller can only grant
+    /// permissions it already holds, and Admin may grant anything. Creating
+    /// Inference/Agent keys and rotating/revoking non-ControlPlane keys
+    /// additionally requires the Admin role (see
+    /// <see cref="RequireAdminForGrant"/>). A caller holding only
+    /// "apikeys:rw" therefore cannot delegate permissions it does not have or
+    /// mint an agent-surface identity.
     /// </remarks>
     [HttpPost("control-plane")]
     public async Task<IActionResult> CreateControlPlane([FromBody] CreateControlPlaneKeyRequest request, CancellationToken ct)
@@ -104,6 +118,14 @@ public sealed class ApiKeyController : ControllerBase
         var unknownDomains = permissions.Keys.Where(k => !ValidDomains.Contains(k)).ToList();
         if (unknownDomains.Count > 0)
             return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionDomain"));
+
+        // A non-Admin caller may only grant permissions it already holds.
+        if (!CallerMayGrant(User, permissions))
+        {
+            LogGrantDenied(targetId: null, requestedDomains: permissions.Keys);
+            return Forbid();
+        }
+
         var permissionsJson = JsonSerializer.Serialize(permissions, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         var created = await _keys.CreateAsync(request.Name.Trim(), ApiKeyScope.ControlPlane, permissionsJson: permissionsJson, ct: ct);
         return Ok(Map(created));
@@ -129,6 +151,13 @@ public sealed class ApiKeyController : ControllerBase
         if (User?.FindFirst("unswarm:key-id")?.Value == id)
             return Forbid();
 
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null)
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
+
+        if (!await CallerMayManageTargetAsync(item, ct))
+            return Forbid();
+
         var ok = await _keys.RevokeAsync(id, ct);
         return ok ? NoContent() : NotFound(LocalizedError.Create("apiKeys.notFound"));
     }
@@ -137,6 +166,13 @@ public sealed class ApiKeyController : ControllerBase
     public async Task<IActionResult> Rotate(string id, CancellationToken ct)
     {
         if (User?.FindFirst("unswarm:key-id")?.Value == id)
+            return Forbid();
+
+        var item = await _keys.GetAsync(id, ct);
+        if (item is null)
+            return NotFound(LocalizedError.Create("apiKeys.notFound"));
+
+        if (!await CallerMayManageTargetAsync(item, ct))
             return Forbid();
 
         try
@@ -234,11 +270,80 @@ public sealed class ApiKeyController : ControllerBase
         var unknownDomains = request.Permissions.Keys.Where(k => !ValidDomains.Contains(k)).ToList();
         if (unknownDomains.Count > 0)
             return BadRequest(LocalizedError.Create("apiKeys.invalidPermissionDomain"));
+
+        // A non-Admin caller may only keep/replace a ControlPlane key with a
+        // permission map that it already holds (both the new and current maps).
+        var targetPermissions = await _keys.GetPermissionsAsync(id, ct) ?? [];
+        if (!CallerMayGrant(User, request.Permissions, targetPermissions))
+        {
+            LogGrantDenied(id, request.Permissions.Keys);
+            return Forbid();
+        }
+
         var json = JsonSerializer.Serialize(request.Permissions, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         var saved = await _keys.SavePermissionsAsync(id, json, ct);
         return saved is null
             ? NotFound(LocalizedError.Create("apiKeys.notFound"))
             : Ok(new ApiKeyPermissionsDto { Permissions = request.Permissions });
+    }
+
+    /// <summary>
+    /// True when the caller may grant <paramref name="requested"/>: Admin always,
+    /// otherwise every requested permission must be a subset of the caller's own
+    /// ControlPlane permissions, and (for existing targets)
+    /// <paramref name="targetCurrent"/> must be a subset too so a caller cannot
+    /// shed a permission it does not hold.
+    /// </summary>
+    public static bool CallerMayGrant(
+        ClaimsPrincipal caller,
+        IReadOnlyDictionary<string, string> requested,
+        IReadOnlyDictionary<string, string>? targetCurrent = null)
+    {
+        if (caller.IsInRole("Admin")) return true;
+
+        var held = PermissionCheck.ParsePermissions(caller.FindFirst("unswarm:permissions")?.Value);
+        if (!PermissionCheck.IsSubsetOf(requested, held)) return false;
+        if (targetCurrent is not null && !PermissionCheck.IsSubsetOf(targetCurrent, held)) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Non-ControlPlane key lifecycle (Inference/Agent create + rotate/revoke)
+    /// requires an Admin caller (decision 13).
+    /// </summary>
+    private bool RequireAdminForGrant(string operation, string? targetId, IReadOnlyCollection<string> requestedDomains)
+    {
+        if (User.IsInRole("Admin")) return true;
+
+        LogGrantDenied(targetId, requestedDomains);
+        _logger.LogWarning("API key grant requires Admin for {Operation}", operation);
+        return false;
+    }
+
+    private async Task<bool> CallerMayManageTargetAsync(ApiKeyItem item, CancellationToken ct)
+    {
+        if (item.Scope != ApiKeyScope.ControlPlane)
+        {
+            if (User.IsInRole("Admin")) return true;
+            LogGrantDenied(item.Id, Array.Empty<string>());
+            return false;
+        }
+
+        var targetPermissions = await _keys.GetPermissionsAsync(item.Id, ct) ?? [];
+        if (CallerMayGrant(User, targetPermissions)) return true;
+        LogGrantDenied(item.Id, targetPermissions.Keys);
+        return false;
+    }
+
+    /// <summary>Log a denied grant. Never logs secrets — only ids and domain names.</summary>
+    private void LogGrantDenied(string? targetId, IEnumerable<string> requestedDomains)
+    {
+        var callerId = User?.FindFirst("unswarm:key-id")?.Value;
+        _logger.LogWarning(
+            "API key permission grant denied. Caller={CallerKeyId} Target={TargetId} RequestedDomains={RequestedDomains}",
+            string.IsNullOrEmpty(callerId) ? "(cookie)" : callerId,
+            targetId ?? "(new)",
+            string.Join(",", requestedDomains));
     }
 
     private static ApiKeyCreateResponse Map(CreateApiKeyResponse r) => new()

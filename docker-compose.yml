@@ -7,7 +7,7 @@ services:
       dockerfile: backend/Dockerfile
     restart: unless-stopped
     ports:
-      - "22301:5014"
+      - "127.0.0.1:22301:5014"
     volumes:
       # Persistent app data: SQLite DB + DataProtection key ring
       # ($HOME=/data → /data/.config/unswarm/unswarm.db and .../keys).
@@ -66,10 +66,12 @@ services:
     group_add:
       - "${DOCKER_GID:-999}"   # GID of the host's docker.socket group; set DOCKER_GID in .env
     environment:
-      # wss:// requires TLS termination in front of the backend; ws:// is only
-      # allowed to loopback unless allow_insecure_ws is set in agent.yaml.
+      # Environment wins over agent.yaml (H5). wss:// requires TLS termination
+      # in front of the backend; plaintext ws:// is allowed but warned for
+      # non-loopback hosts.
       UNSWARM_AGENT_BACKEND_URL: ws://backend:5014
-      UNSWARM_AGENT_API_KEY: ${UNSWARM_API_KEY:-}
+      # Fail fast when no key is provided instead of connecting unauthenticated.
+      UNSWARM_AGENT_API_KEY: ${UNSWARM_API_KEY:?set UNSWARM_API_KEY}
 
 volumes:
   unswarm-data:

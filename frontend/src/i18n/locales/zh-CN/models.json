@@ -47,6 +47,7 @@
     "parameterSize": "参数大小",
     "quantization": "量化",
     "contextWindow": "上下文窗口",
+    "maxOutputTokens": "最大输出 Token 数",
     "inputModalities": "输入模态",
     "inputModalitiesHint": "文本始终受支持。请开启该模型支持的其他格式。",
     "modalityTextLocked": "文本始终受支持",
@@ -59,14 +60,16 @@
     }
   },
   "errors": {
-    "contextWindowInvalid": "上下文窗口必须是不超过 1000 万的正整数"
+    "contextWindowInvalid": "上下文窗口必须是不超过 1000 万的正整数",
+    "maxOutputTokensInvalid": "最大输出 Token 数必须是不超过 1000 万的正整数"
   },
   "placeholders": {
     "displayName": "UI 中显示的文件名（根据模型名称自动填充）",
     "family": "例如 Llama",
     "parameterSize": "例如 8B",
     "quantization": "例如 Q4_K_M",
-    "contextWindow": "例如 128000"
+    "contextWindow": "例如 128000",
+    "maxOutputTokens": "例如 4096"
   },
   "tooltips": {
     "tokensPerSecond": "速度：每秒 Token 数",

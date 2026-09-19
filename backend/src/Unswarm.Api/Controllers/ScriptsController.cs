@@ -25,7 +25,7 @@ namespace Unswarm.Api.Controllers;
 ///   DELETE /api/scripts/agent/{agentName}/{fileName}         — Delete script on agent
 /// </summary>
 [ApiController]
-[Authorize]
+[Authorize(Policy = "ControlPlaneAccess")]
 [Route("api/[controller]")]
 public sealed class ScriptsController : ControllerBase
 {
@@ -203,11 +203,17 @@ public sealed class ScriptsController : ControllerBase
 
         try
         {
+            // Validate the untrusted filename before forwarding it to the agent.
+            var safeFileName = HostScriptDirectoryService.ValidateFileName(file.FileName);
             using var reader = new StreamReader(file.OpenReadStream());
             var content = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
-            var info = await remote.UploadScriptAsync(file.FileName, content, ct).ConfigureAwait(false);
+            var info = await remote.UploadScriptAsync(safeFileName, content, ct).ConfigureAwait(false);
             _logger.LogInformation("Uploaded script {Name} to agent {Agent}", info.Name, agentName);
             return Ok(new { name = info.Name, path = info.Path });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (AgentCommandException ex)
         {
@@ -236,11 +242,19 @@ public sealed class ScriptsController : ControllerBase
 
         try
         {
+            // Validate both the route filename and the multipart filename before
+            // forwarding either to the agent.
+            fileName = HostScriptDirectoryService.ValidateFileName(fileName);
+            _ = HostScriptDirectoryService.ValidateFileName(file.FileName);
             using var reader = new StreamReader(file.OpenReadStream());
             var content = await reader.ReadToEndAsync(ct).ConfigureAwait(false);
             var info = await remote.UpdateScriptAsync(fileName, content, ct).ConfigureAwait(false);
             _logger.LogInformation("Updated script {Name} on agent {Agent}", info.Name, agentName);
             return Ok(new { name = info.Name, path = info.Path });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
         }
         catch (AgentCommandException ex)
         {

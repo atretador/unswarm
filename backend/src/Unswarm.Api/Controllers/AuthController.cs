@@ -52,6 +52,7 @@ public class AuthController : ControllerBase
         return Ok(new { username = user.UserName, isTempPassword = user.IsTempPassword });
     }
 
+    [Authorize]
     [HttpPost("logout")]
     public async Task<IActionResult> Logout()
     {
@@ -59,6 +60,7 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
+    [Authorize]
     [HttpGet("me")]
     public async Task<IActionResult> Me()
     {
@@ -71,6 +73,7 @@ public class AuthController : ControllerBase
         return Ok(new { username = user.UserName, email = user.Email, isTempPassword = user.IsTempPassword });
     }
 
+    [Authorize]
     [HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {

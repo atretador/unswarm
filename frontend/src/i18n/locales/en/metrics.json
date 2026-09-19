@@ -133,6 +133,7 @@
     "more": "more",
     "request_one": "request",
     "request_other": "requests",
+    "request_many": "requests",
     "dayLabels": {
       "mon": "Mon",
       "tue": "Tue",
@@ -237,6 +238,7 @@
       "estCost": "Est. cost",
       "requestCount_one": "{{count}} request",
       "requestCount_other": "{{count}} requests",
+      "requestCount_many": "{{count}} requests",
       "ofTotal": "{{pct}}% of total"
     }
   },

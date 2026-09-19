@@ -592,10 +592,10 @@ func TestFilterListResult_ListContainers_EnforcementOn_FiltersToRegistered(t *te
 	input := protocol.CommandResultPayload{
 		OK: true,
 		Data: []map[string]interface{}{
-			{"name": "web", "id": "aaa"},        // registered by name
-			{"name": "db", "id": "abc123"},       // registered by id
-			{"name": "cache", "id": "zzz"},       // not registered
-			{"name": "proxy", "id": "unknown"},    // not registered
+			{"name": "web", "id": "aaa"},       // registered by name
+			{"name": "db", "id": "abc123"},     // registered by id
+			{"name": "cache", "id": "zzz"},     // not registered
+			{"name": "proxy", "id": "unknown"}, // not registered
 		},
 	}
 
@@ -644,7 +644,7 @@ func TestFilterListResult_ListContainers_ResultNotOK_PassesThrough(t *testing.T)
 	g := NewGate(r, true)
 
 	input := protocol.CommandResultPayload{
-		OK: false,
+		OK:    false,
 		Error: strPtr("docker error"),
 		Data: []map[string]interface{}{
 			{"name": "web"},
@@ -662,19 +662,40 @@ func TestFilterListResult_ListContainers_ResultNotOK_PassesThrough(t *testing.T)
 	}
 }
 
-func TestFilterListResult_ListContainers_DataNotSlice_PassesThrough(t *testing.T) {
+func TestFilterListResult_ListContainers_UnknownDataShape_FailsClosed(t *testing.T) {
 	r := NewRegistry()
+	r.Replace([]protocol.RegistrationEntry{
+		{RegisteredRuntimeID: "rt-1", ContainerName: "web"},
+	})
 	g := NewGate(r, true)
 
-	input := protocol.CommandResultPayload{
-		OK:   true,
-		Data: "unexpected type",
+	// Every unrecognized Data shape must filter out all items rather than
+	// passing an unfiltered payload through (fail closed).
+	shapes := []interface{}{
+		"unexpected type",
+		42,
+		map[string]interface{}{"other": "shape"},
+		map[string]interface{}{"containers": "not-a-list"},
 	}
-
-	got := g.FilterListResult(protocol.CmdListContainers, input)
-	// Should pass through unchanged because Data is not []map[string]interface{}
-	if got.Data != "unexpected type" {
-		t.Errorf("expected Data to pass through unchanged, got %v", got.Data)
+	for _, data := range shapes {
+		input := protocol.CommandResultPayload{OK: true, Data: data}
+		got := g.FilterListResult(protocol.CmdListContainers, input)
+		switch out := got.Data.(type) {
+		case []map[string]interface{}:
+			if len(out) != 0 {
+				t.Errorf("Data %T: expected empty filtered list, got %d items", data, len(out))
+			}
+		case map[string]interface{}:
+			items, ok := out["containers"].([]map[string]interface{})
+			if !ok {
+				t.Fatalf("Data %T: containers = %T, want []map[string]interface{}", data, out["containers"])
+			}
+			if len(items) != 0 {
+				t.Errorf("Data %T: expected empty filtered containers, got %d", data, len(items))
+			}
+		default:
+			t.Fatalf("Data %T: unexpected result shape %T", data, got.Data)
+		}
 	}
 }
 
@@ -710,9 +731,9 @@ func TestFilterListResult_ListContainers_FiltersByNameAndID(t *testing.T) {
 	input := protocol.CommandResultPayload{
 		OK: true,
 		Data: []map[string]interface{}{
-			{"name": "alpha", "id": "other1"},     // match by name
-			{"name": "other2", "id": "deadbeef"},  // match by id
-			{"name": "gamma", "id": "nope"},        // no match
+			{"name": "alpha", "id": "other1"},    // match by name
+			{"name": "other2", "id": "deadbeef"}, // match by id
+			{"name": "gamma", "id": "nope"},      // no match
 		},
 	}
 
@@ -774,7 +795,7 @@ func TestFilterListResult_ListContainers_NoneRegistered(t *testing.T) {
 	}
 }
 
-func TestFilterListResult_ListContainers_NilData(t *testing.T) {
+func TestFilterListResult_ListContainers_NilData_FailsClosed(t *testing.T) {
 	r := NewRegistry()
 	g := NewGate(r, true)
 
@@ -783,16 +804,164 @@ func TestFilterListResult_ListContainers_NilData(t *testing.T) {
 		Data: nil,
 	}
 
+	// nil is an unrecognized shape with enforcement on: fail closed to an
+	// empty list rather than passing the raw payload through.
 	got := g.FilterListResult(protocol.CmdListContainers, input)
-	if got.Data != nil {
-		t.Errorf("expected nil Data to pass through, got %v", got.Data)
+	items, ok := got.Data.([]map[string]interface{})
+	if !ok {
+		t.Fatalf("Data = %T, want empty []map[string]interface{}", got.Data)
+	}
+	if len(items) != 0 {
+		t.Errorf("expected empty filtered list, got %d items", len(items))
+	}
+}
+
+func TestFilterListResult_ListContainers_MapShape(t *testing.T) {
+	// The real agent list_containers result is
+	// {"containers": []map[string]interface{}} (docker.Handler.ListContainers),
+	// not a bare slice — this guards the M8 wiring.
+	r := NewRegistry()
+	r.Replace([]protocol.RegistrationEntry{
+		{RegisteredRuntimeID: "rt-1", ContainerName: "web"},
+		{RegisteredRuntimeID: "rt-2", ContainerID: "abc123"},
+	})
+	g := NewGate(r, true)
+
+	input := protocol.CommandResultPayload{
+		OK: true,
+		Data: map[string]interface{}{
+			"containers": []map[string]interface{}{
+				{"name": "web", "id": "aaa"},
+				{"name": "db", "id": "abc123"},
+				{"name": "cache", "id": "zzz"},
+			},
+		},
+	}
+
+	got := g.FilterListResult(protocol.CmdListContainers, input)
+	data, ok := got.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Data = %T, want map[string]interface{}", got.Data)
+	}
+	items, ok := data["containers"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("containers = %T, want []map[string]interface{}", data["containers"])
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 filtered items, got %d", len(items))
+	}
+	if items[0]["name"] != "web" || items[1]["name"] != "db" {
+		t.Errorf("filtered items = %v, want web and db", items)
+	}
+}
+
+// TestFilterListResult_IDPrefixAndImageMatching covers the M8 mismatch: the
+// backend syncs the full RuntimeContainerId (and may store the image as
+// ContainerName) while the agent emits a 12-char short id plus image/model
+// names. Full-vs-short and short-vs-short must be kept; unrelated dropped.
+func TestFilterListResult_IDPrefixAndImageMatching(t *testing.T) {
+	fullID := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	shortID := fullID[:12] // 12 chars, emitted by the agent
+	otherShort := "deadbeef1234"
+
+	r := NewRegistry()
+	r.Replace([]protocol.RegistrationEntry{
+		{RegisteredRuntimeID: "rt-full", ContainerID: fullID},
+		{RegisteredRuntimeID: "rt-short", ContainerID: otherShort},
+		{RegisteredRuntimeID: "rt-image", ContainerName: "ghcr.io/ggml-org/llama.cpp:server"},
+	})
+	g := NewGate(r, true)
+
+	input := protocol.CommandResultPayload{
+		OK: true,
+		Data: map[string]interface{}{
+			"containers": []map[string]interface{}{
+				{"name": "c1", "id": shortID},                                // full registered vs short emitted → kept
+				{"name": "c2", "id": otherShort},                             // short vs short → kept
+				{"name": "c3", "id": "001122334455"},                         // unrelated → dropped
+				{"name": "c4", "image": "ghcr.io/ggml-org/llama.cpp:server"}, // image/name match → kept
+				{"name": "c5", "id": "ffffffffffffffff"},                     // unrelated full-ish → dropped
+			},
+		},
+	}
+
+	got := g.FilterListResult(protocol.CmdListContainers, input)
+	data, ok := got.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Data = %T, want map[string]interface{}", got.Data)
+	}
+	items, ok := data["containers"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("containers = %T, want []map[string]interface{}", data["containers"])
+	}
+	names := make([]string, 0, len(items))
+	for _, it := range items {
+		names = append(names, it["name"].(string))
+	}
+	want := []string{"c1", "c2", "c4"}
+	if len(names) != len(want) {
+		t.Fatalf("filtered names = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Errorf("filtered names = %v, want %v", names, want)
+			break
+		}
+	}
+}
+
+// TestFilterListResult_IDPrefix_BareSlice verifies the same prefix matching
+// works for the bare-slice result shape.
+func TestFilterListResult_IDPrefix_BareSlice(t *testing.T) {
+	fullID := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	r := NewRegistry()
+	r.Replace([]protocol.RegistrationEntry{
+		{RegisteredRuntimeID: "rt-1", ContainerID: fullID},
+	})
+	g := NewGate(r, true)
+
+	input := protocol.CommandResultPayload{
+		OK: true,
+		Data: []map[string]interface{}{
+			{"name": "keep", "id": fullID[:12]},
+			{"name": "drop", "id": "999999999999"},
+		},
+	}
+	got := g.FilterListResult(protocol.CmdListContainers, input)
+	items := got.Data.([]map[string]interface{})
+	if len(items) != 1 || items[0]["name"] != "keep" {
+		t.Fatalf("filtered items = %v, want only keep", items)
+	}
+}
+
+func TestIDMatch(t *testing.T) {
+	full := "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	tests := []struct {
+		name string
+		a, b string
+		want bool
+	}{
+		{"equal full", full, full, true},
+		{"full vs 12-prefix", full, full[:12], true},
+		{"12-prefix vs full", full[:12], full, true},
+		{"short vs short equal", "deadbeef1234", "deadbeef1234", true},
+		{"unrelated shorts", "deadbeef1234", "001122334455", false},
+		{"under min length not prefix-matched", "abc", "abcdef", false},
+		{"empty", "", full, false},
+		{"case-insensitive", strings.ToUpper(full), full, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idMatch(tt.a, tt.b); got != tt.want {
+				t.Errorf("idMatch(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Concurrency smoke test (Registry)
 // ---------------------------------------------------------------------------
-
 func TestRegistry_ConcurrentAccess(t *testing.T) {
 	r := NewRegistry()
 	// Seed with data

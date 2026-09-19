@@ -13,9 +13,25 @@ namespace Unswarm.Tests.Unit;
 
 public sealed class ApiKeyControllerControlPlaneTests
 {
+    /// <summary>
+    /// Controller with an Admin principal installed. ControlPlane grant checks
+    /// require Admin for the tests that don't override the context.
+    /// </summary>
     private static ApiKeyController CreateController(StubApiKeyStore? store = null)
-        => new(store ?? new StubApiKeyStore(), new StubCloudProviders(), new StubContainers(),
+    {
+        var controller = new ApiKeyController(
+            store ?? new StubApiKeyStore(), new StubCloudProviders(), new StubContainers(),
             new StubRouterProfiles(), new LoggerFactory().CreateLogger<ApiKeyController>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [new Claim(ClaimTypes.Role, "Admin")], "TestAuth"))
+            }
+        };
+        return controller;
+    }
 
     [Fact]
     public async Task CreateControlPlane_CreatesKeyWithPermissionsAndSecret()
@@ -127,6 +143,66 @@ public sealed class ApiKeyControllerControlPlaneTests
         var request = new ApiKeyPermissionsDto { Permissions = new() { ["users"] = "rw" } };
 
         Assert.IsType<BadRequestObjectResult>(await CreateController(store).SavePermissions(key.Id, request, CancellationToken.None));
+    }
+
+    // ── CallerMayGrant ────────────────────────────────────────────────
+
+    private static ClaimsPrincipal Principal(params Claim[] claims)
+        => new(new ClaimsIdentity(claims, "TestAuth"));
+
+    private static Dictionary<string, string> Perms(string json)
+        => Unswarm.Api.Middleware.PermissionCheck.ParsePermissions(json);
+
+    [Fact]
+    public void CallerMayGrant_Admin_ReturnsTrue()
+    {
+        var admin = Principal(new Claim(ClaimTypes.Role, "Admin"));
+
+        Assert.True(ApiKeyController.CallerMayGrant(admin, Perms("{\"users\":\"rw\"}")));
+    }
+
+    [Fact]
+    public void CallerMayGrant_KeyHoldingSuperset_ReturnsTrue()
+    {
+        var key = Principal(new Claim("unswarm:permissions", "{\"apikeys\":\"rw\",\"models\":\"rw\"}"));
+
+        Assert.True(ApiKeyController.CallerMayGrant(key, Perms("{\"models\":\"r\"}")));
+    }
+
+    [Fact]
+    public void CallerMayGrant_KeyRequestingSuperset_ReturnsFalse()
+    {
+        var key = Principal(new Claim("unswarm:permissions", "{\"models\":\"r\"}"));
+
+        Assert.False(ApiKeyController.CallerMayGrant(key, Perms("{\"models\":\"rw\"}")));
+    }
+
+    [Fact]
+    public void CallerMayGrant_KeyWithoutPermission_ReturnsFalse()
+    {
+        var key = Principal(new Claim("unswarm:permissions", "{\"apikeys\":\"rw\"}"));
+
+        Assert.False(ApiKeyController.CallerMayGrant(key, Perms("{\"users\":\"rw\"}")));
+    }
+
+    [Fact]
+    public void CallerMayGrant_TargetCurrentNotHeld_ReturnsFalse()
+    {
+        // Caller holds models:r but the target currently holds users:rw, which the
+        // caller does not — even a subset request must not shed the target grant.
+        var key = Principal(new Claim("unswarm:permissions", "{\"models\":\"r\"}"));
+        var target = Perms("{\"users\":\"rw\"}");
+
+        Assert.False(ApiKeyController.CallerMayGrant(key, Perms("{\"models\":\"r\"}"), target));
+    }
+
+    [Fact]
+    public void CallerMayGrant_TargetCurrentHeld_ReturnsTrue()
+    {
+        var key = Principal(new Claim("unswarm:permissions", "{\"models\":\"rw\"}"));
+        var target = Perms("{\"models\":\"r\"}");
+
+        Assert.True(ApiKeyController.CallerMayGrant(key, Perms("{\"models\":\"r\"}"), target));
     }
 
     private sealed class StubApiKeyStore : IApiKeyStore

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Unswarm.Api.Extensions;
 using Unswarm.Core.Helpers;
 using Unswarm.Core.Persistence;
 
@@ -17,7 +18,7 @@ namespace Unswarm.Api.Controllers;
 /// </remarks>
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "ControlPlaneAccess")]
+[Authorize(Policy = "AdminOnly")]
 public class UsersController : ControllerBase
 {
     private readonly UserManager<ApplicationUser> _userManager;
@@ -58,9 +59,19 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id);
         if (user == null) return NotFound();
 
-        var currentUserId = _userManager.GetUserId(User);
+        // Defense-in-depth: API-key identities carry no NameIdentifier, so the
+        // self-check below would not fire for them. Fail closed instead of
+        // resetting a password we cannot attribute to the acting user.
+        if (!User.TryGetActingUserId(out var currentUserId))
+            return Forbid();
+
         if (user.Id == currentUserId)
             return BadRequest(LocalizedError.Create("users.cannotResetOwnPassword"));
+
+        // Non-Admin callers must not act on Admin accounts. Unreachable under the
+        // AdminOnly policy, but cheap insurance if the attribute ever regresses.
+        if (!User.IsInRole("Admin") && await _userManager.IsInRoleAsync(user, "Admin"))
+            return Forbid();
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
         var result = await _userManager.ResetPasswordAsync(user, token, request.NewPassword);
@@ -82,9 +93,16 @@ public class UsersController : ControllerBase
         var user = await _userManager.FindByIdAsync(id);
         if (user == null) return NotFound();
 
-        var currentUserId = _userManager.GetUserId(User);
+        // Defense-in-depth: fail closed for identities without a NameIdentifier.
+        if (!User.TryGetActingUserId(out var currentUserId))
+            return Forbid();
+
         if (user.Id == currentUserId)
             return BadRequest(LocalizedError.Create("users.cannotDeleteOwnAccount"));
+
+        // Non-Admin callers must not delete Admin accounts.
+        if (!User.IsInRole("Admin") && await _userManager.IsInRoleAsync(user, "Admin"))
+            return Forbid();
 
         var result = await _userManager.DeleteAsync(user);
         if (!result.Succeeded)

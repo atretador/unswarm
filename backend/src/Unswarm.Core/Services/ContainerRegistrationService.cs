@@ -1,7 +1,9 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
 using Unswarm.Core.Services.Remote;
+using Unswarm.Core.Services.Validation;
 
 namespace Unswarm.Core.Services;
 
@@ -32,6 +34,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
     private readonly ISchedulerDrainer? _schedulerDrainer;
     private readonly IApiKeyStore? _apiKeyStore;
+    private readonly HostScriptsOptions _hostScripts;
 
     public ContainerRegistrationService(
         IContainerRegistry registry,
@@ -46,7 +49,8 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         TimeSpan? remoteHealthPollInterval = null,
         HostScriptRuntimeController? scriptController = null,
         ISchedulerDrainer? schedulerDrainer = null,
-        IApiKeyStore? apiKeyStore = null)
+        IApiKeyStore? apiKeyStore = null,
+        IOptions<HostScriptsOptions>? hostScriptsOptions = null)
     {
         _registry = registry;
         _router = router;
@@ -61,6 +65,20 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         _scriptController = scriptController;
         _schedulerDrainer = schedulerDrainer;
         _apiKeyStore = apiKeyStore;
+        _hostScripts = hostScriptsOptions?.Value ?? new HostScriptsOptions();
+    }
+
+    /// <summary>
+    /// True when <paramref name="path"/> is the directory or nested inside it,
+    /// using a path-component boundary (so <c>/scripts-evil</c> is not inside
+    /// <c>/scripts</c>).
+    /// </summary>
+    private static bool IsWithinDirectory(string path, string directory)
+    {
+        var dir = directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (dir.Length == 0) dir = "/";
+        return path.Equals(dir, StringComparison.Ordinal)
+            || path.StartsWith(dir + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     public async Task<RegisteredRuntimeWithModels> RegisterAsync(ContainerRegistrationRequest request, CancellationToken ct = default)
@@ -94,6 +112,18 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
                 if (!File.Exists(request.LauncherPath))
                     throw new ArgumentException($"Launcher script not found: {request.LauncherPath}");
+
+                // Containment: a host Script launcher must live inside the
+                // configured host scripts directory. Without this a ControlPlane
+                // key could register an arbitrary existing executable as a
+                // launcher and start it via StartRegistered. Resolve symlinks on
+                // both sides so an in-directory link pointing outside cannot
+                // bypass the check.
+                var scriptsDir = ContainerCreatePolicy.ResolveSymlinks(Path.GetFullPath(_hostScripts.Directory));
+                var launcherPath = ContainerCreatePolicy.ResolveSymlinks(Path.GetFullPath(request.LauncherPath));
+                if (!IsWithinDirectory(launcherPath, scriptsDir))
+                    throw new ArgumentException(
+                        $"Launcher script must be inside the host scripts directory: {scriptsDir}");
             }
         }
 
@@ -201,13 +231,14 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
 
             if (!mappedPort.HasValue)
             {
-                // Host container without a published port binding (e.g. host
-                // networking): fall back to the declared container port instead of
-                // failing the start — the runtime is still reachable on that port.
-                mappedPort = container.ContainerPort;
-                _logger.LogInformation(
-                    "No published port binding on container {Id}; using declared port {Port}",
-                    registeredContainerId, mappedPort);
+                // Host container without a live-mapped port (e.g. host networking,
+                // or an inspect gap). The declared ContainerPort is caller-settable at
+                // Register, so dialing it would reintroduce the F2 SSRF primitive. Fail
+                // the start rather than probing a caller-influenced port.
+                return await FailAsync(
+                    container,
+                    "Could not determine a live mapped port for this container.",
+                    ct).ConfigureAwait(false);
             }
 
             container = await _registry.UpdateAsync(registeredContainerId, container with
@@ -237,8 +268,10 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             await PushRegistrationSyncAsync(container.Agent, ct).ConfigureAwait(false);
 
             // Discover models and kick off auto-benchmarks (same flow as
-            // StartAsync's original registration path).
-            return await DiscoverAndRegisterModelsAsync(container, ct).ConfigureAwait(false);
+            // StartAsync's original registration path). The port was just resolved
+            // from the live start result / container list — pass it through so
+            // discovery does not re-probe (and never consults the registry port).
+            return await DiscoverAndRegisterModelsAsync(container, ct, mappedPort.Value).ConfigureAwait(false);
         }
         catch (KeyNotFoundException)
         {
@@ -260,31 +293,47 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var controller = GetController(container);
         var isRemote = controller is IRemoteDockerController;
 
-        // Resolve MappedPort when null (e.g. container was registered without
-        // Docker inspect). Try Docker inspect first; fall back to ContainerPort.
-        if (!container.MappedPort.HasValue)
+        // Resolve the dial port from live Docker/agent inspect. For Container kind
+        // neither registry field is trusted: the registry MappedPort AND the declared
+        // ContainerPort are caller-settable at Register, and dialing either would turn
+        // rediscovery into an SSRF probe of an arbitrary loopback port. Script runtimes
+        // keep using their registry-mapped port (Admin-gated for host scripts).
+        var resolvedPort = await ResolveDialPortAsync(container, controller, ct).ConfigureAwait(false);
+        if (resolvedPort is null)
         {
-            _logger.LogInformation("Container {Id} has no mapped port; attempting Docker inspect resolution", registeredContainerId);
-            var resolved = await controller.ResolveMappedPortAsync(container.Image, container.ContainerPort, ct).ConfigureAwait(false);
-            var resolvedPort = resolved ?? container.ContainerPort;
+            _logger.LogWarning(
+                "No live container port resolvable for {Id}; skipping rediscovery without dialing the declared container port",
+                registeredContainerId);
 
-            container = await _registry.UpdateAsync(registeredContainerId, container with
+            var unresolved = await _registry.UpdateAsync(registeredContainerId, container with
             {
-                MappedPort = resolvedPort
+                Status = ContainerRegistrationStatus.Error,
+                ErrorMessage = "Model discovery skipped: no live container port could be resolved for this runtime.",
+                UpdatedAt = _clock.UtcNow
             }, ct).ConfigureAwait(false);
 
-            _logger.LogInformation("Resolved mapped port for container {Id}: {Port} (source: {Source})",
-                registeredContainerId, resolvedPort, resolved.HasValue ? "docker inspect" : "container port fallback");
+            return new RegisteredRuntimeWithModels
+            {
+                Container = unresolved,
+                DiscoveredModels = []
+            };
         }
 
-        _logger.LogInformation("Re-discovering models for container {Id} on port {Port}", registeredContainerId, container.MappedPort!.Value);
+        var mappedPort = resolvedPort.Value;
+        if (container.MappedPort != mappedPort)
+        {
+            container = await _registry.UpdateAsync(registeredContainerId, container with
+            {
+                MappedPort = mappedPort
+            }, ct).ConfigureAwait(false);
+        }
+
+        _logger.LogInformation("Re-discovering models for container {Id} on port {Port}", registeredContainerId, mappedPort);
 
         container = await _registry.UpdateAsync(registeredContainerId, container with
         {
             Status = ContainerRegistrationStatus.Discovering
         }, ct).ConfigureAwait(false);
-
-        var mappedPort = container.MappedPort!.Value;
 
         IReadOnlyList<DiscoveredModel> discovered = Array.Empty<DiscoveredModel>();
         const int MaxDiscoveryRetries = 5;
@@ -372,7 +421,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
                 continue;
             }
 
-            var modelDef = await CreateModelFromDiscoveredAsync(registeredContainerId, discoveredModel, container.MappedPort.Value, isRemote, ct).ConfigureAwait(false);
+            var modelDef = await CreateModelFromDiscoveredAsync(registeredContainerId, discoveredModel, mappedPort, isRemote, ct).ConfigureAwait(false);
             models.Add(modelDef);
             await _registry.AddModelMappingAsync(registeredContainerId, modelDef.Id, ct).ConfigureAwait(false);
         }
@@ -655,6 +704,41 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
     }
 
     /// <summary>
+    /// Resolves the port the backend dials for a registered runtime.
+    /// <para>
+    /// Script runtimes use the registry-stored <see cref="RegisteredRuntime.MappedPort"/>
+    /// (host Script port edits are Admin-gated at the controller). Container runtimes
+    /// resolve the port from live Docker/agent inspect and deliberately ignore both
+    /// caller-settable fields: the registry <c>MappedPort</c> (set at Register/Update)
+    /// and the declared <c>ContainerPort</c>. Trusting either would let a fake
+    /// registration turn health checks / model discovery into an SSRF probe of an
+    /// arbitrary loopback port. Returns <c>null</c> for Container kind when no live
+    /// port can be resolved — callers must then skip the probe/discovery rather than
+    /// dial a fallback.
+    /// </para>
+    /// </summary>
+    private async Task<int?> ResolveDialPortAsync(
+        RegisteredRuntime container,
+        IDockerController controller,
+        CancellationToken ct)
+    {
+        if (container.RuntimeKind == RuntimeKind.Script)
+            return container.MappedPort ?? container.ContainerPort;
+
+        return controller is IRemoteDockerController remote
+            ? await ResolveRemoteMappedPortAsync(
+                remote,
+                container.RuntimeContainerId ?? string.Empty,
+                container.Image,
+                container.Agent,
+                ct).ConfigureAwait(false)
+            : await controller.ResolveMappedPortAsync(
+                container.Image,
+                container.ContainerPort,
+                ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
     /// Pushes a full sync_registrations snapshot of this agent's registered
     /// runtimes to the remote agent so its registered-runtime gate stays current
     /// after create/update/delete. Best-effort and fail-safe: host targets,
@@ -791,21 +875,37 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         throw new TimeoutException($"Container health check timed out on agent '{agentName}'");
     }
 
-    private async Task<RegisteredRuntimeWithModels> DiscoverAndRegisterModelsAsync(RegisteredRuntime container, CancellationToken ct)
+    private async Task<RegisteredRuntimeWithModels> DiscoverAndRegisterModelsAsync(
+        RegisteredRuntime container,
+        CancellationToken ct,
+        int? dialPort = null)
     {
         var controller = GetController(container);
 
-        if (!container.MappedPort.HasValue)
+        // For Container kind the port always comes from live inspect, never a
+        // caller-settable field (see ResolveDialPortAsync). Callers that already
+        // resolved a live port pass it in to avoid a second probe. If no live port
+        // can be resolved, skip discovery rather than dialing the declared port.
+        var resolvedPort = dialPort ?? await ResolveDialPortAsync(container, controller, ct).ConfigureAwait(false);
+        if (resolvedPort is null)
         {
-            // Resolve MappedPort when null (e.g. container started externally or registered without Docker inspect).
-            var resolved = await controller.ResolveMappedPortAsync(container.Image, container.ContainerPort, ct).ConfigureAwait(false);
+            _logger.LogWarning(
+                "No live container port resolvable for {Id}; skipping model discovery without dialing the declared container port",
+                container.Id);
+            return await FailAsync(
+                container,
+                "Model discovery skipped: no live container port could be resolved for this runtime.",
+                ct).ConfigureAwait(false);
+        }
+
+        var port = resolvedPort.Value;
+        if (container.MappedPort != port)
+        {
+            _logger.LogInformation("Resolved port for container {Id}: {Port}", container.Id, port);
             container = await _registry.UpdateAsync(container.Id, container with
             {
-                MappedPort = resolved ?? container.ContainerPort
+                MappedPort = port
             }, ct).ConfigureAwait(false);
-
-            _logger.LogInformation("Resolved mapped port for container {Id}: {Port} (source: {Source})",
-                container.Id, container.MappedPort!.Value, resolved.HasValue ? "docker inspect" : "container port fallback");
         }
 
         container = await _registry.UpdateAsync(container.Id, container with
@@ -816,15 +916,15 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var isRemote = controller is IRemoteDockerController;
 
         var discovered = isRemote
-            ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false)
-            : await _discoveryService.DiscoverModelsAsync(container.MappedPort!.Value, ct).ConfigureAwait(false);
+            ? await ((IRemoteDockerController)controller).DiscoverModelsAsync(port, ct).ConfigureAwait(false)
+            : await _discoveryService.DiscoverModelsAsync(port, ct).ConfigureAwait(false);
 
         // The model list from the container IS the validation — no smoke inference
         // runs during registration. Every discovered model is created/updated Ready.
         var models = new List<ModelDefinition>();
         foreach (var discoveredModel in discovered)
         {
-            var modelDef = await CreateModelFromDiscoveredAsync(container.Id, discoveredModel, container.MappedPort.Value, isRemote, ct).ConfigureAwait(false);
+            var modelDef = await CreateModelFromDiscoveredAsync(container.Id, discoveredModel, port, isRemote, ct).ConfigureAwait(false);
             models.Add(modelDef);
         }
 
@@ -1316,12 +1416,27 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
         var runtime = await _registry.GetAsync(id, ct).ConfigureAwait(false);
         if (runtime == null) return null;
 
-        // Determine the port - use MappedPort if available, else ContainerPort
-        var port = runtime.MappedPort ?? runtime.ContainerPort;
-
         // Remote agents: health probe runs on the remote machine via the agent
         // WebSocket. Local host: the health checker connects to 127.0.0.1:port.
+        // Container kind resolves the port from live inspect and never trusts a
+        // caller-settable field; Script keeps its Admin-gated mapped port.
         var controller = GetController(runtime);
+        var resolvedPort = await ResolveDialPortAsync(runtime, controller, ct).ConfigureAwait(false);
+        if (resolvedPort is null)
+        {
+            _logger.LogWarning(
+                "No live container port resolvable for {Id}; skipping health check without dialing the declared container port",
+                id);
+
+            return await _registry.UpdateAsync(id, runtime with
+            {
+                Status = ContainerRegistrationStatus.Error,
+                ErrorMessage = "Health check skipped: no live container port could be resolved for this runtime.",
+                UpdatedAt = _clock.UtcNow
+            }, ct).ConfigureAwait(false);
+        }
+
+        var port = resolvedPort.Value;
         bool healthy;
         if (controller is IRemoteDockerController remote)
         {
@@ -1345,7 +1460,7 @@ public sealed class ContainerRegistrationService : IContainerRegistrationService
             // Discover and register models
             try
             {
-                await DiscoverAndRegisterModelsAsync(runtime, ct).ConfigureAwait(false);
+                await DiscoverAndRegisterModelsAsync(runtime, ct, port).ConfigureAwait(false);
             }
             catch (InvalidOperationException)
             {

@@ -20,7 +20,7 @@ public sealed class FakeApiKeyStore : IApiKeyStore
         Seed(InferenceKeySecret, "E2E inference key", ApiKeyScope.Inference);
     }
 
-    private void Seed(string secret, string name, ApiKeyScope scope, string? boundAgentName = null)
+    private void Seed(string secret, string name, ApiKeyScope scope, string? boundAgentName = null, string? permissionsJson = null)
     {
         var entity = new ApiKeyEntity
         {
@@ -31,6 +31,7 @@ public sealed class FakeApiKeyStore : IApiKeyStore
             Scope = scope,
             IsActive = true,
             BoundAgentName = boundAgentName,
+            PermissionsJson = permissionsJson ?? "{}",
             CreatedAt = DateTimeOffset.UtcNow
         };
         _bySecret[secret] = entity;
@@ -41,7 +42,7 @@ public sealed class FakeApiKeyStore : IApiKeyStore
         string? boundAgentName = null, string? permissionsJson = null, CancellationToken ct = default)
     {
         var secret = explicitKey ?? Guid.NewGuid().ToString("N");
-        Seed(secret, name, scope, boundAgentName);
+        Seed(secret, name, scope, boundAgentName, permissionsJson);
         var entity = _bySecret[secret];
         return Task.FromResult(new CreateApiKeyResponse
         {
@@ -124,10 +125,35 @@ public sealed class FakeApiKeyStore : IApiKeyStore
         => Task.FromResult(_bySecret.Values.Any(e => e.Id == keyId) ? access : null);
 
     public Task<Dictionary<string, string>?> GetPermissionsAsync(string keyId, CancellationToken ct = default)
-        => Task.FromResult<Dictionary<string, string>?>(null);
+    {
+        var entity = _bySecret.Values.FirstOrDefault(e => e.Id == keyId);
+        if (entity is null) return Task.FromResult<Dictionary<string, string>?>(null);
+        return Task.FromResult<Dictionary<string, string>?>(ParsePermissions(entity.PermissionsJson));
+    }
 
     public Task<Dictionary<string, string>?> SavePermissionsAsync(string keyId, string permissionsJson, CancellationToken ct = default)
-        => Task.FromResult<Dictionary<string, string>?>(null);
+    {
+        var entity = _bySecret.Values.FirstOrDefault(e => e.Id == keyId);
+        if (entity is null) return Task.FromResult<Dictionary<string, string>?>(null);
+        entity.PermissionsJson = permissionsJson;
+        return Task.FromResult<Dictionary<string, string>?>(ParsePermissions(permissionsJson));
+    }
+
+    private static Dictionary<string, string> ParsePermissions(string? json)
+    {
+        try
+        {
+            return string.IsNullOrWhiteSpace(json)
+                ? new(StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, string>(
+                    System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [],
+                    StringComparer.OrdinalIgnoreCase);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return new(StringComparer.OrdinalIgnoreCase);
+        }
+    }
 
     public Task<int> RemoveProviderFromAllKeysAsync(string providerName, CancellationToken ct = default)
         => Task.FromResult(0);

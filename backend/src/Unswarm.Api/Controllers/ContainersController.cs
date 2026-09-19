@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Validation;
 
 namespace Unswarm.Api.Controllers;
 
@@ -41,6 +43,7 @@ public sealed class ContainersController : ControllerBase
     private readonly IContainerRegistry _containerRegistry;
     private readonly IBenchmarkHistory _benchmarks;
     private readonly IContainerCreationService _creationService;
+    private readonly DockerPolicyOptions _policyOptions;
 
     public ContainersController(
         IDockerController docker,
@@ -49,7 +52,8 @@ public sealed class ContainersController : ControllerBase
         IContainerRegistrationService registrationService,
         IContainerRegistry containerRegistry,
         IBenchmarkHistory benchmarks,
-        IContainerCreationService creationService)
+        IContainerCreationService creationService,
+        IOptions<DockerPolicyOptions> policyOptions)
     {
         _docker = docker;
         _registry = registry;
@@ -58,7 +62,25 @@ public sealed class ContainersController : ControllerBase
         _containerRegistry = containerRegistry;
         _benchmarks = benchmarks;
         _creationService = creationService;
+        _policyOptions = policyOptions.Value;
     }
+
+    private static bool IsValidPort(int port) => port is >= 1 and <= 65535;
+
+    /// <summary>0 is treated as "unset" (agent parity); otherwise 1..65535.</summary>
+    private static bool IsValidPortOrUnset(int port) => port is >= 0 and <= 65535;
+
+    /// <summary>
+    /// True for a host Script runtime. The agent is normalized (trim +
+    /// case-insensitive) and null/empty/whitespace counts as "host", matching
+    /// <c>ContainerRegistrationService.RegisterAsync</c>'s own normalization so a
+    /// " host" value cannot slip past the Admin gate while being treated as host
+    /// downstream.
+    /// </summary>
+    private static bool IsHostScript(string? runtimeKind, string? agent) =>
+        string.Equals(runtimeKind, "script", StringComparison.OrdinalIgnoreCase)
+        && (string.IsNullOrWhiteSpace(agent)
+            || string.Equals(agent.Trim(), "host", StringComparison.OrdinalIgnoreCase));
 
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken ct)
@@ -101,23 +123,62 @@ public sealed class ContainersController : ControllerBase
     /// <summary>
     /// Creates a new container from a Docker image.
     /// </summary>
-    [Authorize(Policy = "ControlPlaneAccess")]
+    [Authorize(Policy = "AdminOnly")]
     [HttpPost("create")]
     public async Task<IActionResult> CreateContainer(
         [FromBody] CreateContainerRequestDto dto,
         CancellationToken ct)
     {
+        // Explicit 0 means "unset" (agent parity). Coerce to the default container
+        // port so the local path never builds a "0/tcp" binding that Docker rejects.
+        var containerPort = dto.DockerParams is { ContainerPort: > 0 } dp
+            ? dp.ContainerPort
+            : 8080;
+
+        // Apply the role-free global denylist before doing any work, so policy
+        // violations return 400 and never persist an error row.
+        var policyConfig = new ContainerCreateConfig
+        {
+            Image = dto.Image,
+            ContainerName = string.IsNullOrWhiteSpace(dto.DockerParams?.ContainerName)
+                ? (string.IsNullOrWhiteSpace(dto.Name) ? dto.Image : dto.Name)
+                : dto.DockerParams!.ContainerName!,
+            ContainerPort = containerPort,
+            HostPort = dto.DockerParams?.HostPort,
+            Devices = dto.DockerParams?.Devices,
+            Volumes = dto.DockerParams?.Volumes?
+                .Select(v => new VolumeMount { Host = v.Host, Container = v.Container, Readonly = v.Readonly })
+                .ToList(),
+            Env = dto.DockerParams?.Env?
+                .Select(e => new EnvVar { Key = e.Key, Value = e.Value })
+                .ToList(),
+            ShmSizeMb = dto.DockerParams?.ShmSizeMb ?? 16384,
+            IpcMode = dto.DockerParams?.IpcMode ?? "private",
+            NetworkMode = dto.DockerParams?.NetworkMode ?? "bridge",
+            RestartPolicy = dto.DockerParams?.RestartPolicy ?? "unless-stopped",
+            ServerArgs = dto.DockerParams?.ServerArgs
+        };
+
+        try
+        {
+            ContainerCreatePolicy.Validate(policyConfig, _policyOptions);
+        }
+        catch (ContainerPolicyException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
         try
         {
             var dockerParams = new DockerCreateParams(
                 dto.DockerParams?.ContainerName,
-                dto.DockerParams?.ContainerPort ?? 8080,
+                containerPort,
                 dto.DockerParams?.HostPort,
                 dto.DockerParams?.Devices,
                 dto.DockerParams?.Volumes?.Select(v => new VolumeMount { Host = v.Host, Container = v.Container, Readonly = v.Readonly }).ToList(),
                 dto.DockerParams?.Env?.Select(e => new EnvVar { Key = e.Key, Value = e.Value }).ToList(),
                 dto.DockerParams?.ShmSizeMb ?? 16384,
-                dto.DockerParams?.IpcMode ?? "host",
+                dto.DockerParams?.IpcMode ?? "private",
                 dto.DockerParams?.NetworkMode ?? "bridge",
                 dto.DockerParams?.RestartPolicy ?? "unless-stopped",
                 dto.DockerParams?.ServerArgs);
@@ -195,6 +256,17 @@ public sealed class ContainersController : ControllerBase
         [FromBody] RegisterRuntimeRequestDto dto,
         CancellationToken ct)
     {
+        // 0 is "unset" (agent parity); only out-of-range non-zero values are invalid.
+        if (!IsValidPortOrUnset(dto.ContainerPort)
+            || (dto.MappedPort.HasValue && !IsValidPortOrUnset(dto.MappedPort.Value)))
+            return BadRequest(new { error = "ContainerPort/MappedPort must be 0 (unset) or between 1 and 65535." });
+
+        // Host Script runtimes execute `/bin/bash --login` on the host, so only
+        // Admins (cookie) may register them; ControlPlane keys with runtimes:rw
+        // must not be able to point at an arbitrary existing launcher.
+        if (IsHostScript(dto.RuntimeKind, dto.Agent) && !User.IsInRole("Admin"))
+            return Forbid();
+
         try
         {
             var result = await _registrationService.RegisterAsync(dto.ToRequest(), ct);
@@ -314,6 +386,15 @@ public sealed class ContainersController : ControllerBase
     [HttpPost("registered/{id}/start")]
     public async Task<IActionResult> StartRegistered(string id, CancellationToken ct)
     {
+        var existing = await _containerRegistry.GetAsync(id, ct).ConfigureAwait(false);
+        if (existing is null)
+            return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
+
+        // Starting a host Script runtime executes its launcher on the host —
+        // Admin-only; ControlPlane keys are rejected before the service call.
+        if (IsHostScript(existing.RuntimeKind.ToString(), existing.Agent) && !User.IsInRole("Admin"))
+            return Forbid();
+
         RegisteredRuntimeWithModels result;
         try
         {
@@ -352,6 +433,18 @@ public sealed class ContainersController : ControllerBase
         var existing = await _containerRegistry.GetAsync(id, ct).ConfigureAwait(false);
         if (existing is null)
             return NotFound(LocalizedError.Create("containers.runtimeNotFound"));
+
+        // Port retargeting on a Script runtime is a host pivot (InferenceProxy
+        // forwards to 127.0.0.1:<MappedPort>) — Admin-only, and bounded.
+        if (dto.ContainerPort.HasValue || dto.MappedPort.HasValue)
+        {
+            if ((dto.ContainerPort.HasValue && !IsValidPort(dto.ContainerPort.Value))
+                || (dto.MappedPort.HasValue && !IsValidPort(dto.MappedPort.Value)))
+                return BadRequest(new { error = "ContainerPort/MappedPort must be between 1 and 65535." });
+
+            if (existing.RuntimeKind == RuntimeKind.Script && !User.IsInRole("Admin"))
+                return Forbid();
+        }
 
         if (!string.IsNullOrWhiteSpace(dto.DisplayName))
         {

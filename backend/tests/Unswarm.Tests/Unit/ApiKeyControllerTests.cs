@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Unswarm.Api.Controllers;
@@ -12,9 +14,25 @@ public sealed class ApiKeyControllerTests
 {
     private static IApiKeyStore NewStore() => TestApiKeyStore.Create();
 
+    /// <summary>
+    /// Controller with an Admin cookie principal installed. Inference/Agent key
+    /// lifecycle now requires Admin, so tests that exercise those paths use this.
+    /// </summary>
     private static ApiKeyController CreateController(IApiKeyStore? store = null)
-        => new(store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry(), new StubRouterProfileStore(),
+    {
+        var controller = new ApiKeyController(
+            store ?? NewStore(), new StubCloudProviderStore(), new StubContainerRegistry(), new StubRouterProfileStore(),
             new LoggerFactory().CreateLogger<ApiKeyController>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [new Claim(ClaimTypes.Role, "Admin")], "TestAuth"))
+            }
+        };
+        return controller;
+    }
 
     /// <summary>Minimal ICloudProviderStore for controller tests: one configured provider.</summary>
     private sealed class StubCloudProviderStore : ICloudProviderStore

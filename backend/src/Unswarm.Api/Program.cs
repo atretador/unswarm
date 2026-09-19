@@ -156,6 +156,9 @@ builder.Services.Configure<HostScriptsOptions>(builder.Configuration.GetSection(
 // Auth options (ProtectedPaths for path-scoped API key protection)
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 
+// Role-free global container-create denylist options (Docker section).
+builder.Services.Configure<DockerPolicyOptions>(builder.Configuration.GetSection(DockerPolicyOptions.SectionName));
+
 // ── Core services ─────────────────────────────────────────────────────────
 builder.Services.AddSingleton<IClock, SystemClock>();
 builder.Services.AddSingleton<ILogStore, LogStore>();
@@ -221,12 +224,22 @@ builder.Services.AddSingleton<RouterProfileHandler>();
 // Cancellation is driven by the request's CancellationToken so client disconnect
 // cancels the upstream call (stops token spend).
 //
+// SSRF egress filter: private/reserved upstream addresses are denied inside the
+// ConnectCallback (after DNS, before connect) unless the operator opts in via
+// CloudProviders:AllowPrivateEgress or lists the host in
+// CloudProviders:AllowedPrivateHosts (exact host or ".suffix", case-insensitive,
+// port ignored). The filter runs per address so redirects/rebinding that
+// reconnect are re-checked, and it fails closed when every address is blocked.
+//
 // ConnectCallback: prefer IPv4 when a host publishes both A and AAAA records.
 // Some networks blackhole IPv6 (SYN sent, never answered); the default handler
 // then hangs on the first AAAA forever because the overall client timeout is
 // infinite — every cloud-proxied request stalls with no error surfaced. Trying
 // addresses in IPv4-first order with a short per-address connect window falls
 // through to a working family instead.
+var allowPrivateEgress = builder.Configuration.GetValue<bool>("CloudProviders:AllowPrivateEgress");
+var allowedPrivateHosts = builder.Configuration.GetSection("CloudProviders:AllowedPrivateHosts").Get<string[]>() ?? [];
+
 builder.Services.AddHttpClient("cloud-provider")
     .ConfigureHttpClient(c =>
     {
@@ -246,9 +259,20 @@ builder.Services.AddHttpClient("cloud-provider")
                 .Select(x => x.Addr)
                 .ToArray();
 
+            var hostExplicitlyAllowed = NetworkAddressPolicy.MatchesAllowedHost(ctx.DnsEndPoint.Host, allowedPrivateHosts);
+
             Exception? lastError = null;
             foreach (var addr in ordered)
             {
+                if (!allowPrivateEgress
+                    && !hostExplicitlyAllowed
+                    && NetworkAddressPolicy.IsPrivateOrReserved(addr))
+                {
+                    lastError = new HttpRequestException(
+                        $"Blocked private/reserved address {addr} for host {ctx.DnsEndPoint.Host}");
+                    continue;
+                }
+
                 try
                 {
                     var socket = new Socket(addr.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
@@ -361,6 +385,9 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser().RequireAssertion(context =>
             context.User.IsInRole("Admin")
             || context.User.HasClaim(ApiKeyAuthMiddleware.ScopeClaimType, ApiKeyScope.ControlPlane.ToString())));
+    // Admin-only surfaces. API-key principals carry no role claim
+    // (ApiKeyAuthMiddleware.WithKeyIdentity), so they are always rejected.
+    options.AddPolicy("AdminOnly", policy => policy.RequireAuthenticatedUser().RequireRole("Admin"));
 });
 
 // ── Background services ──────────────────────────────────────────────────

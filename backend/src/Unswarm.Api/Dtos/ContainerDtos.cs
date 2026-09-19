@@ -176,7 +176,7 @@ public sealed class DockerCreateParamsDto
     public List<VolumeMountDto>? Volumes { get; set; }
     public List<EnvVarDto>? Env { get; set; }
     public int ShmSizeMb { get; set; } = 16384;
-    public string IpcMode { get; set; } = "host";
+    public string IpcMode { get; set; } = "private";
     public string NetworkMode { get; set; } = "bridge";
     public string RestartPolicy { get; set; } = "unless-stopped";
     public List<string>? ServerArgs { get; set; }

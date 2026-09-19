@@ -3,6 +3,7 @@ package scripts
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -24,7 +25,7 @@ func TestListScripts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	scripts := m.ListScripts()
 
 	if len(scripts) != 2 {
@@ -44,14 +45,18 @@ func TestListScripts(t *testing.T) {
 }
 
 func TestListScripts_EmptyDir(t *testing.T) {
-	m := NewManager("")
+	m := mustNewManager(t, "")
 	if scripts := m.ListScripts(); scripts != nil {
 		t.Errorf("expected nil for empty scriptsDir, got %v", scripts)
 	}
 }
 
 func TestListScripts_NonexistentDir(t *testing.T) {
-	m := NewManager("/nonexistent/path/that/does/not/exist")
+	// Explicit valid log dir: the scripts dir itself is not required to exist.
+	m, err := NewManager("/nonexistent/path/that/does/not/exist", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
 	if scripts := m.ListScripts(); scripts != nil {
 		t.Errorf("expected nil for nonexistent dir, got %v", scripts)
 	}
@@ -64,7 +69,7 @@ func TestStartScript(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	defer m.Shutdown()
 
 	pid, err := m.StartScript(script, 9000, "")
@@ -91,7 +96,7 @@ func TestStartScript_WhitelistReject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 
 	_, err := m.StartScript(outside, 9000, "")
 	if err == nil {
@@ -106,7 +111,7 @@ func TestStartScript_DuplicateGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	defer m.Shutdown()
 
 	pid1, err := m.StartScript(script, 9000, "")
@@ -133,7 +138,7 @@ func TestStopScript(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 
 	pid, err := m.StartScript(script, 9000, "")
 	if err != nil {
@@ -158,7 +163,7 @@ func TestStopScriptByPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 
 	_, err := m.StartScript(script, 9000, "")
 	if err != nil {
@@ -179,7 +184,7 @@ func TestGetScriptLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	defer m.Shutdown()
 
 	_, err := m.StartScript(script, 0, "")
@@ -207,7 +212,7 @@ func TestGetScriptLogs_TailLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	defer m.Shutdown()
 
 	_, err := m.StartScript(script, 0, "")
@@ -232,7 +237,7 @@ func TestGetStatuses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 	defer m.Shutdown()
 
 	_, err := m.StartScript(script, 9000, "")
@@ -262,7 +267,7 @@ func TestShutdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 
 	pid, err := m.StartScript(script, 9000, "")
 	if err != nil {
@@ -278,11 +283,77 @@ func TestShutdown(t *testing.T) {
 }
 
 func TestIsEnabled(t *testing.T) {
-	if NewManager("").IsEnabled() {
+	if m, err := NewManager("", ""); err != nil {
+		t.Fatalf("NewManager(disabled): %v", err)
+	} else if m.IsEnabled() {
 		t.Error("empty scriptsDir should not be enabled")
 	}
-	if !NewManager("/some/path").IsEnabled() {
+	m, err := NewManager("/some/path", t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if !m.IsEnabled() {
 		t.Error("non-empty scriptsDir should be enabled")
+	}
+}
+
+// mustNewManager builds a Manager with the default derived log directory.
+func mustNewManager(t *testing.T, dir string) *Manager {
+	t.Helper()
+	m, err := NewManager(dir, "")
+	if err != nil {
+		t.Fatalf("NewManager(%q): %v", dir, err)
+	}
+	return m
+}
+
+// TestNewManager_LogDirError verifies the fail-loud error names the path, the
+// script_log_dir key, and the ReadWritePaths fix (H8 / decision 8).
+func TestNewManager_LogDirError(t *testing.T) {
+	// A regular file used as the log dir cannot be MkdirAll'd.
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewManager(t.TempDir(), file)
+	if err == nil {
+		t.Fatal("expected an error when the log dir cannot be created")
+	}
+	msg := err.Error()
+	for _, want := range []string{file, "script_log_dir", "ReadWritePaths"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not mention %q", msg, want)
+		}
+	}
+}
+
+// TestWriteScript_Mode0700 verifies scripts are owner-only on create and after
+// update (H8).
+func TestWriteScript_Mode0700(t *testing.T) {
+	dir := t.TempDir()
+	m := mustNewManager(t, dir)
+
+	info, err := m.WriteScript("perm.sh", "#!/bin/bash\necho hi\n")
+	if err != nil {
+		t.Fatalf("WriteScript: %v", err)
+	}
+	fi, err := os.Stat(info.Path)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("WriteScript mode = %o, want 0700", got)
+	}
+
+	if _, err := m.UpdateScript("perm.sh", "#!/bin/bash\necho bye\n"); err != nil {
+		t.Fatalf("UpdateScript: %v", err)
+	}
+	fi, err = os.Stat(info.Path)
+	if err != nil {
+		t.Fatalf("Stat after update: %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("UpdateScript mode = %o, want 0700", got)
 	}
 }
 
@@ -293,7 +364,7 @@ func TestStartScript_StaleEntryCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := NewManager(dir)
+	m := mustNewManager(t, dir)
 
 	pid1, err := m.StartScript(script, 9000, "")
 	if err != nil {

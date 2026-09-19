@@ -14,18 +14,26 @@ import (
 	"unswarm/agent/internal/protocol"
 )
 
-// PortAllowlist restricts which 127.0.0.1 ports the agent will dial for
-// health_check / discover_models / chat_completion commands. An empty or nil
-// allowlist is unrestricted (any loopback port), preserving legacy behavior.
-type PortAllowlist []int
+// LoopbackPolicy restricts which 127.0.0.1 ports the agent will dial for
+// health_check / discover_models / chat_completion commands. When Unrestricted
+// is true any loopback port is allowed (legacy default). When false only Ports
+// are allowed; an empty Ports list therefore denies every port.
+//
+// Port ranges are not supported yet (decision 19): exact-port scoping is
+// incompatible with auto-assigned container ports (hostPort 0), so operators
+// who scope must give model containers explicit, predictable host ports.
+type LoopbackPolicy struct {
+	Ports        []int
+	Unrestricted bool
+}
 
-// Check rejects ports not on the allowlist before any connection attempt.
-func (a PortAllowlist) Check(port int) error {
-	if len(a) == 0 {
+// Check rejects ports not permitted by the policy before any connection attempt.
+func (p LoopbackPolicy) Check(port int) error {
+	if p.Unrestricted {
 		return nil
 	}
-	for _, p := range a {
-		if p == port {
+	for _, allowed := range p.Ports {
+		if allowed == port {
 			return nil
 		}
 	}
@@ -35,7 +43,7 @@ func (a PortAllowlist) Check(port int) error {
 // HealthCheck performs a TCP/HTTP check on a local port.
 // The command succeeds (ok=true) when the check runs; the result data
 // carries the health verdict.
-func HealthCheck(ctx context.Context, allow PortAllowlist, port int) protocol.CommandResultPayload {
+func HealthCheck(ctx context.Context, allow LoopbackPolicy, port int) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
 	}
@@ -70,7 +78,7 @@ func HealthCheck(ctx context.Context, allow PortAllowlist, port int) protocol.Co
 }
 
 // DiscoverModels queries a local OpenAI-compatible endpoint for available models.
-func DiscoverModels(ctx context.Context, allow PortAllowlist, port int) protocol.CommandResultPayload {
+func DiscoverModels(ctx context.Context, allow LoopbackPolicy, port int) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
 	}
@@ -97,7 +105,7 @@ func DiscoverModels(ctx context.Context, allow PortAllowlist, port int) protocol
 // timeout is generous (120s) because benchmark/validation prompts can take a while.
 // The context is honored: if the backend disconnects/cancels, the HTTP call is
 // aborted so the agent's slot frees up promptly.
-func ChatCompletion(ctx context.Context, allow PortAllowlist, port int, body json.RawMessage) protocol.CommandResultPayload {
+func ChatCompletion(ctx context.Context, allow LoopbackPolicy, port int, body json.RawMessage) protocol.CommandResultPayload {
 	if port <= 0 {
 		return errorResult("invalid port")
 	}
@@ -146,7 +154,7 @@ func ChatCompletion(ctx context.Context, allow PortAllowlist, port int, body jso
 // arbitrary binary bodies both work). The context is honored: if the backend
 // disconnects/cancels, the HTTP call is aborted. A non-2xx status is an error
 // carrying the status code and response body.
-func ChatCompletionStream(ctx context.Context, allow PortAllowlist, port int, jsonBody string, emit func(chunk []byte) error) error {
+func ChatCompletionStream(ctx context.Context, allow LoopbackPolicy, port int, jsonBody string, emit func(chunk []byte) error) error {
 	if port <= 0 {
 		return fmt.Errorf("invalid port")
 	}

@@ -97,7 +97,8 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
             _clock,
             _logger,
             settings,
-            scriptController: scriptController);
+            scriptController: scriptController,
+            hostScriptsOptions: Options.Create(new HostScriptsOptions { Directory = _testDir }));
     }
 
     [Fact]
@@ -168,6 +169,37 @@ public sealed class ContainerRegistrationServiceScriptTests : IDisposable
 
         await Assert.ThrowsAsync<ArgumentException>(
             () => service.RegisterAsync(request));
+    }
+
+    [Fact]
+    public async Task RegisterAsync_HostScript_LauncherSymlinkOutsideDirectory_Throws()
+    {
+        var scriptController = CreateScriptController();
+        var service = CreateService(scriptController: scriptController);
+
+        var outsidePath = Path.Combine(Path.GetTempPath(), $"unswarm-outside-{Guid.NewGuid():N}.sh");
+        File.WriteAllText(outsidePath, "#!/bin/bash\necho outside");
+        var linkPath = Path.Combine(_testDir, $"escape-{Guid.NewGuid():N}.sh");
+        File.CreateSymbolicLink(linkPath, outsidePath);
+
+        try
+        {
+            var request = new ContainerRegistrationRequest
+            {
+                DisplayName = "Escape Script",
+                Image = "escape:latest",
+                RuntimeKind = RuntimeKind.Script,
+                LauncherPath = linkPath,
+                ContainerPort = 8080
+            };
+
+            var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.RegisterAsync(request));
+            Assert.Contains("host scripts directory", ex.Message);
+        }
+        finally
+        {
+            try { File.Delete(outsidePath); } catch { }
+        }
     }
 
     [Fact]

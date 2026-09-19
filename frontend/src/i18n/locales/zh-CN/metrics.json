@@ -131,7 +131,9 @@
     "last7d": "最近 7 天",
     "less": "少",
     "more": "多",
+    "request_one": "个请求",
     "request_other": "个请求",
+    "request_many": "个请求",
     "dayLabels": {
       "mon": "周一",
       "tue": "周二",
@@ -234,7 +236,9 @@
       "avgLatency": "平均延迟",
       "cachedTokens": "已缓存的 Token",
       "estCost": "预估费用",
+      "requestCount_one": "{{count}} 个请求",
       "requestCount_other": "{{count}} 个请求",
+      "requestCount_many": "{{count}} 个请求",
       "ofTotal": "占总计 {{pct}}%"
     }
   },
