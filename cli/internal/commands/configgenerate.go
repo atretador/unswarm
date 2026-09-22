@@ -1,13 +1,13 @@
 package commands
 
 import (
+	"bytes"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -48,6 +48,11 @@ type accessGrants struct {
 	Models    []string `json:"models"`
 }
 
+// openCodeModalities represents the input modalities block in opencode.jsonc.
+type openCodeModalities struct {
+	Input []string `json:"input"`
+}
+
 // openCodeModel represents a model block in opencode.jsonc.
 type openCodeModel struct {
 	Name  string `json:"name"`
@@ -55,14 +60,57 @@ type openCodeModel struct {
 		Context int `json:"context"`
 		Output  int `json:"output"`
 	} `json:"limit"`
+	Modalities openCodeModalities `json:"modalities"`
 }
 
 // piModelEntry represents a model entry in PI's models.json.
 type piModelEntry struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	ContextWindow int    `json:"contextWindow"`
-	MaxTokens     int    `json:"maxTokens"`
+	ID            string   `json:"id"`
+	Name          string   `json:"name"`
+	ContextWindow int      `json:"contextWindow"`
+	MaxTokens     int      `json:"maxTokens"`
+	Input         []string `json:"input,omitempty"`
+}
+
+// inputModalityOrder is the canonical ordering of input modalities supported
+// by the Unswarm wire contract.
+var inputModalityOrder = []string{"text", "image", "video", "audio", "pdf"}
+
+// piInputModalities is the set of input modalities accepted by the PI agent.
+var piInputModalities = map[string]bool{"text": true, "image": true}
+
+// openCodeInputModalities is the set of input modalities accepted by opencode.
+var openCodeInputModalities = map[string]bool{
+	"text": true, "image": true, "video": true, "audio": true, "pdf": true,
+}
+
+// filterInputModalities returns the subset of a model's modalities present in
+// allowed, in canonical order, and always including "text".
+func filterInputModalities(mods []string, allowed map[string]bool) []string {
+	present := make(map[string]bool, len(mods))
+	for _, m := range mods {
+		present[strings.ToLower(strings.TrimSpace(m))] = true
+	}
+	result := make([]string, 0, len(allowed))
+	for _, m := range inputModalityOrder {
+		if allowed[m] && present[m] {
+			result = append(result, m)
+		}
+	}
+	if !present["text"] {
+		result = append([]string{"text"}, result...)
+	}
+	return result
+}
+
+// modelInputModalities resolves the input modalities for a model from the
+// /v1/models Unswarm metadata, filtered to allowed. Missing or empty metadata
+// defaults to text-only.
+func modelInputModalities(m v1ModelData, allowed map[string]bool) []string {
+	if m.Unswarm == nil {
+		return filterInputModalities(nil, allowed)
+	}
+	return filterInputModalities(m.Unswarm.InputModalities, allowed)
 }
 
 func init() {
@@ -112,6 +160,19 @@ func runConfigGenerate(cmd *cobra.Command, kind string) error {
 	scope, _ := keyDetail["scope"].(string)
 	if strings.ToLower(scope) != "inference" {
 		return w.Error("invalid_scope", fmt.Sprintf("only inference-scope API keys are supported (got %q)", scope), nil, "create an inference-scope key with 'apikeys create'", 1)
+	}
+
+	// 2b. Verify the existing target file is mergeable BEFORE rotating.
+	// Rotation invalidates the old secret and cannot be undone, so refusing
+	// here (rather than during the write) is the only safe ordering.
+	if err := preflightConfigTarget(kind, target); err != nil {
+		return w.Error(
+			"invalid_config",
+			err.Error(),
+			nil,
+			"fix or remove the existing config file, then re-run (no key was rotated)",
+			1,
+		)
 	}
 
 	// 3. Confirm rotation
@@ -300,7 +361,9 @@ type v1ModelData struct {
 
 // v1ModelUnswarmInfo holds Unswarm-specific metadata from /v1/models.
 type v1ModelUnswarmInfo struct {
-	ContextWindow int `json:"contextWindow"`
+	ContextWindow   int      `json:"contextWindow"`
+	MaxOutputTokens int      `json:"maxOutputTokens"`
+	InputModalities []string `json:"inputModalities"`
 }
 
 // fetchV1Models calls GET /v1/models to get the full model list the key can access.
@@ -388,15 +451,18 @@ func writeFileAtomically(path string, data []byte) error {
 // --- opencode.jsonc ---
 
 // openCodeConfig represents the top-level structure of opencode.jsonc.
+// It is used by tests to read back a generated file; merging itself operates
+// on the raw document so unknown keys are never dropped (see
+// mergeProviderIntoConfig).
 type openCodeConfig struct {
 	Provider map[string]openCodeProvider `json:"provider"`
 }
 
 type openCodeProvider struct {
-	Name    string                    `json:"name"`
-	API     string                    `json:"api"`
-	Options openCodeOptions           `json:"options"`
-	Models  map[string]openCodeModel  `json:"models"`
+	Name    string                   `json:"name"`
+	API     string                   `json:"api"`
+	Options openCodeOptions          `json:"options"`
+	Models  map[string]openCodeModel `json:"models"`
 }
 
 type openCodeOptions struct {
@@ -428,9 +494,17 @@ func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL,
 				Context: 131072,
 				Output:  32768,
 			},
+			Modalities: openCodeModalities{
+				Input: modelInputModalities(m, openCodeInputModalities),
+			},
 		}
-		if m.Unswarm != nil && m.Unswarm.ContextWindow > 0 {
-			entry.Limit.Context = m.Unswarm.ContextWindow
+		if m.Unswarm != nil {
+			if m.Unswarm.ContextWindow > 0 {
+				entry.Limit.Context = m.Unswarm.ContextWindow
+			}
+			if m.Unswarm.MaxOutputTokens > 0 {
+				entry.Limit.Output = m.Unswarm.MaxOutputTokens
+			}
 		}
 		models[m.ID] = entry
 	}
@@ -445,28 +519,21 @@ func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL,
 		Models: models,
 	}
 
-	// Read existing file
-	existingConfig := &openCodeConfig{
-		Provider: make(map[string]openCodeProvider),
-	}
-
+	// Read existing file, preserving every top-level key and every sibling
+	// provider. A missing file yields an empty document (fresh write).
 	existingData, err := os.ReadFile(targetPath)
-	if err == nil {
-		// Strip comments before parsing JSON
-		stripped := stripJSONComments(string(existingData))
-		_ = json.Unmarshal([]byte(stripped), existingConfig)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing config %s: %w", targetPath, err)
 	}
 
-	// Upsert
-	if existingConfig.Provider == nil {
-		existingConfig.Provider = make(map[string]openCodeProvider)
+	merged, err := mergeProviderIntoConfig(existingData, "provider", "unswarm", provider)
+	if err != nil {
+		return fmt.Errorf("refusing to overwrite %s: %w", targetPath, err)
 	}
-	existingConfig.Provider["unswarm"] = provider
 
 	if dryRun {
-		prettyJSON, _ := json.MarshalIndent(existingConfig, "", "  ")
 		fmt.Printf("Would write to: %s\n", targetPath)
-		fmt.Println(string(prettyJSON))
+		fmt.Println(string(merged))
 		return nil
 	}
 
@@ -475,12 +542,7 @@ func writeOpenCodeConfig(_ *cobra.Command, w *output.Writer, target, backendURL,
 		return err
 	}
 
-	data, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := writeFileAtomically(targetPath, data); err != nil {
+	if err := writeFileAtomically(targetPath, merged); err != nil {
 		return err
 	}
 
@@ -499,9 +561,9 @@ type piConfig struct {
 }
 
 type piProvider struct {
-	BaseURL string        `json:"baseUrl"`
-	API     string        `json:"api"`
-	APIKey  string        `json:"apiKey"`
+	BaseURL string         `json:"baseUrl"`
+	API     string         `json:"api"`
+	APIKey  string         `json:"apiKey"`
 	Models  []piModelEntry `json:"models"`
 }
 
@@ -529,6 +591,7 @@ func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secre
 			Name:          name,
 			ContextWindow: cw,
 			MaxTokens:     32768,
+			Input:         modelInputModalities(m, piInputModalities),
 		})
 	}
 
@@ -539,27 +602,21 @@ func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secre
 		Models:  models,
 	}
 
-	// Read existing file
-	existingConfig := &piConfig{
-		Providers: make(map[string]piProvider),
-	}
-
+	// Read existing file, preserving every top-level key and every sibling
+	// provider. A missing file yields an empty document (fresh write).
 	existingData, err := os.ReadFile(targetPath)
-	if err == nil {
-		stripped := stripJSONComments(string(existingData))
-		_ = json.Unmarshal([]byte(stripped), existingConfig)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read existing config %s: %w", targetPath, err)
 	}
 
-	// Upsert
-	if existingConfig.Providers == nil {
-		existingConfig.Providers = make(map[string]piProvider)
+	merged, err := mergeProviderIntoConfig(existingData, "providers", "unswarm", provider)
+	if err != nil {
+		return fmt.Errorf("refusing to overwrite %s: %w", targetPath, err)
 	}
-	existingConfig.Providers["unswarm"] = provider
 
 	if dryRun {
-		prettyJSON, _ := json.MarshalIndent(existingConfig, "", "  ")
 		fmt.Printf("Would write to: %s\n", targetPath)
-		fmt.Println(string(prettyJSON))
+		fmt.Println(string(merged))
 		return nil
 	}
 
@@ -568,12 +625,7 @@ func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secre
 		return err
 	}
 
-	data, err := json.MarshalIndent(existingConfig, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	if err := writeFileAtomically(targetPath, data); err != nil {
+	if err := writeFileAtomically(targetPath, merged); err != nil {
 		return err
 	}
 
@@ -585,14 +637,265 @@ func writePiConfig(_ *cobra.Command, w *output.Writer, target, backendURL, secre
 }
 
 // stripJSONComments removes // and /* */ comments from JSONC content.
-// This is a simple approach for stripping comments before JSON parsing.
-var (
-	lineCommentRe  = regexp.MustCompile(`//[^\n]*`)
-	blockCommentRe = regexp.MustCompile(`/\*[\s\S]*?\*/`)
-)
-
+//
+// Unlike a plain regular expression, this is string-aware: a "//" or "/*"
+// that occurs inside a JSON string literal (for example "http://localhost"
+// or "https://opencode.ai/config.json") is part of the value and must be
+// preserved. Stripping those produced invalid JSON, which the old callers
+// silently ignored — overwriting the user's config with a stub.
 func stripJSONComments(s string) string {
-	s = blockCommentRe.ReplaceAllString(s, "")
-	s = lineCommentRe.ReplaceAllString(s, "")
-	return s
+	var b strings.Builder
+	b.Grow(len(s))
+
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if inString {
+			b.WriteByte(c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+
+		if c == '"' {
+			inString = true
+			b.WriteByte(c)
+			continue
+		}
+
+		if c == '/' && i+1 < len(s) {
+			switch s[i+1] {
+			case '/':
+				// Line comment: drop through end of line, keep the newline.
+				for i < len(s) && s[i] != '\n' {
+					i++
+				}
+				if i < len(s) {
+					b.WriteByte('\n')
+				}
+				continue
+			case '*':
+				// Block comment: drop through the closing marker.
+				i += 2
+				for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
+					i++
+				}
+				i++ // land on '/' so the loop's i++ moves past it
+				continue
+			}
+		}
+
+		b.WriteByte(c)
+	}
+
+	return b.String()
+}
+
+// decodeJSONObject parses a JSON object, returning its keys in document order
+// plus each key's raw value. Preserving order keeps diffs of the user's config
+// minimal instead of alphabetising their file on every regeneration.
+func decodeJSONObject(s string) ([]string, map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(strings.NewReader(s))
+
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, nil, err
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, nil, fmt.Errorf("expected a JSON object, got %v", tok)
+	}
+
+	keys := make([]string, 0, 8)
+	vals := make(map[string]json.RawMessage, 8)
+
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, nil, fmt.Errorf("expected an object key, got %v", tok)
+		}
+
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, nil, err
+		}
+
+		if _, seen := vals[key]; !seen {
+			keys = append(keys, key)
+		}
+		vals[key] = raw
+	}
+
+	// Consume the closing '}'.
+	if _, err := dec.Token(); err != nil {
+		return nil, nil, err
+	}
+
+	return keys, vals, nil
+}
+
+// buildCompactObject encodes an ordered object as compact JSON.
+func buildCompactObject(keys []string, vals map[string]json.RawMessage) ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+
+	for i, k := range keys {
+		v, ok := vals[k]
+		if !ok {
+			continue
+		}
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+
+		keyJSON, err := marshalJSONNoEscape(k)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyJSON)
+		buf.WriteByte(':')
+
+		// json.Compact validates the value while preserving its key order and
+		// leaving string contents (including "http://") untouched.
+		if err := json.Compact(&buf, v); err != nil {
+			return nil, fmt.Errorf("value for key %q is not valid JSON: %w", k, err)
+		}
+	}
+
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// marshalJSONNoEscape encodes v without HTML-escaping <, > and & so that URL
+// and prompt strings in the config stay readable.
+func marshalJSONNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+// parseConfigDocument validates that an existing config file can be safely
+// merged: it must be a JSON object whose provider block (when present) is also
+// an object. Returns the ordered top-level keys/values.
+func parseConfigDocument(existing []byte, topLevelKey string) ([]string, map[string]json.RawMessage, error) {
+	stripped := strings.TrimSpace(stripJSONComments(string(existing)))
+	if stripped == "" {
+		// Nothing to preserve (missing, empty, or comments-only file).
+		return []string{}, map[string]json.RawMessage{}, nil
+	}
+
+	topKeys, topVals, err := decodeJSONObject(stripped)
+	if err != nil {
+		return nil, nil, fmt.Errorf("existing config is not a valid JSON object: %w", err)
+	}
+
+	if raw, ok := topVals[topLevelKey]; ok && string(raw) != "null" {
+		if _, _, err := decodeJSONObject(string(raw)); err != nil {
+			return nil, nil, fmt.Errorf("existing %q block is not a valid JSON object: %w", topLevelKey, err)
+		}
+	}
+
+	return topKeys, topVals, nil
+}
+
+// mergeProviderIntoConfig upserts providerName under topLevelKey into the
+// existing document while preserving every other key — top level and sibling
+// providers alike — along with their document order.
+//
+// The caller must validate with parseConfigDocument first (see
+// preflightConfigTarget) so an unparseable file is rejected before any
+// irreversible side effect such as an API key rotation.
+func mergeProviderIntoConfig(existing []byte, topLevelKey, providerName string, provider any) ([]byte, error) {
+	providerRaw, err := marshalJSONNoEscape(provider)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode %s provider block: %w", providerName, err)
+	}
+
+	topKeys, topVals, err := parseConfigDocument(existing, topLevelKey)
+	if err != nil {
+		return nil, err
+	}
+
+	providerKeys := []string{}
+	providerVals := map[string]json.RawMessage{}
+
+	if raw, ok := topVals[topLevelKey]; ok && string(raw) != "null" {
+		providerKeys, providerVals, err = decodeJSONObject(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("existing %q block is not a valid JSON object: %w", topLevelKey, err)
+		}
+	} else {
+		topKeys = append(topKeys, topLevelKey)
+	}
+
+	if _, exists := providerVals[providerName]; !exists {
+		providerKeys = append(providerKeys, providerName)
+	}
+	providerVals[providerName] = providerRaw
+
+	providerObj, err := buildCompactObject(providerKeys, providerVals)
+	if err != nil {
+		return nil, err
+	}
+	topVals[topLevelKey] = providerObj
+
+	compact, err := buildCompactObject(topKeys, topVals)
+	if err != nil {
+		return nil, err
+	}
+
+	var out bytes.Buffer
+	if err := json.Indent(&out, compact, "", "  "); err != nil {
+		return nil, fmt.Errorf("failed to format merged config: %w", err)
+	}
+	out.WriteByte('\n')
+
+	return out.Bytes(), nil
+}
+
+// preflightConfigTarget verifies an existing target file is mergeable.
+// Callers run this BEFORE rotating an API key: rotation cannot be undone, so
+// a config we cannot parse must fail the command rather than leave the user
+// with an invalidated key and no updated file.
+func preflightConfigTarget(kind, target string) error {
+	targetPath, err := resolveTargetPath(kind, target)
+	if err != nil {
+		return err
+	}
+
+	existing, err := os.ReadFile(targetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // fresh install, nothing to preserve
+		}
+		return fmt.Errorf("failed to read existing config %s: %w", targetPath, err)
+	}
+
+	_, _, err = parseConfigDocument(existing, providerTopLevelKey(kind))
+	return err
+}
+
+// providerTopLevelKey returns the document key that holds providers for a
+// given agent kind.
+func providerTopLevelKey(kind string) string {
+	if kind == "pi" {
+		return "providers"
+	}
+	return "provider"
 }

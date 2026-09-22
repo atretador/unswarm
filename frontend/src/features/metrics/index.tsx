@@ -8,8 +8,11 @@ import {
   Activity,
   Zap,
   ArrowUpRight,
+  ArrowRight,
   Database,
   AlertTriangle,
+  AlertCircle,
+  Info,
   RefreshCw,
   ChevronUp,
   ChevronDown,
@@ -44,10 +47,10 @@ import {
 import { formatModelName } from "../../lib/format-model-name";
 import type {
   MetricsAnalyticsParams,
+  MetricsTimeBucket,
   Model,
   ProviderCatalogEntry,
   ProviderUsageSummary,
-  UsageTotalsResponse,
 } from "../../lib/api/types";
 import type {
   TimeSeriesMetric,
@@ -57,16 +60,21 @@ import type {
 import {
   loadCostRates,
   saveCostRates,
-  modelCost,
-  computeBlendedRates,
-  bucketCost,
-  cacheSavings,
+  rateAt,
+  pricingModeAt,
   hasAnyRates,
-  isFlatRateProvider,
-  isSelfHostedProvider,
-  isSubscriptionProvider,
+  bucketCost,
+  modelCost,
+  sumBucketCosts,
+  cacheSavings,
   flatCostTotals,
-  type CostRatesMap,
+  dayInstant,
+  inclusiveToExclusiveInstant,
+  inclusiveToExclusiveDate,
+  exclusiveToInclusiveDate,
+  type RatePeriod,
+  type CostBucket,
+  type ModelCost,
   type PricingMode,
 } from "./cost";
 import {
@@ -227,12 +235,14 @@ export default function Metrics() {
   const [presetName, setPresetName] = useState("");
   const { presets, savePreset, deletePreset } = useMetricsPresets();
 
-  // Cost rates are re-read whenever the calculator dialog closes so edits
-  // made there flow into every estimate immediately.
-  const [costRates, setCostRates] = useState<CostRatesMap>(() => loadCostRates());
+  // Cost rate periods are re-read whenever the calculator dialog closes so
+  // edits made there flow into every estimate immediately.
+  const [costRates, setCostRates] = useState<RatePeriod[]>(() => loadCostRates());
   useEffect(() => {
     if (!costDialogOpen) setCostRates(loadCostRates());
   }, [costDialogOpen]);
+
+  const anyRates = useMemo(() => hasAnyRates(costRates), [costRates]);
 
   const rangeParams = useMemo(() => getTimeRangeParams(timeRange), [timeRange]);
 
@@ -302,18 +312,19 @@ export default function Metrics() {
     refetchInterval,
   });
 
-  // Comparison series: one bucket set per provider or model. Only fetched
-  // while a split dimension is active.
+  // Provider+model grouped buckets. Serves both the comparison split and the
+  // date-ranged cost engine (each bucket carries provider/model/at + tokens).
+  // Only fetched when rates exist or a split dimension is active.
   const granularity = timeRange === "24h" ? "hour" : "day";
   const { data: groupedSummary, isFetching: groupedSummaryLoading } = useQuery({
-    queryKey: ["metrics", "summary", "compare", filterParams, granularity, compareDim],
+    queryKey: ["metrics", "summary", "provider_model", filterParams, granularity],
     queryFn: () =>
       client.getMetricsSummary({
         ...filterParams,
         granularity,
-        groupBy: compareDim === "none" ? undefined : compareDim,
+        groupBy: "provider_model",
       }),
-    enabled: compareDim !== "none",
+    enabled: anyRates || compareDim !== "none",
     refetchInterval,
   });
 
@@ -423,14 +434,32 @@ export default function Metrics() {
 
   // ── Derived: filter-modal option lists ──────────────────────
 
+  // Cloud provider names known from the model registry (models whose origin is
+  // "cloud" expose their provider via `providerName`). Local usage providers
+  // are now agent/host names, so anything not confirmed as a known cloud
+  // provider is treated as an agent — an agent whose runtime/model was deleted
+  // must not be mislabeled as cloud.
+  const knownCloudProviderNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const m of registryModels ?? []) {
+      if (m.origin === "cloud" && m.providerName) names.add(m.providerName);
+    }
+    return names;
+  }, [registryModels]);
+
   const providerOptions = useMemo<ProviderCatalogEntry[]>(() => {
     if (providerCatalog) return providerCatalog;
     // Catalog not loaded yet — fall back to providers seen in usage.
     if (!allModels) return [];
     return [...new Set(allModels.map((m) => m.provider))]
       .sort()
-      .map((name) => ({ name, kind: "cloud" as const }));
-  }, [providerCatalog, allModels]);
+      .map((name) => ({
+        name,
+        kind: knownCloudProviderNames.has(name)
+          ? ("cloud" as const)
+          : ("agent" as const),
+      }));
+  }, [providerCatalog, allModels, knownCloudProviderNames]);
 
   const modelOptions = useMemo(() => {
     if (!allModels) return [];
@@ -483,49 +512,109 @@ export default function Metrics() {
 
   // ── Cost estimates ───────────────────────────────────────────
 
-  const blendedRates = useMemo(
-    () => (models ? computeBlendedRates(models, costRates) : null),
-    [models, costRates],
+  // Page-level bucket timeline: one CostBucket per grouped provider+model
+  // bucket. Everything cost-related derives from this single array.
+  const costTimeline = useMemo<CostBucket[]>(() => {
+    if (!groupedSummary) return [];
+    return groupedSummary.map((b) => ({
+      provider: b.provider ?? b.group ?? "",
+      model: b.model ?? "",
+      at: b.bucketStart,
+      promptTokens: b.promptTokens,
+      completionTokens: b.completionTokens,
+      cachedTokens: b.cachedTokens,
+    }));
+  }, [groupedSummary]);
+
+  // Reused by the per-model table/sort and the comparison table so each
+  // (provider, model) timeline is built once.
+  const bucketsByProviderModel = useMemo(() => {
+    const map = new Map<string, CostBucket[]>();
+    for (const b of costTimeline) {
+      const key = `${b.provider}|${b.model}`;
+      const list = map.get(key);
+      if (list) list.push(b);
+      else map.set(key, [b]);
+    }
+    return map;
+  }, [costTimeline]);
+
+  const modelCostByKey = useMemo(() => {
+    const map = new Map<string, ModelCost>();
+    for (const [key, buckets] of bucketsByProviderModel) {
+      map.set(key, modelCost(buckets, costRates));
+    }
+    return map;
+  }, [bucketsByProviderModel, costRates]);
+
+  /** Bucket-start → summed per-token cost, for the cost time series. */
+  const costByBucket = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const b of costTimeline) {
+      const c = bucketCost(b, costRates);
+      if (c !== null) map.set(b.at, (map.get(b.at) ?? 0) + c);
+    }
+    return map;
+  }, [costTimeline, costRates]);
+
+  /** Active calendar months ("YYYY-MM", UTC) per provider, for flat proration. */
+  const activeMonthsByProvider = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const b of costTimeline) {
+      const d = new Date(b.at);
+      const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+      let set = map.get(b.provider);
+      if (!set) {
+        set = new Set();
+        map.set(b.provider, set);
+      }
+      set.add(month);
+    }
+    return map;
+  }, [costTimeline]);
+
+  // Effective window bounds: prefer the server-reported totals window and fall
+  // back to the summary extent (needed for flat proration on "all time").
+  const windowBounds = useMemo<{ from: Date; to: Date }>(() => {
+    if (totals) return { from: new Date(totals.from), to: new Date(totals.to) };
+    const starts = (summary ?? []).map((b) => b.bucketStart).sort();
+    const ends = (summary ?? []).map((b) => b.bucketEnd).sort();
+    return {
+      from: new Date(starts[0] ?? 0),
+      to: new Date(ends.length > 0 ? ends[ends.length - 1]! : 0),
+    };
+  }, [totals, summary]);
+
+  const { estCostTotal } = useMemo(() => {
+    if (costTimeline.length === 0) return { estCostTotal: null as number | null };
+    return { estCostTotal: sumBucketCosts(costTimeline, costRates).cost };
+  }, [costTimeline, costRates]);
+
+  const flatTotals = useMemo(
+    () => flatCostTotals(costRates, activeMonthsByProvider, windowBounds),
+    [costRates, activeMonthsByProvider, windowBounds],
   );
 
-  const { estCostTotal, missingRateCount, flatTotals } = useMemo(() => {
-    if (!models) {
-      return {
-        estCostTotal: null as number | null,
-        missingRateCount: 0,
-        flatTotals: { subscriptions: 0, selfHosted: 0 },
-      };
-    }
-    let total = 0;
+  const missingRateCount = useMemo(() => {
+    if (!models) return 0;
     let missing = 0;
     for (const m of models) {
-      if (isFlatRateProvider(costRates, m.provider)) continue;
-      const c = modelCost(m, costRates);
-      if (c === null) missing += 1;
-      else total += c;
+      const mc = modelCostByKey.get(`${m.provider}|${m.model}`);
+      if (!mc) missing += 1;
+      else if (mc.basis === "per-token" && mc.cost === null) missing += 1;
     }
-    // Flat monthly costs for subscription / self-hosted providers with any
-    // usage in this window — reported as lump sums, never blended into
-    // token math or the time series.
-    const activeProviders = new Set(models.map((m) => m.provider));
-    return {
-      estCostTotal: total,
-      missingRateCount: missing,
-      flatTotals: flatCostTotals(costRates, activeProviders),
-    };
-  }, [models, costRates]);
+    return missing;
+  }, [models, modelCostByKey]);
 
   const savingsEstimate = useMemo(
     () =>
-      totals && totals.totalCachedTokens > 0
-        ? cacheSavings(totals.totalCachedTokens, blendedRates)
-        : totals
-          ? 0
-          : null,
-    [totals, blendedRates],
+      totals
+        ? totals.totalCachedTokens > 0
+          ? cacheSavings(costTimeline, costRates)
+          : 0
+        : null,
+    [totals, costTimeline, costRates],
   );
-
-  const anyRates = useMemo(() => hasAnyRates(costRates), [costRates]);
 
   // ── Keyboard shortcut: press "R" outside inputs to refresh ──
 
@@ -583,11 +672,18 @@ export default function Metrics() {
   const compare = useMemo(() => {
     if (compareDim === "none" || !groupedSummary) return null;
 
+    // Grouped buckets are provider+model; derive the active split's key.
+    const seriesKeyOf = (b: MetricsTimeBucket) =>
+      compareDim === "provider"
+        ? (b.provider ?? b.group ?? "")
+        : (b.model ?? b.group ?? "");
+
     // Rank groups by total request count in the window; keep the top N.
     const totalsByGroup = new Map<string, number>();
     for (const b of groupedSummary) {
-      if (!b.group) continue;
-      totalsByGroup.set(b.group, (totalsByGroup.get(b.group) ?? 0) + b.requestCount);
+      const key = seriesKeyOf(b);
+      if (!key) continue;
+      totalsByGroup.set(key, (totalsByGroup.get(key) ?? 0) + b.requestCount);
     }
     const topGroups = [...totalsByGroup.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -596,66 +692,107 @@ export default function Metrics() {
     if (topGroups.length === 0) return null;
     const topSet = new Set(topGroups);
 
-    // Token-weighted rates per group so the cost metric splits correctly
-    // (each line uses its own provider's pricing, not a global blend).
-    const ratesByGroup = new Map<string, ReturnType<typeof computeBlendedRates>>();
-    for (const group of topGroups) {
-      const rows =
-        compareDim === "provider"
-          ? (models ?? []).filter((m) => m.provider === group)
-          : (models ?? []).filter((m) => m.model === group);
-      ratesByGroup.set(group, rows.length > 0 ? computeBlendedRates(rows, costRates) : null);
+    interface Cell {
+      requestCount: number;
+      promptTokens: number;
+      completionTokens: number;
+      cachedTokens: number;
+      latencyWeighted: number;
+      cost: number;
     }
-
-    // Pivot grouped buckets into per-bucket rows with one column per series.
-    const byBucket = new Map<string, CompareDataPoint>();
+    const byBucket = new Map<
+      string,
+      { row: CompareDataPoint; cells: Map<string, Cell> }
+    >();
     const order: string[] = [];
+
     for (const b of [...groupedSummary].sort((a, b2) =>
       a.bucketStart.localeCompare(b2.bucketStart),
     )) {
-      if (!b.group || !topSet.has(b.group)) continue;
-      let row = byBucket.get(b.bucketStart);
-      if (!row) {
-        row = {
-          bucketStart: b.bucketStart,
-          bucketEnd: b.bucketEnd,
-          time: new Date(b.bucketStart).toLocaleDateString(undefined, {
-            month: "short",
-            day: "numeric",
-            hour: granularity === "hour" ? "2-digit" : undefined,
-          }),
+      const key = seriesKeyOf(b);
+      if (!key || !topSet.has(key)) continue;
+      let entry = byBucket.get(b.bucketStart);
+      if (!entry) {
+        entry = {
+          row: {
+            bucketStart: b.bucketStart,
+            bucketEnd: b.bucketEnd,
+            time: new Date(b.bucketStart).toLocaleDateString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: granularity === "hour" ? "2-digit" : undefined,
+            }),
+          },
+          cells: new Map(),
         };
-        byBucket.set(b.bucketStart, row);
+        byBucket.set(b.bucketStart, entry);
         order.push(b.bucketStart);
       }
-      row[b.group] =
-        seriesMetric === "tokens"
-          ? b.promptTokens + b.completionTokens
-          : seriesMetric === "requests"
-            ? b.requestCount
-            : seriesMetric === "latency"
-              ? Math.round(b.avgLatencyMs)
-              : seriesMetric === "cached"
-                ? b.cachedTokens
-                : (() => {
-                    // Cost uses the group's own token-weighted rates; groups
-                    // with no rated tokens render as a flat zero line.
-                    const rates = ratesByGroup.get(b.group);
-                    return rates ? bucketCost(b, rates) : 0;
-                  })();
+      let cell = entry.cells.get(key);
+      if (!cell) {
+        cell = {
+          requestCount: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          cachedTokens: 0,
+          latencyWeighted: 0,
+          cost: 0,
+        };
+        entry.cells.set(key, cell);
+      }
+      cell.requestCount += b.requestCount;
+      cell.promptTokens += b.promptTokens;
+      cell.completionTokens += b.completionTokens;
+      cell.cachedTokens += b.cachedTokens;
+      cell.latencyWeighted += b.avgLatencyMs * b.requestCount;
+      // Cost is resolved at each bucket's timestamp with the date-ranged
+      // engine, so a mid-window rate change splits across the series.
+      cell.cost +=
+        bucketCost(
+          {
+            provider: b.provider ?? b.group ?? "",
+            model: b.model ?? "",
+            at: b.bucketStart,
+            promptTokens: b.promptTokens,
+            completionTokens: b.completionTokens,
+            cachedTokens: b.cachedTokens,
+          },
+          costRates,
+        ) ?? 0;
     }
 
+    const metricValue = (cell: Cell | undefined): number => {
+      if (!cell) return 0;
+      switch (seriesMetric) {
+        case "tokens":
+          return cell.promptTokens + cell.completionTokens;
+        case "requests":
+          return cell.requestCount;
+        case "latency":
+          return cell.requestCount > 0
+            ? Math.round(cell.latencyWeighted / cell.requestCount)
+            : 0;
+        case "cached":
+          return cell.cachedTokens;
+        case "cost":
+          return cell.cost;
+      }
+    };
+
+    const data = order.map((bucketStart) => {
+      const entry = byBucket.get(bucketStart)!;
+      for (const g of topGroups) entry.row[g] = metricValue(entry.cells.get(g));
+      return entry.row;
+    });
+
     return {
-      data: order.map((k) => byBucket.get(k)!),
+      data,
       series: topGroups.map((g) => ({
         key: g,
-        label:
-          compareDim === "model" && allModels
-            ? modelLabel(g)
-            : g,
+        label: compareDim === "model" ? modelLabel(g) : g,
       })),
     };
-  }, [compareDim, groupedSummary, models, costRates, seriesMetric, granularity, allModels, modelLabel]);
+  }, [compareDim, groupedSummary, costRates, seriesMetric, granularity, modelLabel]);
 
   // ── Comparison table (aggregated per entity from model rows) ──
 
@@ -698,24 +835,28 @@ export default function Metrics() {
       row.completionTokens += m.completionTokens;
       row.cachedTokens += m.cachedTokens;
       row.latencyWeightedSum += m.avgLatencyMs * m.requestCount;
-      if (isFlatRateProvider(costRates, m.provider)) {
-        // Flat-rate usage isn't attributable per token — flagged, not summed.
-        row.hasMissingRate = true;
-      } else {
-        const c = modelCost(m, costRates);
-        if (c === null) row.hasMissingRate = true;
-        else row.estCost += c;
-      }
     }
     return [...groups.values()]
-      .map((row) => ({
-        ...row,
-        providers: [...row.providers],
-        avgLatencyMs:
-          row.requestCount > 0 ? row.latencyWeightedSum / row.requestCount : 0,
-      }))
+      .map((row) => {
+        // Cost for the whole group, resolved from the page timeline so each
+        // bucket is priced at its own timestamp.
+        const groupBuckets = costTimeline.filter((b) =>
+          compareDim === "provider" ? b.provider === row.name : b.model === row.name,
+        );
+        const mc = modelCost(groupBuckets, costRates);
+        // A group that is flat OR spans a flat↔per-token transition cannot be
+        // shown as a single comparable dollar figure.
+        if (mc.basis !== "per-token" || mc.cost === null) row.hasMissingRate = true;
+        else row.estCost += mc.cost;
+        return {
+          ...row,
+          providers: [...row.providers],
+          avgLatencyMs:
+            row.requestCount > 0 ? row.latencyWeightedSum / row.requestCount : 0,
+        };
+      })
       .sort((a, b) => b.requestCount - a.requestCount);
-  }, [compareDim, models, costRates]);
+  }, [compareDim, models, costRates, costTimeline]);
 
   // ── Presets ──────────────────────────────────────────────────
 
@@ -736,7 +877,9 @@ export default function Metrics() {
       presetName.trim() ||
       [
         selectedProviders.length > 0 ? selectedProviders.join("+") : t("allProvidersLabel"),
-        selectedModels.length > 0 ? selectedModels.join("+") : t("allModelsLabel"),
+        selectedModels.length > 0
+          ? selectedModels.map((m) => modelLabel(m)).join("+")
+          : t("allModelsLabel"),
         timeRange,
       ].join(" · ");
     savePreset({
@@ -746,7 +889,7 @@ export default function Metrics() {
       range: timeRange,
     });
     setPresetName("");
-  }, [presetName, selectedProviders, selectedModels, timeRange, savePreset]);
+  }, [presetName, selectedProviders, selectedModels, timeRange, savePreset, modelLabel]);
 
   // ── Hooks (must all be called before any early returns) ────
 
@@ -779,10 +922,11 @@ export default function Metrics() {
           // Flat-rate rows (subscription / self-hosted) carry no per-token
           // cost; they sort as one constant group at the far end of either
           // direction.
-          const costOf = (m: (typeof models)[number]) =>
-            isFlatRateProvider(costRates, m.provider)
-              ? Number.POSITIVE_INFINITY
-              : (modelCost(m, costRates) ?? -1);
+          const costOf = (m: (typeof models)[number]) => {
+            const mc = modelCostByKey.get(`${m.provider}|${m.model}`);
+            if (!mc || mc.basis !== "per-token") return Number.POSITIVE_INFINITY;
+            return mc.cost ?? -1;
+          };
           const costA = costOf(a);
           const costB = costOf(b);
           return dir * (costA - costB);
@@ -792,7 +936,7 @@ export default function Metrics() {
       }
     });
     return sorted;
-  }, [models, sortField, sortDirection, costRates]);
+  }, [models, sortField, sortDirection, modelCostByKey]);
 
   function handleSort(field: SortField) {
     if (sortField === field) {
@@ -831,9 +975,10 @@ export default function Metrics() {
       t("csvHeaders.avgLatencyMs"),
       t("csvHeaders.estCostUsd"),
     ];
-    const lines = sortedModels.map((m) =>
-      [
-        escape(m.model),
+    const lines = sortedModels.map((m) => {
+      const mc = modelCostByKey.get(`${m.provider}|${m.model}`);
+      return [
+        escape(modelLabel(m.model)),
         escape(m.provider),
         m.requestCount,
         m.promptTokens,
@@ -843,11 +988,13 @@ export default function Metrics() {
           ? ((m.cachedTokens / m.promptTokens) * 100).toFixed(2)
           : "",
         Math.round(m.avgLatencyMs),
-        isFlatRateProvider(costRates, m.provider)
+        mc?.basis === "flat"
           ? t("costCalcSection.incl")
-          : (modelCost(m, costRates) ?? "").toString(),
-      ].join(","),
-    );
+          : mc?.basis === "mixed"
+            ? t("costCalcSection.mixed")
+            : (mc?.cost ?? "").toString(),
+      ].join(",");
+    });
     const blob = new Blob([[header.join(","), ...lines].join("\n")], {
       type: "text/csv;charset=utf-8",
     });
@@ -859,7 +1006,7 @@ export default function Metrics() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-  }, [sortedModels, costRates]);
+  }, [sortedModels, modelCostByKey, modelLabel]);
 
   // ── Loading / Error States ──────────────────────────────────
 
@@ -992,7 +1139,11 @@ export default function Metrics() {
         },
         {
           label: t("summary.estCost"),
-          value: anyRates ? formatCurrency(estCostTotal ?? 0) : undefined,
+          value: anyRates
+            ? estCostTotal === null
+              ? "\u2014"
+              : formatCurrency(estCostTotal)
+            : undefined,
           icon: Calculator,
           color: "text-[var(--color-status-error)]",
           sub:
@@ -1358,7 +1509,7 @@ export default function Metrics() {
                   </div>
                   <div className="flex gap-1 bg-[var(--color-bg-muted)] rounded-[var(--radius-lg)] p-0.5">
                     {METRIC_OPTIONS.map((opt) => {
-                      const disabled = opt.value === "cost" && !blendedRates;
+                      const disabled = opt.value === "cost" && !anyRates;
                       return (
                         <button
                           key={opt.value}
@@ -1411,7 +1562,7 @@ export default function Metrics() {
                   <LazyTokenUsageChart
                     summary={summary}
                     metric={seriesMetric}
-                    blendedRates={blendedRates}
+                    costByBucket={costByBucket}
                     onPointClick={handlePointClick}
                   />
                 </Suspense>
@@ -1629,7 +1780,19 @@ export default function Metrics() {
                       </thead>
                       <tbody>
                         {sortedModels.map((m) => {
-                          const cost = modelCost(m, costRates);
+                          const mc = modelCostByKey.get(`${m.provider}|${m.model}`);
+                          const mode = pricingModeAt(
+                            costRates,
+                            m.provider,
+                            m.model,
+                            windowBounds.to,
+                          );
+                          const resolved = rateAt(
+                            costRates,
+                            m.provider,
+                            m.model,
+                            windowBounds.to,
+                          );
                           return (
                             <tr
                               key={`${m.provider}-${m.model}`}
@@ -1670,32 +1833,38 @@ export default function Metrics() {
                               <td
                                 className="py-2.5 px-4 text-right font-mono hidden lg:table-cell"
                                 title={
-                                  isSubscriptionProvider(costRates, m.provider)
-                                    ? t("costTooltips.subscription", {
-                                        amount: formatCurrency(
-                                          costRates[m.provider]?.monthlyPrice ?? 0,
-                                        ),
-                                        provider: m.provider,
-                                      })
-                                    : isSelfHostedProvider(costRates, m.provider)
-                                      ? t("costTooltips.selfHosted", {
+                                  mc?.basis === "mixed"
+                                    ? t("costTooltips.mixed", { provider: m.provider })
+                                    : mode === "subscription"
+                                      ? t("costTooltips.subscription", {
                                           amount: formatCurrency(
-                                            costRates[m.provider]?.monthlyCost ?? 0,
+                                            resolved?.monthlyPrice ?? 0,
                                           ),
                                           provider: m.provider,
                                         })
-                                      : cost === null
-                                        ? t("costTooltips.noRate", { provider: m.provider })
-                                        : undefined
+                                      : mode === "self-hosted"
+                                        ? t("costTooltips.selfHosted", {
+                                            amount: formatCurrency(
+                                              resolved?.monthlyCost ?? 0,
+                                            ),
+                                            provider: m.provider,
+                                          })
+                                        : !mc || mc.cost === null
+                                          ? t("costTooltips.noRate", { provider: m.provider })
+                                          : undefined
                                 }
                               >
-                                {isFlatRateProvider(costRates, m.provider) ? (
+                                {mc?.basis === "flat" ? (
                                   <Badge variant="outline" size="sm">
                                     {t("costCalcSection.incl")}
                                   </Badge>
-                                ) : cost !== null ? (
+                                ) : mc?.basis === "mixed" ? (
+                                  <Badge variant="outline" size="sm">
+                                    {t("costCalcSection.mixed")}
+                                  </Badge>
+                                ) : mc && mc.cost !== null ? (
                                   <span className="text-[var(--color-text)]">
-                                    {formatCurrency(cost)}
+                                    {formatCurrency(mc.cost)}
                                   </span>
                                 ) : (
                                   <span className="text-[var(--color-text-muted)]">
@@ -1869,6 +2038,7 @@ export default function Metrics() {
                 customWindow={customWindow}
                 autoRefreshMs={autoRefreshMs}
                 onClearCustomWindow={() => setCustomWindow(null)}
+                modelLabel={modelLabel}
               />
             </Card>
           </motion.div>
@@ -1880,9 +2050,11 @@ export default function Metrics() {
         open={costDialogOpen}
         onOpenChange={setCostDialogOpen}
         providers={providers}
-        totals={totals}
         catalog={providerCatalog}
-        monthProviders={monthProviders}
+        timeline={costTimeline}
+        activeMonthsByProvider={activeMonthsByProvider}
+        windowBounds={windowBounds}
+        modelLabel={modelLabel}
       />
 
       {/* Filter Options Modal */}
@@ -2028,15 +2200,26 @@ interface CostCalculatorDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   providers: ProviderUsageSummary[] | undefined;
-  totals: UsageTotalsResponse | undefined;
   /** Provider catalog for the picker; undefined = fall back to free text. */
   catalog: ProviderCatalogEntry[] | undefined;
-  /** Calendar-month usage, for derived self-hosted $/1M rates. */
-  monthProviders: ProviderUsageSummary[] | undefined;
+  /** Page bucket timeline (provider+model) reused for window tokens/costs. */
+  timeline: CostBucket[];
+  /** Active "YYYY-MM" months per provider (UTC), for flat proration. */
+  activeMonthsByProvider: Map<string, Set<string>>;
+  /** Effective page window bounds. */
+  windowBounds: { from: Date; to: Date };
+  /** Resolves a model id to its user-facing label. */
+  modelLabel?: (model: string) => string;
 }
 
 interface RateRow {
+  id: string;
   provider: string;
+  /** "" = all models (provider-wide). */
+  model: string;
+  /** "" = open-ended. */
+  from: string;
+  to: string;
   mode: PricingMode;
   promptPer1M: string;
   completionPer1M: string;
@@ -2049,71 +2232,101 @@ interface RateRow {
 /** Sentinel option value that switches a row into custom-entry mode. */
 const CUSTOM_PROVIDER = "__custom__";
 
+function newRateRowId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return uuid ?? `rp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function toPeriod(row: RateRow): RatePeriod {
+  return {
+    id: row.id,
+    provider: row.provider.trim(),
+    model: row.model || null,
+    from: row.from || null,
+    // User-entered To is inclusive; storage/engine expects exclusive.
+    to: inclusiveToExclusiveDate(row.to),
+    mode: row.mode,
+    promptPer1M: parseFloat(row.promptPer1M) || 0,
+    completionPer1M: parseFloat(row.completionPer1M) || 0,
+    monthlyPrice: parseFloat(row.monthlyPrice) || 0,
+    monthlyCost: parseFloat(row.monthlyCost) || 0,
+  };
+}
+
 function CostCalculatorDialog({
   open,
   onOpenChange,
   providers,
-  totals,
   catalog,
-  monthProviders,
+  timeline,
+  activeMonthsByProvider,
+  windowBounds,
+  modelLabel = (m) => m,
 }: CostCalculatorDialogProps) {
   const { t } = useTranslation("metrics");
-  // Build rate rows from saved data + provider list when dialog opens
+  // Rate-period rows, seeded from saved data (or usage providers) on open.
   const [rows, setRows] = useState<RateRow[]>([]);
 
   useEffect(() => {
-    if (open) {
-      const saved = loadCostRates();
-      if (providers && providers.length > 0) {
-        const known = new Set((catalog ?? []).map((c) => c.name));
-        const newRows: RateRow[] = providers.map((p) => ({
+    if (!open) return;
+    const saved = loadCostRates();
+    const known = new Set((catalog ?? []).map((c) => c.name));
+    const isCustom = (provider: string) =>
+      catalog !== undefined && !known.has(provider);
+
+    if (saved.length > 0) {
+      setRows(
+        saved.map((p) => ({
+          id: p.id,
           provider: p.provider,
-          mode: saved[p.provider]?.mode ?? "per-token",
-          promptPer1M: saved[p.provider]?.promptPer1M?.toString() ?? "",
-          completionPer1M: saved[p.provider]?.completionPer1M?.toString() ?? "",
-          monthlyPrice: saved[p.provider]?.monthlyPrice?.toString() ?? "",
-          monthlyCost: saved[p.provider]?.monthlyCost?.toString() ?? "",
-          // Providers not in the catalog start in custom-entry mode.
-          customProvider: catalog !== undefined && !known.has(p.provider),
-        }));
-        setRows(newRows);
-      } else {
-        setRows([]);
-      }
+          model: p.model ?? "",
+          from: p.from ?? "",
+          // Stored `to` is exclusive; the field displays the inclusive day.
+          to: p.to ? exclusiveToInclusiveDate(p.to) : "",
+          mode: p.mode,
+          promptPer1M: p.promptPer1M ? String(p.promptPer1M) : "",
+          completionPer1M: p.completionPer1M ? String(p.completionPer1M) : "",
+          monthlyPrice: p.monthlyPrice ? String(p.monthlyPrice) : "",
+          monthlyCost: p.monthlyCost ? String(p.monthlyCost) : "",
+          customProvider: isCustom(p.provider),
+        })),
+      );
+    } else if (providers && providers.length > 0) {
+      setRows(
+        providers.map((p) => ({
+          id: newRateRowId(),
+          provider: p.provider,
+          model: "",
+          from: "",
+          to: "",
+          mode: "per-token",
+          promptPer1M: "",
+          completionPer1M: "",
+          monthlyPrice: "",
+          monthlyCost: "",
+          customProvider: isCustom(p.provider),
+        })),
+      );
+    } else {
+      setRows([]);
     }
+    // Re-seed only when the dialog opens, not on every prop change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
-  function updateRow(
-    index: number,
-    field: "promptPer1M" | "completionPer1M" | "monthlyPrice" | "monthlyCost",
-    value: string,
-  ) {
-    setRows((prev) =>
-      prev.map((r, i) => (i === index ? { ...r, [field]: value } : r)),
-    );
-  }
-
-  function setRowMode(index: number, mode: PricingMode) {
-    // Switching modes only changes which inputs are shown — the stored values
-    // for the other modes are preserved so toggling back restores them.
-    setRows((prev) =>
-      prev.map((r, i) => (i === index ? { ...r, mode } : r)),
-    );
-  }
-
-  function setRowProvider(index: number, name: string, custom: boolean) {
-    setRows((prev) =>
-      prev.map((r, i) =>
-        i === index ? { ...r, provider: name, customProvider: custom } : r,
-      ),
-    );
+  function updateRow(id: string, patch: Partial<RateRow>) {
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
   function addRow() {
     setRows((prev) => [
       ...prev,
       {
+        id: newRateRowId(),
         provider: "",
+        model: "",
+        from: "",
+        to: "",
         mode: "per-token",
         promptPer1M: "",
         completionPer1M: "",
@@ -2123,482 +2336,706 @@ function CostCalculatorDialog({
     ]);
   }
 
-  function removeRow(index: number) {
-    setRows((prev) => prev.filter((_, i) => i !== index));
+  function removeRow(id: string) {
+    setRows((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  // Display order: provider, then period start.
+  const orderedRows = useMemo(
+    () =>
+      [...rows].sort(
+        (a, b) =>
+          a.provider.localeCompare(b.provider) ||
+          (a.from || "").localeCompare(b.from || ""),
+      ),
+    [rows],
+  );
+
+  function rangeInvalid(r: RateRow): boolean {
+    if (!r.from || !r.to) return false;
+    const from = dayInstant(r.from, NaN);
+    const to = inclusiveToExclusiveInstant(r.to);
+    if (Number.isNaN(from) || to === null) return false;
+    // Inclusive To → exclusive instant; a valid range needs from < to.
+    return from >= to;
+  }
+  const hasInvalidRange = orderedRows.some(rangeInvalid);
+
+  function overlaps(a: RateRow, b: RateRow): boolean {
+    if (a.id === b.id) return false;
+    if (a.provider !== b.provider) return false;
+    const aModel = a.model || "";
+    const bModel = b.model || "";
+    // Same scope, or one side is provider-wide (covers the other's model).
+    if (aModel !== bModel && aModel !== "" && bModel !== "") return false;
+    const aFrom = dayInstant(a.from, -Infinity);
+    const aTo = inclusiveToExclusiveInstant(a.to) ?? Infinity;
+    const bFrom = dayInstant(b.from, -Infinity);
+    const bTo = inclusiveToExclusiveInstant(b.to) ?? Infinity;
+    return aFrom < bTo && bFrom < aTo;
+  }
+
+  function hasOverlap(r: RateRow): boolean {
+    return rows.some((o) => overlaps(r, o));
   }
 
   function saveRates() {
-    const newRates: CostRatesMap = {};
-    for (const row of rows) {
-      if (row.provider) {
-        // All value sets are always written so switching a provider's mode
-        // later never loses its previously entered rates.
-        newRates[row.provider] = {
-          mode: row.mode,
-          promptPer1M: parseFloat(row.promptPer1M) || 0,
-          completionPer1M: parseFloat(row.completionPer1M) || 0,
-          monthlyPrice: parseFloat(row.monthlyPrice) || 0,
-          monthlyCost: parseFloat(row.monthlyCost) || 0,
-        };
-      }
-    }
-    saveCostRates(newRates);
+    if (hasInvalidRange) return;
+    // All value sets are always written so switching a period's mode later
+    // never loses its previously entered rates.
+    saveCostRates(
+      orderedRows.filter((r) => r.provider.trim()).map(toPeriod),
+    );
   }
 
-  // Month-to-date tokens per provider — the denominator for derived
-  // self-hosted $/1M rates (monthly cost ÷ month-to-date tokens × 1M).
-  const monthTokensByProvider = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const p of monthProviders ?? []) {
-      map.set(p.provider, p.promptTokens + p.completionTokens);
+  /** Models seen for a provider on the page timeline (for the scope select). */
+  const modelsByProvider = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const b of timeline) {
+      if (!b.model) continue;
+      let list = map.get(b.provider);
+      if (!list) {
+        list = [];
+        map.set(b.provider, list);
+      }
+      if (!list.includes(b.model)) list.push(b.model);
     }
+    for (const list of map.values()) list.sort();
     return map;
-  }, [monthProviders]);
+  }, [timeline]);
+
+  function bucketsForRow(r: RateRow): CostBucket[] {
+    if (!r.provider.trim()) return [];
+    const from = dayInstant(r.from, -Infinity);
+    // Inclusive user To → exclusive lookup bound.
+    const to = inclusiveToExclusiveInstant(r.to) ?? Infinity;
+    return timeline.filter((b) => {
+      if (b.provider !== r.provider.trim()) return false;
+      if (r.model && b.model !== r.model) return false;
+      const at = new Date(b.at).getTime();
+      return at >= from && at < to;
+    });
+  }
+
+  /** Flat (subscription/self-hosted) window cost for one period. */
+  function flatRowWindowCost(r: RateRow): number {
+    const period = toPeriod(r);
+    const months = activeMonthsByProvider.get(r.provider.trim()) ?? new Set<string>();
+    const { subscriptions, selfHosted } = flatCostTotals(
+      [period],
+      new Map([[r.provider.trim(), months]]),
+      windowBounds,
+    );
+    return subscriptions + selfHosted;
+  }
 
   /**
-   * Derived effective $/1M rate for a self-hosted row. Null when there's no
-   * monthly cost entered or no usage this month to divide by.
+   * Derived effective $/1M for a self-hosted period, using only tokens inside
+   * the period's own active slice of the current month. `active: false` means
+   * the period doesn't cover "now".
    */
-  function derivedSelfHostedRate(row: RateRow): number | null {
-    if (row.mode !== "self-hosted") return null;
-    const cost = parseFloat(row.monthlyCost) || 0;
-    if (cost <= 0) return null;
-    const tokens = monthTokensByProvider.get(row.provider.trim()) ?? 0;
-    if (tokens <= 0) return null;
-    return (cost / tokens) * 1_000_000;
+  function derivedSelfHostedRate(r: RateRow): { rate: number | null; active: boolean } {
+    if (r.mode !== "self-hosted") return { rate: null, active: true };
+    const cost = parseFloat(r.monthlyCost) || 0;
+    if (cost <= 0 || !r.provider.trim()) return { rate: null, active: true };
+
+    const now = Date.now();
+    const periodFrom = dayInstant(r.from, -Infinity);
+    const periodTo = inclusiveToExclusiveInstant(r.to) ?? Infinity;
+    if (!(now >= periodFrom && now < periodTo)) return { rate: null, active: false };
+
+    const nowDate = new Date();
+    const monthStart = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), 1);
+    const monthEnd = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth() + 1, 1);
+    const lo = Math.max(periodFrom, monthStart);
+    const hi = Math.min(periodTo, monthEnd);
+
+    const tokens = timeline
+      .filter((b) => {
+        if (b.provider !== r.provider.trim()) return false;
+        if (r.model && b.model !== r.model) return false;
+        const at = new Date(b.at).getTime();
+        return at >= lo && at < hi;
+      })
+      .reduce((sum, b) => sum + b.promptTokens + b.completionTokens, 0);
+
+    if (tokens <= 0) return { rate: null, active: true };
+    return { rate: (cost / tokens) * 1_000_000, active: true };
   }
 
-  // Calculate costs per provider from the current totals data
-  // We use the totals across all providers and split by the provider breakdown data
-  // to approximate per-provider token counts, then apply rates
-  const costBreakdown = useMemo(() => {
-    if (!providers || !totals) return [];
-    return rows.map((row) => {
-      const isSub = row.mode === "subscription";
-      const isSelfHosted = row.mode === "self-hosted";
-      const monthlyFee = parseFloat(row.monthlyPrice) || 0;
-      const monthlyCost = parseFloat(row.monthlyCost) || 0;
+  function amountLabel(r: RateRow): string {
+    if (r.mode === "subscription") {
+      return `${formatCurrency(parseFloat(r.monthlyPrice) || 0)}${t("monthlySuffix")}`;
+    }
+    if (r.mode === "self-hosted") {
+      return `${formatCurrency(parseFloat(r.monthlyCost) || 0)}${t("monthlySuffix")}`;
+    }
+    return `${formatCurrency(parseFloat(r.promptPer1M) || 0)} / ${formatCurrency(
+      parseFloat(r.completionPer1M) || 0,
+    )} ${t("per1MTok")}`;
+  }
 
-      // Find provider data to get token counts
-      const providerData = providers.find((p) => p.provider === row.provider);
-      const promptTokens = providerData?.promptTokens ?? 0;
-      const completionTokens = providerData?.completionTokens ?? 0;
+  const breakdownRows = orderedRows.filter((r) => r.provider.trim());
 
-      // Flat-rate modes aren't usage-based: the whole fixed cost lands in
-      // Total Cost once, with no token-level attribution.
-      const promptCost = isSub || isSelfHosted
-        ? 0
-        : ((promptTokens / 1_000_000) * (parseFloat(row.promptPer1M) || 0));
-      const completionCost = isSub || isSelfHosted
-        ? 0
-        : (completionTokens / 1_000_000) * (parseFloat(row.completionPer1M) || 0);
-
-      return {
-        ...row,
-        isSub,
-        isSelfHosted,
-        derivedRate: derivedSelfHostedRate(row),
-        monthlyFee,
-        monthlyCost,
-        promptTokens,
-        completionTokens,
-        promptCost,
-        completionCost,
-        totalCost: isSub ? monthlyFee : isSelfHosted ? monthlyCost : promptCost + completionCost,
-      };
-    });
-  }, [rows, providers, totals, monthTokensByProvider]);
-
-  const grandTotal = useMemo(
-    () => costBreakdown.reduce((sum, r) => sum + r.totalCost, 0),
-    [costBreakdown],
+  // Preview costing resolves rates across ALL rows, exactly like the page's
+  // timeline engine: each bucket is priced by the single effective period
+  // (model-specific beats provider-wide, later `from`, later row), so a
+  // provider-wide row never also prices buckets already covered by a
+  // model-scope override row.
+  const previewPeriods = useMemo(
+    () => breakdownRows.map(toPeriod),
+    [breakdownRows],
   );
+
+  const previewPerTokenByRow = useMemo(() => {
+    const byId = new Map<string, number>();
+    for (const b of timeline) {
+      const rate = rateAt(previewPeriods, b.provider, b.model, new Date(b.at));
+      if (!rate || rate.mode !== "per-token") continue;
+      const cost = bucketCost(b, previewPeriods);
+      if (cost === null) continue;
+      byId.set(rate.id, (byId.get(rate.id) ?? 0) + cost);
+    }
+    return byId;
+  }, [timeline, previewPeriods]);
+
+  const previewFlat = useMemo(
+    () => flatCostTotals(previewPeriods, activeMonthsByProvider, windowBounds),
+    [previewPeriods, activeMonthsByProvider, windowBounds],
+  );
+
+  /** Row cost as shown in the breakdown table (effective, deduplicated). */
+  function rowDisplayCost(r: RateRow): number {
+    if (r.mode === "per-token") return previewPerTokenByRow.get(r.id) ?? 0;
+    return flatRowWindowCost(r);
+  }
+
+  const grandTotal =
+    [...previewPerTokenByRow.values()].reduce((sum, v) => sum + v, 0) +
+    previewFlat.subscriptions +
+    previewFlat.selfHosted;
+
+  // Quiet form labels: keeps the many per-period controls legible without
+  // competing with the values themselves.
+  const fieldLabelClass =
+    "text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]";
+  // Identity controls (provider + model scope) are a touch larger and heavier
+  // so they read as the row's primary key; everything else stays secondary.
+  const identitySelectClass =
+    "h-9 w-full appearance-none cursor-pointer rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] pl-3 pr-8 text-sm font-medium text-[var(--color-text-heading)] transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]";
+  const identityInputClass =
+    "h-9 w-full min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 text-sm font-medium text-[var(--color-text-heading)] transition-colors focus:border-[var(--color-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--color-focus-ring)]";
+  const numberInputClass =
+    "h-8 w-full rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors font-mono";
+  const dateInputClass =
+    "h-7 w-full min-w-0 border-0 bg-transparent px-0 text-xs text-[var(--color-text)] focus:outline-none";
+  // Same chevron used by the Select primitive, so the two pickers match.
+  const selectChevron =
+    "bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E')] bg-[position:right_0.5rem_center] bg-no-repeat";
+  // Breakdown table headers: quiet, compact, numeric columns right-aligned.
+  const thClass =
+    "whitespace-nowrap px-3 py-2.5 text-[10px] font-medium uppercase tracking-wider text-[var(--color-text-muted)]";
+  const thRightClass = `${thClass} text-right`;
 
   return (
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
       title={t("costCalculator")}
-      className="sm:max-w-3xl"
+      className="sm:max-w-4xl"
     >
       <div className="px-5 py-4 space-y-5">
         <p className="text-xs text-[var(--color-text-muted)]">
           {t("costCalc.description")}
         </p>
 
-        {/* Rate Entry Table */}
-        <div className="space-y-2">
-          {rows.map((row, i) => (
-            <div
-              key={i}
-              className="flex flex-col sm:flex-row items-start sm:items-end gap-2 p-2.5 rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] bg-[var(--color-bg-muted)]/30"
-            >
-              {/* Provider picker: catalog select with custom-entry fallback */}
-              <div className="flex flex-col gap-1 flex-1 min-w-[160px]">
-                {i === 0 && (
-                  <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.provider")}
-                  </label>
-                )}
-                {!catalog || row.customProvider ? (
-                  <div className="flex gap-1.5">
-                    <input
-                      type="text"
-                      value={row.provider}
-                      onChange={(e) => setRowProvider(i, e.target.value, true)}
-                      placeholder={t("costCalc.providerPlaceholder")}
-                      className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full min-w-0"
-                    />
-                    {catalog && (
-                      <button
-                        type="button"
-                        onClick={() => setRowProvider(i, "", false)}
-                        title={t("pickFromList")}
-                        className="h-8 px-2 shrink-0 rounded-[var(--radius-lg)] border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-border-strong)] transition-colors cursor-pointer whitespace-nowrap"
-                      >
-                        {t("costCalcSection.listButton")}
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <select
-                    value={row.provider === "" ? "" : row.provider}
-                    onChange={(e) => {
-                      if (e.target.value === CUSTOM_PROVIDER) {
-                        setRowProvider(i, "", true);
-                      } else {
-                        setRowProvider(i, e.target.value, false);
-                      }
-                    }}
-                    className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)]
-                      px-3 pr-8 text-sm text-[var(--color-text)]
-                      border-[var(--color-border)]
-                      focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)]
-                      transition-colors duration-[var(--duration-fast)]
-                      appearance-none cursor-pointer w-full
-                      bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%236b7280%22%20stroke-width%3D%222%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C/svg%3E')]
-                      bg-[position:right_0.5rem_center] bg-no-repeat"
-                  >
-                    <option value="">{t("costCalcSection.selectProvider")}</option>
-                    {/* Preserve a saved provider that isn't in the catalog */}
-                    {row.provider !== "" &&
-                      !catalog.some((c) => c.name === row.provider) && (
-                        <option value={row.provider}>{row.provider}</option>
-                      )}
-                    {catalog.some((c) => c.kind === "cloud") && (
-                      <optgroup label={t("costCalcSection.cloudProviders")}>
-                        {catalog
-                          .filter((c) => c.kind === "cloud")
-                          .map((c) => (
-                            <option key={`cloud-${c.name}`} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                    )}
-                    {catalog.some((c) => c.kind === "local") && (
-                      <optgroup label={t("costCalcSection.selfHostedAgents")}>
-                        {catalog
-                          .filter((c) => c.kind === "local")
-                          .map((c) => (
-                            <option key={`local-${c.name}`} value={c.name}>
-                              {c.name}
-                            </option>
-                          ))}
-                      </optgroup>
-                    )}
-                    <option value={CUSTOM_PROVIDER}>{t("costCalcSection.customOption")}</option>
-                  </select>
-                )}
-              </div>
-              {/* Pricing mode toggle */}
-              <div className="flex flex-col gap-1 shrink-0">
-                {i === 0 && (
-                  <span className="text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.pricing")}
-                  </span>
-                )}
-                <div className="flex gap-0.5 bg-[var(--color-bg-muted)] rounded-[var(--radius-md)] p-0.5 h-8 items-center">
-                  {(
-                    [
-                      ["per-token", t("costModes.perToken"), t("costCalcSection.perTokenHint")],
-                      ["subscription", t("costModes.monthly"), t("costCalcSection.monthlyHint")],
-                      [
-                        "self-hosted",
-                        t("costModes.selfHosted"),
-                        t("costCalcSection.selfHostedHint"),
-                      ],
-                    ] as const
-                  ).map(([mode, label, hint]) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setRowMode(i, mode)}
-                      title={hint}
-                      className={`
-                        px-2 py-1 text-xs font-medium rounded-[calc(var(--radius-md)-2px)]
-                        transition-all duration-[var(--duration-fast)] whitespace-nowrap
-                        ${
-                          row.mode === mode
-                            ? "bg-[var(--color-bg-surface)] text-[var(--color-text-heading)] shadow-sm cursor-pointer"
-                            : "text-[var(--color-text-muted)] hover:text-[var(--color-text)] cursor-pointer"
-                        }
-                      `}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              {row.mode === "per-token" && (
-                <>
-                  <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
-                    {i === 0 && (
-                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        {t("costCalcSection.promptRate")}
-                      </label>
-                    )}
-                    <input
-                      type="number"
-                      value={row.promptPer1M}
-                      onChange={(e) => updateRow(i, "promptPer1M", e.target.value)}
-                      placeholder="0.00"
-                      min="0"
-                      step="0.01"
-                      className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full font-mono"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
-                    {i === 0 && (
-                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        {t("costCalcSection.completionRate")}
-                      </label>
-                    )}
-                    <input
-                      type="number"
-                      value={row.completionPer1M}
-                      onChange={(e) => updateRow(i, "completionPer1M", e.target.value)}
-                      placeholder="0.00"
-                      min="0"
-                      step="0.01"
-                      className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full font-mono"
-                    />
-                  </div>
-                </>
-              )}
-              {row.mode === "subscription" && (
-                <div className="flex flex-col gap-1 flex-1 min-w-[120px]">
-                    {i === 0 && (
-                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        {t("costCalc.monthlySubscription")}
-                      </label>
-                    )}
-                  <input
-                    type="number"
-                    value={row.monthlyPrice}
-                    onChange={(e) => updateRow(i, "monthlyPrice", e.target.value)}
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full font-mono"
-                  />
-                </div>
-              )}
-              {row.mode === "self-hosted" && (
-                <div className="flex flex-col gap-1 flex-1 min-w-[150px]">
-                    {i === 0 && (
-                      <label className="text-xs font-medium text-[var(--color-text-muted)]">
-                        {t("costCalc.monthlyCost")}
-                      </label>
-                    )}
-                  <input
-                    type="number"
-                    value={row.monthlyCost}
-                    onChange={(e) => updateRow(i, "monthlyCost", e.target.value)}
-                    placeholder="0.00"
-                    min="0"
-                    step="0.01"
-                    className="h-8 rounded-[var(--radius-lg)] border bg-[var(--color-bg-surface)] px-3 text-sm text-[var(--color-text)] border-[var(--color-border)] focus:outline-none focus:border-[var(--color-primary)] focus:ring-1 focus:ring-[var(--color-focus-ring)] transition-colors w-full font-mono"
-                  />
-                  {(() => {
-                    const derived = derivedSelfHostedRate(row);
-                    return derived !== null ? (
-                      <span className="text-[10px] text-[var(--color-text-muted)]">
-                        ≈ {t("format.currency", { value: derived.toFixed(2) })} {t("costCalcSection.per1MTokens")}{" "}
-                        <em className="not-italic text-[var(--color-primary)]">({t("costCalcSection.derived")})</em>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-[var(--color-text-muted)] italic">
-                        {t("costCalcSection.noUsageThisMonth")}
-                      </span>
-                    );
-                  })()}
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => removeRow(i)}
-                className="h-8 w-8 shrink-0 flex items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] hover:text-[var(--color-status-error)] hover:bg-[var(--color-bg-muted)] transition-colors cursor-pointer"
-                aria-label={t("costCalcSection.removeRow")}
+        {/* Rate-period entry rows */}
+        <div className="space-y-2.5">
+          {orderedRows.map((row) => {
+            const invalid = rangeInvalid(row);
+            const overlap = !invalid && hasOverlap(row);
+            const derived = derivedSelfHostedRate(row);
+            const providerModels = modelsByProvider.get(row.provider) ?? [];
+            return (
+              <div
+                key={row.id}
+                className={[
+                  "rounded-[var(--radius-lg)] border bg-[var(--color-bg-muted)]/30 p-3 transition-colors duration-[var(--duration-fast)]",
+                  invalid
+                    ? "border-[color-mix(in_srgb,var(--color-status-error)_40%,var(--color-border-subtle))]"
+                    : overlap
+                      ? "border-[color-mix(in_srgb,var(--color-status-warning)_45%,var(--color-border-subtle))]"
+                      : "border-[var(--color-border-subtle)]",
+                ].join(" ")}
               >
-                <Trash2 className="size-3.5" />
-              </button>
-            </div>
-          ))}
+                {/* Identity band: provider + model scope read as the row's key */}
+                <div className="flex flex-wrap items-end gap-3">
+                  {/* Provider picker: catalog select with custom-entry fallback */}
+                  <div className="flex min-w-[180px] flex-1 flex-col gap-1">
+                    <span className={fieldLabelClass}>
+                      {t("costCalcSection.provider")}
+                    </span>
+                    {!catalog || row.customProvider ? (
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          value={row.provider}
+                          onChange={(e) =>
+                            updateRow(row.id, {
+                              provider: e.target.value,
+                              customProvider: true,
+                            })
+                          }
+                          placeholder={t("costCalc.providerPlaceholder")}
+                          className={identityInputClass}
+                        />
+                        {catalog && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              updateRow(row.id, { provider: "", customProvider: false })
+                            }
+                            title={t("pickFromList")}
+                            className="h-9 shrink-0 whitespace-nowrap rounded-[var(--radius-lg)] border border-[var(--color-border)] px-2.5 text-xs text-[var(--color-text-muted)] transition-colors hover:border-[var(--color-border-strong)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)] cursor-pointer"
+                          >
+                            {t("costCalcSection.listButton")}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <select
+                        value={row.provider}
+                        onChange={(e) => {
+                          if (e.target.value === CUSTOM_PROVIDER) {
+                            updateRow(row.id, {
+                              provider: "",
+                              model: "",
+                              customProvider: true,
+                            });
+                          } else {
+                            updateRow(row.id, {
+                              provider: e.target.value,
+                              model: "",
+                              customProvider: false,
+                            });
+                          }
+                        }}
+                        className={`${identitySelectClass} ${selectChevron}`}
+                      >
+                        <option value="">{t("costCalcSection.selectProvider")}</option>
+                        {/* Preserve a saved provider that isn't in the catalog */}
+                        {row.provider !== "" &&
+                          !catalog.some((c) => c.name === row.provider) && (
+                            <option value={row.provider}>{row.provider}</option>
+                          )}
+                        {catalog.some((c) => c.kind === "cloud") && (
+                          <optgroup label={t("costCalcSection.cloudProviders")}>
+                            {catalog
+                              .filter((c) => c.kind === "cloud")
+                              .map((c) => (
+                                <option key={`cloud-${c.name}`} value={c.name}>
+                                  {c.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+                        {catalog.some((c) => c.kind === "agent") && (
+                          <optgroup label={t("costCalcSection.selfHostedAgents")}>
+                            {catalog
+                              .filter((c) => c.kind === "agent")
+                              .map((c) => (
+                                <option key={`agent-${c.name}`} value={c.name}>
+                                  {c.name}
+                                </option>
+                              ))}
+                          </optgroup>
+                        )}
+                        <option value={CUSTOM_PROVIDER}>
+                          {t("costCalcSection.customOption")}
+                        </option>
+                      </select>
+                    )}
+                  </div>
 
+                  {/* Model scope: whole provider or one model override */}
+                  <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                    <span className={fieldLabelClass}>
+                      {t("costCalcSection.modelScope")}
+                    </span>
+                    <select
+                      value={row.model}
+                      onChange={(e) => updateRow(row.id, { model: e.target.value })}
+                      className={`${identitySelectClass} ${selectChevron}`}
+                    >
+                      <option value="">{t("costCalcSection.allModels")}</option>
+                      {providerModels.map((mm) => (
+                        <option key={mm} value={mm}>
+                          {modelLabel(mm)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => removeRow(row.id)}
+                    className="mb-1 ml-auto flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-status-error)_12%,transparent)] hover:text-[var(--color-status-error)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+                    aria-label={t("costCalcSection.removeRow")}
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+
+                {/* Secondary band: bounded period, pricing mode, amounts */}
+                <div className="mt-2.5 flex flex-wrap items-start gap-x-3 gap-y-2 border-t border-[var(--color-border-subtle)] pt-2.5">
+                  {/* Period: bounded From → To range; a blank side is open-ended */}
+                  <div className="flex w-full flex-col gap-1 sm:w-auto sm:min-w-[280px] sm:flex-1">
+                    <span className={fieldLabelClass}>
+                      {t("costCalcSection.period")}
+                    </span>
+                    <div className="flex items-stretch gap-1 rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-1 transition-colors focus-within:border-[var(--color-primary)] focus-within:ring-1 focus-within:ring-[var(--color-focus-ring)]">
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="flex items-center justify-between gap-1 px-1">
+                          <span className="text-[10px] font-medium text-[var(--color-text-muted)]">
+                            {t("costCalcSection.periodFrom")}
+                          </span>
+                          {!row.from && (
+                            <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                              {t("costCalcSection.openEnded")}
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="date"
+                          value={row.from}
+                          onChange={(e) => updateRow(row.id, { from: e.target.value })}
+                          className={dateInputClass}
+                        />
+                      </div>
+                      <ArrowRight
+                        className="size-3.5 shrink-0 self-center text-[var(--color-text-muted)]"
+                        aria-hidden="true"
+                      />
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <div className="flex items-center justify-between gap-1 px-1">
+                          <span className="text-[10px] font-medium text-[var(--color-text-muted)]">
+                            {t("costCalcSection.periodTo")}
+                          </span>
+                          {!row.to && (
+                            <span className="rounded-full bg-[var(--color-bg-muted)] px-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
+                              {t("costCalcSection.openEnded")}
+                            </span>
+                          )}
+                        </div>
+                        <input
+                          type="date"
+                          value={row.to}
+                          onChange={(e) => updateRow(row.id, { to: e.target.value })}
+                          className={dateInputClass}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Pricing mode toggle (segmented, unchanged visual language) */}
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <span className={fieldLabelClass}>
+                      {t("costCalcSection.pricing")}
+                    </span>
+                    <div
+                      className="flex h-8 items-center gap-0.5 rounded-[var(--radius-md)] bg-[var(--color-bg-muted)] p-0.5"
+                      role="group"
+                      aria-label={t("costCalcSection.pricing")}
+                    >
+                      {(
+                        [
+                          ["per-token", t("costModes.perToken"), t("costCalcSection.perTokenHint")],
+                          ["subscription", t("costModes.monthly"), t("costCalcSection.monthlyHint")],
+                          [
+                            "self-hosted",
+                            t("costModes.selfHosted"),
+                            t("costCalcSection.selfHostedHint"),
+                          ],
+                        ] as const
+                      ).map(([mode, label, hint]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => updateRow(row.id, { mode })}
+                          title={hint}
+                          aria-pressed={row.mode === mode}
+                          className={`
+                            cursor-pointer whitespace-nowrap rounded-[calc(var(--radius-md)-2px)] px-2 py-1 text-xs font-medium
+                            transition-all duration-[var(--duration-fast)]
+                            focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-focus-ring)]
+                            ${
+                              row.mode === mode
+                                ? "bg-[var(--color-bg-surface)] text-[var(--color-text-heading)] shadow-sm"
+                                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                            }
+                          `}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Amount inputs for the active mode */}
+                  {row.mode === "per-token" && (
+                    <>
+                      <div className="flex min-w-[110px] flex-1 flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {t("costCalcSection.promptRate")}
+                        </span>
+                        <input
+                          type="number"
+                          value={row.promptPer1M}
+                          onChange={(e) =>
+                            updateRow(row.id, { promptPer1M: e.target.value })
+                          }
+                          placeholder="0.00"
+                          min="0"
+                          step="0.01"
+                          className={numberInputClass}
+                        />
+                      </div>
+                      <div className="flex min-w-[110px] flex-1 flex-col gap-1">
+                        <span className={fieldLabelClass}>
+                          {t("costCalcSection.completionRate")}
+                        </span>
+                        <input
+                          type="number"
+                          value={row.completionPer1M}
+                          onChange={(e) =>
+                            updateRow(row.id, { completionPer1M: e.target.value })
+                          }
+                          placeholder="0.00"
+                          min="0"
+                          step="0.01"
+                          className={numberInputClass}
+                        />
+                      </div>
+                    </>
+                  )}
+                  {row.mode === "subscription" && (
+                    <div className="flex min-w-[140px] flex-1 flex-col gap-1">
+                      <span className={fieldLabelClass}>
+                        {t("costCalc.monthlySubscription")}
+                      </span>
+                      <input
+                        type="number"
+                        value={row.monthlyPrice}
+                        onChange={(e) =>
+                          updateRow(row.id, { monthlyPrice: e.target.value })
+                        }
+                        placeholder="0.00"
+                        min="0"
+                        step="0.01"
+                        className={numberInputClass}
+                      />
+                    </div>
+                  )}
+                  {row.mode === "self-hosted" && (
+                    <div className="flex min-w-[160px] flex-1 flex-col gap-1">
+                      <span className={fieldLabelClass}>
+                        {t("costCalc.monthlyCost")}
+                      </span>
+                      <input
+                        type="number"
+                        value={row.monthlyCost}
+                        onChange={(e) =>
+                          updateRow(row.id, { monthlyCost: e.target.value })
+                        }
+                        placeholder="0.00"
+                        min="0"
+                        step="0.01"
+                        className={numberInputClass}
+                      />
+                      {!derived.active ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-[var(--color-text-muted)]">
+                          <Info className="size-3 shrink-0" aria-hidden="true" />
+                          {t("costCalcSection.periodNotActive")}
+                        </span>
+                      ) : derived.rate !== null ? (
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          ≈{" "}
+                          <span className="font-mono text-[var(--color-text)]">
+                            {formatCurrency(Number(derived.rate.toFixed(2)))}
+                          </span>{" "}
+                          {t("costCalcSection.per1MTokens")}{" "}
+                          <span className="text-[var(--color-primary)]">
+                            {t("costCalcSection.derived")}
+                          </span>{" "}
+                          {t("costCalcSection.proratedMonth")}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] italic text-[var(--color-text-muted)]">
+                          {t("costCalcSection.noUsageThisMonth")}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {invalid && (
+                  <p className="mt-2 flex items-start gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-error)_10%,transparent)] px-2 py-1.5 text-[11px] font-medium text-[var(--color-status-error)]">
+                    <AlertCircle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+                    {t("costCalcSection.invalidRange")}
+                  </p>
+                )}
+                {!invalid && overlap && (
+                  <p className="mt-2 flex items-start gap-1.5 rounded-[var(--radius-md)] bg-[color-mix(in_srgb,var(--color-status-warning)_12%,transparent)] px-2 py-1.5 text-[11px] font-medium text-[var(--color-status-warning)]">
+                    <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+                    {t("costCalcSection.overlapWarning")}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
             onClick={addRow}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-bg-muted)] rounded-[var(--radius-md)] transition-colors cursor-pointer"
+            className="flex cursor-pointer items-center gap-1.5 rounded-[var(--radius-md)] px-3 py-1.5 text-xs font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-bg-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
           >
-            <Plus className="size-3" />
-            {t("costCalcSection.addProvider")}
+            <Plus className="size-3.5" />
+            {t("costCalcSection.addPeriod")}
           </button>
-        </div>
-
-        <div className="flex justify-end">
-          <Button variant="primary" size="sm" onClick={saveRates}>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={saveRates}
+            disabled={hasInvalidRange}
+          >
             {t("costCalcSection.saveRates")}
           </Button>
         </div>
 
-        {/* Cost Breakdown Table */}
-        {costBreakdown.length > 0 && (
-          <div className="overflow-x-auto">
+        {/* Cost Breakdown Table (per period) */}
+        {breakdownRows.length > 0 && (
+          <div className="overflow-x-auto rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)]">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-[var(--color-border)]">
-                  <th className="text-left py-2 pr-3 text-xs font-medium text-[var(--color-text-muted)]">
+                <tr className="border-b border-[var(--color-border)] bg-[var(--color-bg-muted)]/40">
+                  <th className={`${thClass} text-left`}>
                     {t("costCalcSection.provider")}
                   </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.promptRate")}
+                  <th className={`${thClass} text-left`}>
+                    {t("costCalcSection.modelScope")}
                   </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.completionRate")}
+                  <th className={`${thClass} text-left`}>
+                    {t("costCalcSection.period")}
                   </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
+                  <th className={thRightClass}>
+                    {t("costCalcSection.pricing")}
+                  </th>
+                  <th className={`${thRightClass} hidden sm:table-cell`}>
                     {t("costCalcSection.promptTokens")}
                   </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)] hidden sm:table-cell">
+                  <th className={`${thRightClass} hidden sm:table-cell`}>
                     {t("costCalcSection.completionTokens")}
                   </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.promptCost")}
-                  </th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-[var(--color-text-muted)]">
-                    {t("costCalcSection.completionCost")}
-                  </th>
-                  <th className="text-right py-2 pl-3 text-xs font-medium text-[var(--color-text-muted)]">
+                  <th className={thRightClass}>
                     {t("costCalcSection.totalCost")}
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {costBreakdown.map((row) => (
-                  <tr
-                    key={row.provider}
-                    className="border-b border-[var(--color-border)] last:border-0"
-                  >
-                    <td className="py-2 pr-3 font-medium text-[var(--color-text-heading)] whitespace-nowrap">
-                      {row.provider || <span className="text-[var(--color-text-muted)] italic">{t("costCalcSection.unnamed")}</span>}
-                      {row.isSub && (
-                        <Badge variant="outline" size="sm" className="ml-2">
-                          {t("costCalcSection.monthly")}
-                        </Badge>
-                      )}
-                      {row.isSelfHosted && (
-                        <Badge variant="outline" size="sm" className="ml-2">
-                          {t("costCalcSection.selfHosted")}
-                        </Badge>
-                      )}
-                    </td>
-                    {row.isSub ? (
-                      <>
-                        <td className="py-2 px-3 text-right text-[var(--color-text-muted)]" colSpan={2}>
-                          {t("costCalcSection.incl")}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)] hidden sm:table-cell">
-                          {formatTokens(row.promptTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)] hidden sm:table-cell">
-                          {formatTokens(row.completionTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]" colSpan={2}>
-                          {formatCurrency(row.monthlyFee)}{t("monthlySuffix")}
-                        </td>
-                      </>
-                    ) : row.isSelfHosted ? (
-                      <>
-                        {/* Derived effective rate sits next to cloud per-token
-                            prices so the comparison is visible at a glance. */}
-                        <td className="py-2 px-3 text-right text-xs text-[var(--color-text-muted)]" colSpan={2}>
-                          {row.derivedRate !== null ? (
-                            <>
-                              {t("format.currency", { value: row.derivedRate.toFixed(2) })} {t("per1MTok")}{" "}
-                              <em className="not-italic text-[var(--color-primary)]">({t("costCalcSection.derived")})</em>
-                            </>
-                          ) : (
-                            <span className="italic">
-                              {t("costCalcSection.noUsageThisMonth")}
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)] hidden sm:table-cell">
-                          {formatTokens(row.promptTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text-muted)] hidden sm:table-cell">
-                          {formatTokens(row.completionTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]" colSpan={2}>
-                          {formatCurrency(row.monthlyCost)}{t("monthlySuffix")}
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {row.promptPer1M ? t("format.currency", { value: parseFloat(row.promptPer1M).toFixed(2) }) : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {row.completionPer1M ? t("format.currency", { value: parseFloat(row.completionPer1M).toFixed(2) }) : "—"}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
-                          {formatTokens(row.promptTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)] hidden sm:table-cell">
-                          {formatTokens(row.completionTokens)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {formatCurrency(row.promptCost)}
-                        </td>
-                        <td className="py-2 px-3 text-right font-mono text-[var(--color-text)]">
-                          {formatCurrency(row.completionCost)}
-                        </td>
-                      </>
-                    )}
-                    <td className="py-2 pl-3 text-right font-mono font-medium text-[var(--color-text-heading)]">
-                      {formatCurrency(row.totalCost)}
-                      {row.isSub && (
-                        <span className="text-[10px] font-normal text-[var(--color-text-muted)] ml-1">
-                          {t("monthlySuffix")}
+                {breakdownRows.map((row) => {
+                  const buckets = bucketsForRow(row);
+                  const promptTokens = buckets.reduce(
+                    (sum, b) => sum + b.promptTokens,
+                    0,
+                  );
+                  const completionTokens = buckets.reduce(
+                    (sum, b) => sum + b.completionTokens,
+                    0,
+                  );
+                  return (
+                    <tr
+                      key={row.id}
+                      className="border-b border-[var(--color-border-subtle)] last:border-0"
+                    >
+                      <td className="whitespace-nowrap px-3 py-2 font-medium text-[var(--color-text-heading)]">
+                        {row.provider || (
+                          <span className="italic text-[var(--color-text-muted)]">
+                            {t("costCalcSection.unnamed")}
+                          </span>
+                        )}
+                        {row.mode === "subscription" && (
+                          <Badge variant="outline" size="sm" className="ml-2">
+                            {t("costCalcSection.monthly")}
+                          </Badge>
+                        )}
+                        {row.mode === "self-hosted" && (
+                          <Badge variant="outline" size="sm" className="ml-2">
+                            {t("costCalcSection.selfHosted")}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-[var(--color-text)]">
+                        {row.model ? (
+                          modelLabel(row.model)
+                        ) : (
+                          <span className="italic text-[var(--color-text-muted)]">
+                            {t("costCalcSection.allModels")}
+                          </span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs">
+                        <span className="inline-flex items-center gap-1.5">
+                          <span
+                            className={`font-mono ${
+                              row.from
+                                ? "text-[var(--color-text)]"
+                                : "italic text-[var(--color-text-muted)]"
+                            }`}
+                          >
+                            {row.from || t("costCalcSection.openEnded")}
+                          </span>
+                          <ArrowRight
+                            className="size-3 shrink-0 text-[var(--color-text-muted)]"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className={`font-mono ${
+                              row.to
+                                ? "text-[var(--color-text)]"
+                                : "italic text-[var(--color-text-muted)]"
+                            }`}
+                          >
+                            {row.to || t("costCalcSection.openEnded")}
+                          </span>
                         </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-[var(--color-text)]">
+                        {amountLabel(row)}
+                      </td>
+                      <td className="hidden px-3 py-2 text-right font-mono text-[var(--color-text)] sm:table-cell">
+                        {formatTokens(promptTokens)}
+                      </td>
+                      <td className="hidden px-3 py-2 text-right font-mono text-[var(--color-text)] sm:table-cell">
+                        {formatTokens(completionTokens)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono font-medium text-[var(--color-text-heading)]">
+                        {formatCurrency(rowDisplayCost(row))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot>
-                <tr className="border-t border-[var(--color-border-strong)]">
+                <tr className="border-t border-[var(--color-border-strong)] bg-[var(--color-bg-muted)]/50">
                   <td
                     colSpan={6}
-                    className="py-2 pr-3 text-right text-xs font-semibold text-[var(--color-text-heading)] sm:col-span-6"
+                    className="px-3 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]"
                   >
                     {t("costCalcSection.grandTotal")}
                   </td>
-                  <td
-                    colSpan={2}
-                    className="py-2 pl-3 text-right font-mono font-semibold text-[var(--color-text-heading)]"
-                  >
+                  <td className="px-3 py-2.5 text-right font-mono text-sm font-semibold text-[var(--color-text-heading)]">
                     {formatCurrency(grandTotal)}
                   </td>
                 </tr>

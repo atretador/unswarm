@@ -297,6 +297,83 @@ func TestFirstPublicPortFromNat_MultipleEntries(t *testing.T) {
 	}
 }
 
+// TestFirstPublicPortFromNat_MultipleEntries_Deterministic runs the
+// multiple-entry case many times so the ordering guarantee (lowest exposed
+// container port wins) is covered despite nat.PortMap's randomized iteration
+// order. This is the regression guard for the former CI flake.
+func TestFirstPublicPortFromNat_MultipleEntries_Deterministic(t *testing.T) {
+	ports := nat.PortMap{
+		"80/tcp": []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: "8080"},
+		},
+		"443/tcp": []nat.PortBinding{
+			{HostIP: "0.0.0.0", HostPort: "8443"},
+		},
+	}
+	for i := 0; i < 1000; i++ {
+		if got := firstPublicPortFromNat(ports); got != 8080 {
+			t.Fatalf("iteration %d: firstPublicPortFromNat = %d, want 8080 (lowest exposed port)", i, got)
+		}
+	}
+}
+
+// TestFirstPublicPortFromNat_LowestPortRule covers the deterministic rule
+// directly: regardless of map insertion order, the binding of the numerically
+// lowest exposed container port is returned, entries without bindings are
+// skipped, and an unparsable host port at the lowest key falls through to the
+// next valid binding.
+func TestFirstPublicPortFromNat_LowestPortRule(t *testing.T) {
+	bid := func(hostPort string) []nat.PortBinding {
+		return []nat.PortBinding{{HostIP: "0.0.0.0", HostPort: hostPort}}
+	}
+	tests := []struct {
+		name  string
+		ports nat.PortMap
+		want  int
+	}{
+		{
+			name: "lowest port wins regardless of insertion order",
+			ports: nat.PortMap{
+				"9000/tcp": bid("19000"),
+				"80/tcp":   bid("8080"),
+				"443/tcp":  bid("8443"),
+			},
+			want: 8080,
+		},
+		{
+			name: "lowest key without bindings is skipped",
+			ports: nat.PortMap{
+				"80/tcp":  nil,
+				"443/tcp": bid("8443"),
+			},
+			want: 8443,
+		},
+		{
+			name: "empty host port at lowest key falls through",
+			ports: nat.PortMap{
+				"80/tcp":  bid(""),
+				"443/tcp": bid("8443"),
+			},
+			want: 8443,
+		},
+		{
+			name: "no valid binding anywhere",
+			ports: nat.PortMap{
+				"80/tcp":  bid("not-a-port"),
+				"443/tcp": nil,
+			},
+			want: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := firstPublicPortFromNat(tt.ports); got != tt.want {
+				t.Errorf("firstPublicPortFromNat = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // okResult / errorResult
 // ---------------------------------------------------------------------------

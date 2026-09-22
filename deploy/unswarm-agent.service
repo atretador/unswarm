@@ -14,15 +14,33 @@ RestartSec=5
 # ── Hardening ─────────────────────────────────────────────────────────────
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
+# PrivateDevices=true hides /dev/nvidia* from the service. Allow them back so
+# `nvidia-smi` GPU telemetry keeps working (decision 18). Remove these if you
+# prefer to set PrivateDevices=false on NVIDIA hosts.
+DeviceAllow=/dev/nvidiactl rw
+DeviceAllow=/dev/nvidia* rw
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
 RestrictSUIDSGID=true
+RestrictNamespaces=true
+RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RemoveIPC=true
+KeyringMode=private
+UMask=0077
+# script_log_dir MUST live under a path listed here.
 ReadWritePaths=/var/lib/unswarm
 
 [Install]

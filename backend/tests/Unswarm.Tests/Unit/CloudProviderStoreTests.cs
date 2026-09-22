@@ -545,6 +545,201 @@ public sealed class CloudProviderStoreTests
         finally { await conn.DisposeAsync(); }
     }
 
+    // ── SaveModelsAsync (metadata overload) ──────────────────────────────
+
+    [Fact]
+    public async Task SaveModelsAsync_WithMetadata_SavesAndReadsBack()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            var metas = new List<CloudProviderModelMeta>
+            {
+                new() { Id = "gpt-5.4", ContextWindow = 1050000, MaxOutputTokens = 128000, Family = "gpt", DisplayName = "GPT 5.4" },
+                new() { Id = "claude-sonnet-4-5", ContextWindow = 200000, MaxOutputTokens = 64000, Family = "claude" }
+            };
+            await store.SaveModelsAsync(id, metas);
+
+            var result = await store.GetModelMetasAsync(id);
+            Assert.Equal(2, result.Count);
+
+            var gpt = result.First(m => m.Id == "gpt-5.4");
+            Assert.Equal(1050000, gpt.ContextWindow);
+            Assert.Equal(128000, gpt.MaxOutputTokens);
+            Assert.Equal("gpt", gpt.Family);
+            Assert.Equal("GPT 5.4", gpt.DisplayName);
+
+            var claude = result.First(m => m.Id == "claude-sonnet-4-5");
+            Assert.Equal(200000, claude.ContextWindow);
+            Assert.Equal(64000, claude.MaxOutputTokens);
+            Assert.Equal("claude", claude.Family);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_WithMetadata_GetModelIdsAsync_AlsoWorks()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            var metas = new List<CloudProviderModelMeta>
+            {
+                new() { Id = "gpt-5.4", ContextWindow = 1050000 },
+                new() { Id = "claude-sonnet-4-5", ContextWindow = 200000 }
+            };
+            await store.SaveModelsAsync(id, metas);
+
+            // GetModelIdsAsync should still return bare IDs
+            var ids = await store.GetModelIdsAsync(id);
+            Assert.Equal(2, ids.Count);
+            Assert.Contains("gpt-5.4", ids);
+            Assert.Contains("claude-sonnet-4-5", ids);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_StringOverload_CreatesMetaObjects()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            // Save via string overload
+            await store.SaveModelsAsync(id, ["gpt-4o", "gpt-4o-mini"]);
+
+            // Read back via meta overload — should get object-format entries
+            var metas = await store.GetModelMetasAsync(id);
+            Assert.Equal(2, metas.Count);
+            Assert.Equal("gpt-4o", metas[0].Id);
+            Assert.Equal(0, metas[0].ContextWindow); // default from FromId
+            Assert.Equal("gpt-4o-mini", metas[1].Id);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_MetadataOverwrite_ReplacesPrevious()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            // First save with metadata
+            await store.SaveModelsAsync(id, new List<CloudProviderModelMeta>
+            {
+                new() { Id = "model-a", ContextWindow = 100000 }
+            });
+
+            // Overwrite with different metadata
+            await store.SaveModelsAsync(id, new List<CloudProviderModelMeta>
+            {
+                new() { Id = "model-a", ContextWindow = 200000, Family = "updated" },
+                new() { Id = "model-b", ContextWindow = 50000 }
+            });
+
+            var result = await store.GetModelMetasAsync(id);
+            Assert.Equal(2, result.Count);
+            var modelA = result.First(m => m.Id == "model-a");
+            Assert.Equal(200000, modelA.ContextWindow);
+            Assert.Equal("updated", modelA.Family);
+            Assert.Equal("model-b", result[1].Id);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task GetModelMetasAsync_MissingProvider_ReturnsEmpty()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var metas = await store.GetModelMetasAsync("cp_nonexistent");
+            Assert.Empty(metas);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task GetModelMetasAsync_DefaultModelsJson_ReturnsEmpty()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+            var metas = await store.GetModelMetasAsync(id);
+            Assert.Empty(metas);
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_Metadata_cloudPrefix_ThrowsArgumentException()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => store.SaveModelsAsync(id, new List<CloudProviderModelMeta>
+                {
+                    new() { Id = "cloud/some-model" }
+                }));
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_Metadata_EmptyId_ThrowsArgumentException()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => store.SaveModelsAsync(id, new List<CloudProviderModelMeta>
+                {
+                    new() { Id = "" }
+                }));
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
+    [Fact]
+    public async Task SaveModelsAsync_Metadata_TooMany_ThrowsArgumentException()
+    {
+        var (factory, conn) = BuildDb();
+        try
+        {
+            var store = new CloudProviderStore(factory, FakeEncryptor(), Log());
+            var id = await CreateTestProviderAsync(store);
+            var tooMany = Enumerable.Range(1, 501)
+                .Select(i => CloudProviderModelMeta.FromId($"model-{i}"))
+                .ToList();
+
+            await Assert.ThrowsAsync<ArgumentException>(
+                () => store.SaveModelsAsync(id, tooMany));
+        }
+        finally { await conn.DisposeAsync(); }
+    }
+
     // ── SaveOAuthTokensAsync / GetOAuthTokensAsync ─────────────────────────
 
     [Fact]

@@ -5,21 +5,24 @@ import {
   ChevronDown,
   ChevronRight,
   MessageSquare,
+  Pencil,
   TriangleAlert,
   RefreshCw,
   Save,
 } from "lucide-react";
 import { useTranslation, Trans } from "react-i18next";
 import { TriCheckbox } from "../../components/ui";
-import { Button, Badge, Tooltip } from "../../components/ui";
+import { Button, Badge, Tooltip, Dialog, Input } from "../../components/ui";
 import { getProviderModelCatalog } from "../api-keys/api-keys-api";
 import { client } from "../../lib/query-client";
+import type { Model } from "../../lib/api/types";
+import { InputModalitiesField, normalizeInputModalities } from "./input-modalities-field";
 
 /**
  * Curates which cloud models are active. Model selection is saved per-provider
  * to ModelsJson via PUT /api/cloudproviders/{id}/models.
  */
-export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?: () => void; onChatModel?: (modelId: string) => void; filter?: string }) {
+export function CloudModelSelector({ onSaved, onChatModel, filter, cloudModels }: { onSaved?: () => void; onChatModel?: (modelId: string) => void; filter?: string; cloudModels?: Model[] }) {
   const { t } = useTranslation('models');
   const { t: tCommon } = useTranslation('common');
   const queryClient = useQueryClient();
@@ -111,6 +114,23 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
   const [refreshing, setRefreshing] = useState<Set<string>>(new Set());
   // Per-provider error state
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
+
+  // ─── Cloud model edit state ────────────────────────────────────
+  const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [editCtxWindow, setEditCtxWindow] = useState("");
+  const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
+  const [editInputModalities, setEditInputModalities] = useState<string[]>(["text"]);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const cloudEditMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: Partial<Model> }) =>
+      client.updateModel(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      setEditingModelId(null);
+    },
+    onError: (err: Error) => setEditError(err.message),
+  });
 
   const clearError = useCallback((name: string) => {
     setErrors((prev) => {
@@ -420,6 +440,24 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
                           </button>
                         </Tooltip>
                       )}
+                      <Tooltip content={t('editDetails')}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const compositeId = `cloud/${provider.name}/${modelId}`;
+                            const existing = (cloudModels ?? []).find((m) => m.id === compositeId);
+                            setEditCtxWindow(existing?.contextWindow?.toString() ?? "");
+                            setEditMaxOutputTokens(existing?.maxOutputTokens?.toString() ?? "");
+                            setEditInputModalities(normalizeInputModalities(existing?.inputModalities));
+                            setEditError(null);
+                            setEditingModelId(compositeId);
+                          }}
+                          aria-label={t('editModelAria', { name: modelId })}
+                          className="flex size-6 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg-surface)] hover:text-[var(--color-text)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]"
+                        >
+                          <Pencil className="size-3" />
+                        </button>
+                      </Tooltip>
                     </div>
                   ))}
                 </div>
@@ -428,6 +466,89 @@ export function CloudModelSelector({ onSaved, onChatModel, filter }: { onSaved?:
           );
         })}
       </div>
+
+      {/* Cloud Model Edit Dialog */}
+      <Dialog
+        open={editingModelId !== null}
+        onOpenChange={(o) => !o && setEditingModelId(null)}
+        title={t('editModel')}
+      >
+        <div className="p-5 space-y-4">
+          <Input
+            label={t('form.internalName')}
+            value={editingModelId ?? ""}
+            readOnly
+            className="opacity-60 cursor-not-allowed"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label={t('form.contextWindow')}
+              value={editCtxWindow}
+              onChange={(e) => setEditCtxWindow(e.target.value)}
+              placeholder={t('placeholders.contextWindow')}
+              type="number"
+              min={1}
+              max={10000000}
+            />
+            <Input
+              label={t('form.maxOutputTokens')}
+              value={editMaxOutputTokens}
+              onChange={(e) => setEditMaxOutputTokens(e.target.value)}
+              placeholder={t('placeholders.maxOutputTokens')}
+              type="number"
+              min={1}
+              max={10000000}
+            />
+          </div>
+          <InputModalitiesField
+            value={editInputModalities}
+            onChange={setEditInputModalities}
+            disabled={cloudEditMutation.isPending}
+          />
+          {editError && (
+            <p className="text-sm text-[var(--color-status-error)]">{editError}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setEditingModelId(null)}
+              disabled={cloudEditMutation.isPending}
+            >
+              {tCommon('cancel')}
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              loading={cloudEditMutation.isPending}
+              onClick={() => {
+                if (!editingModelId) return;
+                const ctxWindow = editCtxWindow ? parseInt(editCtxWindow, 10) : 0;
+                if (editCtxWindow && (isNaN(ctxWindow) || ctxWindow <= 0 || ctxWindow > 10_000_000)) {
+                  setEditError(t('errors.contextWindowInvalid'));
+                  return;
+                }
+                const maxOut = editMaxOutputTokens ? parseInt(editMaxOutputTokens, 10) : undefined;
+                if (editMaxOutputTokens && (maxOut === undefined || isNaN(maxOut) || maxOut <= 0 || maxOut > 10_000_000)) {
+                  setEditError(t('errors.maxOutputTokensInvalid'));
+                  return;
+                }
+                setEditError(null);
+                cloudEditMutation.mutate({
+                  id: editingModelId,
+                  data: {
+                    contextWindow: ctxWindow,
+                    maxOutputTokens: maxOut,
+                    inputModalities: normalizeInputModalities(editInputModalities),
+                  },
+                });
+              }}
+            >
+              {tCommon('save')}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

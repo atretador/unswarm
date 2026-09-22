@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Validation;
 using Unswarm.Tests.Fakes;
 
 namespace Unswarm.Tests.Unit;
@@ -16,6 +18,7 @@ public sealed class ContainersControllerTests
     private readonly FakeContainerRegistry _containerRegistry = new();
     private readonly FakeBenchmarkHistory _benchmarks = new();
     private readonly FakeContainerCreationService _creationService = new();
+    private readonly DockerPolicyOptions _policyOptions = new();
 
     private ContainersController CreateController() => new(
         _docker,
@@ -24,7 +27,8 @@ public sealed class ContainersControllerTests
         _registrationService,
         _containerRegistry,
         _benchmarks,
-        _creationService);
+        _creationService,
+        Options.Create(_policyOptions));
 
     private static RegisteredRuntime MakeContainer(string id, string image = "test:latest") => new()
     {
@@ -576,5 +580,56 @@ public sealed class ContainersControllerTests
         Assert.Null(response.LauncherPath);
         Assert.Null(response.RuntimeProcessId);
         Assert.Equal("docker-c1", response.RuntimeContainerId);
+    }
+
+    // ── CreateContainer port normalization (N1) ───────────────────────
+
+    [Fact]
+    public async Task CreateContainer_ExplicitZeroContainerPort_CoercedToDefault()
+    {
+        CreateContainerRequest? captured = null;
+        _creationService.OnCreate = (req, _) =>
+        {
+            captured = req;
+            return Task.FromResult(new CreateContainerResult(
+                "runtime-1", ContainerCreationStatus.Starting, "container-1", "created", null));
+        };
+
+        var dto = new CreateContainerRequestDto
+        {
+            Image = "docker.io/test/image:latest",
+            DockerParams = new DockerCreateParamsDto { ContainerPort = 0 }
+        };
+
+        var result = await CreateController().CreateContainer(dto, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(captured);
+        // 0 is "unset" (agent parity) — the local path must not attempt a 0/tcp binding.
+        Assert.Equal(8080, captured!.DockerParams.ContainerPort);
+    }
+
+    [Fact]
+    public async Task CreateContainer_ExplicitPort_Preserved()
+    {
+        CreateContainerRequest? captured = null;
+        _creationService.OnCreate = (req, _) =>
+        {
+            captured = req;
+            return Task.FromResult(new CreateContainerResult(
+                "runtime-1", ContainerCreationStatus.Starting, "container-1", "created", null));
+        };
+
+        var dto = new CreateContainerRequestDto
+        {
+            Image = "docker.io/test/image:latest",
+            DockerParams = new DockerCreateParamsDto { ContainerPort = 11434 }
+        };
+
+        var result = await CreateController().CreateContainer(dto, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(captured);
+        Assert.Equal(11434, captured!.DockerParams.ContainerPort);
     }
 }

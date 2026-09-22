@@ -311,7 +311,7 @@ var cloudProvidersTestAndFetchCmd = &cobra.Command{
 
 var cloudProvidersSaveModelsCmd = &cobra.Command{
 	Use:   "save-models <name-or-id>",
-	Short: "Save model IDs for a cloud provider",
+	Short: "Save models for a cloud provider",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c := GetClient(cmd)
@@ -323,12 +323,16 @@ var cloudProvidersSaveModelsCmd = &cobra.Command{
 			return w.Error("not_found", err.Error(), nil, "use 'cloud-providers list' to see available providers", 1)
 		}
 
-		var modelIDs []any
+		var selectedModels []map[string]any
 
 		if cmd.Flags().Changed("model-ids") {
 			modelIDsJSON, _ := cmd.Flags().GetString("model-ids")
-			if err := json.Unmarshal([]byte(modelIDsJSON), &modelIDs); err != nil {
-				return w.Error("invalid_model_ids", "failed to parse model IDs JSON", nil, "provide model IDs as a JSON array", 1)
+			var bareIDs []string
+			if err := json.Unmarshal([]byte(modelIDsJSON), &bareIDs); err != nil {
+				return w.Error("invalid_model_ids", "failed to parse model IDs JSON", nil, "provide model IDs as a JSON array of strings", 1)
+			}
+			for _, id := range bareIDs {
+				selectedModels = append(selectedModels, map[string]any{"id": id})
 			}
 		} else {
 			// Interactive model selection: fetch available models from the provider
@@ -347,16 +351,16 @@ var cloudProvidersSaveModelsCmd = &cobra.Command{
 			}
 
 			// Extract model list from the response
-			models, ok := result["models"].([]any)
-			if !ok || len(models) == 0 {
+			fetchedModels, ok := result["models"].([]any)
+			if !ok || len(fetchedModels) == 0 {
 				return w.Error("no_models", "no models available from this provider", nil, "try 'cloud-providers fetch-models' first", 1)
 			}
 
 			// Build display options for selection
-			options := make([]string, 0, len(models))
-			for _, m := range models {
+			options := make([]string, 0, len(fetchedModels))
+			for _, m := range fetchedModels {
 				if mm, ok := m.(map[string]any); ok {
-					name := helpers.StrOrDash(mm, "name")
+					name := helpers.StrOrDash(mm, "displayName")
 					if name == "-" {
 						name = helpers.StrOrDash(mm, "id")
 					}
@@ -376,20 +380,17 @@ var cloudProvidersSaveModelsCmd = &cobra.Command{
 				return w.Error("selection_error", "invalid selection", nil, "", 1)
 			}
 
-			// Extract the ID of the selected model
-			selectedModel := models[idx]
-			if mm, ok := selectedModel.(map[string]any); ok {
-				if id, ok := mm["id"].(string); ok {
-					modelIDs = []any{id}
-				}
+			// Send the full model meta object for the selected model
+			if mm, ok := fetchedModels[idx].(map[string]any); ok {
+				selectedModels = append(selectedModels, mm)
 			}
-			if len(modelIDs) == 0 {
-				return w.Error("selection_error", "could not extract model ID from selection", nil, "", 1)
+			if len(selectedModels) == 0 {
+				return w.Error("selection_error", "could not extract model from selection", nil, "", 1)
 			}
 		}
 
 		body := map[string]any{
-			"modelIds": modelIDs,
+			"models": selectedModels,
 		}
 
 		resp, err := c.Do(cmd.Context(), "PUT", "/api/cloudproviders/"+resolvedID+"/models", body)
@@ -406,6 +407,185 @@ var cloudProvidersSaveModelsCmd = &cobra.Command{
 			return w.Error("parse_error", "failed to parse response", nil, "", 1)
 		}
 		return w.Print(result)
+	},
+}
+
+// --- cloud-providers model-meta ---
+
+var cloudProvidersModelMetaCmd = &cobra.Command{
+	Use:   "model-meta",
+	Short: "Manage model metadata for a cloud provider",
+	Long:  `List, set, and clear metadata (context window, max output, family, etc.) for individual models.`,
+}
+
+// --- cloud-providers model-meta list ---
+
+var cloudProvidersModelMetaListCmd = &cobra.Command{
+	Use:   "list <provider>",
+	Short: "List models with metadata for a cloud provider",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c := GetClient(cmd)
+		w := GetOutput(cmd)
+
+		resolver := resolve.New(newResolveAdapter(c), "/api/cloudproviders", "name")
+		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
+		if err != nil {
+			return w.Error("not_found", err.Error(), nil, "use 'cloud-providers list' to see available providers", 1)
+		}
+
+		resp, err := c.Do(cmd.Context(), "GET", "/api/cloudproviders/"+resolvedID, nil)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if resp.StatusCode >= 400 {
+			apiErr := client.ParseError(resp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+
+		// Get the provider detail (includes models with metadata via fetch-models)
+		// We need to fetch models separately since the provider detail doesn't include model metadata
+		fetchResp, err := c.Do(cmd.Context(), "POST", "/api/cloudproviders/"+resolvedID+"/fetch-models", nil)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if fetchResp.StatusCode >= 400 {
+			// If fetch fails, try listing from the saved models endpoint
+			// For now, show what we can from the provider detail
+			apiErr := client.ParseError(fetchResp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+
+		var result map[string]any
+		if err := json.Unmarshal(fetchResp.Body, &result); err != nil {
+			return w.Error("parse_error", "failed to parse response", nil, "", 1)
+		}
+
+		modelsRaw, ok := result["models"].([]any)
+		if !ok || len(modelsRaw) == 0 {
+			return w.Error("no_models", "no models found for this provider", nil, "", 1)
+		}
+
+		headers := []string{"MODEL ID", "DISPLAY NAME", "CONTEXT", "MAX OUTPUT", "FAMILY", "PARAMS", "QUANT"}
+		rows := make([][]string, 0, len(modelsRaw))
+		for _, m := range modelsRaw {
+			mm, ok := m.(map[string]any)
+			if !ok {
+				continue
+			}
+			rows = append(rows, []string{
+				helpers.StrOrDash(mm, "id"),
+				helpers.StrOrDash(mm, "displayName"),
+				helpers.IntOrDash(mm, "contextWindow"),
+				helpers.IntOrDash(mm, "maxOutputTokens"),
+				dashIfEmpty(helpers.StrOrDash(mm, "family")),
+				dashIfEmpty(helpers.StrOrDash(mm, "parameterSize")),
+				dashIfEmpty(helpers.StrOrDash(mm, "quantization")),
+			})
+		}
+		return w.PrintTable(headers, rows)
+	},
+}
+
+// --- cloud-providers model-meta set ---
+
+var cloudProvidersModelMetaSetCmd = &cobra.Command{
+	Use:   "set <provider> <model-id>",
+	Short: "Set metadata for a specific model in a cloud provider",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c := GetClient(cmd)
+		w := GetOutput(cmd)
+
+		resolver := resolve.New(newResolveAdapter(c), "/api/cloudproviders", "name")
+		resolvedID, err := resolver.Resolve(cmd.Context(), args[0])
+		if err != nil {
+			return w.Error("not_found", err.Error(), nil, "use 'cloud-providers list' to see available providers", 1)
+		}
+		modelID := args[1]
+
+		// Fetch current models
+		fetchResp, err := c.Do(cmd.Context(), "POST", "/api/cloudproviders/"+resolvedID+"/fetch-models", nil)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if fetchResp.StatusCode >= 400 {
+			apiErr := client.ParseError(fetchResp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+
+		var fetchResult map[string]any
+		if err := json.Unmarshal(fetchResp.Body, &fetchResult); err != nil {
+			return w.Error("parse_error", "failed to parse fetch-models response", nil, "", 1)
+		}
+
+		modelsRaw, ok := fetchResult["models"].([]any)
+		if !ok {
+			modelsRaw = []any{}
+		}
+
+		// Find and update the target model
+		found := false
+		updatedModels := make([]map[string]any, 0, len(modelsRaw))
+		for _, m := range modelsRaw {
+			mm, ok := m.(map[string]any)
+			if !ok {
+				continue
+			}
+			if mm["id"] == modelID {
+				found = true
+				// Apply flag overrides
+				if cmd.Flags().Changed("context-window") {
+					v, _ := cmd.Flags().GetInt("context-window")
+					mm["contextWindow"] = v
+				}
+				if cmd.Flags().Changed("max-output") {
+					v, _ := cmd.Flags().GetInt("max-output")
+					mm["maxOutputTokens"] = v
+				}
+				if cmd.Flags().Changed("family") {
+					v, _ := cmd.Flags().GetString("family")
+					mm["family"] = v
+				}
+				if cmd.Flags().Changed("param-size") {
+					v, _ := cmd.Flags().GetString("param-size")
+					mm["parameterSize"] = v
+				}
+				if cmd.Flags().Changed("quantization") {
+					v, _ := cmd.Flags().GetString("quantization")
+					mm["quantization"] = v
+				}
+				if cmd.Flags().Changed("display-name") {
+					v, _ := cmd.Flags().GetString("display-name")
+					mm["displayName"] = v
+				}
+			}
+			updatedModels = append(updatedModels, mm)
+		}
+
+		if !found {
+			return w.Error("model_not_found", fmt.Sprintf("model '%s' not found in provider %s", modelID, args[0]), nil, "use 'cloud-providers model-meta list' to see available models", 1)
+		}
+
+		// Save updated models
+		body := map[string]any{
+			"models": updatedModels,
+		}
+
+		saveResp, err := c.Do(cmd.Context(), "PUT", "/api/cloudproviders/"+resolvedID+"/models", body)
+		if err != nil {
+			return FormatErrorResponse(w, err)
+		}
+		if saveResp.StatusCode >= 400 {
+			apiErr := client.ParseError(saveResp)
+			return w.Error(apiErr.ErrCode, apiErr.Message, apiErr.Status, apiErr.Hint, apiErr.ExitCode)
+		}
+
+		return w.Print(map[string]any{
+			"message":  fmt.Sprintf("Updated metadata for model %s in provider %s", modelID, args[0]),
+			"provider": args[0],
+			"modelId":  modelID,
+		})
 	},
 }
 
@@ -643,6 +823,18 @@ func init() {
 	// Save-models flags (model-ids is optional; when omitted, interactive selection is used)
 	cloudProvidersSaveModelsCmd.Flags().String("model-ids", "", "Model IDs as JSON array (omit for interactive selection)")
 
+	// Model-meta set flags
+	cloudProvidersModelMetaSetCmd.Flags().Int("context-window", 0, "Context window in tokens")
+	cloudProvidersModelMetaSetCmd.Flags().Int("max-output", 0, "Max output tokens")
+	cloudProvidersModelMetaSetCmd.Flags().String("family", "", "Model family (e.g. gpt, claude, llama)")
+	cloudProvidersModelMetaSetCmd.Flags().String("param-size", "", "Parameter size (e.g. 7B, 70B)")
+	cloudProvidersModelMetaSetCmd.Flags().String("quantization", "", "Quantization (e.g. FP16, Q4_K_M)")
+	cloudProvidersModelMetaSetCmd.Flags().String("display-name", "", "Display name")
+
+	// Model-meta subcommand
+	cloudProvidersModelMetaCmd.AddCommand(cloudProvidersModelMetaListCmd)
+	cloudProvidersModelMetaCmd.AddCommand(cloudProvidersModelMetaSetCmd)
+
 	// OAuth-poll flags
 	cloudProvidersOauthPollCmd.Flags().String("device-auth-id", "", "Device auth ID")
 	cloudProvidersOauthPollCmd.Flags().String("user-code", "", "User code")
@@ -661,6 +853,7 @@ func init() {
 	cloudProvidersCmd.AddCommand(cloudProvidersOauthStartCmd)
 	cloudProvidersCmd.AddCommand(cloudProvidersOauthPollCmd)
 	cloudProvidersCmd.AddCommand(cloudProvidersOauthRefreshCmd)
+	cloudProvidersCmd.AddCommand(cloudProvidersModelMetaCmd)
 
 	rootCmd.AddCommand(cloudProvidersCmd)
 }

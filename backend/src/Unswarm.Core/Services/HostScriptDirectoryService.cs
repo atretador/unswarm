@@ -61,8 +61,10 @@ public sealed class HostScriptDirectoryService
 
     /// <summary>
     /// Validates a filename for safety: no path traversal, .sh extension only.
+    /// Public so remote-agent upload/update paths can validate untrusted names
+    /// before forwarding them to an agent.
     /// </summary>
-    private static string ValidateFileName(string fileName)
+    public static string ValidateFileName(string fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName))
             throw new ArgumentException("File name is required");

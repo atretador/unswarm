@@ -12,7 +12,11 @@ obj/
 
 # Go build artifacts
 agent/unswarm
+agent/agent
 unswarm-agent
+# Built binaries must never be committed
+**/unswarm
+**/agent
 
 # Env
 .env

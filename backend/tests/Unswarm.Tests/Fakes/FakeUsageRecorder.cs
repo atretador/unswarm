@@ -13,7 +13,8 @@ public sealed record FakeUsageRecord(
     double? ElapsedMs,
     string? ApiKeyId,
     string? ApiKeyName,
-    string ProviderKind);
+    string ProviderKind,
+    string? Agent);
 
 /// <summary>Captures usage records in memory for controller tests.</summary>
 public sealed class FakeUsageRecorder : IUsageRecorder
@@ -21,13 +22,13 @@ public sealed class FakeUsageRecorder : IUsageRecorder
     public List<FakeUsageRecord> Records { get; } = [];
 
     public Task RecordAsync(string provider, string model, int promptTokens, int completionTokens, int cachedTokens, bool isStreaming, double? elapsedMs,
-        string? apiKeyId = null, string? apiKeyName = null, string providerKind = "local")
+        string? apiKeyId = null, string? apiKeyName = null, string providerKind = "local", string? agent = null)
     {
         lock (Records)
         {
             Records.Add(new FakeUsageRecord(
                 provider, model, promptTokens, completionTokens, cachedTokens,
-                isStreaming, elapsedMs, apiKeyId, apiKeyName, providerKind));
+                isStreaming, elapsedMs, apiKeyId, apiKeyName, providerKind, agent));
         }
         return Task.CompletedTask;
     }

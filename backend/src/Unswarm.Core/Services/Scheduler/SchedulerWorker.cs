@@ -1391,6 +1391,12 @@ public sealed class SchedulerWorker : ISchedulerDrainer
             var servingRuntime = await GetRuntimeEntityAsync(lane.RuntimeId, ct).ConfigureAwait(false);
             response.ServedByRuntimeId = lane.RuntimeId;
             response.ServedByRuntimeName = servingRuntime?.DisplayName ?? lane.RuntimeId;
+            // Treat null/empty/whitespace agent as the local "host" cost unit so
+            // the metrics cost-unit CASE (which ignores empty agents) can never
+            // fall back to the per-runtime display name and re-split local usage.
+            response.ServedByRuntimeAgent = string.IsNullOrWhiteSpace(servingRuntime?.Agent)
+                ? "host"
+                : servingRuntime!.Agent;
 
             // Signal the caller that the response headers are ready and the body
             // stream is available. For streaming responses the body is still being

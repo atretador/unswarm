@@ -114,7 +114,7 @@
     "monthlySubscription": "Precio de subscripción mensual",
     "monthlyCost": "Costo mensual (energía, hardware, etc.)",
     "zeroPlaceholder": "0.00",
-    "description": "Establezca los precios para cada proveedor — tarifas por uso por 1M tokens, o una subscripción mensual fija. Las tarifas se guardan en el almacenamiento local del navegador y se aplican según la selección de filtros actual."
+    "description": "Defina períodos de tarifas con fechas por proveedor o modelo — tarifas por uso por 1M tokens, o un costo mensual fijo de suscripción/auto-hospedado. Los períodos se guardan en el almacenamiento local del navegador y se aplican a la ventana actual."
   },
   "breakdown": {
     "key": "Clave",
@@ -131,10 +131,9 @@
     "last7d": "Últimos 7 días",
     "less": "menos",
     "more": "más",
-    "request": {
-      "one": "solicitud",
-      "other": "solicitudes"
-    },
+    "request_one": "solicitud",
+    "request_other": "solicitudes",
+    "request_many": "solicitudes",
     "dayLabels": {
       "mon": "Lun",
       "tue": "Mar",
@@ -216,7 +215,7 @@
   },
   "sections": {
     "perModelBreakdown": "Desglose por modelo",
-    "perProviderBreakdown": "Desglose por proveedor",
+    "perProviderBreakdown": "Desglose por proveedor/agente",
     "recentRequests": "Solicitudes recientes",
     "requestsByHour": "Solicitudes por hora"
   },
@@ -237,15 +236,14 @@
       "avgLatency": "Latencia promedio",
       "cachedTokens": "Tokens en caché",
       "estCost": "Costo est.",
-      "requestCount": {
-        "one": "{{count}} solicitud",
-        "other": "{{count}} solicitudes"
-      },
+      "requestCount_one": "{{count}} solicitud",
+      "requestCount_other": "{{count}} solicitudes",
+      "requestCount_many": "{{count}} solicitudes",
       "ofTotal": "{{pct}}% del total"
     }
   },
   "comparisonTable": {
-    "provider": "Proveedor",
+    "provider": "Proveedor / Agente",
     "model": "Modelo",
     "providerComparison": "Comparación de {{dim}}",
     "missingRateDisclaimer": "* Excluye uso sin tarifas por token (subscripciones, auto-hospedados, modelos sin tarifa).",
@@ -272,7 +270,7 @@
     "nextPage": "Página siguiente"
   },
   "providerBreakdown": {
-    "noProviderUsage": "Sin datos de uso de proveedores para este rango de tiempo."
+    "noProviderUsage": "Sin datos de uso de proveedores/agentes para este rango de tiempo."
   },
   "breakdownSection": {
     "latencyDistribution": "Distribución de latencia",
@@ -289,7 +287,19 @@
     "cached": "En caché"
   },
   "costCalcSection": {
-    "provider": "Proveedor",
+    "provider": "Proveedor / Agente",
+    "period": "Período",
+    "periodFrom": "Desde",
+    "periodTo": "Hasta",
+    "openEnded": "sin límite",
+    "modelScope": "Modelo",
+    "allModels": "Todos los modelos",
+    "specificModel": "Modelo específico",
+    "addPeriod": "Agregar período de tarifa",
+    "overlapWarning": "Se superpone con otro período de este proveedor/modelo.",
+    "invalidRange": "«Desde» debe ser anterior o igual a «Hasta».",
+    "periodNotActive": "Período inactivo actualmente",
+    "proratedMonth": "(prorrateado por mes activo)",
     "promptRate": "Tarifa de prompt",
     "completionRate": "Tarifa de finalización",
     "promptTokens": "Tokens de prompt",
@@ -301,6 +311,7 @@
     "monthly": "mensual",
     "selfHosted": "auto-hospedado",
     "incl": "incl.",
+    "mixed": "mixto",
     "noUsageYet": "— sin uso este mes aún",
     "unnamed": "sin nombre",
     "addProvider": "Agregar proveedor",
@@ -329,7 +340,7 @@
   "clearSearch": "Limpiar búsqueda",
   "apply": "Aplicar",
   "cancel": "Cancelar",
-  "allProvidersLabel": "todos los proveedores",
+  "allProvidersLabel": "todos los proveedores/agentes",
   "allModelsLabel": "todos los modelos",
   "byEntity": "por {{entity}}",
   "onboarding": {
@@ -340,7 +351,8 @@
   "costTooltips": {
     "subscription": "Incluido en la subscripción de {{amount}}/mo de {{provider}}",
     "selfHosted": "Incluido en el costo auto-hospedado de {{amount}}/mo de {{provider}}",
-    "noRate": "Sin tarifa establecida para {{provider}}"
+    "noRate": "Sin tarifa establecida para {{provider}}",
+    "mixed": "Precios fijos y por token mezclados en esta ventana para {{provider}}"
   },
   "copyToClipboard": "Copiar al portapapeles",
   "monthlySuffix": "/mo",

@@ -469,6 +469,12 @@ namespace Unswarm.Core.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("InputModalitiesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MaxOutputTokens")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -805,6 +811,10 @@ namespace Unswarm.Core.Migrations
             modelBuilder.Entity("Unswarm.Core.Persistence.UsageRecordEntity", b =>
                 {
                     b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Agent")
+                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ApiKeyId")

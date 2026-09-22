@@ -48,6 +48,7 @@ export interface Model {
   status: ModelStatus;
   lastBenchmark: LastBenchmarkResult | null;
   contextWindow: number;
+  maxOutputTokens?: number;
   containerImage: string;
   sourceRuntimeId: string | null;
   sourceRuntimeName: string | null;
@@ -62,6 +63,11 @@ export interface Model {
   displayName?: string | null;
   /** Effort levels this model supports (e.g. ["none","low","medium","high"]). */
   supportedThinkingEfforts?: string[] | null;
+  /**
+   * Input formats this model accepts (e.g. ["text","image"]).
+   * Always includes "text"; absent/empty is treated as text-only.
+   */
+  inputModalities?: string[];
 }
 
 // ─── Container Creation ─────────────────────────────────────────
@@ -640,8 +646,8 @@ export interface MetricsUsageParams extends MetricsAnalyticsParams {
 
 export interface MetricsSummaryParams extends MetricsAnalyticsParams {
   granularity?: "hour" | "day" | "week" | "month";
-  /** Split each bucket per provider or model (comparison series). */
-  groupBy?: "provider" | "model";
+  /** Split each bucket per provider, model, or provider+model (comparison series). */
+  groupBy?: "provider" | "model" | "provider_model";
 }
 
 export interface UsagePageResponse {
@@ -656,6 +662,10 @@ export interface MetricsTimeBucket {
   bucketEnd: string;
   /** Group identity when the request used groupBy=provider|model; null otherwise. */
   group?: string | null;
+  /** Provider for grouped buckets when available (cost attribution). */
+  provider?: string | null;
+  /** Model for grouped buckets when available (cost attribution). */
+  model?: string | null;
   requestCount: number;
   streamingRequests?: number;
   promptTokens: number;
@@ -723,10 +733,14 @@ export interface ApiKeyUsageRow {
   cachedTokens: number;
 }
 
-/** One entry of the provider catalog (usage + configured + registered). */
+/**
+ * One entry of the metrics provider catalog (usage + configured + registered).
+ * Local usage is keyed by its execution agent/host (the cost unit), so `agent`
+ * replaces the old per-runtime `local`/`router` kinds.
+ */
 export interface ProviderCatalogEntry {
   name: string;
-  kind: "cloud" | "local" | "router";
+  kind: "cloud" | "agent";
 }
 
 export interface UsageRecordResponse {

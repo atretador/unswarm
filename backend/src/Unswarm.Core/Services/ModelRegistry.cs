@@ -98,10 +98,12 @@ public sealed class ModelRegistry : IModelRegistry
             Quantization = definition.Quantization,
             Status = definition.Status.ToString(),
             ContextWindow = definition.ContextWindow,
+            MaxOutputTokens = definition.MaxOutputTokens,
             ContainerImage = definition.ContainerImage,
             SourceRuntimeId = definition.SourceRuntimeId,
             DisplayName = definition.DisplayName,
             SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson,
+            InputModalitiesJson = definition.InputModalitiesJson,
             CreatedAt = now,
             UpdatedAt = now
         };
@@ -127,10 +129,12 @@ public sealed class ModelRegistry : IModelRegistry
         entity.Quantization = definition.Quantization;
         entity.Status = definition.Status.ToString();
         entity.ContextWindow = definition.ContextWindow;
+        entity.MaxOutputTokens = definition.MaxOutputTokens;
         entity.ContainerImage = definition.ContainerImage;
         entity.SourceRuntimeId = definition.SourceRuntimeId;
         entity.DisplayName = definition.DisplayName;
         entity.SupportedThinkingEffortsJson = definition.SupportedThinkingEffortsJson;
+        entity.InputModalitiesJson = definition.InputModalitiesJson;
         entity.UpdatedAt = _clock.UtcNow;
 
         await db.SaveChangesAsync(ct).ConfigureAwait(false);
@@ -188,10 +192,12 @@ public sealed class ModelRegistry : IModelRegistry
         Quantization = e.Quantization,
         Status = Enum.TryParse<ModelStatus>(e.Status, out var s) ? s : ModelStatus.Invalid,
         ContextWindow = e.ContextWindow,
+        MaxOutputTokens = e.MaxOutputTokens,
         ContainerImage = e.ContainerImage,
         SourceRuntimeId = e.SourceRuntimeId,
         DisplayName = e.DisplayName,
         SupportedThinkingEffortsJson = e.SupportedThinkingEffortsJson,
+        InputModalitiesJson = e.InputModalitiesJson,
         CreatedAt = e.CreatedAt,
         UpdatedAt = e.UpdatedAt
     };

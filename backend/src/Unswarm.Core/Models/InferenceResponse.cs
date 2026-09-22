@@ -45,4 +45,10 @@ public sealed class InferenceResponse
 
     /// <summary>Serving runtime's display name (falls back to its id when unnamed).</summary>
     public string? ServedByRuntimeName { get; set; }
+
+    /// <summary>
+    /// Execution-target agent name of the serving runtime — the local cost unit.
+    /// Falls back to "host" when the runtime has no agent recorded.
+    /// </summary>
+    public string? ServedByRuntimeAgent { get; set; }
 }

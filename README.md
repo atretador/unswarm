@@ -275,10 +275,16 @@ go build -o unswarm ./cmd/agent
 Edit `agent.yaml` to point to your backend:
 
 ```yaml
-backend_url: "ws://your-backend-ip:5014"
+backend_url: "wss://your-backend-ip:5014"   # ws:// is allowed but warned
+api_key: ""                                 # prefer UNSWARM_AGENT_API_KEY
 agent_name: "machine-b"
 docker_socket: "unix:///var/run/docker.sock"
 ```
+
+Environment wins over the file: `UNSWARM_AGENT_BACKEND_URL` and
+`UNSWARM_AGENT_API_KEY` take precedence (a conflict logs a warning naming the
+field, never the value). Plaintext `ws://`/`http://` is permitted to any host
+but the agent warns for non-loopback plaintext; prefer `wss://`.
 
 See [agent configuration](backend/docs/agent-config.md) for all options.
 
@@ -289,10 +295,18 @@ The agent manages Docker containers and launcher scripts on the host machine. Th
 | Requirement | Why |
 |-------------|-----|
 | **Docker group membership** (`usermod -aG docker unswarm`) | The agent uses the Docker SDK to start, stop, restart, remove, and inspect containers. Without Docker socket access, all container lifecycle commands fail. |
-| **Scripts directory ownership** (if `scripts_dir` is configured) | The agent reads `.sh` launcher scripts from this directory, writes new/updated scripts via the API, and executes them as bash. The agent user must have read and write access to this directory. |
-| **Scripts directory security** | **The `scripts_dir` must NOT be world-writable.** Anything placed in this directory is executed as bash by the agent — a writable `scripts_dir` is equivalent to remote code execution. Set ownership to the `unswarm` user and permissions to `0750`. |
-| **Config file ownership** (`/etc/unswarm/agent.yaml`) | The agent reads its config at startup. The config contains the API key, so set permissions to `0600` (owner-only read). |
+| **Scripts directory access** (if `scripts_dir` is configured) | The agent reads `.sh` launcher scripts from this directory and executes them as bash. |
+| **Scripts directory security** | **`scripts_dir` must be root-owned and NOT writable by the agent user.** Anything placed in this directory is executed as bash by the agent — a writable `scripts_dir` is equivalent to remote code execution. Script upload is disabled by default (`allow_script_upload: false`); only enable it if the backend is fully trusted and you accept that risk. |
+| **Script log directory** (`script_log_dir`) | Script logs and PID files are written here (default `<parent of scripts_dir>/script-logs`). It MUST live under a path in the systemd unit's `ReadWritePaths` or the agent refuses to start. |
+| **Config file ownership** (`/etc/unswarm/agent.yaml`) | The agent reads its config at startup. The config may contain the API key, so set permissions to `0600` (owner-only read). |
 | **Process management** | The agent sends `SIGTERM`/`SIGKILL` to script process groups to stop launcher scripts. The `unswarm` user must own the processes it spawns. |
+
+> **Upgrading from an older agent?** With the documented `scripts_dir:
+> /opt/unswarm/scripts` layout and no `script_log_dir`, the derived
+> `/opt/unswarm/script-logs` is outside the shipped unit's
+> `ReadWritePaths=/var/lib/unswarm`, so the agent now refuses to start. Set
+> `script_log_dir: /var/lib/unswarm/script-logs`, or add your existing log
+> directory to `ReadWritePaths`.
 
 Example setup for a bare-metal agent with script support:
 
@@ -301,10 +315,13 @@ Example setup for a bare-metal agent with script support:
 sudo useradd --system --home /var/lib/unswarm --create-home --shell /usr/sbin/nologin unswarm
 sudo usermod -aG docker unswarm
 
-# Prepare the scripts directory (owned by unswarm, not world-writable)
+# Prepare the scripts directory (root-owned, NOT writable by the agent)
 sudo mkdir -p /opt/unswarm/scripts
-sudo chown unswarm:unswarm /opt/unswarm/scripts
-sudo chmod 0750 /opt/unswarm/scripts
+sudo chown root:root /opt/unswarm/scripts
+sudo chmod 0755 /opt/unswarm/scripts
+
+# Keep uploads disabled unless you explicitly trust the backend
+# (in agent.yaml: allow_script_upload: false)
 
 # Install config with restricted permissions
 sudo mkdir -p /etc/unswarm

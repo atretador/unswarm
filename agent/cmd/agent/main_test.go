@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,8 +17,10 @@ import (
 	"unswarm/agent/internal/client"
 	"unswarm/agent/internal/config"
 	"unswarm/agent/internal/dispatch"
+	"unswarm/agent/internal/docker"
 	"unswarm/agent/internal/protocol"
 	"unswarm/agent/internal/runtimegate"
+	"unswarm/agent/internal/scripts"
 	"unswarm/agent/internal/telemetry"
 )
 
@@ -28,7 +31,7 @@ func discardLogger() *slog.Logger {
 // TestDispatcherRegistersChatCompletion verifies the chat_completion command is
 // registered on the dispatcher so benchmark/validation inference can be proxied.
 func TestDispatcherRegistersChatCompletion(t *testing.T) {
-	disp := setupDispatcher(nil, nil, runtimegate.NewGate(nil, false), nil, discardLogger())
+	disp := setupDispatcher(nil, nil, runtimegate.NewGate(nil, false), config.DefaultConfig(), discardLogger())
 	if !disp.HasCommand(protocol.CmdChatCompletion) {
 		t.Fatalf("dispatcher does not have %q registered", protocol.CmdChatCompletion)
 	}
@@ -128,6 +131,82 @@ func startFakeBackend(t *testing.T, sessions int) *httptest.Server {
 		}
 	}))
 	return server
+}
+
+// TestStopScriptAlwaysAllowed verifies stop_script is never gated by
+// allow_script_start (decision 15): with start disabled the command still
+// reaches the manager (and fails only because no such PID is tracked).
+func TestStopScriptAlwaysAllowed(t *testing.T) {
+	mgr, err := scripts.NewManager(t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	cfg := config.DefaultConfig()
+	cfg.AllowScriptStart = false
+
+	disp := setupDispatcher(nil, mgr, runtimegate.NewGate(nil, false), cfg, discardLogger())
+	result := disp.Dispatch(protocol.CommandPayload{Command: protocol.CmdStopScript, PID: 999999})
+	if result.OK {
+		t.Fatal("stale PID should not report success")
+	}
+	if result.Error == nil || !strings.Contains(*result.Error, "no tracked script") {
+		t.Fatalf("stop_script should reach the manager despite allow_script_start=false, got: %v", result.Error)
+	}
+}
+
+// TestLoopbackPolicyFromConfig covers the H10 precedence between
+// allow_unrestricted_loopback and allowed_loopback_ports: an explicit,
+// non-empty port list always scopes the policy, even when the flag is true
+// (its default), so an existing config cannot be silently widened to
+// unrestricted on upgrade.
+func TestLoopbackPolicyFromConfig(t *testing.T) {
+	tests := []struct {
+		name             string
+		unrestricted     bool
+		ports            []int
+		wantUnrestricted bool
+	}{
+		{name: "explicit ports scope even when flag true", unrestricted: true, ports: []int{8080}, wantUnrestricted: false},
+		{name: "flag true and empty ports is unrestricted", unrestricted: true, ports: nil, wantUnrestricted: true},
+		{name: "flag false and explicit ports is scoped", unrestricted: false, ports: []int{8080}, wantUnrestricted: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.DefaultConfig()
+			cfg.AllowUnrestrictedLoopback = tt.unrestricted
+			cfg.AllowedLoopbackPorts = tt.ports
+
+			pol := loopbackPolicyFromConfig(cfg)
+			if pol.Unrestricted != tt.wantUnrestricted {
+				t.Fatalf("Unrestricted = %v, want %v", pol.Unrestricted, tt.wantUnrestricted)
+			}
+			if len(tt.ports) > 0 {
+				if err := pol.Check(tt.ports[0]); err != nil {
+					t.Errorf("listed port %d should be allowed: %v", tt.ports[0], err)
+				}
+				if err := pol.Check(9999); err == nil {
+					t.Errorf("unlisted port 9999 should be denied when ports %v are scoped", tt.ports)
+				}
+			} else if err := pol.Check(9999); err != nil {
+				t.Errorf("unrestricted policy should allow any port, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateContainerDeniedByDefault verifies create_container is rejected
+// before touching Docker when allow_container_creation is false (default).
+func TestCreateContainerDeniedByDefault(t *testing.T) {
+	cfg := config.DefaultConfig()
+	if cfg.AllowContainerCreation {
+		t.Fatal("DefaultConfig must disable container creation")
+	}
+	// A nil docker handler still routes through the not-connected guard; use a
+	// policy-level assertion to cover the default wiring.
+	policy := docker.CreatePolicy{Enabled: cfg.AllowContainerCreation}
+	if err := policy.Validate(protocol.CreateContainerPayload{Image: "alpine:latest"}); err == nil {
+		t.Fatal("create_container must be denied by default")
+	}
 }
 
 // TestSessionJoinsGoroutinesOnDisconnect runs a full session against a fake

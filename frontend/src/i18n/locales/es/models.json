@@ -46,17 +46,30 @@
     "family": "Familia",
     "parameterSize": "Tamaño de parámetro",
     "quantization": "Cuantización",
-    "contextWindow": "Ventana de contexto"
+    "contextWindow": "Ventana de contexto",
+    "maxOutputTokens": "Máximo de tokens de salida",
+    "inputModalities": "Modalidades de entrada",
+    "inputModalitiesHint": "El texto siempre está soportado. Active los demás formatos que acepta este modelo.",
+    "modalityTextLocked": "El texto siempre está soportado",
+    "modalities": {
+      "text": "Texto",
+      "image": "Imagen",
+      "video": "Video",
+      "audio": "Audio",
+      "pdf": "PDF"
+    }
   },
   "errors": {
-    "contextWindowInvalid": "La ventana de contexto debe ser un número positivo hasta 10M"
+    "contextWindowInvalid": "La ventana de contexto debe ser un número positivo hasta 10M",
+    "maxOutputTokensInvalid": "El máximo de tokens de salida debe ser un número positivo hasta 10M"
   },
   "placeholders": {
     "displayName": "Nombre de archivo mostrado en la interfaz (auto-completado desde el nombre del modelo)",
     "family": "ej. Llama",
     "parameterSize": "ej. 8B",
     "quantization": "ej. Q4_K_M",
-    "contextWindow": "ej. 128000"
+    "contextWindow": "ej. 128000",
+    "maxOutputTokens": "ej. 4096"
   },
   "tooltips": {
     "tokensPerSecond": "Velocidad: tokens por segundo",

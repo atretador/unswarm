@@ -88,23 +88,38 @@ public sealed class OpenAIController : ControllerBase
                 ContextWindow = m.ContextWindow,
                 ContainerImage = m.ContainerImage,
                 Status = m.Status.ToString().ToLowerInvariant(),
-                SupportedThinkingEfforts = DeserializeThinkingEfforts(m.SupportedThinkingEffortsJson)
+                SupportedThinkingEfforts = DeserializeThinkingEfforts(m.SupportedThinkingEffortsJson),
+                InputModalities = ModelModalities.ParseJson(m.InputModalitiesJson)
             }
         }).ToList();
 
-        // Cloud provider models
+        // Cloud provider models (also indexed by id for router context-window and
+        // modality math below)
         var providers = await _cloudProviderStore.ListAsync(ct);
+        var cloudContextById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var cloudModalitiesById = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
         foreach (var provider in providers)
         {
-            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
-            foreach (var modelId in modelIds)
+            var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
+            foreach (var meta in modelMetas)
             {
+                var cloudModelId = $"cloud/{provider.Name}/{meta.Id}";
+                cloudContextById[cloudModelId] = meta.ContextWindow;
+                cloudModalitiesById[cloudModelId] = ModelModalities.Normalize(meta.InputModalities);
                 data.Add(new OpenAiModelData
                 {
-                    Id = $"cloud/{provider.Name}/{modelId}",
+                    Id = cloudModelId,
                     Created = provider.CreatedAt.ToUnixTimeSeconds(),
                     OwnedBy = provider.Name,
-                    Unswarm = new OpenAiModelUnswarmInfo() // empty defaults for cloud models
+                    Unswarm = new OpenAiModelUnswarmInfo
+                    {
+                        Family = meta.Family,
+                        ParameterSize = meta.ParameterSize,
+                        Quantization = meta.Quantization,
+                        ContextWindow = meta.ContextWindow,
+                        MaxOutputTokens = meta.MaxOutputTokens,
+                        InputModalities = ModelModalities.Normalize(meta.InputModalities),
+                    }
                 });
             }
         }
@@ -113,16 +128,11 @@ public sealed class OpenAIController : ControllerBase
         var routerProfiles = await _routerProfile.ListProfilesAsync(ct);
         foreach (var profile in routerProfiles)
         {
-            // Compute context window as the minimum of all enabled entries' context windows (> 0 only)
-            int minCtx = 0;
-            foreach (var entry in profile.Entries.Where(e => e.IsEnabled))
-            {
-                var def = await _registry.GetAsync(entry.ModelId, ct);
-                if (def is { ContextWindow: > 0 })
-                {
-                    minCtx = minCtx == 0 ? def.ContextWindow : Math.Min(minCtx, def.ContextWindow);
-                }
-            }
+            // A profile can fan out to any enabled entry, so the context window
+            // it advertises must fit the smallest entry: a client sized for a
+            // larger entry overruns a smaller one and hard-fails instead of
+            // compacting in time. Resolve both local and cloud entries.
+            int minCtx = ComputeRouterContextWindow(profile.Entries, cloudContextById, models);
 
             data.Add(new OpenAiModelData
             {
@@ -133,7 +143,8 @@ public sealed class OpenAIController : ControllerBase
                 {
                     Family = $"router-{profile.Mode.ToString().ToLowerInvariant()}",
                     Status = profile.Entries.Any(e => e.IsEnabled) ? "active" : "empty",
-                    ContextWindow = minCtx
+                    ContextWindow = minCtx,
+                    InputModalities = ComputeRouterModalities(profile.Entries, cloudModalitiesById, models)
                 }
             });
         }
@@ -153,6 +164,143 @@ public sealed class OpenAIController : ControllerBase
         }
 
         return Ok(new OpenAiModelListResponse { Data = data });
+    }
+
+    /// <summary>
+    /// Effective context window advertised for a router profile: the minimum
+    /// known context window across its enabled entries. A profile can fan out
+    /// to any entry, so a client sized for a larger entry would overrun a
+    /// smaller one and hard-fail instead of compacting in time.
+    /// Cloud entries resolve from <paramref name="cloudContextById"/>; local
+    /// entries from <paramref name="localModels"/> matched by registry id,
+    /// name, or display name (entries may reference any of them).
+    /// Entries with an unknown window (0) are ignored; returns 0 when none is known.
+    /// </summary>
+    public static int ComputeRouterContextWindow(
+        IEnumerable<RouterProfileEntry> entries,
+        IReadOnlyDictionary<string, int> cloudContextById,
+        IEnumerable<ModelDefinition> localModels)
+    {
+        var localContexts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in localModels)
+        {
+            RegisterContext(localContexts, model.Id, model.ContextWindow);
+            RegisterContext(localContexts, model.Name, model.ContextWindow);
+            RegisterContext(localContexts, model.DisplayName, model.ContextWindow);
+        }
+
+        int minCtx = 0;
+        foreach (var entry in entries.Where(e => e.IsEnabled))
+        {
+            int? ctx = entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal)
+                ? cloudContextById.TryGetValue(entry.ModelId, out var cloudCtx) ? cloudCtx : null
+                : ResolveLocalContext(localContexts, entry.ModelId);
+
+            if (ctx is > 0)
+                minCtx = minCtx == 0 ? ctx.Value : Math.Min(minCtx, ctx.Value);
+        }
+
+        return minCtx;
+    }
+
+    private static void RegisterContext(Dictionary<string, int> contexts, string? key, int contextWindow)
+    {
+        if (string.IsNullOrEmpty(key) || contextWindow <= 0)
+            return;
+
+        // Keep the smallest value when two models share an alias (e.g. the same
+        // model name registered on different runtimes).
+        contexts[key] = contexts.TryGetValue(key, out var existing)
+            ? Math.Min(existing, contextWindow)
+            : contextWindow;
+    }
+
+    private static int? ResolveLocalContext(IReadOnlyDictionary<string, int> contexts, string modelId)
+    {
+        if (contexts.TryGetValue(modelId, out var ctx))
+            return ctx;
+
+        // Local registry ids are composite ("<runtimeId>:<modelName>"); router
+        // entries may reference the bare model name/display name instead.
+        var colon = modelId.LastIndexOf(':');
+        if (colon >= 0 && contexts.TryGetValue(modelId[(colon + 1)..], out var bare))
+            return bare;
+
+        return null;
+    }
+
+    /// <summary>
+    /// Effective input modalities advertised for a router profile: the
+    /// intersection across its enabled entries. An entry that is unresolvable
+    /// (or has no known modalities) contributes text-only, so an unknown entry
+    /// conservatively narrows the profile to text. The result always contains
+    /// text; no enabled entries yields text-only. Cloud entries resolve from
+    /// <paramref name="cloudModalitiesById"/>; local entries from
+    /// <paramref name="localModels"/> matched by registry id, name, or display
+    /// name (with composite "&lt;runtimeId&gt;:&lt;modelName&gt;" stripping).
+    /// </summary>
+    public static string[] ComputeRouterModalities(
+        IEnumerable<RouterProfileEntry> entries,
+        IReadOnlyDictionary<string, string[]> cloudModalitiesById,
+        IEnumerable<ModelDefinition> localModels)
+    {
+        var localModalities = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        foreach (var model in localModels)
+        {
+            var modalities = ModelModalities.ParseJson(model.InputModalitiesJson);
+            RegisterModalities(localModalities, model.Id, modalities);
+            RegisterModalities(localModalities, model.Name, modalities);
+            RegisterModalities(localModalities, model.DisplayName, modalities);
+        }
+
+        string[]? intersection = null;
+        foreach (var entry in entries.Where(e => e.IsEnabled))
+        {
+            string[] entryModalities;
+            if (entry.ModelId.StartsWith("cloud/", StringComparison.Ordinal))
+                entryModalities = cloudModalitiesById.TryGetValue(entry.ModelId, out var cloudMods)
+                    ? ModelModalities.Normalize(cloudMods)
+                    : ModelModalities.TextOnly();
+            else
+                entryModalities = ResolveLocalModalities(localModalities, entry.ModelId) ?? ModelModalities.TextOnly();
+
+            intersection = intersection is null
+                ? entryModalities
+                : Intersect(intersection, entryModalities);
+        }
+
+        return intersection is null ? ModelModalities.TextOnly() : ModelModalities.Normalize(intersection);
+    }
+
+    private static void RegisterModalities(Dictionary<string, string[]> modalities, string? key, string[] values)
+    {
+        if (string.IsNullOrEmpty(key))
+            return;
+
+        // Conservative: when two models share an alias, keep the narrower set.
+        modalities[key] = modalities.TryGetValue(key, out var existing)
+            ? Intersect(existing, values)
+            : values;
+    }
+
+    private static string[]? ResolveLocalModalities(IReadOnlyDictionary<string, string[]> modalities, string modelId)
+    {
+        if (modalities.TryGetValue(modelId, out var found))
+            return found;
+
+        // Local registry ids are composite ("<runtimeId>:<modelName>"); router
+        // entries may reference the bare model name/display name instead.
+        var colon = modelId.LastIndexOf(':');
+        if (colon >= 0 && modalities.TryGetValue(modelId[(colon + 1)..], out var bare))
+            return bare;
+
+        return null;
+    }
+
+    private static string[] Intersect(string[] a, string[] b)
+    {
+        var setB = new HashSet<string>(b, StringComparer.OrdinalIgnoreCase);
+        return ModelModalities.Normalize(a.Where(setB.Contains));
     }
 
     /// <summary>
@@ -446,6 +594,8 @@ public sealed class OpenAIController : ControllerBase
                     }
                 }
 
+                var routerIsCloud = routerResult.ServedModel?.StartsWith("cloud/", StringComparison.Ordinal) == true;
+
                 _ = _usageRecorder.RecordAsync(
                     routerResult.ServedByRuntimeName ?? "router",
                     routerResult.ServedModel ?? modelName,
@@ -456,7 +606,8 @@ public sealed class OpenAIController : ControllerBase
                     routerElapsedMs,
                     apiKeyId,
                     apiKeyName,
-                    providerKind: routerResult.ServedModel?.StartsWith("cloud/", StringComparison.Ordinal) == true ? "cloud" : "local");
+                    providerKind: routerIsCloud ? "cloud" : "local",
+                    agent: routerIsCloud ? null : routerResult.ServedByRuntimeAgent);
 
                 return new EmptyResult();
             }
@@ -570,7 +721,8 @@ public sealed class OpenAIController : ControllerBase
             elapsedMs,
             apiKeyId,
             apiKeyName,
-            providerKind: "local");
+            providerKind: "local",
+            agent: inferenceResponse.ServedByRuntimeAgent);
 
         return new EmptyResult();
     }

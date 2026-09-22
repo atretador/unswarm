@@ -34,12 +34,25 @@ public sealed class CloudProviderReadDto : CloudProviderListItemDto
 
 public sealed class FetchModelsResultDto
 {
-    public List<string> ModelIds { get; set; } = [];
+    public List<CloudProviderModelMetaDto> Models { get; set; } = [];
 }
 
 public sealed class CloudProviderModelListDto
 {
-    public List<string> ModelIds { get; set; } = [];
+    public List<CloudProviderModelMetaDto> Models { get; set; } = [];
+}
+
+/// <summary>Model metadata exposed via the API.</summary>
+public sealed class CloudProviderModelMetaDto
+{
+    public string Id { get; set; } = "";
+    public int ContextWindow { get; set; }
+    public int MaxOutputTokens { get; set; }
+    public string Family { get; set; } = "";
+    public string ParameterSize { get; set; } = "";
+    public string Quantization { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string[]? InputModalities { get; set; }
 }
 
 public record TestAndFetchRequest(

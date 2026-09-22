@@ -1,9 +1,14 @@
+using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Unswarm.Api.Dtos;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Helpers;
+using Unswarm.Core.Models;
+using Unswarm.Core.Services;
 
 namespace Unswarm.Api.Controllers;
 
@@ -32,6 +37,8 @@ public sealed class CloudProviderController : ControllerBase
     private readonly ILogger<CloudProviderController> _logger;
     private readonly IChatGptOAuthService _oauthService;
     private readonly IApiKeyEncryptor _encryptor;
+    private readonly bool _allowPrivateEgress;
+    private readonly string[] _allowedPrivateHosts;
 
     /// <summary>Semver version sent to the Codex models endpoint.</summary>
     private const string CodexClientVersion = "0.99.0";
@@ -41,13 +48,16 @@ public sealed class CloudProviderController : ControllerBase
         IHttpClientFactory httpFactory,
         ILogger<CloudProviderController> logger,
         IChatGptOAuthService oauthService,
-        IApiKeyEncryptor encryptor)
+        IApiKeyEncryptor encryptor,
+        IConfiguration configuration)
     {
         _store = store;
         _httpFactory = httpFactory;
         _logger = logger;
         _oauthService = oauthService;
         _encryptor = encryptor;
+        _allowPrivateEgress = configuration.GetValue<bool>("CloudProviders:AllowPrivateEgress");
+        _allowedPrivateHosts = configuration.GetSection("CloudProviders:AllowedPrivateHosts").Get<string[]>() ?? [];
     }
 
     [HttpGet]
@@ -166,10 +176,10 @@ public sealed class CloudProviderController : ControllerBase
             if (result.Error is not null)
                 return result.Error;
 
-            await _store.SaveModelsAsync(id, result.ModelIds!, ct);
+            await _store.SaveModelsAsync(id, result.Models!, ct);
 
-            _logger.LogInformation("Fetched {Count} models for subscription provider {Id}", result.ModelIds!.Count, id);
-            return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+            _logger.LogInformation("Fetched {Count} models for subscription provider {Id}", result.Models!.Count, id);
+            return Ok(new FetchModelsResultDto { Models = result.Models!.Select(MapToDto).ToList() });
         }
 
         // API key provider — existing behavior
@@ -192,10 +202,10 @@ public sealed class CloudProviderController : ControllerBase
             return apiKeyResult.Error;
 
         // Save models to DB
-        await _store.SaveModelsAsync(id, apiKeyResult.ModelIds!, ct);
+        await _store.SaveModelsAsync(id, apiKeyResult.Models!, ct);
 
-        _logger.LogInformation("Fetched {Count} models for provider {Id}", apiKeyResult.ModelIds!.Count, id);
-        return Ok(new FetchModelsResultDto { ModelIds = apiKeyResult.ModelIds! });
+        _logger.LogInformation("Fetched {Count} models for provider {Id}", apiKeyResult.Models!.Count, id);
+        return Ok(new FetchModelsResultDto { Models = apiKeyResult.Models!.Select(MapToDto).ToList() });
     }
 
     /// <summary>
@@ -218,7 +228,7 @@ public sealed class CloudProviderController : ControllerBase
         if (result.Error is not null)
             return result.Error;
 
-        return Ok(new FetchModelsResultDto { ModelIds = result.ModelIds! });
+        return Ok(new FetchModelsResultDto { Models = result.Models!.Select(MapToDto).ToList() });
     }
 
     [HttpPut("{id}/models")]
@@ -228,9 +238,25 @@ public sealed class CloudProviderController : ControllerBase
         if (existing is null)
             return NotFound(LocalizedError.Create("cloudProviders.notFound"));
 
+        // Validate before mapping: explicit unknown tokens are a client error,
+        // matching the local model create/update contract. A null/omitted list is
+        // allowed and means "keep the stored selection" (see merge below).
+        foreach (var dto in request.Models)
+        {
+            if (ModelModalities.FindUnknownToken(dto.InputModalities) is { } badModality)
+                return BadRequest(LocalizedError.Create("models.inputModalitiesInvalid", new { token = badModality }));
+        }
+
         try
         {
-            await _store.SaveModelsAsync(id, request.ModelIds, ct);
+            // Merge with stored metadata so an omitted inputModalities preserves the
+            // admin's existing selection; only explicitly provided lists overwrite.
+            var storedById = new Dictionary<string, CloudProviderModelMeta>(StringComparer.Ordinal);
+            foreach (var stored in await _store.GetModelMetasAsync(id, ct).ConfigureAwait(false))
+                storedById[stored.Id] = stored;
+
+            var metas = request.Models.Select(d => MapFromDto(d, storedById)).ToList();
+            await _store.SaveModelsAsync(id, metas, ct);
         }
         catch (ArgumentException ex)
         {
@@ -350,7 +376,7 @@ public sealed class CloudProviderController : ControllerBase
 
     // ── Helpers ───────────────────────────────────────────────────
 
-    private async Task<(List<string>? ModelIds, IActionResult? Error)> FetchUpstreamModelsAsync(
+    private async Task<(List<CloudProviderModelMeta>? Models, IActionResult? Error)> FetchUpstreamModelsAsync(
         string baseUrl, string apiKey, CancellationToken ct)
     {
         var httpClient = _httpFactory.CreateClient("cloud-provider");
@@ -371,16 +397,9 @@ public sealed class CloudProviderController : ControllerBase
                 return (null, StatusCode((int)response.StatusCode, LocalizedError.Create("cloudProviders.upstreamError", new { statusCode = (int)response.StatusCode })));
             }
 
-            var modelsResponse = await response.Content.ReadFromJsonAsync<OpenAiModelListResponse>(ct)
-                ?? throw new InvalidOperationException("Upstream did not return a valid model list.");
-
-            var modelIds = modelsResponse.Data
-                .Select(m => m.Id)
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Distinct()
-                .ToList();
-
-            return (modelIds, null);
+            var responseBody = await response.Content.ReadAsStringAsync(ct);
+            var models = ParseUpstreamModels(responseBody);
+            return (models, null);
         }
         catch (HttpRequestException ex)
         {
@@ -394,7 +413,7 @@ public sealed class CloudProviderController : ControllerBase
         }
     }
 
-    private async Task<(List<string>? ModelIds, IActionResult? Error)> FetchSubscriptionModelsAsync(
+    private async Task<(List<CloudProviderModelMeta>? Models, IActionResult? Error)> FetchSubscriptionModelsAsync(
         string accessToken, string? accountId, CancellationToken ct)
     {
         var httpClient = _httpFactory.CreateClient("cloud-provider");
@@ -423,13 +442,13 @@ public sealed class CloudProviderController : ControllerBase
             var modelsResponse = await response.Content.ReadFromJsonAsync<CodexModelsResponse>(ct)
                 ?? throw new InvalidOperationException("Upstream did not return a valid model list.");
 
-            var modelIds = modelsResponse.Models
+            var models = modelsResponse.Models
                 .Where(m => m.SupportedInApi && !string.IsNullOrWhiteSpace(m.Slug))
-                .Select(m => m.Slug)
-                .Distinct()
+                .Select(m => CloudProviderModelMeta.FromId(m.Slug))
+                .DistinctBy(m => m.Id)
                 .ToList();
 
-            return (modelIds, null);
+            return (models, null);
         }
         catch (HttpRequestException ex)
         {
@@ -443,7 +462,114 @@ public sealed class CloudProviderController : ControllerBase
         }
     }
 
-    private static string? NormalizeBaseUrl(string raw)
+    /// <summary>
+    /// Parse upstream /v1/models response and extract model metadata.
+    /// Supports OpenAI, OpenRouter (context_length, top_provider), vLLM (max_model_len), Ollama (context_length).
+    /// </summary>
+    private List<CloudProviderModelMeta> ParseUpstreamModels(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
+                return [];
+
+            var models = new List<CloudProviderModelMeta>();
+            foreach (var item in dataArray.EnumerateArray())
+            {
+                var id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+
+                var meta = CloudProviderModelMeta.FromId(id);
+
+                // Display name
+                if (item.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String)
+                    meta.DisplayName = nameProp.GetString() ?? "";
+
+                // Context length: try multiple field names used by different providers
+                if (TryGetInt(item, "context_length", out var ctxLen))
+                    meta.ContextWindow = ctxLen;
+                else if (TryGetInt(item, "max_model_len", out var mml))
+                    meta.ContextWindow = mml;
+
+                // Max output tokens: try top_provider.max_completion_tokens (OpenRouter)
+                if (item.TryGetProperty("top_provider", out var topProvider) && topProvider.ValueKind == JsonValueKind.Object)
+                {
+                    if (TryGetInt(topProvider, "max_completion_tokens", out var maxOut))
+                        meta.MaxOutputTokens = maxOut;
+                    if (meta.ContextWindow == 0 && TryGetInt(topProvider, "context_length", out var tpCtx))
+                        meta.ContextWindow = tpCtx;
+                }
+
+                // Input modalities: OpenRouter exposes architecture.input_modalities
+                // (array of tokens) or architecture.modality ("text+image->text").
+                if (item.TryGetProperty("architecture", out var architecture) && architecture.ValueKind == JsonValueKind.Object)
+                {
+                    if (architecture.TryGetProperty("input_modalities", out var inputModalities)
+                        && inputModalities.ValueKind == JsonValueKind.Array)
+                    {
+                        var tokens = inputModalities.EnumerateArray()
+                            .Where(t => t.ValueKind == JsonValueKind.String)
+                            .Select(t => t.GetString() ?? "");
+                        meta.InputModalities = ModelModalities.Normalize(tokens);
+                    }
+                    else if (architecture.TryGetProperty("modality", out var modality)
+                        && modality.ValueKind == JsonValueKind.String)
+                    {
+                        meta.InputModalities = ModelModalities.ParseModalityString(modality.GetString());
+                    }
+                }
+
+                models.Add(meta);
+            }
+
+            _logger.LogInformation("Parsed {Count} models with metadata from upstream", models.Count);
+            return models;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to parse upstream model metadata, falling back to bare IDs");
+            return ParseBareIds(responseBody);
+        }
+    }
+
+    /// <summary>Fallback: parse just model IDs from a response we couldn't enrich.</summary>
+    private List<CloudProviderModelMeta> ParseBareIds(string responseBody)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("data", out var dataArray) || dataArray.ValueKind != JsonValueKind.Array)
+                return [];
+
+            return dataArray.EnumerateArray()
+                .Select(item => item.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "")
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct()
+                .Select(CloudProviderModelMeta.FromId)
+                .ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static bool TryGetInt(JsonElement element, string propertyName, out int value)
+    {
+        value = 0;
+        if (!element.TryGetProperty(propertyName, out var prop))
+            return false;
+        if (prop.ValueKind == JsonValueKind.Number)
+        {
+            value = prop.GetInt32();
+            return value > 0;
+        }
+        return false;
+    }
+
+    private string? NormalizeBaseUrl(string raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
             return null;
@@ -452,6 +578,16 @@ public sealed class CloudProviderController : ControllerBase
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return null;
         if (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)
+            return null;
+
+        // Early reject literal private/reserved IPs unless the operator has opted
+        // in (AllowPrivateEgress) or allow-listed the host. The ConnectCallback
+        // remains the authoritative filter (it re-checks every DNS-resolved
+        // address on connect/reconnect).
+        if (!_allowPrivateEgress
+            && !NetworkAddressPolicy.MatchesAllowedHost(uri.DnsSafeHost, _allowedPrivateHosts)
+            && IPAddress.TryParse(uri.DnsSafeHost, out var literal)
+            && NetworkAddressPolicy.IsPrivateOrReserved(literal))
             return null;
 
         var result = uri.ToString().TrimEnd('/');
@@ -500,4 +636,41 @@ public sealed class CloudProviderController : ControllerBase
         CreatedAt = item.CreatedAt,
         UpdatedAt = item.UpdatedAt,
     };
+
+    private static CloudProviderModelMetaDto MapToDto(CloudProviderModelMeta m) => new()
+    {
+        Id = m.Id,
+        ContextWindow = m.ContextWindow,
+        MaxOutputTokens = m.MaxOutputTokens,
+        Family = m.Family,
+        ParameterSize = m.ParameterSize,
+        Quantization = m.Quantization,
+        DisplayName = m.DisplayName,
+        InputModalities = ModelModalities.Normalize(m.InputModalities),
+    };
+
+    private static CloudProviderModelMeta MapFromDto(
+        CloudProviderModelMetaDto d,
+        IReadOnlyDictionary<string, CloudProviderModelMeta> storedById)
+    {
+        // Explicit list wins; omitted (null) preserves the stored selection, and a
+        // brand-new model defaults to text-only.
+        var modalities = d.InputModalities is not null
+            ? ModelModalities.Normalize(d.InputModalities)
+            : storedById.TryGetValue(d.Id, out var stored)
+                ? ModelModalities.Normalize(stored.InputModalities)
+                : ModelModalities.TextOnly();
+
+        return new()
+        {
+            Id = d.Id,
+            ContextWindow = d.ContextWindow,
+            MaxOutputTokens = d.MaxOutputTokens,
+            Family = d.Family,
+            ParameterSize = d.ParameterSize,
+            Quantization = d.Quantization,
+            DisplayName = d.DisplayName,
+            InputModalities = modalities,
+        };
+    }
 }

@@ -40,7 +40,7 @@ public sealed record DockerCreateParams(
     IReadOnlyList<VolumeMount>? Volumes = null,
     IReadOnlyList<EnvVar>? Env = null,
     int ShmSizeMb = 16384,
-    string IpcMode = "host",
+    string IpcMode = "private",
     string NetworkMode = "bridge",
     string RestartPolicy = "unless-stopped",
     IReadOnlyList<string>? ServerArgs = null);

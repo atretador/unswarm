@@ -35,7 +35,7 @@ public sealed class ContainerCreateConfig
     public IReadOnlyList<VolumeMount>? Volumes { get; init; }
     public IReadOnlyList<EnvVar>? Env { get; init; }
     public int ShmSizeMb { get; init; } = 16384;
-    public string IpcMode { get; init; } = "host";
+    public string IpcMode { get; init; } = "private";
     public string NetworkMode { get; init; } = "bridge";
     public string RestartPolicy { get; init; } = "unless-stopped";
     public IReadOnlyList<string>? ServerArgs { get; init; }

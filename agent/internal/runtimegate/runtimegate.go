@@ -65,6 +65,25 @@ func (r *Registry) Contains(nameOrID string) bool {
 	return ok
 }
 
+// ContainsID reports whether any registered key matches id as a (possibly
+// truncated) container ID: exact match, or one is a >=12-char prefix of the
+// other. This bridges the backend syncing the full 64-hex RuntimeContainerId
+// with the agent emitting a 12-char short ID in list_containers.
+func (r *Registry) ContainsID(id string) bool {
+	id = normalize(id)
+	if id == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for key := range r.byKey {
+		if idMatch(key, id) {
+			return true
+		}
+	}
+	return false
+}
+
 // Size returns the number of distinct registered keys (test/observability aid).
 func (r *Registry) Size() int {
 	r.mu.RLock()
@@ -122,25 +141,71 @@ func (g *Gate) Check(command, target string) (protocol.CommandResultPayload, boo
 // FilterListResult filters a list_containers result down to registered
 // containers when enforcement is on. Non-list results and disabled
 // enforcement pass through unchanged. With enforcement on but nothing synced
-// yet, the list is emptied (fail closed).
+// yet, the list is emptied (fail closed). An unrecognized Data shape is also
+// treated as empty (fail closed) so an unexpected payload cannot bypass the
+// filter and leak unregistered containers.
+//
+// The agent's list_containers result shape is
+// {"containers": []map[string]interface{}} (see docker.Handler.ListContainers);
+// a bare []map[string]interface{} is also accepted for older callers/tests.
 func (g *Gate) FilterListResult(command string, result protocol.CommandResultPayload) protocol.CommandResultPayload {
 	if command != protocol.CmdListContainers || !result.OK || !g.enforce {
 		return result
 	}
-	items, ok := result.Data.([]map[string]interface{})
-	if !ok {
-		return result
+	switch data := result.Data.(type) {
+	case []map[string]interface{}:
+		result.Data = g.filterItems(data)
+	case map[string]interface{}:
+		items, ok := data["containers"].([]map[string]interface{})
+		if !ok {
+			// Unrecognized container list shape: fail closed by filtering out
+			// every item rather than passing the raw, unfiltered payload on.
+			items = nil
+		}
+		filtered := g.filterItems(items)
+		// Rebuild with a fresh map so we never mutate a shared payload.
+		next := make(map[string]interface{}, len(data))
+		for k, v := range data {
+			next[k] = v
+		}
+		next["containers"] = filtered
+		result.Data = next
+	default:
+		// Unexpected Data shape: return an empty, filtered result (fail closed)
+		// instead of passing an unfiltered payload through.
+		result.Data = []map[string]interface{}{}
 	}
+	return result
+}
+
+// filterItems keeps only items whose name, image/model name, or (possibly
+// truncated) container id is in the registered set.
+func (g *Gate) filterItems(items []map[string]interface{}) []map[string]interface{} {
 	filtered := make([]map[string]interface{}, 0, len(items))
 	for _, item := range items {
-		name, _ := item["name"].(string)
-		id, _ := item["id"].(string)
-		if g.registry.Contains(name) || g.registry.Contains(id) {
+		if g.matchesItem(item) {
 			filtered = append(filtered, item)
 		}
 	}
-	result.Data = filtered
-	return result
+	return filtered
+}
+
+// matchesItem reports whether a list_containers item maps to a registered
+// runtime. The agent emits the short container id (12 chars) while the backend
+// syncs the full ID, and ContainerName may carry the image rather than the
+// container name, so every candidate field is checked by exact name/id match
+// and by truncated-ID prefix match.
+func (g *Gate) matchesItem(item map[string]interface{}) bool {
+	for _, field := range []string{"name", "modelName", "image", "id", "modelId"} {
+		value, _ := item[field].(string)
+		if value == "" {
+			continue
+		}
+		if g.registry.Contains(value) || g.registry.ContainsID(value) {
+			return true
+		}
+	}
+	return false
 }
 
 // isContainerLifecycleCommand reports whether the command operates on a
@@ -164,4 +229,27 @@ func isContainerLifecycleCommand(command string) bool {
 // drift should not cause spurious rejections).
 func normalize(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// minIDPrefixLen is the shortest container-id prefix considered a match.
+// Docker short IDs are 12 hex chars; both sides must reach this length before
+// a prefix comparison is trusted, so two short/name-like values are not
+// spuriously matched.
+const minIDPrefixLen = 12
+
+// idMatch reports whether a and b identify the same container ID: equal, or
+// one is a >=minIDPrefixLen prefix of the other (either direction).
+func idMatch(a, b string) bool {
+	a = normalize(a)
+	b = normalize(b)
+	if a == "" || b == "" {
+		return false
+	}
+	if a == b {
+		return true
+	}
+	if len(a) < minIDPrefixLen || len(b) < minIDPrefixLen {
+		return false
+	}
+	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
 }

@@ -1,15 +1,19 @@
 // Per-provider monthly budget editor + progress bars.
 //
 // Budgets persist server-side via /api/settings `providerBudgetsJson`
-// (`{"provider":{"tokenBudget":number,"costBudget":number}}`). A one-time
-// migration pushes any legacy localStorage budgets up when the server value
-// is still empty, then clears the old key. Edits apply optimistically for a
-// snappy feel and reconcile with the server response afterwards.
+// (`{"provider":{"tokenBudget":number,"costBudget":number}}`). Providers are
+// now keyed by the metrics cost unit (cloud provider, or execution agent/host
+// for local usage) rather than by runtime name. A backend migration owns the
+// one-time cleanup of old runtime-keyed server entries; the frontend never
+// clears server data. Stale entries are inert because budget rows come from
+// usage `monthProviders` and look up `budgets[row.provider]` by the new agent
+// key. Edits apply optimistically for a snappy feel and reconcile with the
+// server response afterwards.
 //
 // Month-to-date usage per provider comes from /api/metrics/providers over the
 // current calendar month.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PiggyBank, Settings2 } from "lucide-react";
@@ -17,13 +21,7 @@ import { Card, Badge } from "../../components/ui";
 import type { ProviderUsageSummary } from "../../lib/api/types";
 import { client } from "../../lib/query-client";
 import { formatCurrency, formatTokens } from "./format";
-import {
-  getPricingMode,
-  modelCost,
-  type CostRatesMap,
-} from "./cost";
-
-const LEGACY_BUDGETS_KEY = "unswarm-budgets";
+import { pricingModeAt, rateAt, type RatePeriod } from "./cost";
 
 interface ProviderBudget {
   /** Monthly token budget. Undefined = no token budget set. */
@@ -73,32 +71,11 @@ function toServerBudgets(budgets: BudgetsMap): string {
   return JSON.stringify(out);
 }
 
-/** Legacy localStorage wire format: {"provider":{"tokens":n,"cost":n}} */
-function parseLegacyBudgets(raw: string | null): BudgetsMap {
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<
-      string,
-      { tokens?: number; cost?: number }
-    >;
-    const out: BudgetsMap = {};
-    for (const [provider, value] of Object.entries(parsed ?? {})) {
-      out[provider] = {
-        tokens: typeof value?.tokens === "number" ? value.tokens : undefined,
-        cost: typeof value?.cost === "number" ? value.cost : undefined,
-      };
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
-
 export interface BudgetsPanelProps {
   /** Per-provider usage for the current calendar month. */
   monthProviders: ProviderUsageSummary[] | undefined;
   loading: boolean;
-  costRates: CostRatesMap;
+  costRates: RatePeriod[];
 }
 
 interface BarState {
@@ -141,38 +118,6 @@ export function BudgetsPanel({
     [settings],
   );
 
-  // ── One-time migration from legacy localStorage ──────────────
-  const migratedRef = useRef(false);
-  useEffect(() => {
-    if (migratedRef.current || settings === undefined) return;
-    migratedRef.current = true;
-
-    let legacy: BudgetsMap = {};
-    try {
-      legacy = parseLegacyBudgets(localStorage.getItem(LEGACY_BUDGETS_KEY));
-    } catch {
-      legacy = {};
-    }
-
-    const legacyEmpty = Object.keys(legacy).length === 0;
-    const serverEmpty = Object.keys(serverBudgets).length === 0;
-
-    if (!legacyEmpty && serverEmpty) {
-      // Push legacy budgets up once, then retire the old key.
-      client
-        .updateSettings({ providerBudgetsJson: toServerBudgets(legacy) })
-        .then(() => queryClient.invalidateQueries({ queryKey: ["settings"] }))
-        .catch(() => {
-          // Server write failed — keep the local copy for a later attempt.
-          return;
-        });
-      localStorage.removeItem(LEGACY_BUDGETS_KEY);
-    } else {
-      // Nothing to migrate (or server already authoritative) — retire the key.
-      localStorage.removeItem(LEGACY_BUDGETS_KEY);
-    }
-  }, [settings, serverBudgets, queryClient]);
-
   // ── Optimistic local overlay for snappy edits ─────────────────
   const [localBudgets, setLocalBudgets] = useState<BudgetsMap | null>(null);
   const budgets = localBudgets ?? serverBudgets;
@@ -196,20 +141,23 @@ export function BudgetsPanel({
   const [editing, setEditing] = useState(false);
 
   // Only show providers that have usage this month or an existing budget.
+  // Cost is resolved at "now" with the date-ranged engine; a provider-wide
+  // rate period (model scope null) applies to the month's aggregated tokens.
+  const now = new Date();
   const rows = (monthProviders ?? [])
-    .map((p) => ({
-      provider: p.provider,
-      tokensUsed: p.promptTokens + p.completionTokens,
-      costUsed:
-        modelCost(
-          {
-            provider: p.provider,
-            promptTokens: p.promptTokens,
-            completionTokens: p.completionTokens,
-          },
-          costRates,
-        ) ?? 0,
-    }))
+    .map((p) => {
+      const rate = rateAt(costRates, p.provider, null, now);
+      const costUsed =
+        rate && rate.mode === "per-token"
+          ? (p.promptTokens / 1_000_000) * rate.promptPer1M +
+            (p.completionTokens / 1_000_000) * rate.completionPer1M
+          : 0;
+      return {
+        provider: p.provider,
+        tokensUsed: p.promptTokens + p.completionTokens,
+        costUsed,
+      };
+    })
     .sort((a, b) => b.tokensUsed - a.tokensUsed);
 
   return (
@@ -251,12 +199,13 @@ export function BudgetsPanel({
           // monthly amount, not usage-based cost — a cost budget would
           // trivially sit at 100%, so we only surface their token budget
           // plus the flat cost itself.
-          const flatKind = getPricingMode(costRates, row.provider);
-          const isFlat = flatKind === "subscription" || flatKind === "self-hosted";
+          const flatKind = pricingModeAt(costRates, row.provider, null, now);
+          const isFlat = flatKind !== "per-token";
+          const resolved = rateAt(costRates, row.provider, null, now);
           const flatCost =
             flatKind === "subscription"
-              ? (costRates[row.provider]?.monthlyPrice ?? 0)
-              : (costRates[row.provider]?.monthlyCost ?? 0);
+              ? (resolved?.monthlyPrice ?? 0)
+              : (resolved?.monthlyCost ?? 0);
           const cost = barState(row.costUsed, budget.cost);
           return (
             <div

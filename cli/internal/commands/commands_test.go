@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -5841,5 +5842,511 @@ func TestHealthSummaryOutput(t *testing.T) {
 	}
 	if !strings.Contains(out, "12.5") {
 		t.Errorf("expected RPM value '12.5' in summary, got: %s", out)
+	}
+}
+
+// ==================== Config Generate: Input Modalities ====================
+
+// discardStdout redirects os.Stdout to /dev/null for the duration of the test
+// so config writers do not write their summary to a pipe left closed by an
+// earlier test. Returns a function that restores the previous stdout.
+func discardStdout(t *testing.T) func() {
+	t.Helper()
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("failed to open %s: %v", os.DevNull, err)
+	}
+	old := os.Stdout
+	os.Stdout = devNull
+	return func() {
+		os.Stdout = old
+		devNull.Close()
+	}
+}
+
+// writeAndReadPiConfig runs writePiConfig against an isolated HOME and returns
+// the parsed models.json.
+func writeAndReadPiConfig(t *testing.T, models []v1ModelData) piConfig {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+
+	restoreStdout := discardStdout(t)
+	defer restoreStdout()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	if err := writePiConfig(nil, w, "global", "http://localhost:22301", "test-secret", models, nil); err != nil {
+		t.Fatalf("writePiConfig failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".pi", "agent", "models.json"))
+	if err != nil {
+		t.Fatalf("failed to read generated pi config: %v", err)
+	}
+	var cfg piConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse generated pi config: %v", err)
+	}
+	return cfg
+}
+
+// writeAndReadOpenCodeConfig runs writeOpenCodeConfig against an isolated HOME
+// and returns the parsed opencode.jsonc.
+func writeAndReadOpenCodeConfig(t *testing.T, models []v1ModelData) openCodeConfig {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+
+	restoreStdout := discardStdout(t)
+	defer restoreStdout()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	if err := writeOpenCodeConfig(nil, w, "global", "http://localhost:22301", "test-secret", models, nil); err != nil {
+		t.Fatalf("writeOpenCodeConfig failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("failed to read generated opencode config: %v", err)
+	}
+	var cfg openCodeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse generated opencode config: %v", err)
+	}
+	return cfg
+}
+
+func assertModalities(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Errorf("%s: got %v, want %v", label, got, want)
+		return
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("%s: got %v, want %v", label, got, want)
+			return
+		}
+	}
+}
+
+func modalityTestModels() []v1ModelData {
+	return []v1ModelData{
+		{
+			ID:      "multi",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{
+				InputModalities: []string{"text", "image", "video", "audio", "pdf"},
+			},
+		},
+		{
+			ID:      "text-only",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{
+				InputModalities: []string{"text"},
+			},
+		},
+		{
+			ID:      "no-unswarm",
+			OwnedBy: "provider",
+		},
+		{
+			ID:      "empty-modalities",
+			OwnedBy: "provider",
+			Unswarm: &v1ModelUnswarmInfo{},
+		},
+	}
+}
+
+func TestConfigGeneratePiInputModalities(t *testing.T) {
+	cfg := writeAndReadPiConfig(t, modalityTestModels())
+
+	provider, ok := cfg.Providers["unswarm"]
+	if !ok {
+		t.Fatal("expected unswarm provider in generated pi config")
+	}
+	byID := make(map[string]piModelEntry, len(provider.Models))
+	for _, m := range provider.Models {
+		byID[m.ID] = m
+	}
+
+	assertModalities(t, "pi multi", byID["multi"].Input, []string{"text", "image"})
+	assertModalities(t, "pi text-only", byID["text-only"].Input, []string{"text"})
+	assertModalities(t, "pi no-unswarm", byID["no-unswarm"].Input, []string{"text"})
+	assertModalities(t, "pi empty-modalities", byID["empty-modalities"].Input, []string{"text"})
+
+	// pi must never advertise video/audio/pdf.
+	for _, m := range provider.Models {
+		for _, in := range m.Input {
+			if in != "text" && in != "image" {
+				t.Errorf("pi model %s emitted unsupported input modality %q", m.ID, in)
+			}
+		}
+	}
+}
+
+func TestConfigGenerateOpenCodeInputModalities(t *testing.T) {
+	cfg := writeAndReadOpenCodeConfig(t, modalityTestModels())
+
+	provider, ok := cfg.Provider["unswarm"]
+	if !ok {
+		t.Fatal("expected unswarm provider in generated opencode config")
+	}
+
+	assertModalities(
+		t,
+		"opencode multi",
+		provider.Models["multi"].Modalities.Input,
+		[]string{"text", "image", "video", "audio", "pdf"},
+	)
+	assertModalities(t, "opencode text-only", provider.Models["text-only"].Modalities.Input, []string{"text"})
+	assertModalities(t, "opencode no-unswarm", provider.Models["no-unswarm"].Modalities.Input, []string{"text"})
+	assertModalities(t, "opencode empty-modalities", provider.Models["empty-modalities"].Modalities.Input, []string{"text"})
+}
+
+func TestV1ModelDataParsesInputModalities(t *testing.T) {
+	raw := `{"id":"m","owned_by":"p","unswarm":{"contextWindow":8192,"maxOutputTokens":1024,"inputModalities":["text","image"]}}`
+	var m v1ModelData
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	if m.Unswarm == nil {
+		t.Fatal("expected unswarm info to be parsed")
+	}
+	assertModalities(t, "parsed inputModalities", m.Unswarm.InputModalities, []string{"text", "image"})
+
+	// Missing inputModalities must default to text-only through helpers.
+	raw = `{"id":"m","owned_by":"p","unswarm":{"contextWindow":8192}}`
+	var m2 v1ModelData
+	if err := json.Unmarshal([]byte(raw), &m2); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	assertModalities(t, "default pi modalities", modelInputModalities(m2, piInputModalities), []string{"text"})
+	assertModalities(t, "default opencode modalities", modelInputModalities(m2, openCodeInputModalities), []string{"text"})
+
+	// An entirely absent unswarm block must also default to text-only.
+	var m3 v1ModelData
+	if err := json.Unmarshal([]byte(`{"id":"m","owned_by":"p"}`), &m3); err != nil {
+		t.Fatalf("failed to parse v1 model data: %v", err)
+	}
+	assertModalities(t, "absent unswarm pi modalities", modelInputModalities(m3, piInputModalities), []string{"text"})
+	assertModalities(t, "absent unswarm opencode modalities", modelInputModalities(m3, openCodeInputModalities), []string{"text"})
+}
+
+// --- regression: config generation must never destroy existing content ---
+
+// seedOpenCodeConfig writes an existing opencode.jsonc into an isolated HOME
+// and returns the path. The fixture deliberately contains:
+//   - a schema URL with "https://" (the old comment stripper truncated it),
+//   - a real line comment,
+//   - top-level keys the generator's typed struct did not model ($schema,
+//     compaction, plugin, agent, lsp),
+//   - a sibling provider that must survive untouched.
+func seedOpenCodeConfig(t *testing.T, content string) (home, path string) {
+	t.Helper()
+	home = t.TempDir()
+	t.Setenv("HOME", home)
+
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	path = filepath.Join(dir, "opencode.jsonc")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+	return home, path
+}
+
+const seededOpenCodeConfig = `{
+  "$schema": "https://opencode.ai/config.json",
+  // generated by hand; keep these agents
+  "compaction": { "auto": true },
+  "plugin": ["@example/plugin"],
+  "agent": {
+    "plan": { "mode": "primary", "description": "plan // not a comment" }
+  },
+  "lsp": { "go": { "command": "gopls" } },
+  "provider": {
+    "other": {
+      "name": "Other",
+      "api": "openai",
+      "options": { "baseURL": "http://example.com/v1", "apiKey": "keep-me" },
+      "models": { "m": { "name": "m" } }
+    },
+    "unswarm": {
+      "name": "Old",
+      "api": "openai",
+      "options": { "baseURL": "http://old/v1", "apiKey": "stale" },
+      "models": {}
+    }
+  }
+}`
+
+// runOpenCodeWrite invokes writeOpenCodeConfig against the seeded HOME.
+func runOpenCodeWrite(t *testing.T) {
+	t.Helper()
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+
+	restore := discardStdout(t)
+	defer restore()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	models := []v1ModelData{{ID: "fresh-model", OwnedBy: "p"}}
+	if err := writeOpenCodeConfig(nil, w, "global", "http://localhost:22301", "new-secret", models, nil); err != nil {
+		t.Fatalf("writeOpenCodeConfig failed: %v", err)
+	}
+}
+
+func readOpenCodeRaw(t *testing.T, path string) map[string]json.RawMessage {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read generated config: %v", err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("generated config is not valid JSON: %v", err)
+	}
+	return top
+}
+
+func TestWriteOpenCodeConfigPreservesExistingKeys(t *testing.T) {
+	_, path := seedOpenCodeConfig(t, seededOpenCodeConfig)
+	runOpenCodeWrite(t)
+
+	top := readOpenCodeRaw(t, path)
+
+	// Every top-level key the generator never modelled must survive.
+	for _, key := range []string{"$schema", "compaction", "plugin", "agent", "lsp"} {
+		if _, ok := top[key]; !ok {
+			t.Errorf("top-level key %q was dropped by config generation", key)
+		}
+	}
+
+	// The schema URL must not have been mangled by comment stripping.
+	var schema string
+	if err := json.Unmarshal(top["$schema"], &schema); err != nil {
+		t.Fatalf("$schema is not a string: %v", err)
+	}
+	if schema != "https://opencode.ai/config.json" {
+		t.Errorf("$schema corrupted: got %q", schema)
+	}
+
+	// "//" inside a string value must be preserved.
+	var agent struct {
+		Plan struct {
+			Description string `json:"description"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(top["agent"], &agent); err != nil {
+		t.Fatalf("agent block is not intact: %v", err)
+	}
+	if agent.Plan.Description != "plan // not a comment" {
+		t.Errorf("string containing // was altered: got %q", agent.Plan.Description)
+	}
+}
+
+func TestWriteOpenCodeConfigPreservesSiblingProvider(t *testing.T) {
+	_, path := seedOpenCodeConfig(t, seededOpenCodeConfig)
+	runOpenCodeWrite(t)
+
+	top := readOpenCodeRaw(t, path)
+
+	var providers map[string]json.RawMessage
+	if err := json.Unmarshal(top["provider"], &providers); err != nil {
+		t.Fatalf("provider block is not an object: %v", err)
+	}
+
+	otherRaw, ok := providers["other"]
+	if !ok {
+		t.Fatal("sibling provider \"other\" was dropped")
+	}
+	var other struct {
+		Options struct {
+			BaseURL string `json:"baseURL"`
+			APIKey  string `json:"apiKey"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(otherRaw, &other); err != nil {
+		t.Fatalf("sibling provider is corrupt: %v", err)
+	}
+	if other.Options.BaseURL != "http://example.com/v1" || other.Options.APIKey != "keep-me" {
+		t.Errorf("sibling provider altered: %+v", other.Options)
+	}
+
+	// The unswarm block must be the freshly generated one.
+	var unswarm struct {
+		Name    string `json:"name"`
+		Options struct {
+			APIKey string `json:"apiKey"`
+		} `json:"options"`
+		Models map[string]json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(providers["unswarm"], &unswarm); err != nil {
+		t.Fatalf("unswarm provider is corrupt: %v", err)
+	}
+	if unswarm.Name != "Unswarm" {
+		t.Errorf("unswarm name not regenerated: got %q", unswarm.Name)
+	}
+	if unswarm.Options.APIKey != "new-secret" {
+		t.Errorf("unswarm apiKey not updated: got %q", unswarm.Options.APIKey)
+	}
+	if _, ok := unswarm.Models["fresh-model"]; !ok {
+		t.Error("freshly generated model missing from unswarm provider")
+	}
+}
+
+func TestWriteOpenCodeConfigUnparseableRefusesOverwrite(t *testing.T) {
+	broken := `{"provider": {"unswarm": {"name": "Unswarm",`
+	_, path := seedOpenCodeConfig(t, broken)
+
+	// Preflight must reject this BEFORE any rotation happens.
+	if err := preflightConfigTarget("opencode", "global"); err == nil {
+		t.Fatal("preflightConfigTarget accepted an unparseable config")
+	}
+
+	// And the writer itself must refuse rather than clobber the file.
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+	restore := discardStdout(t)
+	defer restore()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	err := writeOpenCodeConfig(nil, w, "global", "http://localhost:22301", "new-secret", nil, nil)
+	if err == nil {
+		t.Fatal("writeOpenCodeConfig overwrote an unparseable config instead of failing")
+	}
+
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("existing config was deleted: %v", readErr)
+	}
+	if string(data) != broken {
+		t.Error("existing config was modified despite the parse failure")
+	}
+}
+
+func TestWriteOpenCodeConfigMissingFileCreatesFresh(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDryRun := dryRun
+	dryRun = false
+	defer func() { dryRun = oldDryRun }()
+	restore := discardStdout(t)
+	defer restore()
+
+	w := output.NewWriter(output.FormatJSON, true, false)
+	if err := writeOpenCodeConfig(nil, w, "global", "http://localhost:22301", "s", []v1ModelData{{ID: "m"}}, nil); err != nil {
+		t.Fatalf("writeOpenCodeConfig failed on missing file: %v", err)
+	}
+
+	top := readOpenCodeRaw(t, filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if _, ok := top["provider"]; !ok {
+		t.Fatal("expected provider block in freshly created config")
+	}
+	if err := preflightConfigTarget("opencode", "global"); err != nil {
+		t.Errorf("preflight rejected freshly created config: %v", err)
+	}
+}
+
+func TestStripJSONCommentsKeepsURLsInStrings(t *testing.T) {
+	in := `{
+  "$schema": "https://opencode.ai/config.json", // trailing comment
+  /* block
+     comment */
+  "baseURL": "http://localhost:22301/v1",
+  "note": "a /* not a comment */ either"
+}`
+	out := stripJSONComments(in)
+
+	var m map[string]string
+	if err := json.Unmarshal([]byte(out), &m); err != nil {
+		t.Fatalf("stripped output is not valid JSON: %v\n%s", err, out)
+	}
+	if m["$schema"] != "https://opencode.ai/config.json" {
+		t.Errorf("schema URL mangled: %q", m["$schema"])
+	}
+	if m["baseURL"] != "http://localhost:22301/v1" {
+		t.Errorf("baseURL mangled: %q", m["baseURL"])
+	}
+	if m["note"] != "a /* not a comment */ either" {
+		t.Errorf("block-comment marker inside string mangled: %q", m["note"])
+	}
+	if strings.Contains(out, "trailing comment") || strings.Contains(out, "block") {
+		t.Errorf("real comments were not stripped:\n%s", out)
+	}
+}
+
+func TestMergeProviderPreservesKeyOrder(t *testing.T) {
+	existing := []byte(`{"zeta":1,"alpha":2,"provider":{"zzz":{"name":"z"},"unswarm":{"name":"old"}}}`)
+
+	merged, err := mergeProviderIntoConfig(existing, "provider", "unswarm", openCodeProvider{
+		Name: "Unswarm", API: "openai",
+		Options: openCodeOptions{BaseURL: "http://localhost:22301/v1", APIKey: "k"},
+		Models:  map[string]openCodeModel{},
+	})
+	if err != nil {
+		t.Fatalf("mergeProviderIntoConfig failed: %v", err)
+	}
+
+	// decodeJSONObject reports document order; sibling keys must not be
+	// alphabetised by regeneration.
+	keys, vals, err := decodeJSONObject(string(merged))
+	if err != nil {
+		t.Fatalf("merged output is not a JSON object: %v", err)
+	}
+	wantOrder := []string{"zeta", "alpha", "provider"}
+	if len(keys) != len(wantOrder) {
+		t.Fatalf("top-level keys = %v, want %v", keys, wantOrder)
+	}
+	for i, want := range wantOrder {
+		if keys[i] != want {
+			t.Errorf("top-level key[%d] = %q, want %q (full order %v)", i, keys[i], want, keys)
+		}
+	}
+	if string(vals["zeta"]) != "1" || string(vals["alpha"]) != "2" {
+		t.Errorf("sibling values altered: zeta=%s alpha=%s", vals["zeta"], vals["alpha"])
+	}
+
+	pKeys, pVals, err := decodeJSONObject(string(vals["provider"]))
+	if err != nil {
+		t.Fatalf("provider block not an object: %v", err)
+	}
+	if len(pKeys) != 2 || pKeys[0] != "zzz" || pKeys[1] != "unswarm" {
+		t.Errorf("provider key order = %v, want [zzz unswarm]", pKeys)
+	}
+	// Values come back from the indented output, so assert structurally
+	// rather than on compact formatting.
+	var sibling openCodeProvider
+	if err := json.Unmarshal(pVals["zzz"], &sibling); err != nil {
+		t.Fatalf("sibling provider corrupt: %v", err)
+	}
+	if sibling.Name != "z" {
+		t.Errorf("sibling provider altered: got name %q", sibling.Name)
+	}
+
+	var unswarm openCodeProvider
+	if err := json.Unmarshal(pVals["unswarm"], &unswarm); err != nil {
+		t.Fatalf("unswarm provider corrupt: %v", err)
+	}
+	if unswarm.Name == "old" {
+		t.Errorf("unswarm block was not replaced: %s", pVals["unswarm"])
+	}
+	if unswarm.Name != "Unswarm" {
+		t.Errorf("unswarm name = %q, want %q", unswarm.Name, "Unswarm")
 	}
 }

@@ -36,6 +36,7 @@ import { enumLabel } from "../../i18n/enum-map";
 import { formatTokensPerSec, formatLatency, formatTokens } from "../../i18n/format";
 import { TestChatDrawer } from "./test-chat-drawer";
 import { CloudModelSelector } from "./cloud-model-selector";
+import { InputModalitiesField, normalizeInputModalities } from "./input-modalities-field";
 
 // ─── Status semantics — identical to the Swarm page palette ───────
 
@@ -135,11 +136,13 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
   const [editParamSize, setEditParamSize] = useState("");
   const [editQuant, setEditQuant] = useState("");
   const [editCtxWindow, setEditCtxWindow] = useState("");
+  const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
   const [editThinkingEfforts, setEditThinkingEfforts] = useState("");
+  const [editInputModalities, setEditInputModalities] = useState<string[]>(["text"]);
   const [editError, setEditError] = useState<string | null>(null);
 
   const updateMutation = useMutation({
-    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; supportedThinkingEffortsJson: string | null }) =>
+    mutationFn: (data: { displayName: string | null; family: string; parameterSize: string; quantization: string; contextWindow: number; maxOutputTokens?: number | null; supportedThinkingEffortsJson: string | null; inputModalities: string[] }) =>
       client.updateModel(model.id, data as unknown as Partial<Model>),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -155,7 +158,9 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
     setEditParamSize(model.parameterSize ?? "");
     setEditQuant(model.quantization ?? "");
     setEditCtxWindow(model.contextWindow?.toString() ?? "");
+    setEditMaxOutputTokens(model.maxOutputTokens?.toString() ?? "");
     setEditThinkingEfforts(model.supportedThinkingEfforts?.join(", ") ?? "");
+    setEditInputModalities(normalizeInputModalities(model.inputModalities));
     setEditError(null);
     setEditing(true);
   };
@@ -166,6 +171,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       setEditError(t('errors.contextWindowInvalid'));
       return;
     }
+    const maxOut = editMaxOutputTokens ? parseInt(editMaxOutputTokens, 10) : undefined;
+    if (editMaxOutputTokens && (maxOut === undefined || isNaN(maxOut) || maxOut <= 0 || maxOut > 10_000_000)) {
+      setEditError(t('errors.maxOutputTokensInvalid'));
+      return;
+    }
     setEditError(null);
     updateMutation.mutate({
       displayName: editDisplayName.trim() || null,
@@ -173,9 +183,11 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
       parameterSize: editParamSize.trim(),
       quantization: editQuant.trim(),
       contextWindow: ctxWindow,
+      maxOutputTokens: maxOut,
       supportedThinkingEffortsJson: editThinkingEfforts.trim()
         ? JSON.stringify(editThinkingEfforts.split(",").map(s => s.trim()).filter(Boolean))
         : null,
+      inputModalities: normalizeInputModalities(editInputModalities),
     });
   };
 
@@ -391,7 +403,21 @@ function ManagedModelRow({ model, index, settings, isSelected, onChat }: { model
               min={1}
               max={10000000}
             />
+            <Input
+              label={t('form.maxOutputTokens')}
+              value={editMaxOutputTokens}
+              onChange={(e) => setEditMaxOutputTokens(e.target.value)}
+              placeholder={t('placeholders.maxOutputTokens')}
+              type="number"
+              min={1}
+              max={10000000}
+            />
           </div>
+          <InputModalitiesField
+            value={editInputModalities}
+            onChange={setEditInputModalities}
+            disabled={updateMutation.isPending}
+          />
           <div className="grid gap-2">
             <Input
               label="Supported Thinking Efforts"
@@ -682,7 +708,7 @@ export default function Models() {
         ) : (
           <>
             {activeTab === "cloud" && (
-              <CloudModelSelector filter={filter} onChatModel={(modelName) => {
+              <CloudModelSelector filter={filter} cloudModels={cloudModels} onChatModel={(modelName) => {
                 const found = (models ?? []).find((m) => m.name === modelName);
                 if (found) setChatModelId(found.id);
               }} />

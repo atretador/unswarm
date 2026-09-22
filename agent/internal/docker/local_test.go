@@ -13,25 +13,28 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// PortAllowlist.Check
+// LoopbackPolicy.Check
 // ---------------------------------------------------------------------------
 
-func TestPortAllowlist_Check_EmptyAllowsAll(t *testing.T) {
-	var allow PortAllowlist
-	if err := allow.Check(12345); err != nil {
-		t.Errorf("empty allowlist should allow any port, got error: %v", err)
+// unrestricted is the legacy default: any loopback port is allowed.
+func unrestricted() LoopbackPolicy { return LoopbackPolicy{Unrestricted: true} }
+
+func TestLoopbackPolicy_Check_EmptyDeniesAll(t *testing.T) {
+	var allow LoopbackPolicy
+	if err := allow.Check(12345); err == nil {
+		t.Error("empty restricted policy should deny any port")
 	}
 }
 
-func TestPortAllowlist_Check_NilAllowsAll(t *testing.T) {
-	var allow PortAllowlist = nil
+func TestLoopbackPolicy_Check_UnrestrictedAllowsAll(t *testing.T) {
+	allow := LoopbackPolicy{Unrestricted: true}
 	if err := allow.Check(9999); err != nil {
-		t.Errorf("nil allowlist should allow any port, got error: %v", err)
+		t.Errorf("unrestricted policy should allow any port, got error: %v", err)
 	}
 }
 
-func TestPortAllowlist_Check_Allowed(t *testing.T) {
-	allow := PortAllowlist{8080, 9090}
+func TestLoopbackPolicy_Check_Allowed(t *testing.T) {
+	allow := LoopbackPolicy{Ports: []int{8080, 9090}}
 	if err := allow.Check(8080); err != nil {
 		t.Errorf("port 8080 should be allowed, got: %v", err)
 	}
@@ -40,8 +43,8 @@ func TestPortAllowlist_Check_Allowed(t *testing.T) {
 	}
 }
 
-func TestPortAllowlist_Check_Denied(t *testing.T) {
-	allow := PortAllowlist{8080, 9090}
+func TestLoopbackPolicy_Check_Denied(t *testing.T) {
+	allow := LoopbackPolicy{Ports: []int{8080, 9090}}
 	err := allow.Check(3000)
 	if err == nil {
 		t.Fatal("port 3000 should be denied")
@@ -54,8 +57,8 @@ func TestPortAllowlist_Check_Denied(t *testing.T) {
 	}
 }
 
-func TestPortAllowlist_Check_SingleElement(t *testing.T) {
-	allow := PortAllowlist{42}
+func TestLoopbackPolicy_Check_SingleElement(t *testing.T) {
+	allow := LoopbackPolicy{Ports: []int{42}}
 	if err := allow.Check(42); err != nil {
 		t.Errorf("port 42 should be allowed, got: %v", err)
 	}
@@ -70,7 +73,7 @@ func TestPortAllowlist_Check_SingleElement(t *testing.T) {
 
 func TestHealthCheck_InvalidPort(t *testing.T) {
 	ctx := context.Background()
-	r := HealthCheck(ctx, nil, 0)
+	r := HealthCheck(ctx, unrestricted(), 0)
 	if r.OK {
 		t.Error("port 0 should fail")
 	}
@@ -81,7 +84,7 @@ func TestHealthCheck_InvalidPort(t *testing.T) {
 
 func TestHealthCheck_NegativePort(t *testing.T) {
 	ctx := context.Background()
-	r := HealthCheck(ctx, nil, -1)
+	r := HealthCheck(ctx, unrestricted(), -1)
 	if r.OK {
 		t.Error("negative port should fail")
 	}
@@ -89,7 +92,7 @@ func TestHealthCheck_NegativePort(t *testing.T) {
 
 func TestHealthCheck_PortBlockedByAllowlist(t *testing.T) {
 	ctx := context.Background()
-	allow := PortAllowlist{9090}
+	allow := LoopbackPolicy{Ports: []int{9090}}
 	r := HealthCheck(ctx, allow, 8080)
 	if r.OK {
 		t.Error("blocked port should fail")
@@ -102,7 +105,7 @@ func TestHealthCheck_PortBlockedByAllowlist(t *testing.T) {
 func TestHealthCheck_UnreachablePort(t *testing.T) {
 	ctx := context.Background()
 	// Use a high port that nothing is listening on.
-	r := HealthCheck(ctx, nil, 19999)
+	r := HealthCheck(ctx, unrestricted(), 19999)
 	if !r.OK {
 		t.Fatalf("HealthCheck should succeed (ok=true) even when unhealthy, got: %v", r.Error)
 	}
@@ -130,7 +133,7 @@ func TestHealthCheck_HealthyServer(t *testing.T) {
 	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
-	r := HealthCheck(ctx, nil, port)
+	r := HealthCheck(ctx, unrestricted(), port)
 	if !r.OK {
 		t.Fatalf("HealthCheck failed: %v", r.Error)
 	}
@@ -156,7 +159,7 @@ func TestHealthCheck_HealthyServer(t *testing.T) {
 
 func TestDiscoverModels_InvalidPort(t *testing.T) {
 	ctx := context.Background()
-	r := DiscoverModels(ctx, nil, 0)
+	r := DiscoverModels(ctx, unrestricted(), 0)
 	if r.OK {
 		t.Error("port 0 should fail")
 	}
@@ -167,7 +170,7 @@ func TestDiscoverModels_InvalidPort(t *testing.T) {
 
 func TestDiscoverModels_PortBlocked(t *testing.T) {
 	ctx := context.Background()
-	allow := PortAllowlist{9090}
+	allow := LoopbackPolicy{Ports: []int{9090}}
 	r := DiscoverModels(ctx, allow, 8080)
 	if r.OK {
 		t.Error("blocked port should fail")
@@ -206,7 +209,7 @@ func TestDiscoverModels_Success(t *testing.T) {
 	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
-	r := DiscoverModels(ctx, nil, port)
+	r := DiscoverModels(ctx, unrestricted(), port)
 	if !r.OK {
 		t.Fatalf("DiscoverModels failed: %v", r.Error)
 	}
@@ -230,7 +233,7 @@ func TestDiscoverModels_HTTPError(t *testing.T) {
 	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
-	r := DiscoverModels(ctx, nil, port)
+	r := DiscoverModels(ctx, unrestricted(), port)
 	// Server returns 500 but JSON decode of the body may succeed or fail.
 	// Either way, the function doesn't return an HTTP-status error for
 	// DiscoverModels — it tries to decode the body. If decoding fails we
@@ -244,7 +247,7 @@ func TestDiscoverModels_HTTPError(t *testing.T) {
 
 func TestDiscoverModels_UnreachablePort(t *testing.T) {
 	ctx := context.Background()
-	r := DiscoverModels(ctx, nil, 19998)
+	r := DiscoverModels(ctx, unrestricted(), 19998)
 	if r.OK {
 		t.Fatalf("expected error for unreachable port, got ok=true")
 	}
@@ -259,7 +262,7 @@ func TestDiscoverModels_UnreachablePort(t *testing.T) {
 
 func TestChatCompletion_InvalidPort(t *testing.T) {
 	ctx := context.Background()
-	r := ChatCompletion(ctx, nil, 0, json.RawMessage(`{}`))
+	r := ChatCompletion(ctx, unrestricted(), 0, json.RawMessage(`{}`))
 	if r.OK {
 		t.Error("port 0 should fail")
 	}
@@ -267,7 +270,7 @@ func TestChatCompletion_InvalidPort(t *testing.T) {
 
 func TestChatCompletion_PortBlocked(t *testing.T) {
 	ctx := context.Background()
-	allow := PortAllowlist{9090}
+	allow := LoopbackPolicy{Ports: []int{9090}}
 	r := ChatCompletion(ctx, allow, 8080, json.RawMessage(`{}`))
 	if r.OK {
 		t.Error("blocked port should fail")
@@ -276,7 +279,7 @@ func TestChatCompletion_PortBlocked(t *testing.T) {
 
 func TestChatCompletion_EmptyBody(t *testing.T) {
 	ctx := context.Background()
-	r := ChatCompletion(ctx, nil, 8080, nil)
+	r := ChatCompletion(ctx, unrestricted(), 8080, nil)
 	if r.OK {
 		t.Error("empty body should fail")
 	}
@@ -287,7 +290,7 @@ func TestChatCompletion_EmptyBody(t *testing.T) {
 
 func TestChatCompletion_EmptyBody_ZeroLength(t *testing.T) {
 	ctx := context.Background()
-	r := ChatCompletion(ctx, nil, 8080, json.RawMessage{})
+	r := ChatCompletion(ctx, unrestricted(), 8080, json.RawMessage{})
 	if r.OK {
 		t.Error("zero-length body should fail")
 	}
@@ -320,7 +323,7 @@ func TestChatCompletion_Success(t *testing.T) {
 
 	ctx := context.Background()
 	reqBody := json.RawMessage(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
-	r := ChatCompletion(ctx, nil, port, reqBody)
+	r := ChatCompletion(ctx, unrestricted(), port, reqBody)
 	if !r.OK {
 		t.Fatalf("ChatCompletion failed: %v", r.Error)
 	}
@@ -344,7 +347,7 @@ func TestChatCompletion_Server500(t *testing.T) {
 	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
-	r := ChatCompletion(ctx, nil, port, json.RawMessage(`{"model":"gpt-4"}`))
+	r := ChatCompletion(ctx, unrestricted(), port, json.RawMessage(`{"model":"gpt-4"}`))
 	if r.OK {
 		t.Error("HTTP 500 should return error result")
 	}
@@ -366,7 +369,7 @@ func TestChatCompletion_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	r := ChatCompletion(ctx, nil, port, json.RawMessage(`{"model":"gpt-4"}`))
+	r := ChatCompletion(ctx, unrestricted(), port, json.RawMessage(`{"model":"gpt-4"}`))
 	if r.OK {
 		t.Error("cancelled context should return error")
 	}
@@ -377,7 +380,7 @@ func TestChatCompletion_ContextCancelled(t *testing.T) {
 
 func TestChatCompletion_UnreachablePort(t *testing.T) {
 	ctx := context.Background()
-	r := ChatCompletion(ctx, nil, 19997, json.RawMessage(`{"model":"gpt-4"}`))
+	r := ChatCompletion(ctx, unrestricted(), 19997, json.RawMessage(`{"model":"gpt-4"}`))
 	if r.OK {
 		t.Error("unreachable port should fail")
 	}
@@ -389,7 +392,7 @@ func TestChatCompletion_UnreachablePort(t *testing.T) {
 
 func TestChatCompletionStream_InvalidPort(t *testing.T) {
 	ctx := context.Background()
-	err := ChatCompletionStream(ctx, nil, 0, "{}", func(chunk []byte) error { return nil })
+	err := ChatCompletionStream(ctx, unrestricted(), 0, "{}", func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("port 0 should fail")
 	}
@@ -400,7 +403,7 @@ func TestChatCompletionStream_InvalidPort(t *testing.T) {
 
 func TestChatCompletionStream_PortBlocked(t *testing.T) {
 	ctx := context.Background()
-	allow := PortAllowlist{9090}
+	allow := LoopbackPolicy{Ports: []int{9090}}
 	err := ChatCompletionStream(ctx, allow, 8080, "{}", func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("blocked port should fail")
@@ -409,7 +412,7 @@ func TestChatCompletionStream_PortBlocked(t *testing.T) {
 
 func TestChatCompletionStream_EmptyBody(t *testing.T) {
 	ctx := context.Background()
-	err := ChatCompletionStream(ctx, nil, 8080, "", func(chunk []byte) error { return nil })
+	err := ChatCompletionStream(ctx, unrestricted(), 8080, "", func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("empty body should fail")
 	}
@@ -440,7 +443,7 @@ func TestChatCompletionStream_Success(t *testing.T) {
 
 	ctx := context.Background()
 	var chunks []string
-	err := ChatCompletionStream(ctx, nil, port, `{"model":"gpt-4"}`, func(chunk []byte) error {
+	err := ChatCompletionStream(ctx, unrestricted(), port, `{"model":"gpt-4"}`, func(chunk []byte) error {
 		chunks = append(chunks, string(chunk))
 		return nil
 	})
@@ -471,7 +474,7 @@ func TestChatCompletionStream_ServerError(t *testing.T) {
 	_, _ = fmt.Sscanf(srv.URL, "http://127.0.0.1:%d", &port)
 
 	ctx := context.Background()
-	err := ChatCompletionStream(ctx, nil, port, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
+	err := ChatCompletionStream(ctx, unrestricted(), port, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("HTTP 400 should return error")
 	}
@@ -492,7 +495,7 @@ func TestChatCompletionStream_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := ChatCompletionStream(ctx, nil, port, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
+	err := ChatCompletionStream(ctx, unrestricted(), port, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("cancelled context should return error")
 	}
@@ -513,7 +516,7 @@ func TestChatCompletionStream_EmitError(t *testing.T) {
 
 	ctx := context.Background()
 	emitErr := errors.New("emit failed")
-	err := ChatCompletionStream(ctx, nil, port, `{"model":"gpt-4"}`, func(chunk []byte) error {
+	err := ChatCompletionStream(ctx, unrestricted(), port, `{"model":"gpt-4"}`, func(chunk []byte) error {
 		return emitErr
 	})
 	if err == nil {
@@ -526,7 +529,7 @@ func TestChatCompletionStream_EmitError(t *testing.T) {
 
 func TestChatCompletionStream_UnreachablePort(t *testing.T) {
 	ctx := context.Background()
-	err := ChatCompletionStream(ctx, nil, 19996, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
+	err := ChatCompletionStream(ctx, unrestricted(), 19996, `{"model":"gpt-4"}`, func(chunk []byte) error { return nil })
 	if err == nil {
 		t.Error("unreachable port should fail")
 	}

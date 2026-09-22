@@ -246,11 +246,11 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task RediscoverAsync_NoMappedPort_ResolvesPortViaDocker()
+    public async Task RediscoverAsync_NoMappedPortNoLiveContainer_SetsErrorWithoutDialing()
     {
-        // Production code now resolves MappedPort via Docker inspect / ContainerPort
-        // fallback instead of throwing. With no discovery server, discovery will fail
-        // and set Error status.
+        // Container kind with no registry MappedPort and no live container: the
+        // declared ContainerPort must NOT be used as a fallback dial target. The
+        // pass is skipped and the runtime is marked Error.
         var service = CreateService();
         var container = new RegisteredRuntime
         {
@@ -264,8 +264,10 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
 
         var result = await service.RediscoverAsync("reg-noport");
 
-        // Port resolved to ContainerPort (default 0), discovery fails → Error status
         Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        Assert.Contains("skipped", result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
     }
 
     [Fact]
@@ -287,14 +289,17 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task RediscoverAsync_DiscoveryTransportFailure_SetsErrorStatus_DoesNotThrow()
     {
-        // OOM-killed container: MappedPort present but port is dead. Rediscover must
-        // set Status=Error + message and return (not throw, not flip back to Ready).
+        // OOM-killed container: the live-resolved port is dead. Rediscover must set
+        // Status=Error + message and return (not throw, not flip back to Ready). The
+        // registry MappedPort is not a dial source, so the dead port here comes from
+        // live resolution (MappedPortOverride).
+        _docker.MappedPortOverride = 1; // live-resolved dead port
         var container = new RegisteredRuntime
         {
             Id = "reg-dead",
             DisplayName = "OomKilled",
             Image = "test:latest",
-            MappedPort = 1, // dead port
+            MappedPort = 1, // live port persisted from inspect
             Status = ContainerRegistrationStatus.Ready,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow
@@ -1152,6 +1157,9 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
     [Fact]
     public async Task HealthCheckAsync_UnhealthyRuntime_ReturnsErrorStatus()
     {
+        // Live resolution yields a port; the health checker reports it unhealthy.
+        // The registry MappedPort is ignored (F2).
+        _docker.MappedPortOverride = 9999;
         _healthChecker.IsReady = false;
 
         var service = CreateService();
@@ -1160,7 +1168,7 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             Id = "reg-hc-fail",
             DisplayName = "HcFail",
             Image = "test:latest",
-            MappedPort = 9999,
+            MappedPort = 1, // registry value, must be ignored
             Status = ContainerRegistrationStatus.Ready,
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow
@@ -1173,6 +1181,8 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal(ContainerRegistrationStatus.Error, result!.Status);
         Assert.NotNull(result.ErrorMessage);
         Assert.Contains("Health check failed", result.ErrorMessage);
+        Assert.Contains(9999, _healthChecker.CheckedPorts);
+        Assert.DoesNotContain(1, _healthChecker.CheckedPorts);
     }
 
     [Fact]
@@ -1194,6 +1204,19 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
             Discovered =
             [
                 new DiscoveredModel { ModelId = "remote-model-hc" }
+            ],
+            // Container-kind ports are resolved from the agent's live container
+            // listing, not the registry MappedPort.
+            ListedContainers =
+            [
+                new ContainerInfo
+                {
+                    Id = "remote-c1",
+                    ModelId = "vllm-serve",
+                    ModelName = "vllm-serve",
+                    Status = ContainerStatus.Running,
+                    Port = 9090
+                }
             ]
         };
 
@@ -1222,6 +1245,197 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         // Health check went through the remote controller, not the local health checker.
         Assert.Equal([9090], remote.HealthCheckedPorts);
         Assert.Empty(_healthChecker.CheckedPorts);
+    }
+
+    // ── F2: registry MappedPort is not a dial source for Container kind ──────
+
+    [Fact]
+    public async Task RediscoverAsync_ContainerKind_IgnoresRegistryMappedPort()
+    {
+        // Attacker-controlled `mappedPort` on a Container-kind runtime must not be
+        // dialed. The live port comes from Docker inspect; here the listener that
+        // serves the SAFE model is exposed as the inspect result, while the registry
+        // MappedPort points at an otherwise-working "ATTACKER" listener. If the
+        // registry port were still used, discovery would return ATTACKER.
+        var attackerPort = StartDiscoveryServer("""{"data":[{"id":"ATTACKER"}]}""");
+        var livePort = StartDiscoveryServer("""{"data":[{"id":"LEGIT"}]}""");
+        _docker.MappedPortOverride = livePort;
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-ssrf-rediscover",
+            DisplayName = "SsrfRediscover",
+            Image = "test:latest",
+            ContainerPort = 8080,
+            MappedPort = attackerPort, // registry-supplied, must be ignored
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.RediscoverAsync("reg-ssrf-rediscover");
+
+        Assert.Equal(ContainerRegistrationStatus.Ready, result.Container.Status);
+        Assert.Equal(livePort, result.Container.MappedPort);
+        var ids = await _registry.GetModelIdsForContainerAsync("reg-ssrf-rediscover");
+        Assert.Contains(ids, id => id.EndsWith(":LEGIT"));
+        Assert.DoesNotContain(ids, id => id.EndsWith(":ATTACKER"));
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_ContainerKind_IgnoresRegistryMappedPort()
+    {
+        // Same guarantee for the one-shot health path: the probe and discovery must
+        // dial the live port, never the registry MappedPort.
+        var attackerPort = StartDiscoveryServer("""{"data":[{"id":"ATTACKER"}]}""");
+        var livePort = StartDiscoveryServer("""{"data":[{"id":"LEGIT"}]}""");
+        _docker.MappedPortOverride = livePort;
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-ssrf-health",
+            DisplayName = "SsrfHealth",
+            Image = "test:latest",
+            ContainerPort = 8080,
+            MappedPort = attackerPort, // registry-supplied, must be ignored
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.HealthCheckAsync("reg-ssrf-health", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Ready, result!.Status);
+        Assert.Contains(livePort, _healthChecker.CheckedPorts);
+        Assert.DoesNotContain(attackerPort, _healthChecker.CheckedPorts);
+        var ids = await _registry.GetModelIdsForContainerAsync("reg-ssrf-health");
+        Assert.Contains(ids, id => id.EndsWith(":LEGIT"));
+        Assert.DoesNotContain(ids, id => id.EndsWith(":ATTACKER"));
+    }
+
+    [Fact]
+    public async Task HealthCheckAsync_ScriptKind_StillUsesRegistryMappedPort()
+    {
+        // Script behavior is unchanged: scripts do not appear in docker ps, so their
+        // registry MappedPort (Admin-gated for host scripts) remains the dial source.
+        var scriptPort = StartDiscoveryServer("""{"data":[{"id":"SCRIPT-MODEL"}]}""");
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-script-health",
+            DisplayName = "ScriptHealth",
+            Image = "script:latest",
+            RuntimeKind = RuntimeKind.Script,
+            ContainerPort = 7000,
+            MappedPort = scriptPort,
+            Status = ContainerRegistrationStatus.Registered,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.HealthCheckAsync("reg-script-health", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Ready, result!.Status);
+        Assert.Contains(scriptPort, _healthChecker.CheckedPorts);
+        Assert.DoesNotContain(7000, _healthChecker.CheckedPorts);
+        var ids = await _registry.GetModelIdsForContainerAsync("reg-script-health");
+        Assert.Contains(ids, id => id.EndsWith(":SCRIPT-MODEL"));
+    }
+
+    // ── F2 hardening: no caller-declared ContainerPort fallback ──────────────
+
+    [Fact]
+    public async Task HealthCheckAsync_ContainerKind_NoLiveContainer_DoesNotDialDeclaredContainerPort()
+    {
+        // A runtimes:rw caller can set ContainerPort at Register. With no live
+        // container to resolve a real port from, the health path must skip the probe
+        // entirely rather than dial the declared port.
+        var declaredPort = StartDiscoveryServer("""{"data":[{"id":"DECLARED"}]}""");
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-declared-hc",
+            DisplayName = "DeclaredHc",
+            Image = "missing:latest",
+            ContainerPort = declaredPort, // caller-declared, must NOT be dialed
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.HealthCheckAsync("reg-declared-hc", CancellationToken.None);
+
+        Assert.NotNull(result);
+        Assert.Equal(ContainerRegistrationStatus.Error, result!.Status);
+        Assert.NotNull(result.ErrorMessage);
+        Assert.Contains("skipped", result.ErrorMessage);
+        Assert.DoesNotContain(declaredPort, _healthChecker.CheckedPorts);
+        Assert.Empty(await _registry.GetModelIdsForContainerAsync("reg-declared-hc"));
+    }
+
+    [Fact]
+    public async Task RediscoverAsync_ContainerKind_NoLiveContainer_DoesNotDialDeclaredContainerPort()
+    {
+        // Same guarantee for rediscovery. The declared port serves a working
+        // discovery endpoint, so a dial would create a model — asserting no model
+        // proves the port was never dialed.
+        var declaredPort = StartDiscoveryServer("""{"data":[{"id":"DECLARED"}]}""");
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-declared-rd",
+            DisplayName = "DeclaredRd",
+            Image = "missing:latest",
+            ContainerPort = declaredPort, // caller-declared, must NOT be dialed
+            Status = ContainerRegistrationStatus.Ready,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.RediscoverAsync("reg-declared-rd");
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        Assert.Contains("skipped", result.Container.ErrorMessage);
+        Assert.Empty(result.DiscoveredModels);
+        Assert.Empty(await _registry.GetModelIdsForContainerAsync("reg-declared-rd"));
+    }
+
+    [Fact]
+    public async Task StartAsync_Host_NoLiveMappedPort_FailsWithoutDialingDeclaredContainerPort()
+    {
+        // StartRegisteredContainerAsync returns no live mapped port (e.g. host
+        // networking or an inspect gap). The declared ContainerPort is caller-settable,
+        // so the start must fail rather than health-check/dial it.
+        var declaredPort = StartDiscoveryServer("""{"data":[{"id":"DECLARED"}]}""");
+
+        _docker.OnStartRegistered = (_, _, _) =>
+            Task.FromResult(new ContainerStartResult { ContainerId = "host-c-noport" });
+
+        var service = CreateService();
+        await _registry.CreateAsync(new RegisteredRuntime
+        {
+            Id = "reg-start-noport",
+            DisplayName = "StartNoPort",
+            Image = "missing:latest",
+            ContainerPort = declaredPort, // caller-declared, must NOT be dialed
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+
+        var result = await service.StartAsync("reg-start-noport");
+
+        Assert.Equal(ContainerRegistrationStatus.Error, result.Container.Status);
+        Assert.NotNull(result.Container.ErrorMessage);
+        Assert.Contains("live mapped port", result.Container.ErrorMessage);
+        Assert.DoesNotContain(declaredPort, _healthChecker.CheckedPorts);
+        Assert.Empty(await _registry.GetModelIdsForContainerAsync("reg-start-noport"));
     }
 
     /// <summary>

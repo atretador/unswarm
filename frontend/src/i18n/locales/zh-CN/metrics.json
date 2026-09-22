@@ -114,7 +114,7 @@
     "monthlySubscription": "月度订阅价格",
     "monthlyCost": "月度费用（电力、硬件等）",
     "zeroPlaceholder": "0.00",
-    "description": "为每个提供方设置定价——按 1M token 计费或固定月度订阅。费率保存到浏览器本地存储并应用于当前筛选。"
+    "description": "按提供方或模型设置带日期的费率周期——按 1M token 的使用费率，或固定的月度订阅/自托管费用。周期保存在浏览器本地存储中，并应用于当前窗口。"
   },
   "breakdown": {
     "key": "密钥",
@@ -131,10 +131,9 @@
     "last7d": "最近 7 天",
     "less": "少",
     "more": "多",
-    "request": {
-      "one": "个请求",
-      "other": "个请求"
-    },
+    "request_one": "个请求",
+    "request_other": "个请求",
+    "request_many": "个请求",
     "dayLabels": {
       "mon": "周一",
       "tue": "周二",
@@ -216,7 +215,7 @@
   },
   "sections": {
     "perModelBreakdown": "按模型明细",
-    "perProviderBreakdown": "按提供方明细",
+    "perProviderBreakdown": "按提供方/Agent 明细",
     "recentRequests": "最近请求",
     "requestsByHour": "按小时请求"
   },
@@ -237,15 +236,14 @@
       "avgLatency": "平均延迟",
       "cachedTokens": "已缓存的 Token",
       "estCost": "预估费用",
-      "requestCount": {
-        "one": "{{count}} 个请求",
-        "other": "{{count}} 个请求"
-      },
+      "requestCount_one": "{{count}} 个请求",
+      "requestCount_other": "{{count}} 个请求",
+      "requestCount_many": "{{count}} 个请求",
       "ofTotal": "占总计 {{pct}}%"
     }
   },
   "comparisonTable": {
-    "provider": "提供方",
+    "provider": "提供方 / Agent",
     "model": "模型",
     "providerComparison": "{{dim}} 比较",
     "missingRateDisclaimer": "* 排除无按量费率的使用（订阅、自托管、未设费率的模型）。",
@@ -272,7 +270,7 @@
     "nextPage": "下一页"
   },
   "providerBreakdown": {
-    "noProviderUsage": "此时间范围内没有提供方使用数据。"
+    "noProviderUsage": "此时间范围内没有提供方/Agent 使用数据。"
   },
   "breakdownSection": {
     "latencyDistribution": "延迟分布",
@@ -289,7 +287,19 @@
     "cached": "已缓存"
   },
   "costCalcSection": {
-    "provider": "提供方",
+    "provider": "提供方 / Agent",
+    "period": "周期",
+    "periodFrom": "开始",
+    "periodTo": "结束",
+    "openEnded": "不限",
+    "modelScope": "模型",
+    "allModels": "所有模型",
+    "specificModel": "指定模型",
+    "addPeriod": "添加费率周期",
+    "overlapWarning": "与该提供方/模型的其他周期重叠。",
+    "invalidRange": "开始日期不得晚于结束日期。",
+    "periodNotActive": "该周期当前未生效",
+    "proratedMonth": "（按生效月份折算）",
     "promptRate": "Prompt 费率",
     "completionRate": "补全费率",
     "promptTokens": "Prompt Token",
@@ -301,6 +311,7 @@
     "monthly": "月度",
     "selfHosted": "自托管",
     "incl": "含",
+    "mixed": "混合",
     "noUsageYet": "——本月暂无使用",
     "unnamed": "未命名",
     "addProvider": "添加提供方",
@@ -329,7 +340,7 @@
   "clearSearch": "清除搜索",
   "apply": "应用",
   "cancel": "取消",
-  "allProvidersLabel": "所有提供方",
+  "allProvidersLabel": "所有提供方/Agent",
   "allModelsLabel": "所有模型",
   "byEntity": "按 {{entity}}",
   "onboarding": {
@@ -340,7 +351,8 @@
   "costTooltips": {
     "subscription": "包含在 {{provider}} 的 {{amount}}/月 订阅中",
     "selfHosted": "包含在 {{provider}} 的 {{amount}}/月 自托管费用中",
-    "noRate": "未为 {{provider}} 设置费率"
+    "noRate": "未为 {{provider}} 设置费率",
+    "mixed": "此窗口中 {{provider}} 混合了固定费用和按 token 计费"
   },
   "copyToClipboard": "复制到剪贴板",
   "monthlySuffix": "/月",

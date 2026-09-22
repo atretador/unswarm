@@ -17,7 +17,7 @@ namespace Unswarm.Api.Controllers;
 /// </summary>
 /// <remarks>
 /// GET /api/metrics/usage — Paginated raw usage records
-/// GET /api/metrics/summary — Time-bucketed usage aggregates (optional groupBy=provider|model)
+/// GET /api/metrics/summary — Time-bucketed usage aggregates (optional groupBy=provider|model|provider_model)
 /// GET /api/metrics/models — Per-model usage with latency percentiles
 /// GET /api/metrics/providers — Per-provider usage summaries
 /// GET /api/metrics/totals — Usage totals for a window
@@ -110,7 +110,7 @@ public sealed class MetricsController : ControllerBase
             {
                 Id = u.Id,
                 Timestamp = u.Timestamp,
-                Provider = u.Provider,
+                Provider = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider,
                 Model = u.Model,
                 PromptTokens = u.PromptTokens,
                 CompletionTokens = u.CompletionTokens,
@@ -203,7 +203,7 @@ public sealed class MetricsController : ControllerBase
     /// <param name="providers">Filter by provider names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
     /// <param name="model">Filter by model name (partial match via Contains). Legacy singular form.</param>
     /// <param name="models">Filter by model names (exact match against any). Accepts repeated keys and/or comma-separated values.</param>
-    /// <param name="groupBy">Optional comparison dimension: "provider" or "model". Buckets are additionally split per group value, exposed on <see cref="MetricsTimeBucket.Group"/>. Any other value aggregates across everything.</param>
+    /// <param name="groupBy">Optional comparison dimension: "provider", "model", or "provider_model" (per-bucket split by cost unit AND model). Single-dimension buckets expose the value on <see cref="MetricsTimeBucket.Group"/>; composite buckets expose it on <see cref="MetricsTimeBucket.Provider"/> and <see cref="MetricsTimeBucket.Model"/>. Any other value aggregates across everything.</param>
     /// <param name="ct">Cancellation token.</param>
     [HttpGet("summary")]
     [ProducesResponseType(typeof(MetricsTimeBucket[]), 200)]
@@ -236,6 +236,51 @@ public sealed class MetricsController : ControllerBase
 
         var normalizedGroupBy = groupBy?.Trim().ToLowerInvariant();
 
+        if (normalizedGroupBy == "provider_model")
+        {
+            // Composite grouping: per-bucket breakdown by cost unit AND model so
+            // the caller can price each (provider, model) pair independently
+            // (rates can change mid-window). Bucketing/aggregation stay SQL-side
+            // exactly like the single-dimension branches below.
+            var compositeRows = await query
+                .GroupBy(u => new
+                {
+                    BucketKey = u.TimestampTicks / ticksPerBucket,
+                    Provider = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider,
+                    u.Model
+                })
+                .Select(g => new GroupedProviderModelBucketRow(
+                    g.Key.BucketKey, g.Key.Provider, g.Key.Model,
+                    g.Count(),
+                    g.Sum(u => u.IsStreaming ? 1 : 0),
+                    g.Sum(u => (long)u.PromptTokens),
+                    g.Sum(u => (long)u.CompletionTokens),
+                    g.Sum(u => (long)u.CachedTokens),
+                    g.Sum(u => u.ElapsedMs)))
+                .ToListAsync(ct);
+
+            var compositeBuckets = compositeRows
+                .Select(b => new MetricsTimeBucket
+                {
+                    BucketStart = new DateTimeOffset(b.BucketKey * ticksPerBucket, TimeSpan.Zero),
+                    BucketEnd = new DateTimeOffset((b.BucketKey + 1) * ticksPerBucket, TimeSpan.Zero),
+                    Provider = b.Provider,
+                    Model = b.Model,
+                    RequestCount = b.RequestCount,
+                    StreamingRequests = b.StreamingRequests,
+                    PromptTokens = b.PromptTokens,
+                    CompletionTokens = b.CompletionTokens,
+                    CachedTokens = b.CachedTokens,
+                    AvgLatencyMs = b.RequestCount > 0 ? (double)b.TotalLatencyMs / b.RequestCount : 0
+                })
+                .OrderBy(b => b.BucketStart)
+                .ThenBy(b => b.Provider, StringComparer.Ordinal)
+                .ThenBy(b => b.Model, StringComparer.Ordinal)
+                .ToArray();
+
+            return Ok(compositeBuckets);
+        }
+
         if (normalizedGroupBy is "provider" or "model")
         {
             // SQL-side bucketing + grouping: GROUP BY on integer division of
@@ -247,7 +292,7 @@ public sealed class MetricsController : ControllerBase
             if (normalizedGroupBy == "provider")
             {
                 rows = await query
-                    .GroupBy(u => new { BucketKey = u.TimestampTicks / ticksPerBucket, Group = u.Provider })
+                    .GroupBy(u => new { BucketKey = u.TimestampTicks / ticksPerBucket, Group = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider })
                     .Select(g => new GroupedBucketRow(
                         g.Key.BucketKey, g.Key.Group,
                         g.Count(),
@@ -356,11 +401,12 @@ public sealed class MetricsController : ControllerBase
 
         var query = FilterUsage(_db.UsageRecords, effectiveFrom.UtcTicks, effectiveTo.UtcTicks, provider, providers, model, models);
 
-        // Counts/sums are aggregated SQL-side (GROUP BY provider+model); only the
+        // Counts/sums are aggregated SQL-side (GROUP BY costUnit+model); only the
         // single ElapsedMs column per row is materialized for the in-memory
-        // percentiles (SQLite has no percentile aggregate).
+        // percentiles (SQLite has no percentile aggregate). costUnit attributes
+        // local usage to the agent and cloud usage to the cloud provider name.
         var aggregates = await query
-            .GroupBy(u => new { u.Provider, u.Model })
+            .GroupBy(u => new { Provider = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider, u.Model })
             .Select(g => new
             {
                 g.Key.Provider,
@@ -374,7 +420,7 @@ public sealed class MetricsController : ControllerBase
             .ToListAsync(ct);
 
         var latencies = await query
-            .Select(u => new { u.Provider, u.Model, u.ElapsedMs })
+            .Select(u => new { Provider = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider, u.Model, u.ElapsedMs })
             .ToListAsync(ct);
 
         var latencyGroups = latencies
@@ -430,7 +476,7 @@ public sealed class MetricsController : ControllerBase
 
         var providers = await _db.UsageRecords
             .Where(u => u.TimestampTicks >= fromTicks && u.TimestampTicks <= toTicks)
-            .GroupBy(u => u.Provider)
+            .GroupBy(u => u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider)
             .Select(g => new ProviderUsageSummary
             {
                 Provider = g.Key,
@@ -448,22 +494,33 @@ public sealed class MetricsController : ControllerBase
 
     /// <summary>
     /// Returns the union of provider identities usable as filters: distinct
-    /// providers seen in usage records (with their recorded kind), configured
-    /// cloud providers (kind "cloud"), and registered runtimes (kind "local").
-    /// Deduped by name; record-seen entries win over catalog-only ones.
+    /// cost units seen in usage records (local rows use their agent, kind
+    /// "agent"; cloud rows use the provider name, kind "cloud"), configured
+    /// cloud providers (kind "cloud"), and registered-runtime agents (kind
+    /// "agent"). Deduped by name; record-seen entries win over catalog-only ones.
     /// </summary>
     [HttpGet("provider-catalog")]
     [ProducesResponseType(typeof(ProviderCatalogItem[]), 200)]
     public async Task<IActionResult> GetProviderCatalog(CancellationToken ct = default)
     {
         var seen = await _db.UsageRecords
-            .GroupBy(u => new { u.Provider, u.ProviderKind })
-            .Select(g => new ProviderCatalogItem { Name = g.Key.Provider, Kind = g.Key.ProviderKind })
+            .GroupBy(u => new
+            {
+                Name = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider,
+                u.ProviderKind
+            })
+            .Select(g => new ProviderCatalogItem
+            {
+                Name = g.Key.Name,
+                Kind = g.Key.ProviderKind == "local" ? "agent" : "cloud"
+            })
             .ToListAsync(ct);
 
         var cloudNames = await _db.CloudProviders.Select(cp => cp.Name).ToListAsync(ct);
-        var runtimeNames = await _db.RegisteredRuntimes
-            .Select(r => r.DisplayName)
+        var agentNames = await _db.RegisteredRuntimes
+            .Where(r => r.Agent != null && r.Agent != "")
+            .Select(r => r.Agent)
+            .Distinct()
             .ToListAsync(ct);
 
         var catalog = new List<ProviderCatalogItem>(seen);
@@ -477,8 +534,8 @@ public sealed class MetricsController : ControllerBase
 
         foreach (var name in cloudNames)
             Upsert(name, "cloud");
-        foreach (var name in runtimeNames)
-            Upsert(name, "local");
+        foreach (var name in agentNames)
+            Upsert(name!, "agent");
 
         return Ok(catalog);
     }
@@ -582,7 +639,7 @@ public sealed class MetricsController : ControllerBase
             .Where(u => u.ApiKeyId == keyId
                         && u.TimestampTicks >= fromTicks
                         && u.TimestampTicks <= toTicks)
-            .GroupBy(u => new { u.Provider, u.Model })
+            .GroupBy(u => new { Provider = u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider, u.Model })
             .Select(g => new KeyUsageModelRow
             {
                 Provider = g.Key.Provider,
@@ -796,7 +853,8 @@ public sealed class MetricsController : ControllerBase
     /// the time window plus provider/model restrictions.
     ///
     /// Provider filtering: singular <paramref name="provider"/> is an exact
-    /// match; plural <paramref name="providers"/> matches any listed value
+    /// match against the row's cost unit (local agent, else raw provider);
+    /// plural <paramref name="providers"/> matches any listed value
     /// (SQL IN). Model filtering: singular <paramref name="model"/> keeps its
     /// legacy substring semantics; plural <paramref name="models"/> exact-matches
     /// any listed value. Both singular + plural may be combined (AND).
@@ -814,13 +872,16 @@ public sealed class MetricsController : ControllerBase
 
         if (!string.IsNullOrEmpty(provider))
         {
-            query = query.Where(u => u.Provider == provider);
+            query = query.Where(u => (u.ProviderKind == "local" && u.Agent != null && u.Agent != "")
+                ? u.Agent == provider
+                : u.Provider == provider);
         }
 
         var providerNames = NormalizeFilterValues(providers);
         if (providerNames.Count > 0)
         {
-            query = query.Where(u => providerNames.Contains(u.Provider));
+            query = query.Where(u => providerNames.Contains(
+                u.ProviderKind == "local" && u.Agent != null && u.Agent != "" ? u.Agent! : u.Provider));
         }
 
         if (!string.IsNullOrEmpty(model))
@@ -845,6 +906,21 @@ public sealed class MetricsController : ControllerBase
     private sealed record GroupedBucketRow(
         long BucketKey,
         string Group,
+        int RequestCount,
+        int StreamingRequests,
+        long PromptTokens,
+        long CompletionTokens,
+        long CachedTokens,
+        long TotalLatencyMs);
+
+    /// <summary>
+    /// One grouped time bucket of a groupBy=provider_model summary projection,
+    /// carrying both the cost-unit provider and the model identity.
+    /// </summary>
+    private sealed record GroupedProviderModelBucketRow(
+        long BucketKey,
+        string Provider,
+        string Model,
         int RequestCount,
         int StreamingRequests,
         long PromptTokens,

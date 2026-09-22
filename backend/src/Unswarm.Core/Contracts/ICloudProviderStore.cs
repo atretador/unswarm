@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Unswarm.Core.Models;
+
 namespace Unswarm.Core.Contracts;
 
 /// <summary>
@@ -39,8 +42,14 @@ public interface ICloudProviderStore
     Task<string?> GetApiKeyAsync(string id, CancellationToken ct = default);
 
     /// <summary>
-    /// Validate and save a provider's model list. Entries are validated:
-    /// non-empty strings, must not start with "cloud/", count ≤ 500, total ≤ 64 KiB.
+    /// Validate and save a provider's model list with metadata.
+    /// Entries are validated: non-empty ids, must not start with "cloud/", count ≤ 500, total ≤ 64 KiB.
+    /// </summary>
+    Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default);
+
+    /// <summary>
+    /// Save a provider's model list from bare IDs (metadata defaults to empty).
+    /// Convenience overload for backward compatibility.
     /// </summary>
     Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default);
 
@@ -50,8 +59,11 @@ public interface ICloudProviderStore
     /// <summary>Check if a provider name already exists (for uniqueness validation).</summary>
     Task<bool> NameExistsAsync(string name, CancellationToken ct = default);
 
-    /// <summary>Get the model ID list for a provider.</summary>
+    /// <summary>Get the model ID list for a provider (bare IDs, no metadata).</summary>
     Task<IReadOnlyList<string>> GetModelIdsAsync(string id, CancellationToken ct = default);
+
+    /// <summary>Get the full model metadata list for a provider.</summary>
+    Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default);
 
     /// <summary>Save OAuth tokens for a ChatGPT subscription provider.</summary>
     Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default);
@@ -68,6 +80,35 @@ public record OAuthTokenSet(
     string RefreshTokenCiphertext,
     DateTimeOffset? ExpiresAt,
     string? ChatgptAccountId);
+
+/// <summary>
+/// Metadata for a single cloud provider model. Stored as a JSON array of these
+/// objects in <see cref="CloudProviderEntity.ModelsJson"/>.
+/// </summary>
+public sealed class CloudProviderModelMeta
+{
+    [System.Text.Json.Serialization.JsonPropertyName("id")]
+    public string Id { get; set; } = string.Empty;
+    [System.Text.Json.Serialization.JsonPropertyName("contextWindow")]
+    public int ContextWindow { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("maxOutputTokens")]
+    public int MaxOutputTokens { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("family")]
+    public string Family { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("parameterSize")]
+    public string ParameterSize { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("quantization")]
+    public string Quantization { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("displayName")]
+    public string DisplayName { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("inputModalities")]
+    public string[] InputModalities { get; set; } = [ModelModalities.Text];
+
+    /// <summary>Create a meta entry from a bare model ID (all metadata zero/empty).</summary>
+    public static CloudProviderModelMeta FromId(string id) => new() { Id = id };
+
+    public override string ToString() => Id;
+}
 
 public class CloudProviderListItem
 {
@@ -87,4 +128,81 @@ public sealed class CloudProviderReadItem : CloudProviderListItem
     public string BaseUrlFull { get; set; } = string.Empty;
     public string? ChatgptAccountId { get; set; }
     public DateTimeOffset? TokenExpiresAt { get; set; }
+}
+
+/// <summary>
+/// Helpers for reading <see cref="CloudProviderEntity.ModelsJson"/> in both
+/// the legacy bare-string format and the current object format.
+/// </summary>
+public static class CloudProviderModelsJsonHelper
+{
+    /// <summary>
+    /// Parse ModelsJson into a list of <see cref="CloudProviderModelMeta"/>.
+    /// Handles both legacy <c>["id1","id2"]</c> and current <c>[{"id":"id1",...}]</c> formats.
+    /// </summary>
+    public static IReadOnlyList<CloudProviderModelMeta> Parse(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json == "[]")
+            return [];
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var result = new List<CloudProviderModelMeta>();
+            foreach (var item in doc.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String)
+                {
+                    // Legacy bare-string format
+                    var id = item.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(id))
+                        result.Add(CloudProviderModelMeta.FromId(id));
+                }
+                else if (item.ValueKind == JsonValueKind.Object)
+                {
+                    var meta = new CloudProviderModelMeta();
+                    if (item.TryGetProperty("id", out var idEl))
+                        meta.Id = idEl.GetString() ?? "";
+                    if (item.TryGetProperty("contextWindow", out var cw) && cw.ValueKind == JsonValueKind.Number)
+                        meta.ContextWindow = cw.GetInt32();
+                    if (item.TryGetProperty("maxOutputTokens", out var mot) && mot.ValueKind == JsonValueKind.Number)
+                        meta.MaxOutputTokens = mot.GetInt32();
+                    if (item.TryGetProperty("family", out var fam) && fam.ValueKind == JsonValueKind.String)
+                        meta.Family = fam.GetString() ?? "";
+                    if (item.TryGetProperty("parameterSize", out var ps) && ps.ValueKind == JsonValueKind.String)
+                        meta.ParameterSize = ps.GetString() ?? "";
+                    if (item.TryGetProperty("quantization", out var q) && q.ValueKind == JsonValueKind.String)
+                        meta.Quantization = q.GetString() ?? "";
+                    if (item.TryGetProperty("displayName", out var dn) && dn.ValueKind == JsonValueKind.String)
+                        meta.DisplayName = dn.GetString() ?? "";
+                    if (item.TryGetProperty("inputModalities", out var imod) && imod.ValueKind == JsonValueKind.Array)
+                    {
+                        var tokens = new List<string>();
+                        foreach (var token in imod.EnumerateArray())
+                        {
+                            if (token.ValueKind == JsonValueKind.String)
+                                tokens.Add(token.GetString() ?? "");
+                        }
+                        meta.InputModalities = ModelModalities.Normalize(tokens);
+                    }
+
+                    if (!string.IsNullOrEmpty(meta.Id))
+                        result.Add(meta);
+                }
+            }
+            return result;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Extract bare model IDs from a ModelsJson string.</summary>
+    public static IReadOnlyList<string> ParseIds(string json)
+        => Parse(json).Select(m => m.Id).Where(id => !string.IsNullOrEmpty(id)).ToList();
+
+    /// <summary>Serialize a list of <see cref="CloudProviderModelMeta"/> to ModelsJson.</summary>
+    public static string Serialize(IReadOnlyList<CloudProviderModelMeta> models)
+        => JsonSerializer.Serialize(models);
 }

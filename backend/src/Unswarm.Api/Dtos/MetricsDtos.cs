@@ -9,9 +9,21 @@ public sealed class MetricsTimeBucket
     public DateTimeOffset BucketEnd { get; set; }
     /// <summary>
     /// Group identity when the request used <c>groupBy=provider|model</c>;
-    /// null for ungrouped responses.
+    /// null for ungrouped responses and for the composite
+    /// <c>groupBy=provider_model</c> response (where <see cref="Provider"/> and
+    /// <see cref="Model"/> carry the identity).
     /// </summary>
     public string? Group { get; set; }
+    /// <summary>
+    /// Cost unit (local agent or cloud provider name) for the composite
+    /// <c>groupBy=provider_model</c> response; null otherwise.
+    /// </summary>
+    public string? Provider { get; set; }
+    /// <summary>
+    /// Model name for the composite <c>groupBy=provider_model</c> response;
+    /// null otherwise.
+    /// </summary>
+    public string? Model { get; set; }
     public int RequestCount { get; set; }
     public int StreamingRequests { get; set; }
     public long PromptTokens { get; set; }
@@ -67,12 +79,14 @@ public sealed class ApiKeyUsageSummary
 }
 
 /// <summary>
-/// One entry of the provider catalog: a name usable as a provider filter plus
-/// its kind ("cloud" or "local").
+/// One entry of the provider catalog: a cost-unit name usable as a provider
+/// filter plus its kind ("cloud" for cloud provider names, "agent" for local
+/// execution-target agent names).
 /// </summary>
 public sealed class ProviderCatalogItem
 {
     public string Name { get; set; } = string.Empty;
+    /// <summary>"cloud" or "agent".</summary>
     public string Kind { get; set; } = string.Empty;
 }
 
@@ -141,7 +155,8 @@ public sealed class KeyUsageResponse
 }
 
 /// <summary>
-/// A single raw usage record for the detail endpoint.
+/// A single raw usage record for the detail endpoint. <see cref="Provider"/> is
+/// the cost unit (local agent or cloud provider name).
 /// </summary>
 public sealed class UsageRecordResponse
 {

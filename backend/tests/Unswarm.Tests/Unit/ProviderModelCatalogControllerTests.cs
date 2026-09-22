@@ -71,10 +71,12 @@ public sealed class ProviderModelCatalogControllerTests
         public Task<bool> DeleteAsync(string id, CancellationToken ct = default) => Task.FromResult(false);
         public Task<string?> GetApiKeyAsync(string id, CancellationToken ct = default) => Task.FromResult<string?>(null);
         public Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default) => Task.CompletedTask;
+        public Task SaveModelsAsync(string id, IReadOnlyList<CloudProviderModelMeta> models, CancellationToken ct = default) => Task.CompletedTask;
         public Task<bool> NameExistsAsync(string name, CancellationToken ct = default) => Task.FromResult(false);
         public Task SaveOAuthTokensAsync(string id, string accessTokenCiphertext, string refreshTokenCiphertext, DateTimeOffset? expiresAt, string? chatgptAccountId, CancellationToken ct = default) => Task.CompletedTask;
         public Task<OAuthTokenSet?> GetOAuthTokensAsync(string id, CancellationToken ct = default) => Task.FromResult<OAuthTokenSet?>(null);
         public Task<int> GetAuthTypeAsync(string id, CancellationToken ct = default) => Task.FromResult(0);
+        public Task<IReadOnlyList<CloudProviderModelMeta>> GetModelMetasAsync(string id, CancellationToken ct = default) => Task.FromResult<IReadOnlyList<CloudProviderModelMeta>>([]);
     }
 
     private sealed class FakeRouterProfileStore : IRouterProfileStore

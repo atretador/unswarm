@@ -4,8 +4,8 @@ package config
 import (
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -21,6 +21,27 @@ type ReconnectConfig struct {
 	MaxRetries       int `yaml:"max_retries"`
 }
 
+// ContainerCreationConfig configures the agent-side create_container policy.
+// Empty allowlists mean deny-all (see docker.CreatePolicy).
+type ContainerCreationConfig struct {
+	// AllowedImages is a list of image glob patterns; at least one must match
+	// for create_container to proceed. Empty = deny all.
+	AllowedImages []string `yaml:"allowed_images"`
+	// AllowedHostPathPrefixes restricts host paths mounted into created
+	// containers, on a path-component boundary. Empty = deny all host mounts.
+	AllowedHostPathPrefixes []string `yaml:"allowed_host_path_prefixes"`
+	// AllowHostNetwork permits NetworkMode=host and NetworkMode=container:*.
+	AllowHostNetwork bool `yaml:"allow_host_network"`
+	// AllowIpcHost permits IpcMode=host and IpcMode=container:*.
+	AllowIpcHost bool `yaml:"allow_ipc_host"`
+	// AllowedDevicePrefixes lists device paths that may be passed through on a
+	// path-component boundary. Empty = deny all devices.
+	AllowedDevicePrefixes []string `yaml:"allowed_device_prefixes"`
+	// BindAddress is the host IP that mapped container ports bind to. Empty
+	// defaults to 127.0.0.1 (never 0.0.0.0).
+	BindAddress string `yaml:"bind_address"`
+}
+
 // Config is the top-level agent configuration.
 type Config struct {
 	BackendURL      string          `yaml:"backend_url"`
@@ -28,7 +49,7 @@ type Config struct {
 	AgentName       string          `yaml:"agent_name"`
 	DockerSocket    string          `yaml:"docker_socket"`
 	ScriptsDir      string          `yaml:"scripts_dir"`
-	AllowInsecureWs bool            `yaml:"allow_insecure_ws"`
+	AllowInsecureWs bool            `yaml:"allow_insecure_ws"` // deprecated no-op (H6)
 	Reconnect       ReconnectConfig `yaml:"reconnect"`
 
 	// ExpectedServerFingerprint is an optional SHA-256 hex fingerprint of the
@@ -39,10 +60,43 @@ type Config struct {
 	ExpectedServerFingerprint string `yaml:"expected_server_fingerprint"`
 
 	// AllowedLoopbackPorts restricts which 127.0.0.1 ports the agent will dial
-	// for health_check / discover_models / chat_completion commands. Empty or
-	// nil = unrestricted (any loopback port). When set, ports not on the list
-	// are rejected before any connection attempt.
+	// for health_check / discover_models / chat_completion commands. When
+	// non-empty it always scopes the policy, regardless of
+	// AllowUnrestrictedLoopback (an explicit list is never silently widened on
+	// upgrade). An empty list means unrestricted only when
+	// AllowUnrestrictedLoopback is true. Port ranges are not supported yet
+	// (decision 19): scoping requires explicit host ports on the backend;
+	// auto-assigned container ports are not knowable in advance.
 	AllowedLoopbackPorts []int `yaml:"allowed_loopback_ports"`
+
+	// AllowUnrestrictedLoopback preserves legacy behavior: when true (and
+	// AllowedLoopbackPorts is empty) the agent will dial any 127.0.0.1 port.
+	// Default true for back-compat; a non-empty AllowedLoopbackPorts scopes it
+	// regardless of this flag.
+	AllowUnrestrictedLoopback bool `yaml:"allow_unrestricted_loopback"`
+
+	// AllowContainerCreation enables the create_container command. Default
+	// false: creation is denied entirely unless explicitly enabled.
+	AllowContainerCreation bool `yaml:"allow_container_creation"`
+
+	// ContainerCreation configures the create_container policy (images, bind
+	// paths, networking, devices) when AllowContainerCreation is true.
+	ContainerCreation ContainerCreationConfig `yaml:"container_creation"`
+
+	// AllowScriptUpload enables upload_script / update_script /
+	// delete_script / get_script_content. Default false: the backend cannot
+	// write executable scripts to the host. Only enable with a root-owned,
+	// agent-read-only scripts_dir.
+	AllowScriptUpload bool `yaml:"allow_script_upload"`
+
+	// AllowScriptStart enables start_script. Default true so pre-provisioned
+	// launcher scripts keep working. stop_script is never gated.
+	AllowScriptStart bool `yaml:"allow_script_start"`
+
+	// ScriptLogDir overrides where script logs/PID files are written. Empty
+	// derives the path from scripts_dir. It MUST live under a path listed in
+	// the systemd unit's ReadWritePaths or the agent refuses to start.
+	ScriptLogDir string `yaml:"script_log_dir"`
 
 	// TelemetryIntervalMs is how often telemetry (host + per-container status,
 	// including Docker inspect/stats calls) is collected and sent, in
@@ -54,6 +108,12 @@ type Config struct {
 	// itself (as opposed to the UNSWARM_AGENT_API_KEY environment fallback).
 	// Used to decide whether a plaintext-key-on-disk permission warning applies.
 	APIKeyFromYAML bool `yaml:"-"`
+
+	// BackendURLSource / APIKeySource record where the effective value came
+	// from ("env", "yaml" or "default") for the startup log. Not parsed from
+	// YAML. Never logged with the value.
+	BackendURLSource string `yaml:"-"`
+	APIKeySource     string `yaml:"-"`
 
 	// EnforceRegisteredRuntime gates container lifecycle commands against the
 	// registered runtime set synced from the backend (sync_registrations).
@@ -77,8 +137,29 @@ func DefaultConfig() Config {
 		// Registered-runtime enforcement is ON by default; an explicit
 		// enforce_registered_runtime: false in agent.yaml opts out.
 		EnforceRegisteredRuntime: true,
+		// Loopback access is unrestricted by default for back-compat (RC1):
+		// YAML is unmarshalled over these defaults, and a zero value would
+		// otherwise fail Validate() on no-config-file runs. Operators should
+		// set allow_unrestricted_loopback: false plus allowed_loopback_ports.
+		AllowUnrestrictedLoopback: true,
+		// Script start is enabled by default (decision 6); upload is disabled
+		// by default (decision 7) so the backend cannot drop executables on the
+		// host unless the operator opts in.
+		AllowScriptStart:  true,
+		AllowScriptUpload: false,
+		// Container creation is disabled by default (decision 3); requires
+		// allow_container_creation: true and an explicit container_creation
+		// allowlist policy.
+		AllowContainerCreation: false,
+		// Sensible GPU device prefixes when creation is enabled. Empty lists
+		// would deny all devices (decision 4).
+		ContainerCreation: ContainerCreationConfig{
+			AllowedDevicePrefixes: []string{"/dev/kfd", "/dev/dri/", "/dev/nvidia"},
+		},
 		// Telemetry every 30s by default.
 		TelemetryIntervalMs: 30000,
+		BackendURLSource:    "default",
+		APIKeySource:        "default",
 	}
 }
 
@@ -100,9 +181,31 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %s: %w", path, err)
 	}
 
+	// Detect which fields were explicitly present in the YAML file so the
+	// startup log can report the effective source. Defaults were applied
+	// before unmarshalling, so non-empty values alone cannot distinguish
+	// "yaml" from "default".
+	var present map[string]yaml.Node
+	if err := yaml.Unmarshal(data, &present); err == nil {
+		if _, ok := present["backend_url"]; ok {
+			cfg.BackendURLSource = "yaml"
+		}
+		if _, ok := present["api_key"]; ok {
+			cfg.APIKeySource = "yaml"
+		}
+	}
+
 	// Record whether the API key came from the YAML file before environment
 	// overrides can fill it in from UNSWARM_AGENT_API_KEY.
 	cfg.APIKeyFromYAML = strings.TrimSpace(cfg.APIKey) != ""
+
+	// allow_insecure_ws is a deprecated no-op for one release (H6): plaintext
+	// is now allowed to any host with a warning. Still parse it so existing
+	// files with the key load cleanly, and warn once that it does nothing.
+	if cfg.AllowInsecureWs {
+		slog.Warn("allow_insecure_ws is deprecated and no longer has any effect; " +
+			"plaintext ws:// is permitted with a warning for non-loopback hosts")
+	}
 
 	cfg.ApplyEnvOverrides()
 
@@ -113,20 +216,36 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// ApplyEnvOverrides fills in BackendURL and APIKey from the environment when
-// the corresponding YAML field is empty. Precedence: a non-empty YAML value
-// wins; the environment (UNSWARM_AGENT_BACKEND_URL, UNSWARM_AGENT_API_KEY) is
-// used only as a fallback for empty fields.
+// ApplyEnvOverrides applies environment overrides. Precedence (H5, decision 1):
+// the environment wins over YAML for UNSWARM_AGENT_BACKEND_URL and
+// UNSWARM_AGENT_API_KEY. When env and YAML disagree a warning names the field
+// and both sources (never the value/secret); enforcement never fails. The
+// signature stays void so no call site changes.
 func (c *Config) ApplyEnvOverrides() {
-	if c.BackendURL == "" {
-		if v := os.Getenv("UNSWARM_AGENT_BACKEND_URL"); v != "" {
-			c.BackendURL = v
+	if v := os.Getenv("UNSWARM_AGENT_BACKEND_URL"); v != "" {
+		if c.BackendURL != "" && c.BackendURL != v {
+			slog.Warn("environment overrides YAML config value",
+				"field", "backend_url",
+				"env_var", "UNSWARM_AGENT_BACKEND_URL",
+				"yaml_source", c.BackendURLSource,
+				"effective_source", "env",
+			)
 		}
+		c.BackendURL = v
+		c.BackendURLSource = "env"
 	}
-	if c.APIKey == "" {
-		if v := os.Getenv("UNSWARM_AGENT_API_KEY"); v != "" {
-			c.APIKey = v
+	if v := os.Getenv("UNSWARM_AGENT_API_KEY"); v != "" {
+		if c.APIKey != "" && c.APIKey != v {
+			// Never log either value: only the field name and sources.
+			slog.Warn("environment overrides YAML config value",
+				"field", "api_key",
+				"env_var", "UNSWARM_AGENT_API_KEY",
+				"yaml_source", c.APIKeySource,
+				"effective_source", "env",
+			)
 		}
+		c.APIKey = v
+		c.APIKeySource = "env"
 	}
 }
 
@@ -160,11 +279,19 @@ func (c Config) Validate() error {
 			c.Reconnect.MaxBackoffMs, c.Reconnect.InitialBackoffMs,
 		)
 	}
-	if err := validateInsecureWs(c.BackendURL, c.AllowInsecureWs); err != nil {
-		return err
-	}
 	if _, err := NormalizeFingerprint(c.ExpectedServerFingerprint); err != nil {
 		return err
+	}
+	// H10 / decision 11: default is unrestricted (DefaultConfig seeds true).
+	// This only fires when the operator explicitly opts into scoping but lists
+	// no ports, which would silently deny every loopback command. An explicit
+	// non-empty list is honored regardless of the flag (see
+	// loopbackPolicyFromConfig in cmd/agent), so no error is needed there.
+	if !c.AllowUnrestrictedLoopback && len(c.AllowedLoopbackPorts) == 0 {
+		return fmt.Errorf(
+			"allow_unrestricted_loopback is false but allowed_loopback_ports is empty; " +
+				"either set allow_unrestricted_loopback: true or list the local ports the agent may dial",
+		)
 	}
 	// DefaultConfig seeds 30000, so an unset field passes; only explicit
 	// misconfigurations (0 or a hot-loop value) land here.
@@ -201,29 +328,6 @@ func NormalizeFingerprint(s string) (string, error) {
 		return "", fmt.Errorf("expected_server_fingerprint is not valid hex: %w", err)
 	}
 	return stripped, nil
-}
-
-// validateInsecureWs rejects ws:// connections to non-loopback hosts unless
-// allowInsecureWs is true, because the API key would be sent in plaintext.
-func validateInsecureWs(backendURL string, allowInsecureWs bool) error {
-	u, err := url.Parse(backendURL)
-	if err != nil {
-		return nil // unparseable URLs are caught elsewhere
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "ws" {
-		return nil // wss:// and other schemes are fine
-	}
-	host := u.Hostname()
-	if host == "" || IsLoopback(host) {
-		return nil // loopback ws:// is allowed for local dev
-	}
-	if !allowInsecureWs {
-		return fmt.Errorf(
-			"backend_url uses unencrypted ws:// to a non-loopback host; the API key would be sent in plaintext. Use wss:// (e.g., via a TLS-terminating reverse proxy) or set allow_insecure_ws: true to accept the risk",
-		)
-	}
-	return nil
 }
 
 // IsLoopback reports whether host is a loopback address (localhost, 127.x.x.x,

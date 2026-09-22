@@ -2,8 +2,10 @@ using System.Diagnostics;
 using Docker.DotNet;
 using Docker.DotNet.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Unswarm.Core.Contracts;
 using Unswarm.Core.Models;
+using Unswarm.Core.Services.Validation;
 using ContainerStatus = Unswarm.Core.Models.ContainerStatus;
 
 namespace Unswarm.Core.Services;
@@ -12,14 +14,16 @@ public sealed class DockerController : IDockerController
 {
     private readonly DockerClient _client;
     private readonly ILogger<DockerController> _logger;
+    private readonly DockerPolicyOptions _policyOptions;
 
     private const string ManagedLabel = "unswarm.managed";
     private const string ModelLabel = "unswarm.model";
     private const string RegistryLabel = "unswarm.registry";
 
-    public DockerController(ILogger<DockerController> logger)
+    public DockerController(ILogger<DockerController> logger, IOptions<DockerPolicyOptions> policyOptions)
     {
         _logger = logger;
+        _policyOptions = policyOptions.Value;
         _client = new DockerClientConfiguration(new Uri("unix:///var/run/docker.sock"))
             .CreateClient();
     }
@@ -458,6 +462,10 @@ public sealed class DockerController : IDockerController
 
     public async Task<ContainerCreateResult> CreateContainerAsync(ContainerCreateConfig config, CancellationToken ct = default)
     {
+        // Authoritative role-free global denylist. The API layer performs the same
+        // check early for a clean 400, but no caller may bypass this one.
+        ContainerCreatePolicy.Validate(config, _policyOptions);
+
         _logger.LogInformation("Creating container {Name} from image {Image}", config.ContainerName, config.Image);
 
         // Check name uniqueness

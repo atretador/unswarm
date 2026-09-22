@@ -1051,12 +1051,12 @@ function seeded(i: number): number {
 
 const USAGE_PROVIDERS: Array<{
   provider: string;
-  kind: "cloud" | "local";
+  kind: "cloud" | "agent";
   models: string[];
 }> = [
   { provider: "openai", kind: "cloud", models: ["gpt-4o", "gpt-4o-mini"] },
   { provider: "anthropic", kind: "cloud", models: ["claude-3-5-sonnet"] },
-  { provider: "local-agent", kind: "local", models: ["llama-3"] },
+  { provider: "host", kind: "agent", models: ["llama-3"] },
 ];
 
 const API_KEY_NAMES = ["Key Alpha", "Key Beta"];
@@ -1081,7 +1081,7 @@ function buildUsageSeed(): UsageRecordResponse[] {
       const completionTokens = 50 + Math.floor(seeded(seq + 2) * 900);
       const cached = seeded(seq + 3) > 0.6 ? Math.floor(promptTokens * 0.4) : 0;
       const elapsedMs =
-        pick.kind === "local"
+        pick.kind === "agent"
           ? 300 + Math.floor(seeded(seq + 4) * 2200)
           : 400 + Math.floor(seeded(seq + 4) * 4200);
       const withKey = seeded(seq + 5) > 0.5;
@@ -2081,6 +2081,8 @@ export const mockClient: UnswarmClient = {
     interface Row {
       key: string;
       group: string | null;
+      provider: string | null;
+      model: string | null;
       bucketStartMs: number;
       requestCount: number;
       streamingRequests: number;
@@ -2093,18 +2095,27 @@ export const mockClient: UnswarmClient = {
     for (const r of records) {
       const t = new Date(r.timestamp).getTime();
       const bucketStartMs = Math.floor(t / size) * size;
+      const groupBy = opts?.groupBy;
+      const provider =
+        groupBy === "provider" || groupBy === "provider_model" ? r.provider : null;
+      const model =
+        groupBy === "model" || groupBy === "provider_model" ? r.model : null;
       const group =
-        opts?.groupBy === "provider"
+        groupBy === "provider"
           ? r.provider
-          : opts?.groupBy === "model"
+          : groupBy === "model"
             ? r.model
-            : null;
+            : groupBy === "provider_model"
+              ? `${r.provider}|${r.model}`
+              : null;
       const key = `${bucketStartMs}|${group ?? ""}`;
       let row = rows.get(key);
       if (!row) {
         row = {
           key,
           group,
+          provider,
+          model,
           bucketStartMs,
           requestCount: 0,
           streamingRequests: 0,
@@ -2133,6 +2144,8 @@ export const mockClient: UnswarmClient = {
         bucketStart: new Date(row.bucketStartMs).toISOString(),
         bucketEnd: new Date(row.bucketStartMs + size).toISOString(),
         group: row.group,
+        provider: row.provider,
+        model: row.model,
         requestCount: row.requestCount,
         streamingRequests: row.streamingRequests,
         promptTokens: row.promptTokens,
@@ -2248,7 +2261,7 @@ export const mockClient: UnswarmClient = {
 
   async getMetricsProviderCatalog() {
     await delay(rand(40, 120));
-    const catalog = new Map<string, { name: string; kind: "cloud" | "local" }>();
+    const catalog = new Map<string, { name: string; kind: "cloud" | "agent" }>();
     // Record-seen entries first — they win over catalog-only ones.
     for (const r of usageRecords) {
       if (!catalog.has(r.provider)) {
@@ -2259,9 +2272,10 @@ export const mockClient: UnswarmClient = {
     for (const cp of CLOUD_PROVIDERS) {
       if (!catalog.has(cp.name)) catalog.set(cp.name, { name: cp.name, kind: "cloud" });
     }
+    // Local runtimes collapse to their execution agent/host — the cost unit.
     for (const rt of registeredRuntimes) {
-      if (!catalog.has(rt.displayName)) {
-        catalog.set(rt.displayName, { name: rt.displayName, kind: "local" });
+      if (!catalog.has(rt.agent)) {
+        catalog.set(rt.agent, { name: rt.agent, kind: "agent" });
       }
     }
     return [...catalog.values()];

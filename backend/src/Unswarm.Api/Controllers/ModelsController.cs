@@ -96,16 +96,19 @@ public sealed class ModelsController : ControllerBase
         var providers = await _cloudProviderStore.ListAsync(ct);
         foreach (var provider in providers)
         {
-            var modelIds = await _cloudProviderStore.GetModelIdsAsync(provider.Id, ct);
-            foreach (var modelId in modelIds)
+            var modelMetas = await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct);
+            foreach (var meta in modelMetas)
             {
                 responses.Add(new ModelResponse
                 {
-                    Id = $"cloud/{provider.Name}/{modelId}",
-                    Name = modelId,
+                    Id = $"cloud/{provider.Name}/{meta.Id}",
+                    Name = meta.Id,
                     Origin = "cloud",
                     ProviderName = provider.Name,
                     Status = ModelStatus.Ready,
+                    ContextWindow = meta.ContextWindow,
+                    MaxOutputTokens = meta.MaxOutputTokens,
+                    InputModalities = ModelModalities.Normalize(meta.InputModalities),
                     CreatedAt = provider.CreatedAt,
                     UpdatedAt = provider.UpdatedAt
                 });
@@ -134,6 +137,9 @@ public sealed class ModelsController : ControllerBase
         if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
             return BadRequest(LocalizedError.Create("models.contextWindowInvalid"));
 
+        if (ModelModalities.FindUnknownToken(request.InputModalities) is { } badModality)
+            return BadRequest(LocalizedError.Create("models.inputModalitiesInvalid", new { token = badModality }));
+
         var definition = new ModelDefinition
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -142,8 +148,12 @@ public sealed class ModelsController : ControllerBase
             ParameterSize = request.ParameterSize,
             Quantization = request.Quantization,
             ContextWindow = request.ContextWindow,
+            MaxOutputTokens = request.MaxOutputTokens,
             ContainerImage = request.ContainerImage,
-            SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson
+            SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson,
+            InputModalitiesJson = request.InputModalities is null
+                ? null
+                : ModelModalities.SerializeJson(request.InputModalities)
         };
 
         var created = await _registry.CreateAsync(definition, ct);
@@ -156,6 +166,14 @@ public sealed class ModelsController : ControllerBase
     {
         if (request.ContextWindow is { } ctx && (ctx <= 0 || ctx > 10_000_000))
             return BadRequest(LocalizedError.Create("models.contextWindowInvalid"));
+
+        if (ModelModalities.FindUnknownToken(request.InputModalities) is { } badModality)
+            return BadRequest(LocalizedError.Create("models.inputModalitiesInvalid", new { token = badModality }));
+
+        // Cloud models are stored in the provider JSON store rather than the local
+        // registry, so a "cloud/<provider>/<model>" id never resolves locally.
+        if (TryParseCloudModelId(id, out var cloudProviderName, out var cloudModelId))
+            return await UpdateCloudModelAsync(cloudProviderName, cloudModelId, request, ct).ConfigureAwait(false);
 
         var existing = await _registry.GetAsync(id, ct);
         if (existing is null && !string.IsNullOrEmpty(id) && id[0] != '/')
@@ -171,9 +189,13 @@ public sealed class ModelsController : ControllerBase
             Quantization = request.Quantization ?? existing.Quantization,
             Status = request.Status ?? existing.Status,
             ContextWindow = request.ContextWindow ?? existing.ContextWindow,
+            MaxOutputTokens = request.MaxOutputTokens ?? existing.MaxOutputTokens,
             ContainerImage = request.ContainerImage ?? existing.ContainerImage,
             DisplayName = request.DisplayName ?? existing.DisplayName,
             SupportedThinkingEffortsJson = request.SupportedThinkingEffortsJson ?? existing.SupportedThinkingEffortsJson,
+            InputModalitiesJson = request.InputModalities is null
+                ? existing.InputModalitiesJson
+                : ModelModalities.SerializeJson(request.InputModalities),
             SourceRuntimeId = existing.SourceRuntimeId,
             CreatedAt = existing.CreatedAt,
             UpdatedAt = existing.UpdatedAt
@@ -204,10 +226,12 @@ public sealed class ModelsController : ControllerBase
                             Quantization = model.Quantization,
                             Status = ModelStatus.Conflict,
                             ContextWindow = model.ContextWindow,
+                            MaxOutputTokens = model.MaxOutputTokens,
                             ContainerImage = model.ContainerImage,
                             SourceRuntimeId = model.SourceRuntimeId,
                             DisplayName = model.DisplayName,
                             SupportedThinkingEffortsJson = model.SupportedThinkingEffortsJson,
+                            InputModalitiesJson = model.InputModalitiesJson,
                             CreatedAt = model.CreatedAt,
                             UpdatedAt = _clock.UtcNow
                         }, ct).ConfigureAwait(false);
@@ -229,10 +253,12 @@ public sealed class ModelsController : ControllerBase
                     Quantization = sameName[0].Quantization,
                     Status = ModelStatus.Ready,
                     ContextWindow = sameName[0].ContextWindow,
+                    MaxOutputTokens = sameName[0].MaxOutputTokens,
                     ContainerImage = sameName[0].ContainerImage,
                     SourceRuntimeId = sameName[0].SourceRuntimeId,
                     DisplayName = sameName[0].DisplayName,
                     SupportedThinkingEffortsJson = sameName[0].SupportedThinkingEffortsJson,
+                    InputModalitiesJson = sameName[0].InputModalitiesJson,
                     CreatedAt = sameName[0].CreatedAt,
                     UpdatedAt = _clock.UtcNow
                 }, ct).ConfigureAwait(false);
@@ -241,6 +267,74 @@ public sealed class ModelsController : ControllerBase
         }
 
         return Ok(ModelResponse.FromDefinition(result));
+    }
+
+    /// <summary>
+    /// "cloud/&lt;provider&gt;/&lt;model&gt;" → provider name + model id. Provider names
+    /// cannot contain '/', so the first segment after "cloud/" is the provider and
+    /// the remainder (which may contain slashes, e.g. OpenRouter ids) is the model.
+    /// </summary>
+    private static bool TryParseCloudModelId(string id, out string providerName, out string modelId)
+    {
+        providerName = string.Empty;
+        modelId = string.Empty;
+        if (string.IsNullOrEmpty(id) || !id.StartsWith("cloud/", StringComparison.Ordinal))
+            return false;
+
+        var rest = id["cloud/".Length..];
+        var slash = rest.IndexOf('/');
+        if (slash <= 0 || slash == rest.Length - 1)
+            return false;
+
+        providerName = rest[..slash];
+        modelId = rest[(slash + 1)..];
+        return true;
+    }
+
+    /// <summary>
+    /// Updates a cloud model's metadata (context window, max output tokens,
+    /// input modalities) through PUT /api/models/{id}, persisting via the
+    /// provider JSON store. Response shape mirrors the local model update.
+    /// </summary>
+    private async Task<IActionResult> UpdateCloudModelAsync(
+        string providerName, string modelId, ModelUpdateRequest request, CancellationToken ct)
+    {
+        var provider = await _cloudProviderStore.GetByNameAsync(providerName, ct).ConfigureAwait(false);
+        if (provider is null) return NotFound();
+
+        var metas = (await _cloudProviderStore.GetModelMetasAsync(provider.Id, ct).ConfigureAwait(false)).ToList();
+        var index = metas.FindIndex(m => string.Equals(m.Id, modelId, StringComparison.Ordinal));
+        if (index < 0) return NotFound();
+
+        var meta = metas[index];
+        if (request.ContextWindow is int cw) meta.ContextWindow = cw;
+        if (request.MaxOutputTokens is int mot) meta.MaxOutputTokens = mot;
+        if (request.InputModalities is not null)
+            meta.InputModalities = ModelModalities.Normalize(request.InputModalities);
+
+        try
+        {
+            await _cloudProviderStore.SaveModelsAsync(provider.Id, metas, ct).ConfigureAwait(false);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
+        var refreshed = await _cloudProviderStore.GetByNameAsync(providerName, ct).ConfigureAwait(false) ?? provider;
+        return Ok(new ModelResponse
+        {
+            Id = $"cloud/{providerName}/{meta.Id}",
+            Name = meta.Id,
+            Origin = "cloud",
+            ProviderName = providerName,
+            Status = ModelStatus.Ready,
+            ContextWindow = meta.ContextWindow,
+            MaxOutputTokens = meta.MaxOutputTokens,
+            InputModalities = ModelModalities.Normalize(meta.InputModalities),
+            CreatedAt = refreshed.CreatedAt,
+            UpdatedAt = refreshed.UpdatedAt
+        });
     }
 
     [Authorize(Policy = "ControlPlaneAccess")]
@@ -381,7 +475,8 @@ public sealed class ModelsController : ControllerBase
             response.PromptTokensCached,
             isStream,
             elapsedMs,
-            providerKind: "local");
+            providerKind: "local",
+            agent: response.ServedByRuntimeAgent);
 
         return new EmptyResult();
     }

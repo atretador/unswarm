@@ -69,7 +69,9 @@ func main() {
 	}
 	logger.Info("config loaded",
 		"backend_url", client.LoggableURL(cfg.BackendURL),
+		"backend_url_source", cfg.BackendURLSource,
 		"agent_name", cfg.AgentName,
+		"api_key_source", cfg.APIKeySource,
 		"docker_socket", cfg.DockerSocket,
 	)
 	warnConfigPermissions(cfgPath, cfg, logger)
@@ -82,10 +84,21 @@ func main() {
 		logger.Warn("continuing without Docker connectivity")
 	}
 
-	// Set up script manager
-	scriptMgr := scripts.NewManager(cfg.ScriptsDir)
+	// Set up script manager. NewManager is fail-loud: if the script log
+	// directory cannot be created (e.g. script_log_dir outside ReadWritePaths)
+	// the agent refuses to start rather than silently losing script logs.
+	scriptMgr, err := scripts.NewManager(cfg.ScriptsDir, cfg.ScriptLogDir)
+	if err != nil {
+		logger.Error("failed to initialize script manager", "error", err)
+		os.Exit(1)
+	}
 	if scriptMgr.IsEnabled() {
-		logger.Info("script support enabled", "scripts_dir", cfg.ScriptsDir)
+		logger.Info("script support enabled",
+			"scripts_dir", cfg.ScriptsDir,
+			"allow_script_upload", cfg.AllowScriptUpload,
+			"allow_script_start", cfg.AllowScriptStart,
+		)
+		warnScriptsDirWritable(cfg, logger)
 	}
 
 	// Registered-runtime gate: lifecycle commands are checked against the
@@ -98,7 +111,7 @@ func main() {
 	}
 
 	// Set up command dispatcher
-	disp := setupDispatcher(dockerHandler, scriptMgr, gate, cfg.AllowedLoopbackPorts, logger)
+	disp := setupDispatcher(dockerHandler, scriptMgr, gate, cfg, logger)
 
 	// Set up the message router (extension point for future inference
 	// message types proxied over the WebSocket). sync_registrations is
@@ -508,13 +521,51 @@ func errorResult(msg string) protocol.CommandResultPayload {
 	return protocol.CommandResultPayload{OK: false, Error: &msg}
 }
 
+// loopbackPolicyFromConfig builds the loopback dial policy from config.
+//
+// Precedence: an explicit, non-empty allowed_loopback_ports always scopes the
+// policy, even when allow_unrestricted_loopback is true. DefaultConfig seeds
+// allow_unrestricted_loopback: true for back-compat, so without this precedence
+// an existing config that listed allowed_loopback_ports (leaving the flag at
+// its default) would be silently widened to unrestricted on upgrade — reopening
+// the H10 loopback/SSRF pivot. An empty port list is unrestricted only when the
+// flag is true; with the flag false and no ports, Validate() rejects the config.
+func loopbackPolicyFromConfig(cfg config.Config) docker.LoopbackPolicy {
+	return docker.LoopbackPolicy{
+		Ports:        cfg.AllowedLoopbackPorts,
+		Unrestricted: cfg.AllowUnrestrictedLoopback && len(cfg.AllowedLoopbackPorts) == 0,
+	}
+}
+
 // setupDispatcher registers all command handlers. Container lifecycle
 // commands pass through the registered-runtime gate first: an unregistered
 // target is rejected without any Docker API call when enforcement is on.
-// Loopback-port commands (health_check, discover_models, chat_completion*)
-// are restricted to allow (allowed_loopback_ports; empty = unrestricted).
-func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runtimegate.Gate, allow docker.PortAllowlist, logger *slog.Logger) *dispatch.Dispatcher {
+// Loopback-port commands (health_check, discover_models, chat_completion*) are
+// restricted by cfg.AllowedLoopbackPorts / cfg.AllowUnrestrictedLoopback, and
+// create_container is validated against cfg.ContainerCreation before any
+// Docker API call.
+func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runtimegate.Gate, cfg config.Config, logger *slog.Logger) *dispatch.Dispatcher {
 	d := dispatch.New()
+
+	loopback := loopbackPolicyFromConfig(cfg)
+	createPolicy := docker.CreatePolicy{
+		Enabled:                 cfg.AllowContainerCreation,
+		AllowedImages:           cfg.ContainerCreation.AllowedImages,
+		AllowedHostPathPrefixes: cfg.ContainerCreation.AllowedHostPathPrefixes,
+		AllowHostNetwork:        cfg.ContainerCreation.AllowHostNetwork,
+		AllowIpcHost:            cfg.ContainerCreation.AllowIpcHost,
+		AllowedDevicePrefixes:   cfg.ContainerCreation.AllowedDevicePrefixes,
+		BindAddress:             cfg.ContainerCreation.BindAddress,
+	}
+	if loopback.Unrestricted {
+		logger.Warn("loopback access is UNRESTRICTED: the agent will dial any 127.0.0.1 port for health_check/discover_models/chat_completion; set allow_unrestricted_loopback: false and allowed_loopback_ports to scope it")
+	}
+	if createPolicy.Enabled {
+		logger.Warn("container creation is ENABLED: create_container will pull and run images matched by container_creation.allowed_images")
+	}
+	if dh != nil {
+		dh.SetCreateBindAddress(createPolicy.BindAddressOrDefault())
+	}
 
 	// gated wraps a lifecycle handler with the registered-runtime check.
 	gated := func(cmd string, run func(p protocol.CommandPayload, name string) protocol.CommandResultPayload) func(protocol.CommandPayload) protocol.CommandResultPayload {
@@ -571,7 +622,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("listing containers")
 		ctx, cancel := commandContext()
 		defer cancel()
-		return dh.ListContainers(ctx)
+		return gate.FilterListResult(protocol.CmdListContainers, dh.ListContainers(ctx))
 	})
 
 	// get_container_logs
@@ -592,6 +643,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 
 	// create_container
 	d.Register(protocol.CmdCreateContainer, func(p protocol.CommandPayload) protocol.CommandResultPayload {
+		if dh == nil {
+			return notConnectedResult("create_container")
+		}
 		var payload protocol.CreateContainerPayload
 		if p.JsonBody != nil {
 			if err := json.Unmarshal(p.JsonBody, &payload); err != nil {
@@ -610,6 +664,13 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 			return errorResult("containerName is required for create_container")
 		}
 
+		// H7: validate against the creation policy BEFORE pulling/pulling any
+		// image or touching Docker. Disabled by default.
+		if err := createPolicy.Validate(payload); err != nil {
+			logger.Warn("create_container rejected by policy", "image", payload.Image, "error", err)
+			return errorResult(err.Error())
+		}
+
 		logger.Info("creating container", "image", payload.Image, "name", payload.ContainerName)
 		ctx, cancel := commandContext()
 		defer cancel()
@@ -621,7 +682,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("health check", "port", p.Port)
 		ctx, cancel := commandContext()
 		defer cancel()
-		return docker.HealthCheck(ctx, allow, p.Port)
+		return docker.HealthCheck(ctx, loopback, p.Port)
 	})
 
 	// discover_models
@@ -629,7 +690,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		logger.Info("discovering models", "port", p.Port)
 		ctx, cancel := commandContext()
 		defer cancel()
-		return docker.DiscoverModels(ctx, allow, p.Port)
+		return docker.DiscoverModels(ctx, loopback, p.Port)
 	})
 
 	// chat_completion — forwards a raw OpenAI chat-completions body to the local
@@ -637,7 +698,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	// cancellation (backend disconnect) aborts the HTTP call via ctx.
 	d.RegisterContext(protocol.CmdChatCompletion, func(ctx context.Context, p protocol.CommandPayload) protocol.CommandResultPayload {
 		logger.Info("chat completion", "port", p.Port, "jsonBytes", len(p.JsonBody))
-		return docker.ChatCompletion(ctx, allow, p.Port, p.JsonBody)
+		return docker.ChatCompletion(ctx, loopback, p.Port, p.JsonBody)
 	})
 
 	// chat_completion_stream — same endpoint as chat_completion, but the raw
@@ -645,7 +706,7 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	// (base64-encoded), followed by exactly one final command_result.
 	d.RegisterStream(protocol.CmdChatCompletionStream, func(ctx context.Context, p protocol.CommandPayload, emit func([]byte) error) error {
 		logger.Info("chat completion stream", "port", p.Port, "jsonBytes", len(p.JsonBody))
-		return docker.ChatCompletionStream(ctx, allow, p.Port, string(p.JsonBody), emit)
+		return docker.ChatCompletionStream(ctx, loopback, p.Port, string(p.JsonBody), emit)
 	})
 
 	// list_scripts
@@ -661,6 +722,10 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
 		}
+		// H8 / decision 6: start is gated on allow_script_start (default true).
+		if !cfg.AllowScriptStart {
+			return errorResult("script start is disabled; set allow_script_start: true to enable it")
+		}
 		pid, err := scriptMgr.StartScript(p.ScriptPath, p.ScriptPort, p.RegistrationId)
 		if err != nil {
 			return errorResult(err.Error())
@@ -668,7 +733,8 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		return protocol.CommandResultPayload{OK: true, Data: map[string]interface{}{"pid": pid}}
 	})
 
-	// stop_script
+	// stop_script — NEVER gated (decision 15 / review MUST-FIX 6): a running
+	// script must remain stoppable even after allow_script_start is turned off.
 	d.Register(protocol.CmdStopScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		if scriptMgr == nil {
 			return errorResult("script support not enabled")
@@ -696,6 +762,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
 		}
+		if !cfg.AllowScriptUpload {
+			return errorResult("script upload is disabled; set allow_script_upload: true to enable it")
+		}
 		if p.ScriptPath == "" {
 			return errorResult("scriptPath is required")
 		}
@@ -714,6 +783,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
 		}
+		if !cfg.AllowScriptUpload {
+			return errorResult("script update is disabled; set allow_script_upload: true to enable it")
+		}
 		if p.ScriptPath == "" {
 			return errorResult("scriptPath is required")
 		}
@@ -727,10 +799,15 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 		return protocol.CommandResultPayload{OK: true, Data: info}
 	})
 
-	// get_script_content — reads and returns a script's content
+	// get_script_content — reads and returns a script's content. Decision 16:
+	// reading content is tied to the upload trust level (it exposes executable
+	// script bodies).
 	d.Register(protocol.CmdGetScriptContent, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if !cfg.AllowScriptUpload {
+			return errorResult("reading script content is disabled; set allow_script_upload: true to enable it")
 		}
 		if p.ScriptPath == "" {
 			return errorResult("scriptPath is required")
@@ -746,6 +823,9 @@ func setupDispatcher(dh *docker.Handler, scriptMgr *scripts.Manager, gate *runti
 	d.Register(protocol.CmdDeleteScript, func(p protocol.CommandPayload) protocol.CommandResultPayload {
 		if scriptMgr == nil || !scriptMgr.IsEnabled() {
 			return errorResult("script support not enabled (scripts_dir not configured)")
+		}
+		if !cfg.AllowScriptUpload {
+			return errorResult("script delete is disabled; set allow_script_upload: true to enable it")
 		}
 		if p.ScriptPath == "" {
 			return errorResult("scriptPath is required")
@@ -810,6 +890,41 @@ func warnConfigPermissions(path string, cfg config.Config, logger *slog.Logger) 
 			"fix", fmt.Sprintf("chmod 600 %s", path),
 		)
 	}
+}
+
+// warnScriptsDirWritable warns (H8 / decision 17) when scripts_dir is writable
+// by the agent user: anything in that directory is executed as bash, so a
+// writable scripts_dir is remote code execution by design. We warn rather than
+// refuse so the agent still starts, but upload stays disabled unless the
+// operator explicitly enables allow_script_upload.
+func warnScriptsDirWritable(cfg config.Config, logger *slog.Logger) {
+	if cfg.ScriptsDir == "" {
+		return
+	}
+	info, err := os.Stat(cfg.ScriptsDir)
+	if err != nil {
+		return
+	}
+	perm := info.Mode().Perm()
+	writable := perm&0o002 != 0 // other-writable
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		if st.Uid == uint32(os.Getuid()) && perm&0o200 != 0 {
+			writable = true // owner-writable by the agent user
+		}
+		if st.Gid == uint32(os.Getgid()) && perm&0o020 != 0 {
+			writable = true // group-writable by the agent's primary group
+		}
+	}
+	if !writable {
+		return
+	}
+	logger.Warn(
+		"scripts_dir is writable by the agent user; anything in it is executed as bash. "+
+			"Prefer a root-owned, agent-read-only scripts_dir and keep allow_script_upload disabled unless required",
+		"path", cfg.ScriptsDir,
+		"perms", perm.String(),
+		"allow_script_upload", cfg.AllowScriptUpload,
+	)
 }
 
 // reachedMaxRetries reports whether the reconnect loop should give up.

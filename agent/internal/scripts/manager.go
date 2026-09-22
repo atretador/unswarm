@@ -64,22 +64,38 @@ type ScriptStatus struct {
 }
 
 // NewManager creates a Manager. If scriptsDir is empty the manager is
-// disabled (IsEnabled returns false).
-func NewManager(scriptsDir string) *Manager {
-	// Place script logs under the parent of scriptsDir (typically
-	// /var/lib/unswarm) so they live inside the agent's ReadWritePaths
-	// instead of /tmp which may be owned by another user.
-	logDir := filepath.Join(filepath.Dir(scriptsDir), "script-logs")
-	_ = os.MkdirAll(logDir, 0o700)
+// disabled (IsEnabled returns false) and no directories are created.
+//
+// logDir is where script logs/PID files are written. If empty it is derived
+// as <parent of scriptsDir>/script-logs (typically /var/lib/unswarm). It MUST
+// resolve inside a path listed in the systemd unit's ReadWritePaths; if the
+// directory cannot be created the returned error names the path, the
+// script_log_dir config key, and the literal fix.
+func NewManager(scriptsDir, logDir string) (*Manager, error) {
+	if scriptsDir == "" {
+		return &Manager{}, nil
+	}
+	if logDir == "" {
+		logDir = filepath.Join(filepath.Dir(scriptsDir), "script-logs")
+	}
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return nil, fmt.Errorf(
+			"create script log directory %q: %w; "+
+				"set script_log_dir to a writable path under the systemd unit's ReadWritePaths "+
+				"(e.g. script_log_dir: /var/lib/unswarm/script-logs) "+
+				"or add %q to ReadWritePaths",
+			logDir, err, logDir,
+		)
+	}
 	return &Manager{
 		scriptsDir: scriptsDir,
 		logDir:     logDir,
 		processes:  make(map[string]*scriptProcess),
-	}
+	}, nil
 }
 
 // IsEnabled reports whether script support is configured.
-func (m *Manager) IsEnabled() bool { return m.scriptsDir != "" }
+func (m *Manager) IsEnabled() bool { return m != nil && m.scriptsDir != "" }
 
 // ListScripts returns .sh files found at the top level of scriptsDir.
 func (m *Manager) ListScripts() []ScriptInfo {
@@ -141,19 +157,23 @@ func (m *Manager) WriteScript(name string, content string) (ScriptInfo, error) {
 		return ScriptInfo{}, fmt.Errorf("script exceeds maximum size of %dKB", maxScriptBytes/1024)
 	}
 
-	// Resolve to final path and validate containment.
-	resolved, err := m.resolveWithinScriptsDir(filepath.Join(m.scriptsDir, name))
+	// Resolve to final path and validate containment. The target may not exist
+	// yet (upload of a new script), so resolve the directory and the basename
+	// separately instead of EvalSymlinks on the whole path.
+	resolved, err := m.resolveWriteTarget(name)
 	if err != nil {
 		return ScriptInfo{}, err
 	}
 
-	if err := os.WriteFile(resolved, []byte(content), 0o644); err != nil {
+	// Write owner-only (0o700): scripts are executable content and must not be
+	// readable by other local users. os.WriteFile does not change the mode of
+	// an existing file, so chmod explicitly to enforce 0700 on overwrite too
+	// (UpdateScript shares this path).
+	if err := os.WriteFile(resolved, []byte(content), 0o700); err != nil {
 		return ScriptInfo{}, fmt.Errorf("write script: %w", err)
 	}
-
-	// Make executable.
-	if err := chmodPlusX(resolved); err != nil {
-		slog.Warn("failed to set executable permission", "path", resolved, "error", err)
+	if err := os.Chmod(resolved, 0o700); err != nil {
+		slog.Warn("failed to set script permissions", "path", resolved, "error", err)
 	}
 
 	abs, _ := filepath.Abs(resolved)
@@ -227,15 +247,41 @@ func (m *Manager) DeleteScript(name string) (ScriptInfo, error) {
 	return ScriptInfo{Path: abs, Name: name}, nil
 }
 
-// chmodPlusX sets the executable bit on a file using an argument array
-// (avoids shell interpretation of filenames with spaces or special chars).
-func chmodPlusX(path string) error {
-	cmd := exec.Command("chmod", "+x", path)
-	return cmd.Run()
+// resolveWriteTarget returns the absolute path to write a (possibly new)
+// script to, ensuring it stays inside scripts_dir. The target itself may not
+// exist yet, so the directory is symlink-resolved and the already-sanitized
+// basename is appended. If the target exists and is a symlink pointing
+// outside scripts_dir, the write is refused.
+func (m *Manager) resolveWriteTarget(name string) (string, error) {
+	scriptsDir, err := filepath.Abs(filepath.Clean(m.scriptsDir))
+	if err != nil {
+		return "", fmt.Errorf("resolve scripts_dir: %w", err)
+	}
+	scriptsDir, err = filepath.EvalSymlinks(scriptsDir)
+	if err != nil {
+		return "", fmt.Errorf("eval symlinks for scripts_dir: %w", err)
+	}
+	resolved := filepath.Join(scriptsDir, name)
+
+	// If the target already exists (e.g. an update), resolve any symlink and
+	// enforce containment so a symlink cannot redirect the write outside.
+	if real, err := filepath.EvalSymlinks(resolved); err == nil {
+		if !pathWithin(real, scriptsDir) {
+			return "", fmt.Errorf("path %q is outside scripts_dir %q", real, scriptsDir)
+		}
+		return real, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("eval symlinks for %q: %w", resolved, err)
+	}
+	return resolved, nil
 }
 
-// resolveWithinScriptsDir resolves path to an absolute, symlink-resolved
-// location and enforces the scripts_dir whitelist (security boundary). Used by
+// pathWithin reports whether path is scriptsDir or a descendant of it.
+func pathWithin(path, dir string) bool {
+	return path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))
+}
+
+// resolveWithinScriptsDir resolves path to an absolute, symlink-resolved// location and enforces the scripts_dir whitelist (security boundary). Used by
 // both StartScript and GetScriptLogs so log reads cannot escape scripts_dir.
 func (m *Manager) resolveWithinScriptsDir(path string) (string, error) {
 	resolved, err := filepath.Abs(filepath.Clean(path))

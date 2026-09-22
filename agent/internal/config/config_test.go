@@ -31,6 +31,61 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Reconnect.MaxRetries != -1 {
 		t.Errorf("MaxRetries = %d, want -1", cfg.Reconnect.MaxRetries)
 	}
+	// RC1: YAML is unmarshalled over these defaults, so they must be seeded.
+	if !cfg.AllowScriptStart {
+		t.Error("AllowScriptStart default = false, want true (decision 6)")
+	}
+	if cfg.AllowScriptUpload {
+		t.Error("AllowScriptUpload default = true, want false (decision 7)")
+	}
+	if !cfg.AllowUnrestrictedLoopback {
+		t.Error("AllowUnrestrictedLoopback default = false, want true (RC1)")
+	}
+	if cfg.AllowContainerCreation {
+		t.Error("AllowContainerCreation default = true, want false (decision 3)")
+	}
+}
+
+func TestValidate_LoopbackScopingRequiresPorts(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.AllowUnrestrictedLoopback = false
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error when scoping is enabled with no ports")
+	}
+	cfg.AllowedLoopbackPorts = []int{8080}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil once ports are listed", err)
+	}
+}
+
+// TestValidate_LoopbackPrecedence covers the interplay between
+// allow_unrestricted_loopback and allowed_loopback_ports: an explicit
+// non-empty port list is valid and honored regardless of the flag, and only
+// the false + empty combination is rejected (it would silently deny every
+// loopback command).
+func TestValidate_LoopbackPrecedence(t *testing.T) {
+	tests := []struct {
+		name         string
+		unrestricted bool
+		ports        []int
+		wantErr      bool
+	}{
+		{name: "flag true empty ports unrestricted", unrestricted: true, ports: nil, wantErr: false},
+		{name: "flag true explicit ports scoped", unrestricted: true, ports: []int{8080}, wantErr: false},
+		{name: "flag false explicit ports scoped", unrestricted: false, ports: []int{8080}, wantErr: false},
+		{name: "flag false empty ports invalid", unrestricted: false, ports: nil, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.AllowUnrestrictedLoopback = tt.unrestricted
+			cfg.AllowedLoopbackPorts = tt.ports
+			err := cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
 }
 
 func TestLoadEmptyPath(t *testing.T) {
@@ -291,22 +346,28 @@ agent_name: "env-test"
 		}
 	})
 
-	t.Run("non-empty yaml wins over env", func(t *testing.T) {
+	t.Run("env wins over non-empty yaml", func(t *testing.T) {
 		t.Setenv("UNSWARM_AGENT_BACKEND_URL", "ws://127.0.0.1:5014")
 		t.Setenv("UNSWARM_AGENT_API_KEY", "env-key")
 		cfg, err := Load(writeYAML(t, `
 backend_url: "wss://yaml.example.com:8443"
 api_key: "yaml-key"
-agent_name: "yaml-wins"
+agent_name: "env-wins"
 `))
 		if err != nil {
 			t.Fatalf("Load: %v", err)
 		}
-		if cfg.BackendURL != "wss://yaml.example.com:8443" {
-			t.Errorf("BackendURL = %q, want wss://yaml.example.com:8443 (yaml precedence)", cfg.BackendURL)
+		if cfg.BackendURL != "ws://127.0.0.1:5014" {
+			t.Errorf("BackendURL = %q, want ws://127.0.0.1:5014 (env precedence)", cfg.BackendURL)
 		}
-		if cfg.APIKey != "yaml-key" {
-			t.Errorf("APIKey = %q, want yaml-key (yaml precedence)", cfg.APIKey)
+		if cfg.APIKey != "env-key" {
+			t.Errorf("APIKey = %q, want env-key (env precedence)", cfg.APIKey)
+		}
+		if cfg.BackendURLSource != "env" {
+			t.Errorf("BackendURLSource = %q, want env", cfg.BackendURLSource)
+		}
+		if cfg.APIKeySource != "env" {
+			t.Errorf("APIKeySource = %q, want env", cfg.APIKeySource)
 		}
 	})
 
@@ -327,68 +388,23 @@ agent_name: "no-env"
 	})
 }
 
-func TestValidateInsecureWs(t *testing.T) {
-	tests := []struct {
-		name          string
-		backendURL    string
-		allowInsecure bool
-		wantErr       bool
-	}{
-		{
-			name:          "loopback ws:// localhost allowed",
-			backendURL:    "ws://localhost:5014",
-			allowInsecure: false,
-			wantErr:       false,
-		},
-		{
-			name:          "loopback ws:// 127.0.0.1 allowed",
-			backendURL:    "ws://127.0.0.1:5014",
-			allowInsecure: false,
-			wantErr:       false,
-		},
-		{
-			name:          "loopback ws:// ::1 allowed",
-			backendURL:    "ws://[::1]:5014",
-			allowInsecure: false,
-			wantErr:       false,
-		},
-		{
-			name:          "non-loopback ws:// rejected",
-			backendURL:    "ws://10.0.0.1:5014",
-			allowInsecure: false,
-			wantErr:       true,
-		},
-		{
-			name:          "non-loopback ws:// rejected for hostname",
-			backendURL:    "ws://backend.example.com:5014",
-			allowInsecure: false,
-			wantErr:       true,
-		},
-		{
-			name:          "non-loopback ws:// with allow_insecure_ws ok",
-			backendURL:    "ws://10.0.0.1:5014",
-			allowInsecure: true,
-			wantErr:       false,
-		},
-		{
-			name:          "wss:// always ok",
-			backendURL:    "wss://backend.example.com:8443",
-			allowInsecure: false,
-			wantErr:       false,
-		},
-		{
-			name:          "wss:// non-loopback ok",
-			backendURL:    "wss://10.0.0.1:8443",
-			allowInsecure: false,
-			wantErr:       false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateInsecureWs(tt.backendURL, tt.allowInsecure)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateInsecureWs(%q, %v) error = %v, wantErr %v",
-					tt.backendURL, tt.allowInsecure, err, tt.wantErr)
+func TestLoad_PlaintextRemoteAllowed(t *testing.T) {
+	// H6: plaintext ws:// and http:// to non-loopback hosts load fine (the
+	// agent logs a warning at connect time; it does not refuse configs).
+	for _, backendURL := range []string{"ws://10.0.0.1:5014", "http://10.0.0.1:5014"} {
+		t.Run(backendURL, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "agent.yaml")
+			content := "backend_url: \"" + backendURL + "\"\nagent_name: \"plaintext\"\n"
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load(%q) = %v, want no error (plaintext allowed)", backendURL, err)
+			}
+			if cfg.BackendURL != backendURL {
+				t.Errorf("BackendURL = %q, want %q", cfg.BackendURL, backendURL)
 			}
 		})
 	}
