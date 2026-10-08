@@ -164,7 +164,27 @@ public sealed class ApiKeyAuthMiddlewareTests
     [Fact]
     public async Task ValidAgentKey_WsAgent_PassesAndSetsScopeClaim()
     {
-        var store = TestApiKeyStore.Create();
+        // File-backed store: the middleware updates LastUsedAt fire-and-forget while
+        // this test polls GetAsync below, so the store must support concurrent
+        // contexts. A shared in-memory connection cannot (see TestApiKeyStore) and
+        // races with SQLite Error 5 when EF re-registers functions on a busy
+        // connection.
+        var dbPath = Path.Combine(Path.GetTempPath(), $"unswarm-apikey-{Guid.NewGuid():N}.db");
+        try
+        {
+            await RunValidAgentKeyScenario(dbPath);
+        }
+        finally
+        {
+            DeleteIfExists(dbPath);
+            DeleteIfExists(dbPath + "-wal");
+            DeleteIfExists(dbPath + "-shm");
+        }
+    }
+
+    private static async Task RunValidAgentKeyScenario(string dbPath)
+    {
+        var store = TestApiKeyStore.Create(dbPath);
         var created = await store.CreateAsync("machine-b", ApiKeyScope.Agent, "agent-secret");
 
         var (middleware, context, tracker, _) = CreateSut(
@@ -182,6 +202,18 @@ public sealed class ApiKeyAuthMiddlewareTests
         await Eventually.UntilAsync(() => store.GetAsync(created.Id).GetAwaiter().GetResult()?.LastUsedAt is not null);
         var key = await store.GetAsync(created.Id);
         Assert.NotNull(key?.LastUsedAt);
+    }
+
+    private static void DeleteIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (IOException)
+        {
+            // Best-effort temp cleanup; a leftover temp file must not fail the test.
+        }
     }
 
     [Fact]
