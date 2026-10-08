@@ -25,3 +25,6 @@ unswarm-agent
 unswarm.db
 .tmp-ddcheck/
 cli/unswarm
+
+# Internal security audit — not for public release
+SECURITY_AUDIT.md
