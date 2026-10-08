@@ -364,28 +364,6 @@ public sealed class DockerController : IDockerController
         return match?.ID;
     }
 
-    private static bool ImageMatches(string containerImage, string searchImage)
-    {
-        // Exact match
-        if (containerImage.Equals(searchImage, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        // Match without tag (e.g. "image:latest" matches "image")
-        var colonIndex = containerImage.LastIndexOf(':');
-        if (colonIndex > 0)
-        {
-            var withoutTag = containerImage[..colonIndex];
-            if (withoutTag.Equals(searchImage, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-
-        // Partial match (container image contains search image)
-        if (containerImage.Contains(searchImage, StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return false;
-    }
-
     public async Task<int?> ResolveMappedPortAsync(string containerName, int containerPort, CancellationToken ct = default)
     {
         try

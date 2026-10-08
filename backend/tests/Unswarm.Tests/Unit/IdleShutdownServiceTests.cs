@@ -285,6 +285,53 @@ public sealed class IdleShutdownServiceTests : IDisposable
         });
     }
 
+    [Fact]
+    public async Task AutoShutdownDisabled_NoStopOccurs()
+    {
+        await _registry.CreateAsync(NewRuntime("reg-off", "Off", "cid-off"));
+        _docker.ListedContainers = [RunningContainer("cid-off", "reg-off", uptime: 999)];
+
+        await using var provider = BuildProvider(settings: new Settings
+        {
+            AutoShutdownIdle = false,
+            IdleTimeout = 10
+        });
+
+        await RunOneTickAsync(new IdleShutdownService(provider, Log<IdleShutdownService>()), async () =>
+        {
+            await Task.Delay(300);
+            Assert.Empty(_docker.StoppedContainerIds);
+            Assert.Empty(_drainer.StopCalls);
+        });
+    }
+
+    [Fact]
+    public async Task DirectStopThrows_LogsErrorAndDoesNotCrash()
+    {
+        await _registry.CreateAsync(NewRuntime("reg-fail", "Fail", "cid-fail"));
+        _docker.ListedContainers = [RunningContainer("cid-fail", "reg-fail", uptime: 999)];
+        _docker.OnStop = (_, _) => Task.FromException(new InvalidOperationException("stop failed"));
+
+        // No drainer → legacy direct-stop path, which throws and must be caught.
+        var services = new ServiceCollection();
+        services.AddSingleton<IDockerController>(_docker);
+        services.AddSingleton<ILogStore>(_logStore);
+        services.AddSingleton<IClock>(_clock);
+        services.AddSingleton<IContainerRegistry>(_registry);
+        services.AddSingleton<ISettingsStore>(new FakeSettingsStore(new Settings
+        {
+            AutoShutdownIdle = true,
+            IdleTimeout = 10
+        }));
+        await using var provider = services.BuildServiceProvider();
+
+        await RunOneTickAsync(new IdleShutdownService(provider, Log<IdleShutdownService>()), async () =>
+        {
+            await Eventually.UntilAsync(() =>
+                _logStore.Entries.Any(e => e.Level == LogLevel.Error && e.Message.Contains("Failed to stop idle container")));
+        });
+    }
+
     private static ILogger<T> Log<T>() => new LoggerFactory().CreateLogger<T>();
 
     public void Dispose()

@@ -194,6 +194,79 @@ public sealed class ContainerRegistryTests : IDisposable
         Assert.Null(containerId);
     }
 
+    // ── GetAllContainerIdsForModelAsync ───────────────────────────────
+
+    [Fact]
+    public async Task GetAllContainerIdsForModelAsync_ReturnsDistinctRuntimeIds()
+    {
+        var registry = CreateRegistry();
+        await registry.CreateAsync(MakeContainer(id: "c1"));
+        await registry.CreateAsync(MakeContainer(id: "c2"));
+        await CreateModelInDb("model-1", name: "llama-3");
+
+        await registry.AddModelMappingAsync("c1", "model-1");
+        await registry.AddModelMappingAsync("c2", "model-1");
+        await registry.AddModelMappingAsync("c1", "model-1"); // duplicate
+
+        var ids = await registry.GetAllContainerIdsForModelAsync("model-1");
+
+        Assert.Equal(2, ids.Count);
+        Assert.Contains("c1", ids);
+        Assert.Contains("c2", ids);
+    }
+
+    [Fact]
+    public async Task GetAllContainerIdsForModelAsync_MatchesByModelName()
+    {
+        var registry = CreateRegistry();
+        await registry.CreateAsync(MakeContainer(id: "c1"));
+        await CreateModelInDb("model-1", name: "llama-3");
+        await registry.AddModelMappingAsync("c1", "model-1");
+
+        var ids = await registry.GetAllContainerIdsForModelAsync("llama-3");
+
+        Assert.Equal(["c1"], ids);
+    }
+
+    [Fact]
+    public async Task GetAllContainerIdsForModelAsync_UnknownModel_ReturnsEmpty()
+    {
+        var registry = CreateRegistry();
+
+        Assert.Empty(await registry.GetAllContainerIdsForModelAsync("nope"));
+    }
+
+    // ── UpdateConcurrencyPairAsync ────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateConcurrencyPairAsync_UpdatesBothAndReturns()
+    {
+        var registry = CreateRegistry();
+        await registry.CreateAsync(MakeContainer(id: "c1"));
+        await registry.CreateAsync(MakeContainer(id: "c2"));
+
+        var result = await registry.UpdateConcurrencyPairAsync(
+            "c1", ["c2"], "c2", ["c1"]);
+
+        Assert.NotNull(result);
+        Assert.Contains("c2", result!.Value.A.CanRunAlongWith);
+        Assert.Contains("c1", result.Value.B.CanRunAlongWith);
+
+        var rereadA = await registry.GetAsync("c1");
+        Assert.Contains("c2", rereadA!.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task UpdateConcurrencyPairAsync_MissingOne_ReturnsNull()
+    {
+        var registry = CreateRegistry();
+        await registry.CreateAsync(MakeContainer(id: "c1"));
+
+        var result = await registry.UpdateConcurrencyPairAsync("c1", ["x"], "missing", ["y"]);
+
+        Assert.Null(result);
+    }
+
     [Fact]
     public async Task ExtraLabels_RoundTripsCorrectly()
     {

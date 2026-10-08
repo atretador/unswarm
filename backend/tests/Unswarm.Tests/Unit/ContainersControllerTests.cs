@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Unswarm.Api.Controllers;
@@ -29,6 +31,30 @@ public sealed class ContainersControllerTests
         _benchmarks,
         _creationService,
         Options.Create(_policyOptions));
+
+    /// <summary>Controller wired to a caller-supplied (scriptable) registration service.</summary>
+    private ContainersController CreateController(IContainerRegistrationService registrationService) => new(
+        _docker,
+        _modelRegistry,
+        _clock,
+        registrationService,
+        _containerRegistry,
+        _benchmarks,
+        _creationService,
+        Options.Create(_policyOptions));
+
+    private static ContainersController AsAdmin(ContainersController controller)
+    {
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [new Claim(ClaimTypes.Role, "Admin")], "test"))
+            }
+        };
+        return controller;
+    }
 
     private static RegisteredRuntime MakeContainer(string id, string image = "test:latest") => new()
     {
@@ -631,5 +657,329 @@ public sealed class ContainersControllerTests
         Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(captured);
         Assert.Equal(11434, captured!.DockerParams.ContainerPort);
+    }
+
+    // ── List (running containers) ─────────────────────────────────────
+
+    [Fact]
+    public async Task List_ReturnsMappedContainerResponses()
+    {
+        _docker.ListedContainers.Add(new ContainerInfo
+        {
+            Id = "c1",
+            ModelId = "m1",
+            ModelName = "llama-3",
+            Status = ContainerStatus.Running,
+            Port = 8080,
+            Pid = 12,
+            MemoryMb = 100,
+            CpuPercent = 5,
+            Uptime = 60,
+            CreatedAt = _clock.UtcNow
+        });
+
+        var result = await CreateController().List(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var list = Assert.IsAssignableFrom<List<ContainerResponse>>(ok.Value);
+        var response = Assert.Single(list);
+        Assert.Equal("c1", response.Id);
+        Assert.Equal("m1", response.ModelId);
+        Assert.Equal(8080, response.Port);
+        Assert.Equal(12, response.Pid);
+    }
+
+    // ── Start ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Start_ModelMissing_ReturnsNotFound()
+    {
+        var result = await CreateController().Start(
+            new ContainerStartRequest { ModelId = "nope" }, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Start_Success_ReturnsRunningContainer()
+    {
+        await SeedModelAsync("m1", "llama-3");
+
+        var result = await CreateController().Start(
+            new ContainerStartRequest { ModelId = "m1" }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<ContainerResponse>(ok.Value);
+        Assert.Equal("m1", response.ModelId);
+        Assert.Equal("llama-3", response.ModelName);
+        Assert.Equal(ContainerStatus.Running, response.Status);
+        Assert.Equal(1234, response.Pid);
+        Assert.Contains("llama-3", _docker.StartedModels);
+    }
+
+    [Fact]
+    public async Task Start_DockerFailure_Returns500()
+    {
+        await SeedModelAsync("m1", "llama-3");
+        _docker.FailStart = true;
+
+        var result = await CreateController().Start(
+            new ContainerStartRequest { ModelId = "m1" }, CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, status.StatusCode);
+    }
+
+    // ── Rediscover ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Rediscover_Success_ReturnsRegisteredRuntime()
+    {
+        var result = await CreateController().Rediscover("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("reg-default", response.Id);
+    }
+
+    [Fact]
+    public async Task Rediscover_NotFound_ReturnsNotFound()
+    {
+        var registration = new FakeContainerRegistrationServiceCoverage1
+        {
+            RediscoverException = new InvalidOperationException("Registered container reg-1 not found")
+        };
+
+        var result = await CreateController(registration).Rediscover("reg-1", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Rediscover_InvalidState_ReturnsBadRequest()
+    {
+        var registration = new FakeContainerRegistrationServiceCoverage1
+        {
+            RediscoverException = new InvalidOperationException("runtime is not running")
+        };
+
+        var result = await CreateController(registration).Rediscover("reg-1", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── DeleteRegistered ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteRegistered_Success_ReturnsNoContent()
+    {
+        var result = await CreateController().DeleteRegistered("reg-1", deleteModels: true, CancellationToken.None);
+
+        Assert.IsType<NoContentResult>(result);
+        Assert.Contains("reg-1", _registrationService.DeletedIds);
+    }
+
+    [Fact]
+    public async Task DeleteRegistered_Unknown_ReturnsNotFound()
+    {
+        var registration = new FakeContainerRegistrationServiceCoverage1
+        {
+            DeleteException = new InvalidOperationException("Registered container reg-1 not found")
+        };
+
+        var result = await CreateController(registration).DeleteRegistered("reg-1", deleteModels: false, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    // ── HealthCheckRegistered ─────────────────────────────────────────
+
+    [Fact]
+    public async Task HealthCheckRegistered_Unknown_ReturnsNotFound()
+    {
+        _registrationService.HealthCheckReturnsNull = true;
+
+        var result = await CreateController().HealthCheckRegistered("nope", CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task HealthCheckRegistered_Success_ReturnsRuntime()
+    {
+        var container = MakeContainer("reg-1");
+        await _containerRegistry.CreateAsync(container);
+        _registrationService.HealthCheckResult = container;
+
+        var result = await CreateController().HealthCheckRegistered("reg-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("reg-1", response.Id);
+        Assert.Equal("ready", response.Status);
+    }
+
+    [Fact]
+    public async Task HealthCheckRegistered_ServiceThrows_Returns500()
+    {
+        var registration = new FakeContainerRegistrationServiceCoverage1
+        {
+            HealthCheckException = new InvalidOperationException("boom")
+        };
+
+        var result = await CreateController(registration).HealthCheckRegistered("reg-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, status.StatusCode);
+    }
+
+    // ── Register ──────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Register_Valid_ReturnsOk()
+    {
+        var dto = new RegisterRuntimeRequestDto { Image = "img:latest", ContainerPort = 8080 };
+
+        var result = await CreateController().Register(dto, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("reg-default", response.Id);
+    }
+
+    [Fact]
+    public async Task Register_PortOutOfRange_ReturnsBadRequest()
+    {
+        var dto = new RegisterRuntimeRequestDto { Image = "img:latest", ContainerPort = 70000 };
+
+        var result = await CreateController().Register(dto, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Register_HostScriptNonAdmin_Forbids()
+    {
+        var dto = new RegisterRuntimeRequestDto
+        {
+            Image = "img:latest",
+            RuntimeKind = "script",
+            Agent = "host"
+        };
+
+        var controller = CreateController();
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await controller.Register(dto, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task Register_HostScriptAdmin_Allowed()
+    {
+        var dto = new RegisterRuntimeRequestDto
+        {
+            Image = "img:latest",
+            RuntimeKind = "script",
+            Agent = "host"
+        };
+
+        var result = await AsAdmin(CreateController()).Register(dto, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Register_ServiceThrows_Returns500()
+    {
+        var registration = new FakeContainerRegistrationServiceCoverage1
+        {
+            RegisterException = new InvalidOperationException("boom")
+        };
+        var dto = new RegisterRuntimeRequestDto { Image = "img:latest", ContainerPort = 8080 };
+
+        var result = await CreateController(registration).Register(dto, CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, status.StatusCode);
+    }
+
+    // ── UpdateRegistered ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpdateRegistered_Unknown_ReturnsNotFound()
+    {
+        var result = await CreateController().UpdateRegistered("nope",
+            new UpdateRuntimeRequestDto { DisplayName = "renamed" }, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateRegistered_InvalidPort_ReturnsBadRequest()
+    {
+        await _containerRegistry.CreateAsync(MakeContainer("reg-1"));
+
+        var result = await CreateController().UpdateRegistered("reg-1",
+            new UpdateRuntimeRequestDto { ContainerPort = 0 }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateRegistered_ScriptPortNonAdmin_Forbids()
+    {
+        await _containerRegistry.CreateAsync(MakeContainer("reg-1") with { RuntimeKind = RuntimeKind.Script });
+
+        var controller = CreateController();
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await controller.UpdateRegistered("reg-1",
+            new UpdateRuntimeRequestDto { MappedPort = 9000 }, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task UpdateRegistered_DisplayNameAndMaxConcurrent_Updates()
+    {
+        await _containerRegistry.CreateAsync(MakeContainer("reg-1"));
+
+        var result = await CreateController().UpdateRegistered("reg-1",
+            new UpdateRuntimeRequestDto { DisplayName = "  renamed  ", MaxConcurrentInferences = 3 },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal("renamed", response.DisplayName);
+        Assert.Equal(3, response.MaxConcurrentInferences);
+    }
+
+    [Fact]
+    public async Task UpdateRegistered_ContainerPort_ClearsMappedPort()
+    {
+        await _containerRegistry.CreateAsync(MakeContainer("reg-1") with { MappedPort = 8081 });
+
+        var result = await CreateController().UpdateRegistered("reg-1",
+            new UpdateRuntimeRequestDto { ContainerPort = 9000 }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal(9000, response.ContainerPort);
+        Assert.Null(response.MappedPort);
+    }
+
+    [Fact]
+    public async Task UpdateRegistered_MappedPort_SetsMappedPort()
+    {
+        await _containerRegistry.CreateAsync(MakeContainer("reg-1"));
+
+        var result = await CreateController().UpdateRegistered("reg-1",
+            new UpdateRuntimeRequestDto { MappedPort = 9001 }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<RegisteredRuntimeResponse>(ok.Value);
+        Assert.Equal(9001, response.MappedPort);
     }
 }

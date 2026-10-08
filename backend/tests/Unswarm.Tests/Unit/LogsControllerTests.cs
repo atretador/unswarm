@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Unswarm.Api.Controllers;
 using Unswarm.Api.Dtos;
@@ -77,5 +78,47 @@ public sealed class LogsControllerTests
         var ok = Assert.IsType<OkObjectResult>(result);
         var entries = Assert.IsAssignableFrom<List<LogEntryResponse>>(ok.Value);
         Assert.Equal(3, entries.Count);
+    }
+
+    // ── SSE stream ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Stream_WritesEntriesAsSse()
+    {
+        var store = new FakeLogStoreCoverage1();
+        store.Enqueue(LogLevel.Info, "app", "hello-stream");
+
+        var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+        var controller = new LogsController(store)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+
+        await controller.Stream(CancellationToken.None);
+
+        body.Position = 0;
+        var text = new StreamReader(body).ReadToEnd();
+        Assert.Contains("data:", text);
+        Assert.Contains("hello-stream", text);
+        Assert.Equal("text/event-stream", context.Response.ContentType);
+    }
+
+    [Fact]
+    public async Task Stream_NoEntries_WritesNothing()
+    {
+        var store = new FakeLogStoreCoverage1();
+        var body = new MemoryStream();
+        var context = new DefaultHttpContext();
+        context.Response.Body = body;
+        var controller = new LogsController(store)
+        {
+            ControllerContext = new ControllerContext { HttpContext = context }
+        };
+
+        await controller.Stream(CancellationToken.None);
+
+        Assert.Equal(0, body.Length);
     }
 }

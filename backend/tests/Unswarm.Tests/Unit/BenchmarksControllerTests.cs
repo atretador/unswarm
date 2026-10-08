@@ -32,6 +32,9 @@ public sealed class BenchmarksControllerTests
     private BenchmarksController CreateController() =>
         new(_modelRegistry, _scheduler, _clock, _history, _prompts, new FakeCloudForwardingService());
 
+    private BenchmarksController CreateController(ICloudForwardingService cloudForwarding) =>
+        new(_modelRegistry, _scheduler, _clock, _history, _prompts, cloudForwarding);
+
     [Fact]
     public async Task Run_PersistsAndReturnsFullCompletedItem()
     {
@@ -130,5 +133,141 @@ public sealed class BenchmarksControllerTests
         Assert.Equal(2, items.Count);
         Assert.Equal("p2", items[0].Prompt); // newest first
         Assert.Equal("p1", items[1].Prompt);
+    }
+
+    // ── Prompt resolution ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task Run_WithPromptId_UsesSavedPromptTextAndCap()
+    {
+        var model = await SeedModel();
+        var prompt = await _prompts.CreateAsync("Saved", "Do the thing", maxTokens: 128);
+
+        var controller = CreateController();
+        var result = await controller.Run(model.Id, new BenchmarkRunRequest { PromptId = prompt.Id }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var item = Assert.IsType<BenchmarkResponse>(ok.Value);
+        Assert.Equal("completed", item.Status);
+
+        var request = Assert.Single(_scheduler.EnqueuedRequests);
+        Assert.Contains("Do the thing", request.OriginalJson);
+        Assert.Contains("\"max_tokens\":128", request.OriginalJson);
+    }
+
+    [Fact]
+    public async Task Run_UnknownPromptId_ReturnsBadRequest()
+    {
+        var model = await SeedModel();
+
+        var controller = CreateController();
+        var result = await controller.Run(model.Id, new BenchmarkRunRequest { PromptId = "missing" }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Empty(_history.Entries);
+    }
+
+    [Fact]
+    public async Task Run_SwarmCancelled_Returns499()
+    {
+        var model = await SeedModel();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        _scheduler.EnqueueFunc = (_, ct) => throw new OperationCanceledException();
+
+        var controller = CreateController();
+        var result = await controller.Run(model.Id, null, cts.Token);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(499, status.StatusCode);
+    }
+
+    // ── Cloud benchmark path ──────────────────────────────────────────
+
+    [Fact]
+    public async Task Run_CloudModel_ParsesUpstreamResponseAndPersistsContent()
+    {
+        var cloud = new FakeCloudForwardingCoverage2
+        {
+            BodyBytes = System.Text.Encoding.UTF8.GetBytes(
+                """{"choices":[{"message":{"content":"the answer","reasoning_content":"the reasoning"}}],"usage":{"completion_tokens":7}}""")
+        };
+
+        var controller = CreateController(cloud);
+        var result = await controller.Run("cloud/openai/gpt-4o", new BenchmarkRunRequest { Prompt = "Hi" }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var item = Assert.IsType<BenchmarkResponse>(ok.Value);
+        Assert.Equal("completed", item.Status);
+        Assert.Equal("openai/gpt-4o", item.ModelName);
+
+        var entry = Assert.Single(_history.Entries);
+        Assert.Equal("the answer", entry.Response);
+        Assert.Equal("the reasoning", entry.Reasoning);
+        Assert.Equal(7, entry.TokensGenerated);
+
+        var forwarded = Assert.Single(cloud.Forwarded);
+        Assert.Equal("cloud/openai/gpt-4o", forwarded.ModelId);
+        Assert.Equal("/v1/chat/completions", forwarded.RequestPath);
+        Assert.False(forwarded.IsStreaming);
+    }
+
+    [Fact]
+    public async Task Run_CloudModel_UpstreamError_ReturnsUpstreamStatusAndErrorEntry()
+    {
+        var cloud = new FakeCloudForwardingCoverage2 { StatusCode = 503 };
+
+        var controller = CreateController(cloud);
+        var result = await controller.Run("cloud/openai/gpt-4o", null, CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+        var item = Assert.IsType<BenchmarkResponse>(status.Value);
+        Assert.Equal("error", item.Status);
+        Assert.Equal("openai/gpt-4o", item.ModelName);
+    }
+
+    [Fact]
+    public async Task Run_CloudModel_TransportFailure_Returns502()
+    {
+        var cloud = new FakeCloudForwardingCoverage2 { Exception = new HttpRequestException("boom") };
+
+        var controller = CreateController(cloud);
+        var result = await controller.Run("cloud/openai/gpt-4o", null, CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+        var item = Assert.IsType<BenchmarkResponse>(status.Value);
+        Assert.Equal("error", item.Status);
+        Assert.Single(_history.Entries);
+    }
+
+    [Fact]
+    public async Task Run_CloudModel_Cancelled_Returns499()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var cloud = new FakeCloudForwardingCoverage2 { Exception = new OperationCanceledException() };
+
+        var controller = CreateController(cloud);
+        var result = await controller.Run("cloud/openai/gpt-4o", null, cts.Token);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(499, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task List_CloudModel_UsesDerivedDisplayName()
+    {
+        await _history.AddAsync("cloud/openai/gpt-4o", "p", 1, 1, 1, "completed", null);
+
+        var controller = CreateController();
+        var result = await controller.List(null, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var items = Assert.IsAssignableFrom<List<BenchmarkResponse>>(ok.Value);
+        var item = Assert.Single(items);
+        Assert.Equal("openai/gpt-4o", item.ModelName);
+        Assert.Equal("openai/gpt-4o", item.ModelDisplayName);
     }
 }

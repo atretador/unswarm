@@ -752,4 +752,110 @@ public sealed class AgentsControllerTests
         var script = Assert.Single(agent.Scripts);
         Assert.Equal("running", script.Status);
     }
+
+    // ── ListAgentContainers / ListAvailableScripts error branches ──────
+
+    [Fact]
+    public async Task ListAgentContainers_RemoteAgent_ReturnsContainers()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            ListedContainers =
+            [
+                new ContainerInfo { Id = "r1", ModelId = "llama", ModelName = "llama-3", Status = ContainerStatus.Running, Port = 8080 }
+            ]
+        };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = _docker,
+            [ExecutionTarget.ForAgent("gpu1").Id] = remote
+        });
+
+        var result = await CreateController(router).ListAgentContainers("gpu1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var containers = Assert.IsAssignableFrom<List<ContainerResponse>>(ok.Value);
+        Assert.Equal("r1", Assert.Single(containers).Id);
+    }
+
+    [Fact]
+    public async Task ListAgentContainers_AgentCommandFailure_Returns502()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            ListContainersException = new AgentCommandException("gpu1", "list_containers", "boom")
+        };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = _docker,
+            [ExecutionTarget.ForAgent("gpu1").Id] = remote
+        });
+
+        var result = await CreateController(router).ListAgentContainers("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListAgentContainers_AgentUnavailable_Returns503()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            ListContainersException = new InvalidOperationException("not connected")
+        };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = _docker,
+            [ExecutionTarget.ForAgent("gpu1").Id] = remote
+        });
+
+        var result = await CreateController(router).ListAgentContainers("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_AgentCommandFailure_Returns502()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            ListScriptsException = new AgentCommandException("gpu1", "list_scripts", "boom")
+        };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = _docker,
+            [ExecutionTarget.ForAgent("gpu1").Id] = remote
+        });
+
+        var result = await CreateController(router).ListAvailableScripts("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListAvailableScripts_AgentTimeout_Returns503()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            ListScriptsException = new TimeoutException("timeout")
+        };
+        var router = new FakeDockerControllerRouter(new Dictionary<string, IDockerController>
+        {
+            ["host"] = _docker,
+            [ExecutionTarget.ForAgent("gpu1").Id] = remote
+        });
+
+        var result = await CreateController(router).ListAvailableScripts("gpu1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
 }

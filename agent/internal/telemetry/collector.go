@@ -433,23 +433,30 @@ func getMemoryMb() int64 {
 	if err != nil {
 		return 0
 	}
-	var total int64
-	for _, line := range splitLines(string(data)) {
-		if len(line) > 10 && line[:10] == "MemTotal: " {
-			// Parse "MemTotal:   16384000 kB"
-			var kb int64
-			for _, ch := range line[10:] {
-				if ch >= '0' && ch <= '9' {
-					kb = kb*10 + int64(ch-'0')
-				} else {
-					break
-				}
-			}
-			total = kb / 1024 // Convert to MB
-			break
+	return parseMemTotalMb(string(data))
+}
+
+// parseMemTotalMb extracts the MemTotal field, in MB, from /proc/meminfo-style
+// content. The value is right-aligned with spaces after the colon (e.g.
+// "MemTotal:       16384000 kB"), so the whitespace must be trimmed before
+// parsing the digit prefix.
+func parseMemTotalMb(content string) int64 {
+	for _, line := range splitLines(content) {
+		const prefix = "MemTotal:"
+		if !strings.HasPrefix(line, prefix) {
+			continue
 		}
+		var kb int64
+		for _, ch := range strings.TrimSpace(line[len(prefix):]) {
+			if ch >= '0' && ch <= '9' {
+				kb = kb*10 + int64(ch-'0')
+			} else {
+				break
+			}
+		}
+		return kb / 1024 // kB -> MB
 	}
-	return total
+	return 0
 }
 
 func splitLines(s string) []string {

@@ -187,4 +187,88 @@ public sealed class HostScriptRuntimeControllerTests : IAsyncLifetime
         // The stale PID file should be cleaned up
         Assert.False(File.Exists(pidFile));
     }
+
+    [Fact]
+    public async Task GetScriptLogsAsync_CapturesStderr()
+    {
+        var script = CreateScript("echo to-stderr >&2 && sleep 30");
+
+        var result = await _controller.StartScriptAsync("test-stderr", script, 8080);
+        Assert.Null(result.ErrorMessage);
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        IReadOnlyList<string> logs = [];
+        while (DateTime.UtcNow < deadline)
+        {
+            logs = await _controller.GetScriptLogsAsync("test-stderr");
+            if (logs.Any(l => l.Contains("to-stderr"))) break;
+            await Task.Delay(100);
+        }
+
+        Assert.Contains(logs, l => l.StartsWith("[stderr]") && l.Contains("to-stderr"));
+
+        await _controller.StopScriptAsync("test-stderr");
+    }
+
+    [Fact]
+    public async Task AdoptOrphanedScriptsAsync_InvalidPidFile_CleansUp()
+    {
+        var scriptLogsDir = Path.Combine(_testDir, "script-logs");
+        Directory.CreateDirectory(scriptLogsDir);
+        var pidFile = Path.Combine(scriptLogsDir, "bad.pid");
+        await File.WriteAllTextAsync(pidFile, "not-a-number");
+
+        await _controller.AdoptOrphanedScriptsAsync();
+
+        Assert.False(File.Exists(pidFile));
+    }
+
+    [Fact]
+    public void GetRunningScriptIds_NoProcesses_ReturnsEmpty()
+    {
+        Assert.Empty(_controller.GetRunningScriptIds());
+    }
+
+    [Fact]
+    public async Task IsRunningByPath_UnknownPath_ReturnsFalse()
+    {
+        Assert.False(_controller.IsRunningByPath("/nonexistent/script.sh"));
+    }
+
+    [Fact]
+    public async Task IsRunningByPath_TracksRunningLauncher()
+    {
+        var script = CreateScript("while true; do sleep 1; done");
+        var result = await _controller.StartScriptAsync("path-reg", script, 8080);
+        Assert.NotNull(result.Pid);
+
+        // The launcher path is the second process argument — a running script must
+        // be detected by path.
+        Assert.True(_controller.IsRunningByPath(script));
+
+        await _controller.StopScriptAsync("path-reg");
+        Assert.False(_controller.IsRunningByPath(script));
+    }
+
+    [Fact]
+    public async Task StartScriptAsync_EmptyLauncherPath_CleansNoState()
+    {
+        // Empty launcher path returns an error and leaves no tracked process.
+        var result = await _controller.StartScriptAsync("empty-state", "   ", 8080);
+        Assert.NotNull(result.ErrorMessage);
+        Assert.False(_controller.IsScriptRunning("empty-state"));
+    }
+
+    [Fact]
+    public async Task GetRunningScriptIds_IncludesStartedScript()
+    {
+        var script = CreateScript("while true; do sleep 1; done");
+        var result = await _controller.StartScriptAsync("running-id", script, 8080);
+        Assert.NotNull(result.Pid);
+
+        Assert.Contains("running-id", _controller.GetRunningScriptIds());
+
+        await _controller.StopScriptAsync("running-id");
+        Assert.DoesNotContain("running-id", _controller.GetRunningScriptIds());
+    }
 }

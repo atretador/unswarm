@@ -129,6 +129,45 @@ public sealed class PromptStoreTests : IDisposable
         Assert.False(result);
     }
 
+    // ── GetDefault ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetDefaultAsync_NoDefaultSet_ReturnsNull()
+    {
+        var service = CreateService();
+        await service.CreateAsync("A", "text-a");
+
+        Assert.Null(await service.GetDefaultAsync());
+    }
+
+    [Fact]
+    public async Task GetDefaultAsync_ReturnsDefaultEntry()
+    {
+        var service = CreateService();
+        var created = await service.CreateAsync("Default", "body");
+        await service.SetDefaultAsync(created.Id);
+
+        var entry = await service.GetDefaultAsync();
+
+        Assert.NotNull(entry);
+        Assert.Equal(created.Id, entry!.Id);
+        Assert.True(entry.IsDefault);
+    }
+
+    [Fact]
+    public async Task GetDefaultAsync_OnlyOneDefaultAfterSwitch()
+    {
+        var service = CreateService();
+        var first = await service.CreateAsync("First", "1");
+        var second = await service.CreateAsync("Second", "2");
+        await service.SetDefaultAsync(first.Id);
+        await service.SetDefaultAsync(second.Id);
+
+        var entry = await service.GetDefaultAsync();
+
+        Assert.Equal(second.Id, entry!.Id);
+    }
+
     public void Dispose()
     {
         _connection.Dispose();

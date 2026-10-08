@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -856,7 +857,7 @@ func loadConfig(path string) (config.Config, string, error) {
 		if err == nil {
 			return cfg, p, nil
 		}
-		if !os.IsNotExist(err) {
+		if !errors.Is(err, fs.ErrNotExist) {
 			return config.Config{}, "", fmt.Errorf("config %s: %w", p, err)
 		}
 	}

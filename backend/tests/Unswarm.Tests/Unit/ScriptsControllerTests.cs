@@ -51,10 +51,11 @@ public sealed class ScriptsControllerTests : IDisposable
     private ScriptsController CreateController(
         HostScriptDirectoryService? scriptDir = null,
         IDockerControllerRouter? router = null,
-        IAgentRegistry? agentRegistry = null)
+        IAgentRegistry? agentRegistry = null,
+        HostScriptRuntimeController? scriptRuntime = null)
         => new(
             scriptDir ?? CreateScriptDir(),
-            CreateScriptRuntime(),
+            scriptRuntime ?? CreateScriptRuntime(),
             router ?? _router,
             agentRegistry ?? _agentRegistry,
             new LoggerFactory().CreateLogger<ScriptsController>());
@@ -232,5 +233,297 @@ public sealed class ScriptsControllerTests : IDisposable
 
         var contentResult = Assert.IsType<ContentResult>(result);
         Assert.Equal("text/plain", contentResult.ContentType);
+    }
+
+    // ── Host Update ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Update_ValidFile_ReturnsOk()
+    {
+        File.WriteAllText(Path.Combine(_tempDir, "upd.sh"), "#!/bin/bash\necho old");
+        var ctrl = CreateController();
+        var file = MakeFormFile("upd.sh", "#!/bin/bash\necho new");
+
+        var result = await ctrl.Update("upd.sh", file, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Contains("echo new", File.ReadAllText(Path.Combine(_tempDir, "upd.sh")));
+    }
+
+    [Fact]
+    public async Task Update_NullFile_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.Update("x.sh", null!, CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task Update_InvalidFileName_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var file = MakeFormFile("x.txt", "#!/bin/bash\necho hi");
+        var result = await ctrl.Update("x.txt", file, CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── Host GetContent errors ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetContent_InvalidFileName_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.GetContent("not-a-script.txt", CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── Host Delete: running script conflict ──────────────────────────
+
+    [Fact]
+    public async Task Delete_RunningScript_ReturnsConflict()
+    {
+        var scriptRuntime = CreateScriptRuntime();
+        var scriptPath = Path.Combine(_tempDir, "running.sh");
+        File.WriteAllText(scriptPath, "#!/bin/bash\nwhile true; do sleep 1; done");
+        File.SetUnixFileMode(scriptPath,
+            File.GetUnixFileMode(scriptPath) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute);
+        var start = await scriptRuntime.StartScriptAsync("running-reg", scriptPath, 9000);
+        Assert.NotNull(start.Pid);
+
+        var ctrl = CreateController(scriptRuntime: scriptRuntime);
+        var result = await ctrl.Delete("running.sh", CancellationToken.None);
+
+        // The running-script guard must refuse deletion with 409 Conflict.
+        Assert.IsType<ConflictObjectResult>(result);
+        Assert.True(File.Exists(scriptPath), "running script must not be deleted");
+
+        await scriptRuntime.StopScriptAsync("running-reg");
+    }
+
+    // ── Remote agent endpoints (scriptable failures) ──────────────────
+
+    private static FakeDockerControllerRouter RouterFor(string agentName, FakeRemoteDockerControllerCoverage2 remote)
+        => new(new Dictionary<string, IDockerController>
+        {
+            [ExecutionTarget.ForAgent(agentName).Id] = remote
+        });
+
+    [Fact]
+    public async Task AgentUpdate_Success_ReturnsOk()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-u");
+        var remote = new FakeRemoteDockerControllerCoverage2();
+        var ctrl = CreateController(router: RouterFor("agent-u", remote));
+
+        var result = await ctrl.AgentUpdate("agent-u", "my.sh", MakeFormFile("my.sh", "#!/bin/bash\necho hi"), CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Contains("my.sh", remote.Updated.Select(u => u.Name));
+    }
+
+    [Fact]
+    public async Task AgentUpdate_NoFile_ReturnsBadRequest()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-u");
+        var ctrl = CreateController(router: RouterFor("agent-u", new FakeRemoteDockerControllerCoverage2()));
+
+        var result = await ctrl.AgentUpdate("agent-u", "my.sh", null!, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task AgentUpdate_InvalidRouteFileName_ReturnsBadRequest()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-u");
+        var ctrl = CreateController(router: RouterFor("agent-u", new FakeRemoteDockerControllerCoverage2()));
+
+        var result = await ctrl.AgentUpdate("agent-u", "bad.txt", MakeFormFile("bad.txt"), CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task AgentUpdate_AgentRejected_Returns502()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-u");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            UpdateException = new AgentCommandException("agent-u", "update_script", "nope")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-u", remote));
+
+        var result = await ctrl.AgentUpdate("agent-u", "my.sh", MakeFormFile("my.sh"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentUpdate_AgentUnavailable_Returns503()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-u");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            UpdateException = new InvalidOperationException("not connected")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-u", remote));
+
+        var result = await ctrl.AgentUpdate("agent-u", "my.sh", MakeFormFile("my.sh"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentUpload_InvalidFileName_ReturnsBadRequest()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-up");
+        var ctrl = CreateController(router: RouterFor("agent-up", new FakeRemoteDockerControllerCoverage2()));
+
+        var result = await ctrl.AgentUpload("agent-up", MakeFormFile("bad.txt"), CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task AgentUpload_AgentRejected_Returns502()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-up");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            UploadException = new AgentCommandException("agent-up", "upload_script", "rejected")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-up", remote));
+
+        var result = await ctrl.AgentUpload("agent-up", MakeFormFile("ok.sh"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentUpload_AgentUnavailable_Returns503()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-up");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            UploadException = new TimeoutException("timeout")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-up", remote));
+
+        var result = await ctrl.AgentUpload("agent-up", MakeFormFile("ok.sh"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentGetContent_AgentRejected_Returns502()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-gc");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            GetContentException = new AgentCommandException("agent-gc", "get_script", "nope")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-gc", remote));
+
+        var result = await ctrl.AgentGetContent("agent-gc", "my.sh", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentGetContent_AgentUnavailable_Returns503()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-gc");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            GetContentException = new InvalidOperationException("not connected")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-gc", remote));
+
+        var result = await ctrl.AgentGetContent("agent-gc", "my.sh", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentDelete_Success_ReturnsOk()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-d");
+        var remote = new FakeRemoteDockerControllerCoverage2();
+        var ctrl = CreateController(router: RouterFor("agent-d", remote));
+
+        var result = await ctrl.AgentDelete("agent-d", "my.sh", CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Contains("my.sh", remote.Deleted);
+    }
+
+    [Fact]
+    public async Task AgentDelete_AgentRejected_Returns502()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-d");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            DeleteException = new AgentCommandException("agent-d", "delete_script", "nope")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-d", remote));
+
+        var result = await ctrl.AgentDelete("agent-d", "my.sh", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentDelete_AgentUnavailable_Returns503()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-d");
+        var remote = new FakeRemoteDockerControllerCoverage2
+        {
+            DeleteException = new InvalidOperationException("not connected")
+        };
+        var ctrl = CreateController(router: RouterFor("agent-d", remote));
+
+        var result = await ctrl.AgentDelete("agent-d", "my.sh", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentUpload_HostName_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.AgentUpload("host", MakeFormFile("x.sh"), CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task AgentUpload_UnreachableAgent_Returns503()
+    {
+        _agentRegistry.RegisteredNames.Add("agent-x");
+        var remote = new FakeRemoteDockerControllerCoverage2();
+        var router = new FakeDockerControllerRouter(
+            new Dictionary<string, IDockerController> { [ExecutionTarget.ForAgent("agent-x").Id] = remote },
+            reachable: []);
+        var ctrl = CreateController(router: router);
+
+        var result = await ctrl.AgentUpload("agent-x", MakeFormFile("x.sh"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(503, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task AgentGetContent_UnknownAgent_ReturnsNotFound()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.AgentGetContent("ghost", "x.sh", CancellationToken.None);
+        Assert.IsType<NotFoundObjectResult>(result);
     }
 }

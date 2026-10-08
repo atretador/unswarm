@@ -229,8 +229,11 @@ public sealed class HostScriptRuntimeController
         {
             try
             {
+                // The launcher path is the second argument (ArgumentList[0] is
+                // "--login"); compare that, not the login flag.
+                var launcherArg = kvp.Value.Process.StartInfo.ArgumentList.Skip(1).FirstOrDefault();
                 if (!kvp.Value.Process.HasExited &&
-                    string.Equals(kvp.Value.Process.StartInfo.ArgumentList.FirstOrDefault(), full, StringComparison.Ordinal))
+                    string.Equals(launcherArg, full, StringComparison.Ordinal))
                     return true;
             }
             catch

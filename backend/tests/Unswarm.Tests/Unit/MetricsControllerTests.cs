@@ -1,9 +1,13 @@
+using System.Net.WebSockets;
 using System.Threading.Channels;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Unswarm.Api.Controllers;
 using Unswarm.Core.Contracts;
+using Unswarm.Core.Models;
 using Unswarm.Core.Persistence;
 using Unswarm.Tests.Fakes;
 
@@ -537,6 +541,251 @@ public sealed class MetricsControllerTests : IDisposable
         var ok = Assert.IsType<OkObjectResult>(result);
         var total = (int)ok.Value!.GetType().GetProperty("total")!.GetValue(ok.Value)!;
         Assert.Equal(3, total);
+    }
+
+    // ─── API-key usage ────────────────────────────────────────────────
+
+    private async Task SeedKeyedAsync(
+        string? keyId,
+        string? keyName,
+        string provider,
+        string model,
+        int promptTokens = 100,
+        int completionTokens = 50,
+        DateTimeOffset? timestamp = null,
+        string providerKind = "local",
+        string? agent = null)
+    {
+        var ts = timestamp ?? new DateTimeOffset(2026, 1, 10, 12, 0, 0, TimeSpan.Zero);
+        _db.UsageRecords.Add(new UsageRecordEntity
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Timestamp = ts,
+            TimestampTicks = ts.UtcTicks,
+            Provider = provider,
+            ProviderKind = providerKind,
+            Agent = agent,
+            Model = model,
+            PromptTokens = promptTokens,
+            CompletionTokens = completionTokens,
+            ApiKeyId = keyId,
+            ApiKeyName = keyName
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task GetApiKeyUsage_GroupsByKeyAndExcludesUnattributed()
+    {
+        await SeedKeyedAsync("k1", "alpha", "openai", "gpt-4o", promptTokens: 100, completionTokens: 50);
+        await SeedKeyedAsync("k1", "alpha", "openai", "gpt-4o", promptTokens: 100, completionTokens: 50);
+        await SeedKeyedAsync("k2", "beta", "anthropic", "claude", promptTokens: 10, completionTokens: 5);
+        await SeedKeyedAsync(null, null, "openai", "gpt-4o"); // cookie/admin → excluded
+
+        var result = await CreateController().GetApiKeyUsage(WindowStart, WindowEnd, CancellationToken.None);
+
+        var keys = Assert.IsType<List<Unswarm.Api.Dtos.ApiKeyUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(2, keys.Count);
+        var alpha = keys.Single(k => k.ApiKeyId == "k1");
+        Assert.Equal(2, alpha.RequestCount);
+        Assert.Equal(200, alpha.PromptTokens);
+        Assert.Equal(100, alpha.CompletionTokens);
+        Assert.Equal("alpha", alpha.KeyName);
+    }
+
+    [Fact]
+    public async Task GetApiKeyUsage_NoKeyedRecords_ReturnsEmpty()
+    {
+        await SeedAsync("openai", "gpt-4o");
+
+        var result = await CreateController().GetApiKeyUsage(WindowStart, WindowEnd, CancellationToken.None);
+
+        var keys = Assert.IsType<List<Unswarm.Api.Dtos.ApiKeyUsageSummary>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Empty(keys);
+    }
+
+    [Fact]
+    public async Task GetApiKeyUsageDetail_ReturnsTotalsAndModelBreakdown()
+    {
+        await SeedKeyedAsync("k1", "alpha", "openai", "gpt-4o", promptTokens: 100, completionTokens: 50);
+        await SeedKeyedAsync("k1", "alpha", "anthropic", "claude", promptTokens: 40, completionTokens: 20);
+        await SeedKeyedAsync("k2", "beta", "openai", "gpt-4o"); // other key excluded
+
+        var result = await CreateController().GetApiKeyUsageDetail("k1", WindowStart, WindowEnd, CancellationToken.None);
+
+        var response = Assert.IsType<Unswarm.Api.Dtos.KeyUsageResponse>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(2, response.Totals.RequestCount);
+        Assert.Equal(140, response.Totals.PromptTokens);
+        Assert.Equal(70, response.Totals.CompletionTokens);
+        Assert.Equal(2, response.Models.Count);
+    }
+
+    [Fact]
+    public async Task GetApiKeyUsageDetail_UnknownKey_ReturnsZeros()
+    {
+        await SeedKeyedAsync("k1", "alpha", "openai", "gpt-4o");
+
+        var result = await CreateController().GetApiKeyUsageDetail("nope", WindowStart, WindowEnd, CancellationToken.None);
+
+        var response = Assert.IsType<Unswarm.Api.Dtos.KeyUsageResponse>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Equal(0, response.Totals.RequestCount);
+        Assert.Empty(response.Models);
+    }
+
+    // ─── Provider catalog ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetProviderCatalog_UnionsSeenConfiguredAndRegistered()
+    {
+        // Seen in usage: local agent + cloud provider.
+        await SeedAsync("runtime-a", "llama-3", agent: "agent-x");
+        await SeedAsync("openai", "gpt-4o", providerKind: "cloud");
+
+        // Configured cloud provider + registered runtime agent not yet seen.
+        _db.CloudProviders.Add(new CloudProviderEntity
+        {
+            Id = "prov-1",
+            Name = "anthropic",
+            BaseUrl = "https://example.test",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        _db.RegisteredRuntimes.Add(new RegisteredRuntimeEntity
+        {
+            Id = "rt-1",
+            DisplayName = "runtime-b",
+            Image = "img",
+            Agent = "agent-y",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await _db.SaveChangesAsync();
+
+        var result = await CreateController().GetProviderCatalog(CancellationToken.None);
+
+        var catalog = Assert.IsType<List<Unswarm.Api.Dtos.ProviderCatalogItem>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Contains(catalog, c => c.Name == "agent-x" && c.Kind == "agent");
+        Assert.Contains(catalog, c => c.Name == "openai" && c.Kind == "cloud");
+        Assert.Contains(catalog, c => c.Name == "anthropic" && c.Kind == "cloud");
+        Assert.Contains(catalog, c => c.Name == "agent-y" && c.Kind == "agent");
+        // Deduped by name.
+        Assert.Equal(catalog.Select(c => c.Name).Distinct().Count(), catalog.Count);
+    }
+
+    [Fact]
+    public async Task GetProviderCatalog_EmptyDatabase_ReturnsEmpty()
+    {
+        var result = await CreateController().GetProviderCatalog(CancellationToken.None);
+
+        var catalog = Assert.IsType<List<Unswarm.Api.Dtos.ProviderCatalogItem>>(
+            Assert.IsType<OkObjectResult>(result).Value);
+        Assert.Empty(catalog);
+    }
+
+    // ─── Purge ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PurgeUsage_DeletesRecordsOlderThanWindow()
+    {
+        await SeedAsync("openai", "gpt-4o",
+            timestamp: DateTimeOffset.UtcNow.AddDays(-40));
+        await SeedAsync("openai", "gpt-4o",
+            timestamp: DateTimeOffset.UtcNow.AddDays(-1));
+
+        var result = await CreateController().PurgeUsage(olderThanDays: 30, ct: CancellationToken.None);
+
+        var deleted = (int)Assert.IsType<OkObjectResult>(result).Value!
+            .GetType().GetProperty("deleted")!.GetValue(Assert.IsType<OkObjectResult>(result).Value)!;
+        Assert.Equal(1, deleted);
+        Assert.Equal(1, await _db.UsageRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task PurgeUsage_ZeroDays_DeletesEverything()
+    {
+        await SeedAsync("openai", "gpt-4o", timestamp: DateTimeOffset.UtcNow.AddMinutes(-5));
+        await SeedAsync("openai", "gpt-4o", timestamp: DateTimeOffset.UtcNow.AddMinutes(-10));
+
+        var result = await CreateController().PurgeUsage(olderThanDays: 0, ct: CancellationToken.None);
+
+        var deleted = (int)Assert.IsType<OkObjectResult>(result).Value!
+            .GetType().GetProperty("deleted")!.GetValue(Assert.IsType<OkObjectResult>(result).Value)!;
+        Assert.Equal(2, deleted);
+        Assert.Equal(0, await _db.UsageRecords.CountAsync());
+    }
+
+    [Fact]
+    public async Task PurgeUsage_UsesSettingRetentionWhenNotOverridden()
+    {
+        var settings = new Settings { UsageRetentionDays = 7 };
+        await SeedAsync("openai", "gpt-4o", timestamp: DateTimeOffset.UtcNow.AddDays(-30));
+        await SeedAsync("openai", "gpt-4o", timestamp: DateTimeOffset.UtcNow.AddDays(-1));
+
+        var controller = new MetricsController(_db, new FakeSettingsStore(settings), new NullLiveTailBroadcaster());
+        var result = await controller.PurgeUsage(ct: CancellationToken.None);
+
+        var deleted = (int)Assert.IsType<OkObjectResult>(result).Value!
+            .GetType().GetProperty("deleted")!.GetValue(Assert.IsType<OkObjectResult>(result).Value)!;
+        Assert.Equal(1, deleted);
+    }
+
+    // ─── Live tail WebSocket ──────────────────────────────────────────
+
+    [Fact]
+    public async Task LiveTail_NotAWebSocketRequest_Returns400()
+    {
+        var controller = new MetricsController(_db, new FakeSettingsStore(), new NullLiveTailBroadcaster());
+        controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        await controller.LiveTail(CancellationToken.None);
+
+        Assert.Equal(400, controller.HttpContext.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task LiveTail_PushesPublishedEventsToSocket()
+    {
+        var broadcaster = new FakeUsageLiveTailBroadcasterCoverage1();
+        broadcaster.Publish(new UsageLiveTailEvent(
+            "evt-1", DateTimeOffset.UtcNow, "agent-x", "local", "llama-3", 10, 20, 0, false, 100, "agent-x"));
+        broadcaster.Complete();
+
+        var socket = new FakeWebSocket();
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeatureCoverage1(socket));
+        var controller = new MetricsController(_db, new FakeSettingsStore(), broadcaster);
+        controller.ControllerContext = new ControllerContext { HttpContext = ctx };
+
+        await controller.LiveTail(CancellationToken.None);
+
+        var sent = Assert.Single(socket.SentMessages);
+        Assert.Contains("llama-3", sent);
+        Assert.Contains("evt-1", sent);
+    }
+
+    [Fact]
+    public async Task LiveTail_ClientCloseFrame_TerminatesStream()
+    {
+        var broadcaster = new FakeUsageLiveTailBroadcasterCoverage1();
+        var socket = new FakeWebSocket();
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+        var ctx = new DefaultHttpContext();
+        ctx.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeatureCoverage1(socket));
+        var controller = new MetricsController(_db, new FakeSettingsStore(), broadcaster);
+        controller.ControllerContext = new ControllerContext { HttpContext = ctx };
+
+        using var cts = new CancellationTokenSource();
+        var streamTask = controller.LiveTail(cts.Token);
+        await Eventually.UntilAsync(() => socket.CloseCallCount == 1);
+        cts.Cancel();
+        await streamTask;
+
+        Assert.Equal(1, socket.CloseCallCount);
     }
 
     /// <summary>

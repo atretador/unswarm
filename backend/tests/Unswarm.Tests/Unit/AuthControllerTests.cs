@@ -221,4 +221,39 @@ public sealed class AuthControllerTests
 
         Assert.IsType<BadRequestObjectResult>(result);
     }
+
+    [Fact]
+    public async Task ChangePassword_TempPassword_ClearsTempFlag()
+    {
+        var user = _store.AddUser("tempcp", password: "Old123!", isTempPassword: true);
+        var ctrl = CreateController();
+        SetAuthenticatedUser(ctrl, user.Id);
+
+        var result = await ctrl.ChangePassword(new ChangePasswordRequest("Old123!", "New456!"));
+
+        Assert.IsType<OkResult>(result);
+        Assert.False(user.IsTempPassword);
+    }
+
+    [Fact]
+    public async Task ChangePassword_Unauthenticated_ReturnsUnauthorized()
+    {
+        var ctrl = CreateController();
+        ctrl.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await ctrl.ChangePassword(new ChangePasswordRequest("a", "b"));
+
+        Assert.IsType<UnauthorizedResult>(result);
+    }
+
+    [Fact]
+    public async Task Me_Unauthenticated_ReturnsUnauthorized()
+    {
+        var ctrl = CreateController();
+        ctrl.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await ctrl.Me();
+
+        Assert.IsType<UnauthorizedResult>(result);
+    }
 }

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,13 +41,43 @@ func simulateInput(lines ...string) {
 // testHexID is a valid 32-char hex ID used by tests to bypass name resolution.
 const testHexID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-// setupTest configures the given command with a mock server and JSON output.
-// The Writer is created AFTER os.Stdout is redirected so all output is captured.
-// The cmd MUST be the actual command under test (not a dummy parent) so flags are accessible.
-func setupTest(cmd *cobra.Command, serverURL string) func() string {
+// newStdoutCapture redirects os.Stdout to a pipe and returns an idempotent
+// capture function. The returned function is also registered via t.Cleanup so
+// that os.Stdout is always restored, even if a test never calls capture. This
+// is essential for `go test -cover`: the coverage runtime writes its profile to
+// os.Stdout at process exit, and leaving a pipe (whose reader has been GC'd)
+// installed causes "write |1: broken pipe".
+//
+// The capture function closes the pipe writer and restores os.Stdout before
+// draining the reader, so no closed pipe is ever left as os.Stdout.
+func newStdoutCapture(t *testing.T) func() string {
+	t.Helper()
 	r, wPipe, _ := os.Pipe()
 	old := os.Stdout
 	os.Stdout = wPipe
+
+	var once sync.Once
+	var out string
+	capture := func() string {
+		once.Do(func() {
+			wPipe.Close()
+			os.Stdout = old
+			var buf bytes.Buffer
+			io.Copy(&buf, r)
+			out = buf.String()
+		})
+		return out
+	}
+	t.Cleanup(func() { capture() })
+	return capture
+}
+
+// setupTest configures the given command with a mock server and JSON output.
+// The Writer is created AFTER os.Stdout is redirected so all output is captured.
+// The cmd MUST be the actual command under test (not a dummy parent) so flags are accessible.
+func setupTest(t *testing.T, cmd *cobra.Command, serverURL string) func() string {
+	t.Helper()
+	capture := newStdoutCapture(t)
 
 	cfg := &client.Config{BaseURL: serverURL, OutputFmt: "json", Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key"))
@@ -56,20 +87,13 @@ func setupTest(cmd *cobra.Command, serverURL string) func() string {
 	ctx = context.WithValue(ctx, outputKey, w)
 	cmd.SetContext(ctx)
 
-	return func() string {
-		wPipe.Close()
-		os.Stdout = old
-		var buf bytes.Buffer
-		io.Copy(&buf, r)
-		return buf.String()
-	}
+	return capture
 }
 
 // setupTestYes is like setupTest but also sets the yes flag to skip confirmation prompts.
-func setupTestYes(cmd *cobra.Command, serverURL string) func() string {
-	r, wPipe, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = wPipe
+func setupTestYes(t *testing.T, cmd *cobra.Command, serverURL string) func() string {
+	t.Helper()
+	capture := newStdoutCapture(t)
 
 	cfg := &client.Config{BaseURL: serverURL, OutputFmt: "json", Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key"))
@@ -80,20 +104,13 @@ func setupTestYes(cmd *cobra.Command, serverURL string) func() string {
 	ctx = context.WithValue(ctx, outputKey, w)
 	cmd.SetContext(ctx)
 
-	return func() string {
-		wPipe.Close()
-		os.Stdout = old
-		var buf bytes.Buffer
-		io.Copy(&buf, r)
-		return buf.String()
-	}
+	return capture
 }
 
 // setupTestFmt configures with a specific output format.
-func setupTestFmt(cmd *cobra.Command, serverURL string, fmt output.Format) func() string {
-	r, wPipe, _ := os.Pipe()
-	old := os.Stdout
-	os.Stdout = wPipe
+func setupTestFmt(t *testing.T, cmd *cobra.Command, serverURL string, fmt output.Format) func() string {
+	t.Helper()
+	capture := newStdoutCapture(t)
 
 	cfg := &client.Config{BaseURL: serverURL, OutputFmt: string(fmt), Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key"))
@@ -103,13 +120,7 @@ func setupTestFmt(cmd *cobra.Command, serverURL string, fmt output.Format) func(
 	ctx = context.WithValue(ctx, outputKey, w)
 	cmd.SetContext(ctx)
 
-	return func() string {
-		wPipe.Close()
-		os.Stdout = old
-		var buf bytes.Buffer
-		io.Copy(&buf, r)
-		return buf.String()
-	}
+	return capture
 }
 
 // ==================== Models Tests ====================
@@ -126,7 +137,7 @@ func TestModelsList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsListCmd, server.URL)
+	capture := setupTest(t, modelsListCmd, server.URL)
 	err := modelsListCmd.RunE(modelsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -148,7 +159,7 @@ func TestModelsListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(modelsListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, modelsListCmd, server.URL, output.FormatTable)
 	err := modelsListCmd.RunE(modelsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -167,7 +178,7 @@ func TestModelsGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsGetCmd, server.URL)
+	capture := setupTest(t, modelsGetCmd, server.URL)
 	err := modelsGetCmd.RunE(modelsGetCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -187,7 +198,7 @@ func TestModelsGet404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsGetCmd, server.URL)
+	capture := setupTest(t, modelsGetCmd, server.URL)
 	modelsGetCmd.RunE(modelsGetCmd, []string{testHexID})
 
 	out := capture()
@@ -209,7 +220,7 @@ func TestModelsCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsCreateCmd, server.URL)
+	capture := setupTest(t, modelsCreateCmd, server.URL)
 	modelsCreateCmd.Flags().Set("name", "new-model")
 
 	err := modelsCreateCmd.RunE(modelsCreateCmd, nil)
@@ -281,7 +292,7 @@ func TestModelsCreateInteractive(t *testing.T) {
 	cmd.Flags().String("container-image", "", "Container image")
 	cmd.Flags().String("thinking-efforts", "", "Thinking efforts JSON")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 
 	err := cmd.RunE(cmd, nil)
 	if err != nil {
@@ -325,7 +336,7 @@ func TestModelsCreateFlagsPath(t *testing.T) {
 	cmd.Flags().String("container-image", "", "Container image")
 	cmd.Flags().String("thinking-efforts", "", "Thinking efforts JSON")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("name", "flag-model")
 	cmd.Flags().Set("family", "mistral")
 
@@ -359,7 +370,7 @@ func TestModelsCreateQuietNoFlags(t *testing.T) {
 	cmd.Flags().String("container-image", "", "Container image")
 	cmd.Flags().String("thinking-efforts", "", "Thinking efforts JSON")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	ctx := cmd.Context()
 	ctx = context.WithValue(ctx, quietKey, true)
 	cmd.SetContext(ctx)
@@ -387,7 +398,7 @@ func TestModelsUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsUpdateCmd, server.URL)
+	capture := setupTest(t, modelsUpdateCmd, server.URL)
 	modelsUpdateCmd.Flags().Set("name", "updated-name")
 
 	err := modelsUpdateCmd.RunE(modelsUpdateCmd, []string{testHexID})
@@ -410,7 +421,7 @@ func TestModelsDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(modelsDeleteCmd, server.URL)
+	capture := setupTestYes(t, modelsDeleteCmd, server.URL)
 	err := modelsDeleteCmd.RunE(modelsDeleteCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -434,7 +445,7 @@ func TestModelsTestChat(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsTestChatCmd, server.URL)
+	capture := setupTest(t, modelsTestChatCmd, server.URL)
 	modelsTestChatCmd.Flags().Set("model", testHexID)
 	modelsTestChatCmd.Flags().Set("messages", `[{"role":"user","content":"Hi"}]`)
 	modelsTestChatCmd.Flags().Set("stream", "false")
@@ -482,7 +493,7 @@ func TestModelsTestChatStreaming(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsTestChatCmd, server.URL)
+	capture := setupTest(t, modelsTestChatCmd, server.URL)
 	modelsTestChatCmd.Flags().Set("model", testHexID)
 	modelsTestChatCmd.Flags().Set("messages", `[{"role":"user","content":"Hi"}]`)
 	modelsTestChatCmd.Flags().Set("stream", "true")
@@ -529,7 +540,7 @@ func TestRuntimesList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesListCmd, server.URL)
+	capture := setupTest(t, runtimesListCmd, server.URL)
 	err := runtimesListCmd.RunE(runtimesListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -551,7 +562,7 @@ func TestRuntimesListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(runtimesListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, runtimesListCmd, server.URL, output.FormatTable)
 	err := runtimesListCmd.RunE(runtimesListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -571,7 +582,7 @@ func TestRuntimesGet404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesGetCmd, server.URL)
+	capture := setupTest(t, runtimesGetCmd, server.URL)
 	runtimesGetCmd.RunE(runtimesGetCmd, []string{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
 
 	out := capture()
@@ -586,7 +597,7 @@ func TestRuntimesDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(runtimesDeleteCmd, server.URL)
+	capture := setupTestYes(t, runtimesDeleteCmd, server.URL)
 	err := runtimesDeleteCmd.RunE(runtimesDeleteCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -607,7 +618,7 @@ func TestRuntimesDeleteWithModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(runtimesDeleteCmd, server.URL)
+	capture := setupTestYes(t, runtimesDeleteCmd, server.URL)
 	runtimesDeleteCmd.Flags().Set("delete-models", "true")
 
 	err := runtimesDeleteCmd.RunE(runtimesDeleteCmd, []string{testHexID})
@@ -634,7 +645,7 @@ func TestRuntimesRegister(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesRegisterCmd, server.URL)
+	capture := setupTest(t, runtimesRegisterCmd, server.URL)
 	runtimesRegisterCmd.Flags().Set("name", "New Runtime")
 	runtimesRegisterCmd.Flags().Set("image", "nvidia/cuda:12")
 
@@ -659,7 +670,7 @@ func TestRuntimesUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesUpdateCmd, server.URL)
+	capture := setupTest(t, runtimesUpdateCmd, server.URL)
 	runtimesUpdateCmd.Flags().Set("name", "Updated Runtime")
 
 	err := runtimesUpdateCmd.RunE(runtimesUpdateCmd, []string{testHexID})
@@ -679,7 +690,7 @@ func TestRuntimesStart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesStartCmd, server.URL)
+	capture := setupTest(t, runtimesStartCmd, server.URL)
 	err := runtimesStartCmd.RunE(runtimesStartCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -697,7 +708,7 @@ func TestRuntimesStop(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesStopCmd, server.URL)
+	capture := setupTest(t, runtimesStopCmd, server.URL)
 	err := runtimesStopCmd.RunE(runtimesStopCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -715,7 +726,7 @@ func TestRuntimesRediscover(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesRediscoverCmd, server.URL)
+	capture := setupTest(t, runtimesRediscoverCmd, server.URL)
 	err := runtimesRediscoverCmd.RunE(runtimesRediscoverCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -733,7 +744,7 @@ func TestRuntimesHealthcheck(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesHealthcheckCmd, server.URL)
+	capture := setupTest(t, runtimesHealthcheckCmd, server.URL)
 	err := runtimesHealthcheckCmd.RunE(runtimesHealthcheckCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -752,7 +763,7 @@ func TestRuntimesSetConcurrency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesSetConcurrencyCmd, server.URL)
+	capture := setupTest(t, runtimesSetConcurrencyCmd, server.URL)
 	runtimesSetConcurrencyCmd.Flags().Set("max-concurrent", "4")
 
 	err := runtimesSetConcurrencyCmd.RunE(runtimesSetConcurrencyCmd, []string{testHexID})
@@ -773,7 +784,7 @@ func TestRuntimesToggleConcurrency(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(runtimesToggleConcurrencyCmd, server.URL)
+	capture := setupTest(t, runtimesToggleConcurrencyCmd, server.URL)
 	runtimesToggleConcurrencyCmd.Flags().Set("runtime-a", testHexID)
 	runtimesToggleConcurrencyCmd.Flags().Set("runtime-b", testHexID)
 
@@ -800,7 +811,7 @@ func TestContainersList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(containersListCmd, server.URL)
+	capture := setupTest(t, containersListCmd, server.URL)
 	err := containersListCmd.RunE(containersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -822,7 +833,7 @@ func TestContainersListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(containersListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, containersListCmd, server.URL, output.FormatTable)
 	err := containersListCmd.RunE(containersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -846,7 +857,7 @@ func TestContainersStart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(containersStartCmd, server.URL)
+	capture := setupTest(t, containersStartCmd, server.URL)
 	containersStartCmd.Flags().Set("model", testHexID)
 
 	err := containersStartCmd.RunE(containersStartCmd, nil)
@@ -866,7 +877,7 @@ func TestContainersStop204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(containersStopCmd, server.URL)
+	capture := setupTestYes(t, containersStopCmd, server.URL)
 	err := containersStopCmd.RunE(containersStopCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -884,7 +895,7 @@ func TestContainersRestart(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(containersRestartCmd, server.URL)
+	capture := setupTestYes(t, containersRestartCmd, server.URL)
 	err := containersRestartCmd.RunE(containersRestartCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -910,7 +921,7 @@ func TestAgentsList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsListCmd, server.URL)
+	capture := setupTest(t, agentsListCmd, server.URL)
 	err := agentsListCmd.RunE(agentsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -932,7 +943,7 @@ func TestAgentsListDisconnected(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsListCmd, server.URL)
+	capture := setupTest(t, agentsListCmd, server.URL)
 	err := agentsListCmd.RunE(agentsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -955,7 +966,7 @@ func TestAgentsListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(agentsListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, agentsListCmd, server.URL, output.FormatTable)
 	err := agentsListCmd.RunE(agentsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -974,7 +985,7 @@ func TestAgentsContainers(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsContainersCmd, server.URL)
+	capture := setupTest(t, agentsContainersCmd, server.URL)
 	err := agentsContainersCmd.RunE(agentsContainersCmd, []string{"agent-1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -993,7 +1004,7 @@ func TestAgentsScripts(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsScriptsCmd, server.URL)
+	capture := setupTest(t, agentsScriptsCmd, server.URL)
 	err := agentsScriptsCmd.RunE(agentsScriptsCmd, []string{"agent-1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1012,7 +1023,7 @@ func TestAgentsScriptsAvailable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsScriptsAvailableCmd, server.URL)
+	capture := setupTest(t, agentsScriptsAvailableCmd, server.URL)
 	err := agentsScriptsAvailableCmd.RunE(agentsScriptsAvailableCmd, []string{"agent-1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1031,7 +1042,7 @@ func TestAgentsScriptsAvailableTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(agentsScriptsAvailableCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, agentsScriptsAvailableCmd, server.URL, output.FormatTable)
 	err := agentsScriptsAvailableCmd.RunE(agentsScriptsAvailableCmd, []string{"agent-1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1053,7 +1064,7 @@ func TestModelsListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsListCmd, server.URL)
+	capture := setupTest(t, modelsListCmd, server.URL)
 	modelsListCmd.RunE(modelsListCmd, nil)
 
 	out := capture()
@@ -1070,7 +1081,7 @@ func TestContainersListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(containersListCmd, server.URL)
+	capture := setupTest(t, containersListCmd, server.URL)
 	containersListCmd.RunE(containersListCmd, nil)
 
 	out := capture()
@@ -1087,7 +1098,7 @@ func TestAgentsListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsListCmd, server.URL)
+	capture := setupTest(t, agentsListCmd, server.URL)
 	agentsListCmd.RunE(agentsListCmd, nil)
 
 	out := capture()
@@ -1105,7 +1116,7 @@ func TestModelsListJSONOutput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsListCmd, server.URL)
+	capture := setupTest(t, modelsListCmd, server.URL)
 	err := modelsListCmd.RunE(modelsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1239,7 +1250,7 @@ func TestAPIKeyHeaderSent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(modelsListCmd, server.URL, output.FormatJSON)
+	capture := setupTestFmt(t, modelsListCmd, server.URL, output.FormatJSON)
 	// Override the client with specific key
 	cfg := &client.Config{BaseURL: server.URL, OutputFmt: "json", Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key-123"))
@@ -1269,7 +1280,7 @@ func TestTransportError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsListCmd, server.URL)
+	capture := setupTest(t, modelsListCmd, server.URL)
 	modelsListCmd.RunE(modelsListCmd, nil)
 
 	out := capture()
@@ -1287,7 +1298,7 @@ func TestUsersList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersListCmd, server.URL)
+	capture := setupTest(t, usersListCmd, server.URL)
 	err := usersListCmd.RunE(usersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1306,7 +1317,7 @@ func TestUsersListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(usersListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, usersListCmd, server.URL, output.FormatTable)
 	err := usersListCmd.RunE(usersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1334,7 +1345,7 @@ func TestUsersCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersCreateCmd, server.URL)
+	capture := setupTest(t, usersCreateCmd, server.URL)
 	usersCreateCmd.Flags().Set("username", "newuser")
 	usersCreateCmd.Flags().Set("password", "pass123")
 
@@ -1357,7 +1368,7 @@ func TestUsersCreateAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersCreateCmd, server.URL)
+	capture := setupTest(t, usersCreateCmd, server.URL)
 	usersCreateCmd.Flags().Set("username", "existing")
 	usersCreateCmd.Flags().Set("password", "pass123")
 
@@ -1383,7 +1394,7 @@ func TestUsersResetPassword(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersResetPasswordCmd, server.URL)
+	capture := setupTest(t, usersResetPasswordCmd, server.URL)
 	usersResetPasswordCmd.Flags().Set("new-password", "newpass456")
 
 	err := usersResetPasswordCmd.RunE(usersResetPasswordCmd, []string{testHexID})
@@ -1413,7 +1424,7 @@ func TestUsersDelete200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(usersDeleteCmd, server.URL)
+	capture := setupTestYes(t, usersDeleteCmd, server.URL)
 
 	err := usersDeleteCmd.RunE(usersDeleteCmd, []string{testHexID})
 	if err != nil {
@@ -1488,7 +1499,7 @@ func TestAPIKeysList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysListCmd, server.URL)
+	capture := setupTest(t, apikeysListCmd, server.URL)
 	err := apikeysListCmd.RunE(apikeysListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1507,7 +1518,7 @@ func TestAPIKeysListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(apikeysListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, apikeysListCmd, server.URL, output.FormatTable)
 	err := apikeysListCmd.RunE(apikeysListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1526,7 +1537,7 @@ func TestAPIKeysGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysGetCmd, server.URL)
+	capture := setupTest(t, apikeysGetCmd, server.URL)
 	err := apikeysGetCmd.RunE(apikeysGetCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1561,7 +1572,7 @@ func TestAPIKeysCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysCreateCmd, server.URL)
+	capture := setupTest(t, apikeysCreateCmd, server.URL)
 	apikeysCreateCmd.Flags().Set("name", "new-key")
 
 	err := apikeysCreateCmd.RunE(apikeysCreateCmd, nil)
@@ -1594,7 +1605,7 @@ func TestAPIKeysCreateAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysCreateAgentCmd, server.URL)
+	capture := setupTest(t, apikeysCreateAgentCmd, server.URL)
 	apikeysCreateAgentCmd.Flags().Set("name", "agent-key")
 	apikeysCreateAgentCmd.Flags().Set("bound-agent", "agent-1")
 
@@ -1622,7 +1633,7 @@ func TestAPIKeysCreateAgentNoBound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysCreateAgentCmd, server.URL)
+	capture := setupTest(t, apikeysCreateAgentCmd, server.URL)
 	// Explicitly reset flags that may have been set by prior test
 	apikeysCreateAgentCmd.Flags().Set("name", "unbound-key")
 	apikeysCreateAgentCmd.Flags().Set("bound-agent", "")
@@ -1658,7 +1669,7 @@ func TestAPIKeysCreateControlPlane(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysCreateControlPlaneCmd, server.URL)
+	capture := setupTest(t, apikeysCreateControlPlaneCmd, server.URL)
 	apikeysCreateControlPlaneCmd.Flags().Set("name", "cp-key")
 	apikeysCreateControlPlaneCmd.Flags().Set("permissions", `{"domain": "rw"}`)
 
@@ -1682,7 +1693,7 @@ func TestAPIKeysRevoke204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(apikeysRevokeCmd, server.URL)
+	capture := setupTestYes(t, apikeysRevokeCmd, server.URL)
 
 	err := apikeysRevokeCmd.RunE(apikeysRevokeCmd, []string{testHexID})
 	if err != nil {
@@ -1745,7 +1756,7 @@ func TestAPIKeysRotate200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(apikeysRotateCmd, server.URL)
+	capture := setupTestYes(t, apikeysRotateCmd, server.URL)
 
 	err := apikeysRotateCmd.RunE(apikeysRotateCmd, []string{testHexID})
 	if err != nil {
@@ -1805,7 +1816,7 @@ func TestAPIKeysGetAccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysGetAccessCmd, server.URL)
+	capture := setupTest(t, apikeysGetAccessCmd, server.URL)
 	err := apikeysGetAccessCmd.RunE(apikeysGetAccessCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1840,7 +1851,7 @@ func TestAPIKeysSetAccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysSetAccessCmd, server.URL)
+	capture := setupTest(t, apikeysSetAccessCmd, server.URL)
 	apikeysSetAccessCmd.Flags().Set("providers", `["openai"]`)
 	apikeysSetAccessCmd.Flags().Set("models", `["gpt-4"]`)
 
@@ -1861,7 +1872,7 @@ func TestAPIKeysSetAccessInvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysSetAccessCmd, server.URL)
+	capture := setupTest(t, apikeysSetAccessCmd, server.URL)
 	apikeysSetAccessCmd.Flags().Set("providers", `not-json`)
 
 	apikeysSetAccessCmd.RunE(apikeysSetAccessCmd, []string{testHexID})
@@ -1886,7 +1897,7 @@ func TestAPIKeysGetPermissions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysGetPermissionsCmd, server.URL)
+	capture := setupTest(t, apikeysGetPermissionsCmd, server.URL)
 	err := apikeysGetPermissionsCmd.RunE(apikeysGetPermissionsCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -1921,7 +1932,7 @@ func TestAPIKeysSetPermissions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysSetPermissionsCmd, server.URL)
+	capture := setupTest(t, apikeysSetPermissionsCmd, server.URL)
 	apikeysSetPermissionsCmd.Flags().Set("permissions", `{"domain": "r"}`)
 
 	err := apikeysSetPermissionsCmd.RunE(apikeysSetPermissionsCmd, []string{testHexID})
@@ -1963,7 +1974,7 @@ func TestAPIKeysListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysListCmd, server.URL)
+	capture := setupTest(t, apikeysListCmd, server.URL)
 	apikeysListCmd.RunE(apikeysListCmd, nil)
 
 	out := capture()
@@ -1981,7 +1992,7 @@ func TestSettingsGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsGetCmd, server.URL)
+	capture := setupTest(t, settingsGetCmd, server.URL)
 	err := settingsGetCmd.RunE(settingsGetCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2011,7 +2022,7 @@ func TestSettingsUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsUpdateCmd, server.URL)
+	capture := setupTest(t, settingsUpdateCmd, server.URL)
 	settingsUpdateCmd.Flags().Set("request-timeout", "60")
 	settingsUpdateCmd.Flags().Set("auto-shutdown-idle", "false")
 
@@ -2043,7 +2054,7 @@ func TestSettingsUpdateNoChanges(t *testing.T) {
 	freshCmd.Flags().Float64("request-timeout", 0, "")
 	freshCmd.Flags().Bool("auto-shutdown-idle", false, "")
 
-	capture := setupTest(freshCmd, server.URL)
+	capture := setupTest(t, freshCmd, server.URL)
 
 	freshCmd.RunE(freshCmd, nil)
 
@@ -2061,7 +2072,7 @@ func TestSettingsGetAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsGetCmd, server.URL)
+	capture := setupTest(t, settingsGetCmd, server.URL)
 	settingsGetCmd.RunE(settingsGetCmd, nil)
 
 	out := capture()
@@ -2085,7 +2096,7 @@ func TestSettingsUpdateBoolFlags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsUpdateCmd, server.URL)
+	capture := setupTest(t, settingsUpdateCmd, server.URL)
 	settingsUpdateCmd.Flags().Set("enable-benchmarking", "true")
 	settingsUpdateCmd.Flags().Set("batch-drain", "true")
 
@@ -2112,7 +2123,7 @@ func TestSettingsUpdateIntFlags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsUpdateCmd, server.URL)
+	capture := setupTest(t, settingsUpdateCmd, server.URL)
 	settingsUpdateCmd.Flags().Set("max-queue-depth", "100")
 
 	err := settingsUpdateCmd.RunE(settingsUpdateCmd, nil)
@@ -2148,7 +2159,7 @@ func TestQueueSnapshot(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueSnapshotCmd, server.URL)
+	capture := setupTest(t, queueSnapshotCmd, server.URL)
 	err := queueSnapshotCmd.RunE(queueSnapshotCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2168,7 +2179,7 @@ func TestQueueSnapshotAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueSnapshotCmd, server.URL)
+	capture := setupTest(t, queueSnapshotCmd, server.URL)
 	queueSnapshotCmd.RunE(queueSnapshotCmd, nil)
 
 	out := capture()
@@ -2187,7 +2198,7 @@ func TestQueueCancel200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueCancelCmd, server.URL)
+	capture := setupTest(t, queueCancelCmd, server.URL)
 	err := queueCancelCmd.RunE(queueCancelCmd, []string{"item-123"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2219,7 +2230,7 @@ func TestQueueReleaseHold200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueReleaseHoldCmd, server.URL)
+	capture := setupTest(t, queueReleaseHoldCmd, server.URL)
 	err := queueReleaseHoldCmd.RunE(queueReleaseHoldCmd, []string{"target-456"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2259,7 +2270,7 @@ func TestQueueCancelAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueCancelCmd, server.URL)
+	capture := setupTest(t, queueCancelCmd, server.URL)
 	queueCancelCmd.RunE(queueCancelCmd, []string{"nonexistent"})
 
 	out := capture()
@@ -2276,7 +2287,7 @@ func TestQueueReleaseHoldAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueReleaseHoldCmd, server.URL)
+	capture := setupTest(t, queueReleaseHoldCmd, server.URL)
 	queueReleaseHoldCmd.RunE(queueReleaseHoldCmd, []string{"target-789"})
 
 	out := capture()
@@ -2292,7 +2303,7 @@ func TestQueueSnapshotJSONOutput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueSnapshotCmd, server.URL)
+	capture := setupTest(t, queueSnapshotCmd, server.URL)
 	err := queueSnapshotCmd.RunE(queueSnapshotCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2318,7 +2329,7 @@ func TestUsersListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersListCmd, server.URL)
+	capture := setupTest(t, usersListCmd, server.URL)
 	usersListCmd.RunE(usersListCmd, nil)
 
 	out := capture()
@@ -2335,7 +2346,7 @@ func TestUsersResetPasswordAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(usersResetPasswordCmd, server.URL)
+	capture := setupTest(t, usersResetPasswordCmd, server.URL)
 	usersResetPasswordCmd.Flags().Set("new-password", "newpass")
 
 	usersResetPasswordCmd.RunE(usersResetPasswordCmd, []string{testHexID})
@@ -2354,7 +2365,7 @@ func TestAPIKeysGetAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysGetCmd, server.URL)
+	capture := setupTest(t, apikeysGetCmd, server.URL)
 	apikeysGetCmd.RunE(apikeysGetCmd, []string{testHexID})
 
 	out := capture()
@@ -2369,7 +2380,7 @@ func TestAPIKeysCreateInvalidPermissions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysCreateControlPlaneCmd, server.URL)
+	capture := setupTest(t, apikeysCreateControlPlaneCmd, server.URL)
 	apikeysCreateControlPlaneCmd.Flags().Set("name", "bad-key")
 	apikeysCreateControlPlaneCmd.Flags().Set("permissions", `not-json`)
 
@@ -2387,7 +2398,7 @@ func TestAPIKeysSetPermissionsInvalidJSON(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(apikeysSetPermissionsCmd, server.URL)
+	capture := setupTest(t, apikeysSetPermissionsCmd, server.URL)
 	apikeysSetPermissionsCmd.Flags().Set("permissions", `invalid`)
 
 	apikeysSetPermissionsCmd.RunE(apikeysSetPermissionsCmd, []string{testHexID})
@@ -2410,7 +2421,7 @@ func TestSettingsUpdateStringFlags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsUpdateCmd, server.URL)
+	capture := setupTest(t, settingsUpdateCmd, server.URL)
 	settingsUpdateCmd.Flags().Set("priority-mode", "least-connections")
 
 	err := settingsUpdateCmd.RunE(settingsUpdateCmd, nil)
@@ -2436,7 +2447,7 @@ func TestSettingsUpdateFloatFlags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(settingsUpdateCmd, server.URL)
+	capture := setupTest(t, settingsUpdateCmd, server.URL)
 	settingsUpdateCmd.Flags().Set("idle-timeout", "300")
 
 	err := settingsUpdateCmd.RunE(settingsUpdateCmd, nil)
@@ -2465,7 +2476,7 @@ func TestBenchmarksRun(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(benchmarksRunCmd, server.URL)
+	capture := setupTest(t, benchmarksRunCmd, server.URL)
 	// Use testHexID to bypass name resolution.
 	err := benchmarksRunCmd.RunE(benchmarksRunCmd, []string{testHexID})
 	if err != nil {
@@ -2496,7 +2507,7 @@ func TestBenchmarksRunWithFlags(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(benchmarksRunCmd, server.URL)
+	capture := setupTest(t, benchmarksRunCmd, server.URL)
 	benchmarksRunCmd.Flags().Set("prompt", "test prompt")
 
 	err := benchmarksRunCmd.RunE(benchmarksRunCmd, []string{testHexID})
@@ -2517,7 +2528,7 @@ func TestBenchmarksList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(benchmarksListCmd, server.URL)
+	capture := setupTest(t, benchmarksListCmd, server.URL)
 	err := benchmarksListCmd.RunE(benchmarksListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2536,7 +2547,7 @@ func TestBenchmarksListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(benchmarksListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, benchmarksListCmd, server.URL, output.FormatTable)
 	err := benchmarksListCmd.RunE(benchmarksListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2577,7 +2588,7 @@ func TestPromptsList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsListCmd, server.URL)
+	capture := setupTest(t, promptsListCmd, server.URL)
 	err := promptsListCmd.RunE(promptsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2596,7 +2607,7 @@ func TestPromptsListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(promptsListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, promptsListCmd, server.URL, output.FormatTable)
 	err := promptsListCmd.RunE(promptsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2615,7 +2626,7 @@ func TestPromptsGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsGetCmd, server.URL)
+	capture := setupTest(t, promptsGetCmd, server.URL)
 	err := promptsGetCmd.RunE(promptsGetCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2643,7 +2654,7 @@ func TestPromptsCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsCreateCmd, server.URL)
+	capture := setupTest(t, promptsCreateCmd, server.URL)
 	promptsCreateCmd.Flags().Set("name", "new-prompt")
 	promptsCreateCmd.Flags().Set("text", "test")
 
@@ -2673,7 +2684,7 @@ func TestPromptsUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsUpdateCmd, server.URL)
+	capture := setupTest(t, promptsUpdateCmd, server.URL)
 	promptsUpdateCmd.Flags().Set("name", "updated-prompt")
 
 	err := promptsUpdateCmd.RunE(promptsUpdateCmd, []string{testHexID})
@@ -2696,7 +2707,7 @@ func TestPromptsDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(promptsDeleteCmd, server.URL)
+	capture := setupTestYes(t, promptsDeleteCmd, server.URL)
 
 	err := promptsDeleteCmd.RunE(promptsDeleteCmd, []string{testHexID})
 	if err != nil {
@@ -2752,7 +2763,7 @@ func TestPromptsSetDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsSetDefaultCmd, server.URL)
+	capture := setupTest(t, promptsSetDefaultCmd, server.URL)
 	err := promptsSetDefaultCmd.RunE(promptsSetDefaultCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2771,7 +2782,7 @@ func TestPromptsVersions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsVersionsCmd, server.URL)
+	capture := setupTest(t, promptsVersionsCmd, server.URL)
 	err := promptsVersionsCmd.RunE(promptsVersionsCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2793,7 +2804,7 @@ func TestPromptsVersion(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsVersionCmd, server.URL)
+	capture := setupTest(t, promptsVersionCmd, server.URL)
 	err := promptsVersionCmd.RunE(promptsVersionCmd, []string{testHexID, "2"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -2827,7 +2838,7 @@ func TestPromptsRollback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsRollbackCmd, server.URL)
+	capture := setupTest(t, promptsRollbackCmd, server.URL)
 	promptsRollbackCmd.Flags().Set("version", "1")
 
 	err := promptsRollbackCmd.RunE(promptsRollbackCmd, []string{testHexID})
@@ -2903,7 +2914,7 @@ func TestPromptsCreateWithFile(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsCreateCmd, server.URL)
+	capture := setupTest(t, promptsCreateCmd, server.URL)
 	promptsCreateCmd.Flags().Set("name", "file-prompt")
 	promptsCreateCmd.Flags().Set("file", tmpFile.Name())
 
@@ -2949,7 +2960,7 @@ func TestPromptsCreateWithStdin(t *testing.T) {
 	w.Close()
 	defer func() { os.Stdin = oldStdin }()
 
-	capture := setupTest(promptsCreateCmd, server.URL)
+	capture := setupTest(t, promptsCreateCmd, server.URL)
 	promptsCreateCmd.Flags().Set("name", "stdin-prompt")
 	promptsCreateCmd.Flags().Set("stdin", "true")
 
@@ -2984,7 +2995,7 @@ func TestPromptsCreateTextFileConflict(t *testing.T) {
 	tmpFile.WriteString("file content")
 	tmpFile.Close()
 
-	capture := setupTest(promptsCreateCmd, "http://localhost:1")
+	capture := setupTest(t, promptsCreateCmd, "http://localhost:1")
 	promptsCreateCmd.Flags().Set("name", "conflict-prompt")
 	promptsCreateCmd.Flags().Set("text", "text content")
 	promptsCreateCmd.Flags().Set("file", tmpFile.Name())
@@ -3017,7 +3028,7 @@ func TestPromptsDiff(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(promptsDiffCmd, server.URL)
+	capture := setupTest(t, promptsDiffCmd, server.URL)
 	promptsDiffCmd.Flags().Set("from", "1")
 	promptsDiffCmd.Flags().Set("to", "2")
 
@@ -3047,7 +3058,7 @@ func TestMetricsUsage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsUsageCmd, server.URL)
+	capture := setupTest(t, metricsUsageCmd, server.URL)
 	err := metricsUsageCmd.RunE(metricsUsageCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3066,7 +3077,7 @@ func TestMetricsSummary(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsSummaryCmd, server.URL)
+	capture := setupTest(t, metricsSummaryCmd, server.URL)
 	err := metricsSummaryCmd.RunE(metricsSummaryCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3085,7 +3096,7 @@ func TestMetricsModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsModelsCmd, server.URL)
+	capture := setupTest(t, metricsModelsCmd, server.URL)
 	err := metricsModelsCmd.RunE(metricsModelsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3104,7 +3115,7 @@ func TestMetricsProviders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsProvidersCmd, server.URL)
+	capture := setupTest(t, metricsProvidersCmd, server.URL)
 	err := metricsProvidersCmd.RunE(metricsProvidersCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3123,7 +3134,7 @@ func TestMetricsTotals(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsTotalsCmd, server.URL)
+	capture := setupTest(t, metricsTotalsCmd, server.URL)
 	err := metricsTotalsCmd.RunE(metricsTotalsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3142,7 +3153,7 @@ func TestMetricsLatencyBands(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsLatencyBandsCmd, server.URL)
+	capture := setupTest(t, metricsLatencyBandsCmd, server.URL)
 	err := metricsLatencyBandsCmd.RunE(metricsLatencyBandsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3161,7 +3172,7 @@ func TestMetricsApiKeys(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsApiKeysCmd, server.URL)
+	capture := setupTest(t, metricsApiKeysCmd, server.URL)
 	err := metricsApiKeysCmd.RunE(metricsApiKeysCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3183,7 +3194,7 @@ func TestMetricsApiKeyUsage(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsApiKeyUsageCmd, server.URL)
+	capture := setupTest(t, metricsApiKeyUsageCmd, server.URL)
 	err := metricsApiKeyUsageCmd.RunE(metricsApiKeyUsageCmd, []string{"k1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3209,7 +3220,7 @@ func TestMetricsProviderCatalog(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsProviderCatalogCmd, server.URL)
+	capture := setupTest(t, metricsProviderCatalogCmd, server.URL)
 	err := metricsProviderCatalogCmd.RunE(metricsProviderCatalogCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3231,7 +3242,7 @@ func TestMetricsPurge200(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(metricsPurgeCmd, server.URL)
+	capture := setupTestYes(t, metricsPurgeCmd, server.URL)
 
 	err := metricsPurgeCmd.RunE(metricsPurgeCmd, nil)
 	if err != nil {
@@ -3298,7 +3309,7 @@ func TestLogsList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsListCmd, server.URL)
+	capture := setupTest(t, logsListCmd, server.URL)
 	err := logsListCmd.RunE(logsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3317,7 +3328,7 @@ func TestLogsListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(logsListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, logsListCmd, server.URL, output.FormatTable)
 	err := logsListCmd.RunE(logsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3351,7 +3362,7 @@ func TestScriptsList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(scriptsListCmd, server.URL)
+	capture := setupTest(t, scriptsListCmd, server.URL)
 	err := scriptsListCmd.RunE(scriptsListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3370,7 +3381,7 @@ func TestScriptsContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(scriptsContentCmd, server.URL)
+	capture := setupTest(t, scriptsContentCmd, server.URL)
 	err := scriptsContentCmd.RunE(scriptsContentCmd, []string{"run.sh"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3391,7 +3402,7 @@ func TestScriptsDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(scriptsDeleteCmd, server.URL)
+	capture := setupTestYes(t, scriptsDeleteCmd, server.URL)
 
 	err := scriptsDeleteCmd.RunE(scriptsDeleteCmd, []string{"run.sh"})
 	if err != nil {
@@ -3472,7 +3483,7 @@ func TestStats(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(statsCmd, server.URL)
+	capture := setupTest(t, statsCmd, server.URL)
 	err := statsCmd.RunE(statsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3491,7 +3502,7 @@ func TestStatsTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(statsCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, statsCmd, server.URL, output.FormatTable)
 	err := statsCmd.RunE(statsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3535,7 +3546,7 @@ func TestHealthNonWatchUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(healthCmd, server.URL)
+	capture := setupTest(t, healthCmd, server.URL)
 	err := healthCmd.RunE(healthCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3568,7 +3579,7 @@ func TestStatsNonWatchUnchanged(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(statsCmd, server.URL)
+	capture := setupTest(t, statsCmd, server.URL)
 	err := statsCmd.RunE(statsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3589,7 +3600,7 @@ func TestCloudProvidersList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(cloudProvidersListCmd, server.URL)
+	capture := setupTest(t, cloudProvidersListCmd, server.URL)
 	err := cloudProvidersListCmd.RunE(cloudProvidersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3608,7 +3619,7 @@ func TestCloudProvidersListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(cloudProvidersListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, cloudProvidersListCmd, server.URL, output.FormatTable)
 	err := cloudProvidersListCmd.RunE(cloudProvidersListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3627,7 +3638,7 @@ func TestCloudProvidersGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(cloudProvidersGetCmd, server.URL)
+	capture := setupTest(t, cloudProvidersGetCmd, server.URL)
 	err := cloudProvidersGetCmd.RunE(cloudProvidersGetCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3655,7 +3666,7 @@ func TestCloudProvidersCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(cloudProvidersCreateCmd, server.URL)
+	capture := setupTest(t, cloudProvidersCreateCmd, server.URL)
 	cloudProvidersCreateCmd.Flags().Set("name", "My Provider")
 	cloudProvidersCreateCmd.Flags().Set("base-url", "https://api.example.com")
 
@@ -3685,7 +3696,7 @@ func TestCloudProvidersUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(cloudProvidersUpdateCmd, server.URL)
+	capture := setupTest(t, cloudProvidersUpdateCmd, server.URL)
 	cloudProvidersUpdateCmd.Flags().Set("base-url", "https://new-url.com")
 
 	err := cloudProvidersUpdateCmd.RunE(cloudProvidersUpdateCmd, []string{testHexID})
@@ -3708,7 +3719,7 @@ func TestCloudProvidersDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(cloudProvidersDeleteCmd, server.URL)
+	capture := setupTestYes(t, cloudProvidersDeleteCmd, server.URL)
 
 	err := cloudProvidersDeleteCmd.RunE(cloudProvidersDeleteCmd, []string{testHexID})
 	if err != nil {
@@ -3764,7 +3775,7 @@ func TestCloudProvidersFetchModels(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(cloudProvidersFetchModelsCmd, server.URL)
+	capture := setupTest(t, cloudProvidersFetchModelsCmd, server.URL)
 	err := cloudProvidersFetchModelsCmd.RunE(cloudProvidersFetchModelsCmd, []string{testHexID})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3812,7 +3823,7 @@ func TestRouterProfilesList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesListCmd, server.URL)
+	capture := setupTest(t, routerProfilesListCmd, server.URL)
 	err := routerProfilesListCmd.RunE(routerProfilesListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3831,7 +3842,7 @@ func TestRouterProfilesListTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(routerProfilesListCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, routerProfilesListCmd, server.URL, output.FormatTable)
 	err := routerProfilesListCmd.RunE(routerProfilesListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3854,7 +3865,7 @@ func TestRouterProfilesGet(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesGetCmd, server.URL)
+	capture := setupTest(t, routerProfilesGetCmd, server.URL)
 	err := routerProfilesGetCmd.RunE(routerProfilesGetCmd, []string{"default"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -3884,7 +3895,7 @@ func TestRouterProfilesCreate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesCreateCmd, server.URL)
+	capture := setupTest(t, routerProfilesCreateCmd, server.URL)
 	routerProfilesCreateCmd.Flags().Set("name", "new-profile")
 	routerProfilesCreateCmd.Flags().Set("mode", "auto")
 	routerProfilesCreateCmd.Flags().Set("entries", `[{"modelId":"m1","priority":1,"isEnabled":true}]`)
@@ -3914,7 +3925,7 @@ func TestRouterProfilesUpdate(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesUpdateCmd, server.URL)
+	capture := setupTest(t, routerProfilesUpdateCmd, server.URL)
 	routerProfilesUpdateCmd.Flags().Set("name", "updated-profile")
 
 	err := routerProfilesUpdateCmd.RunE(routerProfilesUpdateCmd, []string{"default"})
@@ -3942,7 +3953,7 @@ func TestRouterProfilesDelete204(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestYes(routerProfilesDeleteCmd, server.URL)
+	capture := setupTestYes(t, routerProfilesDeleteCmd, server.URL)
 
 	err := routerProfilesDeleteCmd.RunE(routerProfilesDeleteCmd, []string{"default"})
 	if err != nil {
@@ -3966,7 +3977,7 @@ func TestRouterProfilesDeleteRequiresConfirmation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesDeleteCmd, server.URL)
+	capture := setupTest(t, routerProfilesDeleteCmd, server.URL)
 	// Set quiet mode so ConfirmOrSkip returns error instead of prompting
 	ctx := routerProfilesDeleteCmd.Context()
 	ctx = context.WithValue(ctx, quietKey, true)
@@ -4006,7 +4017,7 @@ func TestRouterProfilesSetActiveEntry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesSetActiveEntryCmd, server.URL)
+	capture := setupTest(t, routerProfilesSetActiveEntryCmd, server.URL)
 	routerProfilesSetActiveEntryCmd.Flags().Set("model-id", "m2")
 
 	err := routerProfilesSetActiveEntryCmd.RunE(routerProfilesSetActiveEntryCmd, []string{"default"})
@@ -4043,7 +4054,7 @@ func TestRouterProfilesSetThinkingEffort(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesSetThinkingEffortCmd, server.URL)
+	capture := setupTest(t, routerProfilesSetThinkingEffortCmd, server.URL)
 	routerProfilesSetThinkingEffortCmd.Flags().Set("model-id", "m1")
 	routerProfilesSetThinkingEffortCmd.Flags().Set("effort", "high")
 
@@ -4065,7 +4076,7 @@ func TestRouterProfilesStatus(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesStatusCmd, server.URL)
+	capture := setupTest(t, routerProfilesStatusCmd, server.URL)
 	err := routerProfilesStatusCmd.RunE(routerProfilesStatusCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4127,7 +4138,7 @@ func TestRouterProfileSetActiveEntryResolution(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesSetActiveEntryCmd, server.URL)
+	capture := setupTest(t, routerProfilesSetActiveEntryCmd, server.URL)
 	routerProfilesSetActiveEntryCmd.Flags().Set("model-id", "Llama 7B")
 
 	err := routerProfilesSetActiveEntryCmd.RunE(routerProfilesSetActiveEntryCmd, []string{"default"})
@@ -4155,7 +4166,7 @@ func TestRouterProfileSetThinkingEffortValidation(t *testing.T) {
 	defer server.Close()
 
 	// Test with invalid effort value — use a hex ID to bypass model name resolution
-	capture := setupTest(routerProfilesSetThinkingEffortCmd, server.URL)
+	capture := setupTest(t, routerProfilesSetThinkingEffortCmd, server.URL)
 	routerProfilesSetThinkingEffortCmd.Flags().Set("model-id", testHexID)
 	routerProfilesSetThinkingEffortCmd.Flags().Set("effort", "invalid-value")
 
@@ -4189,7 +4200,7 @@ func TestRouterProfileSetThinkingEffortValidValues(t *testing.T) {
 	defer server.Close()
 
 	for _, effort := range []string{"low", "medium", "high"} {
-		capture := setupTest(routerProfilesSetThinkingEffortCmd, server.URL)
+		capture := setupTest(t, routerProfilesSetThinkingEffortCmd, server.URL)
 		routerProfilesSetThinkingEffortCmd.Flags().Set("model-id", "Llama 7B")
 		routerProfilesSetThinkingEffortCmd.Flags().Set("effort", effort)
 
@@ -4236,7 +4247,7 @@ func TestRouterProfileAddEntryThinkingEffort(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(routerProfilesAddEntryCmd, server.URL)
+	capture := setupTest(t, routerProfilesAddEntryCmd, server.URL)
 	routerProfilesAddEntryCmd.Flags().Set("model", testHexID)
 	routerProfilesAddEntryCmd.Flags().Set("thinking-effort", "high")
 
@@ -4260,7 +4271,7 @@ func TestProviderModelCatalog(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(providerModelCatalogCmd, server.URL)
+	capture := setupTest(t, providerModelCatalogCmd, server.URL)
 	err := providerModelCatalogCmd.RunE(providerModelCatalogCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4279,7 +4290,7 @@ func TestProviderModelCatalogTable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(providerModelCatalogCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, providerModelCatalogCmd, server.URL, output.FormatTable)
 	err := providerModelCatalogCmd.RunE(providerModelCatalogCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4341,7 +4352,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configGetCmd, "http://localhost:22301")
+	capture := setupTest(t, configGetCmd, "http://localhost:22301")
 	err := configGetCmd.RunE(configGetCmd, []string{"url"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4363,7 +4374,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configGetCmd, "http://localhost:22301")
+	capture := setupTest(t, configGetCmd, "http://localhost:22301")
 	err := configGetCmd.RunE(configGetCmd, []string{"output"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4385,7 +4396,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configGetCmd, "http://localhost:22301")
+	capture := setupTest(t, configGetCmd, "http://localhost:22301")
 	err := configGetCmd.RunE(configGetCmd, []string{"color"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4398,7 +4409,7 @@ contexts:
 }
 
 func TestConfigGetInvalidKey(t *testing.T) {
-	capture := setupTest(configGetCmd, "http://localhost:22301")
+	capture := setupTest(t, configGetCmd, "http://localhost:22301")
 	err := configGetCmd.RunE(configGetCmd, []string{"invalid_key"})
 	if err == nil {
 		t.Error("expected error for invalid config key")
@@ -4420,7 +4431,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"url", "http://staging:22301"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4442,7 +4453,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"output", "json"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4464,7 +4475,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"color", "true"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4486,7 +4497,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"color", "false"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4499,7 +4510,7 @@ contexts:
 }
 
 func TestConfigSetColorInvalid(t *testing.T) {
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"color", "invalid"})
 	if err == nil {
 		t.Error("expected error for invalid color value")
@@ -4512,7 +4523,7 @@ func TestConfigSetColorInvalid(t *testing.T) {
 }
 
 func TestConfigSetInvalidKey(t *testing.T) {
-	capture := setupTest(configSetCmd, "http://localhost:22301")
+	capture := setupTest(t, configSetCmd, "http://localhost:22301")
 	err := configSetCmd.RunE(configSetCmd, []string{"bad_key", "value"})
 	if err == nil {
 		t.Error("expected error for invalid config key")
@@ -4552,7 +4563,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configContextsCmd, "http://staging:22301")
+	capture := setupTest(t, configContextsCmd, "http://staging:22301")
 	err := configContextsCmd.RunE(configContextsCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4581,7 +4592,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configUseCmd, "http://staging:22301")
+	capture := setupTest(t, configUseCmd, "http://staging:22301")
 	err := configUseCmd.RunE(configUseCmd, []string{"staging"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4603,7 +4614,7 @@ contexts:
 `)
 	defer cleanup()
 
-	capture := setupTest(configUseCmd, "http://localhost:22301")
+	capture := setupTest(t, configUseCmd, "http://localhost:22301")
 	err := configUseCmd.RunE(configUseCmd, []string{"nonexistent"})
 	if err == nil {
 		t.Error("expected error for nonexistent context")
@@ -4629,7 +4640,7 @@ func TestConfigTestConnection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(configTestCmd, server.URL)
+	capture := setupTest(t, configTestCmd, server.URL)
 	err := configTestCmd.RunE(configTestCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4655,7 +4666,7 @@ func TestConfigTestConnectionError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(configTestCmd, server.URL)
+	capture := setupTest(t, configTestCmd, server.URL)
 	configTestCmd.RunE(configTestCmd, nil)
 
 	out := capture()
@@ -4669,7 +4680,7 @@ func TestConfigGetMissingConfig(t *testing.T) {
 	defer cleanup()
 
 	// When no config exists, LoadConfig returns defaults
-	capture := setupTest(configGetCmd, "http://localhost:22301")
+	capture := setupTest(t, configGetCmd, "http://localhost:22301")
 	err := configGetCmd.RunE(configGetCmd, []string{"url"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4786,7 +4797,7 @@ func TestRuntimesRegisterInteractive(t *testing.T) {
 	defer func() { interact.In = nil }()
 
 	cmd := newFreshRegisterCmd()
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 
 	err := cmd.RunE(cmd, nil)
 	if err != nil {
@@ -4818,7 +4829,7 @@ func TestRuntimesRegisterFlagsPath(t *testing.T) {
 	defer server.Close()
 
 	cmd := newFreshRegisterCmd()
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("name", "Flag Runtime")
 	cmd.Flags().Set("image", "python:3.11")
 
@@ -4840,7 +4851,7 @@ func TestRuntimesRegisterQuietNoFlags(t *testing.T) {
 	defer server.Close()
 
 	cmd := newFreshRegisterCmd()
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	ctx := cmd.Context()
 	ctx = context.WithValue(ctx, quietKey, true)
 	cmd.SetContext(ctx)
@@ -4869,7 +4880,7 @@ func TestLogsFollow(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsFollowCmd, server.URL)
+	capture := setupTest(t, logsFollowCmd, server.URL)
 	// Set a very short interval so the test runs quickly
 	logsFollowCmd.Flags().Set("interval", "1")
 
@@ -4910,7 +4921,7 @@ func TestLogsSearch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsSearchCmd, server.URL)
+	capture := setupTest(t, logsSearchCmd, server.URL)
 	err := logsSearchCmd.RunE(logsSearchCmd, []string{"error"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4946,7 +4957,7 @@ func TestLogsSearchNoMatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsSearchCmd, server.URL)
+	capture := setupTest(t, logsSearchCmd, server.URL)
 	err := logsSearchCmd.RunE(logsSearchCmd, []string{"xyznonexistent"})
 	if err == nil {
 		t.Fatal("expected error for no matching logs")
@@ -4969,7 +4980,7 @@ func TestLogsLast(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsLastCmd, server.URL)
+	capture := setupTest(t, logsLastCmd, server.URL)
 	err := logsLastCmd.RunE(logsLastCmd, []string{"50"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -4992,7 +5003,7 @@ func TestLogsLastDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(logsLastCmd, server.URL)
+	capture := setupTest(t, logsLastCmd, server.URL)
 	err := logsLastCmd.RunE(logsLastCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5027,7 +5038,7 @@ func TestModelsCompare(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsCompareCmd, server.URL)
+	capture := setupTest(t, modelsCompareCmd, server.URL)
 	err := modelsCompareCmd.RunE(modelsCompareCmd, []string{"llama-7b", "mistral-7b"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5062,7 +5073,7 @@ func TestModelsCompareNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(modelsCompareCmd, server.URL)
+	capture := setupTest(t, modelsCompareCmd, server.URL)
 	modelsCompareCmd.RunE(modelsCompareCmd, []string{"llama-7b", "mistral-7b"})
 
 	out := capture()
@@ -5094,7 +5105,7 @@ func TestMetricsToday(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsTodayCmd, server.URL)
+	capture := setupTest(t, metricsTodayCmd, server.URL)
 	err := metricsTodayCmd.RunE(metricsTodayCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5117,7 +5128,7 @@ func TestMetricsLast7d(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsLastCmd, server.URL)
+	capture := setupTest(t, metricsLastCmd, server.URL)
 	err := metricsLastCmd.RunE(metricsLastCmd, []string{"7d"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5135,7 +5146,7 @@ func TestMetricsLastInvalidDuration(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsLastCmd, server.URL)
+	capture := setupTest(t, metricsLastCmd, server.URL)
 	err := metricsLastCmd.RunE(metricsLastCmd, []string{"invalid"})
 	if err == nil {
 		t.Fatal("expected error for invalid duration")
@@ -5203,7 +5214,7 @@ func TestScriptsUploadStdin(t *testing.T) {
 	cmd.Flags().Bool("quiet", false, "Quiet mode")
 	cmd.Flags().Bool("dry-run", false, "Dry run")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("stdin", "true")
 	cmd.Flags().Set("filename", "test.sh")
 
@@ -5255,7 +5266,7 @@ func TestScriptsUploadStdinDefaultFilename(t *testing.T) {
 	cmd.Flags().Bool("quiet", false, "Quiet mode")
 	cmd.Flags().Bool("dry-run", false, "Dry run")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("stdin", "true")
 
 	stdinReader = strings.NewReader("#!/bin/bash\necho hello")
@@ -5284,7 +5295,7 @@ func TestScriptsUploadStdinEmpty(t *testing.T) {
 	cmd.Flags().Bool("quiet", false, "Quiet mode")
 	cmd.Flags().Bool("dry-run", false, "Dry run")
 
-	setupTest(cmd, "http://unused")
+	setupTest(t, cmd, "http://unused")
 	cmd.Flags().Set("stdin", "true")
 
 	stdinReader = strings.NewReader("")
@@ -5308,7 +5319,7 @@ func TestScriptsUploadNoFileNoStdin(t *testing.T) {
 	cmd.Flags().Bool("quiet", false, "Quiet mode")
 	cmd.Flags().Bool("dry-run", false, "Dry run")
 
-	setupTest(cmd, "http://unused")
+	setupTest(t, cmd, "http://unused")
 
 	err := cmd.RunE(cmd, nil)
 	if err == nil {
@@ -5333,7 +5344,7 @@ func TestQueueList(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueListCmd, server.URL)
+	capture := setupTest(t, queueListCmd, server.URL)
 	err := queueListCmd.RunE(queueListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5367,7 +5378,7 @@ func TestQueueListFilterStatus(t *testing.T) {
 	cmd.Flags().Bool("quiet", false, "Quiet mode")
 	cmd.Flags().Bool("dry-run", false, "Dry run")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("status", "waiting")
 
 	err := cmd.RunE(cmd, nil)
@@ -5391,7 +5402,7 @@ func TestQueueListEmpty(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueListCmd, server.URL)
+	capture := setupTest(t, queueListCmd, server.URL)
 	err := queueListCmd.RunE(queueListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5411,7 +5422,7 @@ func TestQueueListNoItemsKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueListCmd, server.URL)
+	capture := setupTest(t, queueListCmd, server.URL)
 	err := queueListCmd.RunE(queueListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5432,7 +5443,7 @@ func TestQueueListAPIError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(queueListCmd, server.URL)
+	capture := setupTest(t, queueListCmd, server.URL)
 	queueListCmd.RunE(queueListCmd, nil)
 
 	out := capture()
@@ -5450,7 +5461,7 @@ func TestQueueListJSONOutput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(queueListCmd, server.URL, output.FormatJSON)
+	capture := setupTestFmt(t, queueListCmd, server.URL, output.FormatJSON)
 	err := queueListCmd.RunE(queueListCmd, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5504,7 +5515,7 @@ func TestBenchmarksRunWait(t *testing.T) {
 	cmd.Flags().String("prompt-id", "", "")
 	cmd.Flags().Bool("wait", false, "")
 
-	capture := setupTest(cmd, server.URL)
+	capture := setupTest(t, cmd, server.URL)
 	cmd.Flags().Set("wait", "true")
 
 	err := cmd.RunE(cmd, []string{testHexID})
@@ -5537,7 +5548,7 @@ func TestAgentStats(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(agentsStatsCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, agentsStatsCmd, server.URL, output.FormatTable)
 	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"agent-1"})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
@@ -5568,7 +5579,7 @@ func TestAgentStatsNotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsStatsCmd, server.URL)
+	capture := setupTest(t, agentsStatsCmd, server.URL)
 	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent agent")
@@ -5584,7 +5595,7 @@ func TestAgentStatsNoTelemetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(agentsStatsCmd, server.URL)
+	capture := setupTest(t, agentsStatsCmd, server.URL)
 	err := agentsStatsCmd.RunE(agentsStatsCmd, []string{"agent-no-tel"})
 	if err == nil {
 		t.Fatal("expected error for agent with no telemetry")
@@ -5617,7 +5628,7 @@ func TestMetricsCost(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(metricsCostCmd, server.URL, output.FormatTable)
+	capture := setupTestFmt(t, metricsCostCmd, server.URL, output.FormatTable)
 	metricsCostCmd.Flags().Set("rates", `{"gpt-4o":{"prompt":0.0025,"completion":0.01}}`)
 
 	err := metricsCostCmd.RunE(metricsCostCmd, nil)
@@ -5650,7 +5661,7 @@ func TestMetricsCostRequiresRates(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(metricsCostCmd, server.URL)
+	capture := setupTest(t, metricsCostCmd, server.URL)
 	// Make sure rates is not set.
 	metricsCostCmd.Flags().Set("rates", "")
 	err := metricsCostCmd.RunE(metricsCostCmd, nil)
@@ -5703,7 +5714,7 @@ func TestLogsFollowSSE(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(logsFollowCmd, server.URL, output.FormatJSON)
+	capture := setupTestFmt(t, logsFollowCmd, server.URL, output.FormatJSON)
 	// Override output format to non-JSON to test formatted output
 	cfg := &client.Config{BaseURL: server.URL, OutputFmt: "", Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key"))
@@ -5752,7 +5763,7 @@ func TestLogsFollowFallback(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTestFmt(logsFollowCmd, server.URL, output.FormatJSON)
+	capture := setupTestFmt(t, logsFollowCmd, server.URL, output.FormatJSON)
 	cfg := &client.Config{BaseURL: server.URL, OutputFmt: "", Color: false}
 	c := client.New(cfg, client.WithAPIKey("test-key"))
 	ctx := context.Background()
@@ -5810,7 +5821,7 @@ func TestHealthSummaryOutput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	capture := setupTest(healthCmd, server.URL)
+	capture := setupTest(t, healthCmd, server.URL)
 	healthCmd.Flags().Set("summary", "true")
 
 	err := healthCmd.RunE(healthCmd, nil)
@@ -5858,10 +5869,12 @@ func discardStdout(t *testing.T) func() {
 	}
 	old := os.Stdout
 	os.Stdout = devNull
-	return func() {
+	restore := func() {
 		os.Stdout = old
 		devNull.Close()
 	}
+	t.Cleanup(restore)
+	return restore
 }
 
 // writeAndReadPiConfig runs writePiConfig against an isolated HOME and returns

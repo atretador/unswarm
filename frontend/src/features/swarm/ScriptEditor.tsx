@@ -1059,72 +1059,76 @@ export function AgentScriptUpload({
             const already = isScriptRegistered(s.path);
             const selected = selectedScript === s.path;
             return (
-              <button
-                key={s.path}
-                type="button"
-                onClick={() => !already && handleSelectScript(s.path)}
-                disabled={already}
-                aria-pressed={selected}
-                className={`
-                  group relative flex flex-col gap-2 overflow-hidden rounded-[var(--radius-xl)] border p-3 text-left
-                  transition-all duration-[var(--duration-fast)]
-                  focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
-                  ${
-                    selected
-                      ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] cursor-pointer"
-                      : already
-                        ? "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-bg-muted)] opacity-55"
-                        : "cursor-pointer border-[var(--color-border)] bg-[var(--color-bg-surface)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-elevated)]"
-                  }
-                `}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.name}>
-                    {s.name}
-                  </span>
-                  {already ? (
-                    <Badge variant="success" className="shrink-0 gap-1">
-                      <Terminal className="size-2.5" />
-                      {t('registered')}
-                    </Badge>
-                  ) : selected ? (
-                    <Badge variant="info" className="shrink-0">
-                      {t('selected')}
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                    >
-                      {t('register')}
-                    </Badge>
-                  )}
-                </div>
-                <p className="truncate text-[10px] text-[var(--color-text-muted)]" title={s.path}>
-                  {s.path}
-                </p>
+              <div key={s.path} className="group relative">
+                <button
+                  type="button"
+                  onClick={() => !already && handleSelectScript(s.path)}
+                  disabled={already}
+                  aria-pressed={selected}
+                  className={`
+                    flex w-full flex-col gap-2 overflow-hidden rounded-[var(--radius-xl)] border p-3 text-left
+                    transition-all duration-[var(--duration-fast)]
+                    focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus-ring)]
+                    ${
+                      selected
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] cursor-pointer"
+                        : already
+                          ? "cursor-not-allowed border-[var(--color-border)] bg-[var(--color-bg-muted)] opacity-55"
+                          : "cursor-pointer border-[var(--color-border)] bg-[var(--color-bg-surface)] hover:border-[var(--color-border-strong)] hover:bg-[var(--color-bg-elevated)]"
+                    }
+                  `}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate font-mono text-xs text-[var(--color-text-heading)]" title={s.name}>
+                      {s.name}
+                    </span>
+                    {already ? (
+                      <Badge variant="success" className="shrink-0 gap-1">
+                        <Terminal className="size-2.5" />
+                        {t('registered')}
+                      </Badge>
+                    ) : selected ? (
+                      <Badge variant="info" className="shrink-0">
+                        {t('selected')}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        {t('register')}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-[10px] text-[var(--color-text-muted)]" title={s.path}>
+                    {s.path}
+                  </p>
 
-                {/* Edit button for non-registered scripts */}
+                  {/* Reserve the action row so the sibling edit button aligns with it. */}
+                  {!already && <div className="mt-0.5 h-7" aria-hidden="true" />}
+                </button>
+
+                {/* Edit button for non-registered scripts. Rendered as a sibling of the
+                    card button so interactive controls are never nested. */}
                 {!already && (
-                  <div className="flex items-center gap-1 pt-0.5">
+                  <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-center gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation();
+                      onClick={() => {
                         // Extract filename from path for editing
                         const filename = s.path.split("/").pop() ?? s.name;
                         setEditingScript(filename);
                       }}
                       title={t('script.editContent')}
-                      className="opacity-0 transition-opacity group-hover:opacity-100"
+                      className="pointer-events-auto opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                     >
                       <Pencil className="size-3" />
                       {tc('edit')}
                     </Button>
                   </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>

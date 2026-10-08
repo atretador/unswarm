@@ -46,6 +46,12 @@ public sealed class CloudProviderControllerTests
         public List<(string Id, IReadOnlyList<CloudProviderModelMeta> Metas)> SavedModelMetas { get; } = [];
         public List<(string Id, string AccessToken, string RefreshToken, DateTimeOffset? ExpiresAt, string? AccountId)> SavedOAuthTokens { get; } = [];
 
+        /// <summary>When true, <see cref="GetApiKeyAsync"/> throws a decryption failure.</summary>
+        public bool ThrowOnGetApiKey { get; set; }
+
+        /// <summary>Value returned by <see cref="GetApiKeyAsync"/>; null simulates an unavailable key.</summary>
+        public string? ApiKey { get; set; } = "sk-decrypted-test-key";
+
         public void SeedProvider(string id, string name, string baseUrl = "https://api.openai.com/v1", int authType = 0, string? chatgptAccountId = null, DateTimeOffset? tokenExpiresAt = null)
         {
             _items[id] = new CloudProviderReadItem
@@ -172,7 +178,11 @@ public sealed class CloudProviderControllerTests
         }
 
         public Task<string?> GetApiKeyAsync(string id, CancellationToken ct = default)
-            => Task.FromResult<string?>("sk-decrypted-test-key");
+        {
+            if (ThrowOnGetApiKey)
+                throw new System.Security.Cryptography.CryptographicException("cannot decrypt");
+            return Task.FromResult(ApiKey);
+        }
 
         public Task SaveModelsAsync(string id, IReadOnlyList<string> modelIds, CancellationToken ct = default)
         {
@@ -296,6 +306,7 @@ public sealed class CloudProviderControllerTests
         public DeviceCodeResult? StartResult { get; set; }
         public OAuthTokenResult? PollResult { get; set; }
         public OAuthTokenResult? RefreshResult { get; set; }
+        public Exception? PollException { get; set; }
         public bool StartCalled { get; private set; }
         public bool PollCalled { get; private set; }
 
@@ -308,6 +319,7 @@ public sealed class CloudProviderControllerTests
         public Task<OAuthTokenResult?> PollForTokenAsync(string deviceAuthId, string userCode, CancellationToken ct)
         {
             PollCalled = true;
+            if (PollException is not null) return Task.FromException<OAuthTokenResult?>(PollException);
             return Task.FromResult(PollResult);
         }
 
@@ -317,8 +329,16 @@ public sealed class CloudProviderControllerTests
 
     private sealed class FakeEncryptor : IApiKeyEncryptor
     {
+        public bool ThrowOnUnprotect { get; set; }
+
         public string Protect(string plaintext) => $"encrypted({plaintext})";
-        public string Unprotect(string ciphertext) => ciphertext.Replace("encrypted(", "").TrimEnd(')');
+
+        public string Unprotect(string ciphertext)
+        {
+            if (ThrowOnUnprotect)
+                throw new System.Security.Cryptography.CryptographicException("cannot decrypt");
+            return ciphertext.Replace("encrypted(", "").TrimEnd(')');
+        }
     }
 
     private sealed class TestHttpMessageHandler : HttpMessageHandler
@@ -967,5 +987,228 @@ public sealed class CloudProviderControllerTests
         var result = await ctrl.RefreshOAuth("cp-1", CancellationToken.None);
 
         Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── FetchModels: API-key error branches ──────────────────────────
+
+    [Fact]
+    public async Task FetchModels_ApiKeyDecryptFailure_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _store.ThrowOnGetApiKey = true;
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task FetchModels_ApiKeyUnavailable_Returns500()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _store.ApiKey = null;
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(500, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task FetchModels_TransportError_Returns502()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _httpFactory.Handler = _ => throw new HttpRequestException("connection refused");
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task FetchModels_Timeout_Returns504()
+    {
+        _store.SeedProvider("cp-1", "openai");
+        _httpFactory.Handler = _ => throw new TaskCanceledException("timeout");
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(504, status.StatusCode);
+    }
+
+    // ── FetchModels: ChatGPT subscription (OAuth) path ───────────────
+
+    [Fact]
+    public async Task FetchModels_SubscriptionProvider_FetchesAndSavesModels()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _store.SeedOAuthTokens("cp-1");
+        _httpFactory.Handler = _ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.StringContent(
+                """{"models":[{"slug":"gpt-5","supportedInApi":true},{"slug":"gpt-5-mini","supportedInApi":false},{"slug":"gpt-5-codex","supportedInApi":true}]}""",
+                System.Text.Encoding.UTF8, "application/json")
+        };
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<FetchModelsResultDto>(ok.Value);
+        Assert.Equal(2, dto.Models.Count);
+        Assert.Contains(dto.Models, m => m.Id == "gpt-5");
+        Assert.Contains(dto.Models, m => m.Id == "gpt-5-codex");
+        Assert.DoesNotContain(dto.Models, m => m.Id == "gpt-5-mini");
+        Assert.Single(_store.SavedModelMetas);
+    }
+
+    [Fact]
+    public async Task FetchModels_SubscriptionNoTokens_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        // No OAuth tokens seeded
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task FetchModels_SubscriptionDecryptFailure_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _store.SeedOAuthTokens("cp-1");
+        var encryptor = new FakeEncryptor { ThrowOnUnprotect = true };
+
+        var ctrl = CreateController(encryptor: encryptor);
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task FetchModels_SubscriptionUpstreamError_ReturnsUpstreamStatus()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _store.SeedOAuthTokens("cp-1");
+        _httpFactory.Handler = _ => new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized);
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(401, status.StatusCode);
+    }
+
+    [Fact]
+    public async Task FetchModels_SubscriptionTransportError_Returns502()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _store.SeedOAuthTokens("cp-1");
+        _httpFactory.Handler = _ => throw new HttpRequestException("refused");
+
+        var ctrl = CreateController();
+        var result = await ctrl.FetchModels("cp-1", CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    // ── TestAndFetch validation ───────────────────────────────────────
+
+    [Fact]
+    public async Task TestAndFetch_MissingBaseUrl_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.TestAndFetch(new TestAndFetchRequest("  ", "sk-key"), CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task TestAndFetch_MissingApiKey_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.TestAndFetch(new TestAndFetchRequest("https://api.openai.com/v1", "  "), CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task TestAndFetch_InvalidBaseUrl_ReturnsBadRequest()
+    {
+        var ctrl = CreateController();
+        var result = await ctrl.TestAndFetch(new TestAndFetchRequest("not-a-url", "sk-key"), CancellationToken.None);
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task TestAndFetch_TransportError_Returns502()
+    {
+        _httpFactory.Handler = _ => throw new HttpRequestException("refused");
+        var ctrl = CreateController();
+
+        var result = await ctrl.TestAndFetch(
+            new TestAndFetchRequest("https://api.openai.com/v1", "sk-key"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
+    }
+
+    // ── PollOAuth: remaining branches ────────────────────────────────
+
+    [Fact]
+    public async Task PollOAuth_NonOAuthProvider_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "openai", authType: 0);
+        var ctrl = CreateController();
+
+        var result = await ctrl.PollOAuth("cp-1", new PollOAuthRequest("auth-1", "CODE"), CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task PollOAuth_AlreadyCompleted_ReturnsSuccessWithoutPolling()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1,
+            chatgptAccountId: "acct-1", tokenExpiresAt: DateTimeOffset.UtcNow.AddHours(1));
+        var ctrl = CreateController();
+
+        var result = await ctrl.PollOAuth("cp-1", new PollOAuthRequest("auth-1", "CODE"), CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.False(_oauthService.PollCalled);
+        Assert.NotNull(ok.Value);
+    }
+
+    [Fact]
+    public async Task PollOAuth_InvalidOperation_ReturnsBadRequest()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _oauthService.PollException = new InvalidOperationException("device code expired");
+        var ctrl = CreateController();
+
+        var result = await ctrl.PollOAuth("cp-1", new PollOAuthRequest("auth-1", "CODE"), CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task PollOAuth_GenericError_Returns502()
+    {
+        _store.SeedProvider("cp-1", "chatgpt", authType: 1);
+        _oauthService.PollException = new Exception("unexpected");
+        var ctrl = CreateController();
+
+        var result = await ctrl.PollOAuth("cp-1", new PollOAuthRequest("auth-1", "CODE"), CancellationToken.None);
+
+        var status = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(502, status.StatusCode);
     }
 }

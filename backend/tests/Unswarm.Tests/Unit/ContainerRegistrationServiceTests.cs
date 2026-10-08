@@ -1597,6 +1597,92 @@ public sealed class ContainerRegistrationServiceTests : IDisposable
         Assert.Equal(ModelStatus.Ready, aGuffModels[0].Status);
     }
 
+    // ── UpdateCanRunAlongWithAsync / ToggleConcurrencyAsync ───────────
+
+    private RegisteredRuntime MakeRuntime(string id, string displayName, string? image = null, params string[] canRunAlongWith)
+    {
+        return new RegisteredRuntime
+        {
+            Id = id,
+            DisplayName = displayName,
+            Image = image ?? $"{id}:latest",
+            Agent = "host",
+            CanRunAlongWith = canRunAlongWith,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    [Fact]
+    public async Task UpdateCanRunAlongWith_UnknownId_ReturnsNull()
+    {
+        var service = CreateService();
+        Assert.Null(await service.UpdateCanRunAlongWithAsync("nope", ["x"]));
+    }
+
+    [Fact]
+    public async Task UpdateCanRunAlongWith_Existing_UpdatesList()
+    {
+        var service = CreateService();
+        await _registry.CreateAsync(MakeRuntime("reg-1", "Runtime One"));
+
+        var updated = await service.UpdateCanRunAlongWithAsync("reg-1", ["peer-a", "peer-b"]);
+
+        Assert.NotNull(updated);
+        Assert.Equal(["peer-a", "peer-b"], updated!.CanRunAlongWith);
+        Assert.Equal(["peer-a", "peer-b"], (await _registry.GetAsync("reg-1"))!.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task ToggleConcurrency_TurnOn_AddsPeersSymmetrically()
+    {
+        var service = CreateService();
+        await _registry.CreateAsync(MakeRuntime("reg-a", "A"));
+        await _registry.CreateAsync(MakeRuntime("reg-b", "B"));
+
+        var result = await service.ToggleConcurrencyAsync("reg-a", "reg-b", canRunAlongWith: true);
+
+        Assert.NotNull(result);
+        Assert.Contains("B", result!.Value.A.CanRunAlongWith);
+        Assert.Contains("A", result.Value.B.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task ToggleConcurrency_TurnOn_DoesNotDuplicatePeer()
+    {
+        var service = CreateService();
+        await _registry.CreateAsync(MakeRuntime("reg-a", "A", canRunAlongWith: "B"));
+        await _registry.CreateAsync(MakeRuntime("reg-b", "B"));
+
+        var result = await service.ToggleConcurrencyAsync("reg-a", "reg-b", canRunAlongWith: true);
+
+        Assert.NotNull(result);
+        Assert.Single(result!.Value.A.CanRunAlongWith);
+        Assert.Contains("B", result.Value.A.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task ToggleConcurrency_TurnOff_RemovesPeerByNameAndImage()
+    {
+        var service = CreateService();
+        await _registry.CreateAsync(MakeRuntime("reg-a", "A", image: "img-a", canRunAlongWith: ["b:latest", "B"]));
+        await _registry.CreateAsync(MakeRuntime("reg-b", "B", image: "b:latest"));
+
+        var result = await service.ToggleConcurrencyAsync("reg-a", "reg-b", canRunAlongWith: false);
+
+        Assert.NotNull(result);
+        Assert.Empty(result!.Value.A.CanRunAlongWith);
+    }
+
+    [Fact]
+    public async Task ToggleConcurrency_MissingPeer_ReturnsNull()
+    {
+        var service = CreateService();
+        await _registry.CreateAsync(MakeRuntime("reg-a", "A"));
+
+        Assert.Null(await service.ToggleConcurrencyAsync("reg-a", "missing", canRunAlongWith: true));
+    }
+
     public void Dispose()
     {
         foreach (var listener in _listeners)

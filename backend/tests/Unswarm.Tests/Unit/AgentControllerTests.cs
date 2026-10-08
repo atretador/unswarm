@@ -1,6 +1,9 @@
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Unswarm.Api.Controllers;
 using Unswarm.Core.Contracts;
@@ -556,6 +559,105 @@ public sealed class AgentControllerTests : IDisposable
 
         Assert.DoesNotContain(socket.SentMessages, m => m.Contains("sync_registrations"));
         Assert.Contains(socket.SentMessages, m => m.Contains("\"type\":\"hello\""));
+    }
+
+    // ── HTTP entry point (Get) ────────────────────────────────────────
+
+    [Fact]
+    public async Task Get_NotAWebSocketRequest_Sets400()
+    {
+        var context = new DefaultHttpContext();
+        _controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+        await _controller.Get(CancellationToken.None);
+
+        Assert.Equal(400, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Get_WebSocketRequest_HandlesConnection()
+    {
+        var socket = new FakeWebSocket();
+        var hello = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "http-agent", version = "2.0" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(hello));
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+
+        var context = new DefaultHttpContext();
+        context.Features.Set<IHttpWebSocketFeature>(new TestWebSocketFeatureCoverage1(socket));
+        _controller.ControllerContext = new ControllerContext { HttpContext = context };
+
+        await _controller.Get(CancellationToken.None);
+
+        Assert.Contains(socket.SentMessages, m => m.Contains("\"type\":\"hello\""));
+        Assert.Null(_registry.Get("http-agent"));
+    }
+
+    // ── Telemetry metrics parsing + broadcast ─────────────────────────
+
+    [Fact]
+    public async Task Telemetry_WithMetrics_ParsesAndBroadcasts()
+    {
+        var broadcaster = new FakeRuntimeStatusBroadcasterCoverage2();
+        var controller = new AgentController(
+            _registry, NullLogger<AgentController>.Instance, runtimeStatusBroadcaster: broadcaster);
+
+        var socket = new FakeWebSocket();
+        var hello = JsonSerializer.Serialize(new
+        {
+            type = "hello",
+            payload = new { name = "metrics-agent" }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(hello));
+
+        var telemetry = JsonSerializer.Serialize(new
+        {
+            type = "telemetry",
+            payload = new
+            {
+                containers = new object[]
+                {
+                    new { id = "c1", name = "llama", status = "running", port = 8080 }
+                },
+                hostMetrics = new { cpuPercent = 12.5, ramPercent = 40.0, ramUsedMb = 100L, ramTotalMb = 200L },
+                gpuMetrics = new object[]
+                {
+                    new { index = 0, name = "RTX 4090", vendor = "nvidia", corePercent = 50.0, memoryPercent = 25.0, memoryUsedMb = 1000L, memoryTotalMb = 4000L }
+                },
+                containerMetrics = new Dictionary<string, object>
+                {
+                    ["c1"] = new { cpuPercent = 5.0, ramPercent = 10.0, ramUsedMb = 50L, ramTotalMb = 500L }
+                }
+            }
+        }, JsonOptions);
+        socket.EnqueueReceive(WebSocketMessageType.Text, Encoding.UTF8.GetBytes(telemetry));
+
+        var task = controller.HandleConnectionAsync(socket, CancellationToken.None);
+
+        var agent = await WaitForAgentAsync("metrics-agent");
+        Assert.NotNull(agent);
+
+        await Eventually.UntilAsync(() => broadcaster.Published.Count > 0);
+        await Eventually.UntilAsync(() => agent!.Telemetry?.Gpus.Count == 1);
+
+        Assert.NotNull(agent!.Telemetry);
+        Assert.Equal(12.5, agent.Telemetry!.Host!.CpuPercent);
+        Assert.Equal(200, agent.Telemetry.Host.RamTotalMb);
+        Assert.Equal("RTX 4090", agent.Telemetry.Gpus[0].Name);
+        Assert.Equal("nvidia", agent.Telemetry.Gpus[0].Vendor);
+        Assert.Equal(1000, agent.Telemetry.Gpus[0].MemoryUsedMb);
+        Assert.True(agent.Telemetry.Containers.ContainsKey("c1"));
+        Assert.Equal(5.0, agent.Telemetry.Containers["c1"].CpuPercent);
+
+        var published = broadcaster.Published[0];
+        Assert.Equal("metrics-agent", published.AgentName);
+        Assert.Contains(published.Containers, c => c.Id == "c1");
+
+        socket.EnqueueReceive(WebSocketMessageType.Close, []);
+        await task;
     }
 
     public void Dispose()

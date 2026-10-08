@@ -170,4 +170,93 @@ public sealed class UsersControllerTests
         var json = JsonSerializer.Serialize(bad.Value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         Assert.Contains("cannotDeleteOwnAccount", json);
     }
+
+    // ── ResetPassword: additional branches ────────────────────────────
+
+    [Fact]
+    public async Task ResetPassword_UnknownUser_ReturnsNotFound()
+    {
+        var admin = _store.AddUser("admin");
+        var ctrl = CreateController(CreateUserManager(), currentUserId: admin.Id);
+
+        var result = await ctrl.ResetPassword("ghost-id", new ResetPasswordRequest("NewPass1!"));
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task ResetPassword_NoActingUser_Forbids()
+    {
+        var target = _store.AddUser("target");
+        var ctrl = CreateController();
+        ctrl.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await ctrl.ResetPassword(target.Id, new ResetPasswordRequest("NewPass1!"));
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task ResetPassword_NonAdminTargetsAdmin_Forbids()
+    {
+        var target = _store.AddUser("admin-target");
+        await _store.AddToRoleAsync(target, "Admin", CancellationToken.None);
+        var caller = _store.AddUser("plain-user");
+        var ctrl = CreateController(CreateUserManager(), currentUserId: caller.Id);
+
+        var result = await ctrl.ResetPassword(target.Id, new ResetPasswordRequest("NewPass1!"));
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task ResetPassword_TempPasswordTarget_ClearsFlag()
+    {
+        var target = _store.AddUser("temp-target", isTempPassword: true);
+        var admin = _store.AddUser("admin");
+        var ctrl = CreateController(CreateUserManager(), currentUserId: admin.Id);
+
+        var result = await ctrl.ResetPassword(target.Id, new ResetPasswordRequest("NewPass1!"));
+
+        Assert.IsType<OkResult>(result);
+        Assert.False(target.IsTempPassword);
+    }
+
+    // ── Delete: additional branches ───────────────────────────────────
+
+    [Fact]
+    public async Task Delete_UnknownUser_ReturnsNotFound()
+    {
+        var admin = _store.AddUser("admin");
+        var ctrl = CreateController(CreateUserManager(), currentUserId: admin.Id);
+
+        var result = await ctrl.Delete("ghost-id");
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task Delete_NoActingUser_Forbids()
+    {
+        var target = _store.AddUser("target");
+        var ctrl = CreateController();
+        ctrl.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
+
+        var result = await ctrl.Delete(target.Id);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task Delete_NonAdminTargetsAdmin_Forbids()
+    {
+        var target = _store.AddUser("admin-target");
+        await _store.AddToRoleAsync(target, "Admin", CancellationToken.None);
+        var caller = _store.AddUser("plain-user");
+        var ctrl = CreateController(CreateUserManager(), currentUserId: caller.Id);
+
+        var result = await ctrl.Delete(target.Id);
+
+        Assert.IsType<ForbidResult>(result);
+    }
 }

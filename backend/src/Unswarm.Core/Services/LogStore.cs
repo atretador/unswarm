@@ -43,6 +43,7 @@ public sealed class LogStore : ILogStore, IDisposable
 
     private readonly CancellationTokenSource _shutdownCts = new();
     private readonly Task _writerTask;
+    private int _disposed;
 
     public LogStore(Func<UnswarmDbContext> dbFactory, IClock clock, ILogger<LogStore> logger)
     {
@@ -237,9 +238,13 @@ public sealed class LogStore : ILogStore, IDisposable
         }
     }
 
-    /// <summary>Graceful shutdown: stop accepting entries and flush the queue.</summary>
+    /// <summary>Graceful shutdown: stop accepting entries and flush the queue. Idempotent.</summary>
     public void Dispose()
     {
+        // Safe double-dispose: only the first caller runs the drain/teardown.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         _persistChannel.Writer.TryComplete();
         _shutdownCts.Cancel();
         try

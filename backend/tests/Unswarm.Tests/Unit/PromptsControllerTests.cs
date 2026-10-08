@@ -136,4 +136,51 @@ public sealed class PromptsControllerTests
         var result = await controller.Delete("nonexistent", CancellationToken.None);
         Assert.IsType<NotFoundResult>(result);
     }
+
+    // ── GetVersion ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetVersion_ExistingVersion_ReturnsVersion()
+    {
+        var store = new FakePromptStoreCoverage1();
+        var entry = await store.CreateAsync("My Prompt", "v2 text");
+        store.SeedVersion(new PromptVersion
+        {
+            Id = "ver-2",
+            PromptId = entry.Id,
+            Version = 2,
+            Text = "v2 text",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        var controller = new PromptsController(store);
+
+        var result = await controller.GetVersion(entry.Id, 2, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<PromptVersionResponse>(ok.Value);
+        Assert.Equal(2, response.Version);
+        Assert.Equal("v2 text", response.Text);
+    }
+
+    [Fact]
+    public async Task GetVersion_UnknownPrompt_Returns404()
+    {
+        var controller = new PromptsController(new FakePromptStoreCoverage1());
+
+        var result = await controller.GetVersion("nonexistent", 1, CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    [Fact]
+    public async Task GetVersion_UnknownVersion_Returns404()
+    {
+        var store = new FakePromptStoreCoverage1();
+        var entry = await store.CreateAsync("My Prompt", "text");
+        var controller = new PromptsController(store);
+
+        var result = await controller.GetVersion(entry.Id, 99, CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
 }

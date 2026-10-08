@@ -240,4 +240,116 @@ public sealed class ApiKeyStoreTests
         Assert.Equal(AgentKeyBindingResult.Mismatch,
             await store.ResolveAgentBindingAsync(created.Id, "any"));
     }
+
+    // ── ControlPlane permissions ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetPermissions_UnknownKey_ReturnsNull()
+    {
+        var store = NewStore();
+        Assert.Null(await store.GetPermissionsAsync("nonexistent"));
+    }
+
+    [Fact]
+    public async Task GetPermissions_RoundTripsSavedJson()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("cp", ApiKeyScope.ControlPlane,
+            permissionsJson: """{"models":"rw","scripts":"r"}""");
+
+        var permissions = await store.GetPermissionsAsync(created.Id);
+
+        Assert.NotNull(permissions);
+        Assert.Equal("rw", permissions!["models"]);
+        Assert.Equal("r", permissions["scripts"]);
+    }
+
+    [Fact]
+    public async Task GetPermissions_MalformedJson_ReturnsEmptyFailsClosed()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("cp-bad", ApiKeyScope.ControlPlane,
+            permissionsJson: "{not valid json");
+
+        var permissions = await store.GetPermissionsAsync(created.Id);
+
+        Assert.NotNull(permissions);
+        Assert.Empty(permissions!);
+    }
+
+    [Fact]
+    public async Task GetPermissions_NonControlPlaneKey_ReturnsEmpty()
+    {
+        var store = NewStore();
+        // Inference keys carry no permissions JSON (column defaults to empty).
+        var created = await store.CreateAsync("inf", ApiKeyScope.Inference);
+
+        var permissions = await store.GetPermissionsAsync(created.Id);
+
+        Assert.NotNull(permissions);
+        Assert.Empty(permissions!);
+    }
+
+    [Fact]
+    public async Task SavePermissions_UnknownKey_ReturnsNull()
+    {
+        var store = NewStore();
+        Assert.Null(await store.SavePermissionsAsync("nonexistent", """{"models":"r"}"""));
+    }
+
+    [Fact]
+    public async Task SavePermissions_RoundTrips()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("cp", ApiKeyScope.ControlPlane);
+
+        var saved = await store.SavePermissionsAsync(created.Id, """{"models":"rw"}""");
+
+        Assert.NotNull(saved);
+        Assert.Equal("rw", saved!["models"]);
+        Assert.Equal("rw", (await store.GetPermissionsAsync(created.Id))!["models"]);
+    }
+
+    [Fact]
+    public async Task SavePermissions_MalformedJson_ReturnsEmptyFailsClosed()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("cp", ApiKeyScope.ControlPlane);
+
+        var saved = await store.SavePermissionsAsync(created.Id, "{not json");
+
+        Assert.NotNull(saved);
+        Assert.Empty(saved!);
+    }
+
+    // ── RemoveProviderFromAllKeys ─────────────────────────────────────
+
+    [Fact]
+    public async Task RemoveProviderFromAllKeys_RemovesCaseInsensitively()
+    {
+        var store = NewStore();
+        var k1 = await store.CreateAsync("k1", ApiKeyScope.Inference);
+        await store.SaveAccessAsync(k1.Id, new KeyAccess { Providers = ["openai", "anthropic"], Models = ["m"] });
+        var k2 = await store.CreateAsync("k2", ApiKeyScope.Inference);
+        await store.SaveAccessAsync(k2.Id, new KeyAccess { Providers = ["anthropic"], Models = [] });
+
+        var removed = await store.RemoveProviderFromAllKeysAsync("OpenAI");
+
+        Assert.Equal(1, removed);
+        var access = await store.GetAccessAsync(k1.Id);
+        Assert.DoesNotContain("openai", access!.Providers);
+        Assert.Contains("anthropic", access.Providers);
+        // k2 untouched.
+        Assert.Contains("anthropic", (await store.GetAccessAsync(k2.Id))!.Providers);
+    }
+
+    [Fact]
+    public async Task RemoveProviderFromAllKeys_NoMatch_ReturnsZero()
+    {
+        var store = NewStore();
+        var k1 = await store.CreateAsync("k1", ApiKeyScope.Inference);
+        await store.SaveAccessAsync(k1.Id, new KeyAccess { Providers = ["openai"], Models = [] });
+
+        Assert.Equal(0, await store.RemoveProviderFromAllKeysAsync("anthropic"));
+    }
 }

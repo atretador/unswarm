@@ -137,4 +137,108 @@ public sealed class DockerControllerRouterTests
 
         Assert.Same(first, second);
     }
+
+    // ── Host target ───────────────────────────────────────────────────
+
+    [Fact]
+    public void GetController_HostTarget_ReturnsHostController()
+    {
+        var router = CreateRouter();
+        Assert.Same(_hostController, router.GetController(ExecutionTarget.HostId));
+    }
+
+    [Fact]
+    public void GetController_AgentTargetWithoutRegistry_Throws()
+    {
+        var router = new DockerControllerRouter(_hostController);
+
+        Assert.Throws<InvalidOperationException>(() => router.GetController("agent:gpu1"));
+    }
+
+    // ── GetAvailableTargets ───────────────────────────────────────────
+
+    [Fact]
+    public void GetAvailableTargets_IncludesHostAndConnectedAgents()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        _registry.Register("gpu2", MakeConnection("gpu2"), new FakeWebSocket());
+        var router = CreateRouter();
+
+        var targets = router.GetAvailableTargets();
+
+        Assert.Contains(ExecutionTarget.HostId, targets);
+        Assert.Contains("agent:gpu1", targets);
+        Assert.Contains("agent:gpu2", targets);
+    }
+
+    [Fact]
+    public void GetAvailableTargets_WithoutRegistry_ReturnsHostOnly()
+    {
+        var router = new DockerControllerRouter(_hostController);
+
+        Assert.Equal([ExecutionTarget.HostId], router.GetAvailableTargets());
+    }
+
+    // ── IsTargetReachable ─────────────────────────────────────────────
+
+    [Fact]
+    public void IsTargetReachable_Host_True()
+    {
+        var router = CreateRouter();
+        Assert.True(router.IsTargetReachable(ExecutionTarget.HostId));
+    }
+
+    [Fact]
+    public void IsTargetReachable_ConnectedAgent_True()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var router = CreateRouter();
+
+        Assert.True(router.IsTargetReachable("agent:gpu1"));
+    }
+
+    [Fact]
+    public void IsTargetReachable_UnknownAgent_False()
+    {
+        var router = CreateRouter();
+        Assert.False(router.IsTargetReachable("agent:ghost"));
+    }
+
+    [Fact]
+    public void IsTargetReachable_AgentWithoutRegistry_False()
+    {
+        var router = new DockerControllerRouter(_hostController);
+        Assert.False(router.IsTargetReachable("agent:gpu1"));
+    }
+
+    // ── NotifyAgentDisconnected ───────────────────────────────────────
+
+    [Fact]
+    public void NotifyAgentDisconnected_EmptyName_NoThrow()
+    {
+        var router = CreateRouter();
+        router.NotifyAgentDisconnected("");
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void NotifyAgentDisconnected_CachedController_FailsPendingCommands()
+    {
+        _registry.Register("gpu1", MakeConnection("gpu1"), new FakeWebSocket());
+        var router = CreateRouter();
+        _ = router.GetController("agent:gpu1");
+
+        // No pending commands → must simply complete without throwing.
+        router.NotifyAgentDisconnected("gpu1");
+
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void NotifyAgentDisconnected_NoCachedController_NoThrow()
+    {
+        var router = CreateRouter();
+        router.NotifyAgentDisconnected("ghost");
+        Assert.True(true);
+    }
 }

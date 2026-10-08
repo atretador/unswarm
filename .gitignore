@@ -4,11 +4,13 @@
 # Node
 node_modules/
 dist/
+coverage/
 *.local
 
 # .NET build artifacts
 bin/
 obj/
+TestResults/
 
 # Go build artifacts
 agent/unswarm
@@ -16,7 +18,9 @@ agent/agent
 unswarm-agent
 # Built binaries must never be committed
 **/unswarm
-**/agent
+# NOTE: do not re-add `**/agent` — it also matches the `agent/` source
+# directory and silently ignores every new file under it. The agent binary is
+# already covered by `agent/agent` above.
 
 # Env
 .env

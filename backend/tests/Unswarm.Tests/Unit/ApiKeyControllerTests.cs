@@ -321,4 +321,176 @@ public sealed class ApiKeyControllerTests
 
         Assert.IsType<NotFoundObjectResult>(result);
     }
+
+    // ── Get ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Get_ExistingKey_ReturnsOk()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("lookup", ApiKeyScope.Inference);
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.Get(created.Id, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var item = Assert.IsType<ApiKeyListItem>(ok.Value);
+        Assert.Equal(created.Id, item.Id);
+        Assert.Equal("lookup", item.Name);
+    }
+
+    [Fact]
+    public async Task Get_UnknownKey_ReturnsNotFound()
+    {
+        var ctrl = CreateController();
+
+        var result = await ctrl.Get("nonexistent", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    // ── GetAccess ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAccess_ExistingInferenceKey_ReturnsStoredAccess()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("scoped", ApiKeyScope.Inference);
+        await store.SaveAccessAsync(created.Id, new KeyAccess { Providers = ["openai"], Models = ["gpt-4o"] });
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.GetAccess(created.Id, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<KeyAccessDto>(ok.Value);
+        Assert.Contains("openai", dto.Providers);
+        Assert.Contains("gpt-4o", dto.Models);
+    }
+
+    [Fact]
+    public async Task GetAccess_UnknownKey_ReturnsNotFound()
+    {
+        var ctrl = CreateController();
+
+        var result = await ctrl.GetAccess("nonexistent", CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task GetAccess_AgentKey_ReturnsBadRequest()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("agent-access", ApiKeyScope.Agent);
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.GetAccess(created.Id, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── SaveAccess ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveAccess_KnownProviderAndModel_SavesAndReturns()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("scoped", ApiKeyScope.Inference);
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.SaveAccess(created.Id,
+            new KeyAccessDto { Providers = ["openai"], Models = ["gpt-4o"] }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<KeyAccessDto>(ok.Value);
+        Assert.Equal(["openai"], dto.Providers);
+        Assert.Equal(["gpt-4o"], dto.Models);
+    }
+
+    [Fact]
+    public async Task SaveAccess_UnknownProvider_IsStripped()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("scoped", ApiKeyScope.Inference);
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.SaveAccess(created.Id,
+            new KeyAccessDto { Providers = ["openai", "ghost-provider"], Models = [] }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var dto = Assert.IsType<KeyAccessDto>(ok.Value);
+        Assert.Equal(["openai"], dto.Providers);
+    }
+
+    [Fact]
+    public async Task SaveAccess_AgentKey_ReturnsBadRequest()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("agent-access", ApiKeyScope.Agent);
+        var ctrl = CreateController(store);
+
+        var result = await ctrl.SaveAccess(created.Id,
+            new KeyAccessDto { Providers = ["openai"] }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task SaveAccess_UnknownKey_ReturnsNotFound()
+    {
+        var ctrl = CreateController();
+
+        var result = await ctrl.SaveAccess("nonexistent",
+            new KeyAccessDto { Providers = ["openai"] }, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+    }
+
+    [Fact]
+    public async Task SaveAccess_TooManyModels_ReturnsBadRequest()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("scoped", ApiKeyScope.Inference);
+        var ctrl = CreateController(store);
+        var models = Enumerable.Range(0, 501).Select(i => $"model-{i}").ToList();
+
+        var result = await ctrl.SaveAccess(created.Id,
+            new KeyAccessDto { Providers = [], Models = models }, CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    // ── Self-target guard (revoke/rotate own key) ─────────────────────
+
+    [Fact]
+    public async Task Revoke_OwnKey_Forbids()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("self", ApiKeyScope.ControlPlane);
+        var ctrl = CreateController(store);
+        SetCallerKeyId(ctrl, created.Id);
+
+        var result = await ctrl.Revoke(created.Id, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public async Task Rotate_OwnKey_Forbids()
+    {
+        var store = NewStore();
+        var created = await store.CreateAsync("self", ApiKeyScope.ControlPlane);
+        var ctrl = CreateController(store);
+        SetCallerKeyId(ctrl, created.Id);
+
+        var result = await ctrl.Rotate(created.Id, CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    private static void SetCallerKeyId(ApiKeyController controller, string keyId)
+    {
+        controller.ControllerContext.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(
+            [new Claim(ClaimTypes.Role, "Admin"), new Claim("unswarm:key-id", keyId)], "TestAuth"));
+    }
 }
