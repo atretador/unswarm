@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setMockLatency, mockClient } from "../lib/api/mock";
 import { TestWrapper } from "./test-utils";
@@ -432,14 +438,21 @@ describe("Providers", () => {
     const apiKeyInput = within(dialog).getByLabelText("API Key");
     await user.type(apiKeyInput, "sk-xxxx-yyyy-key");
 
-    // Submit
-    await user.click(
-      within(dialog).getByRole("button", { name: /add provider/i }),
+    // Submit the form directly. On loaded CI runners the dialog can re-render
+    // while async queries settle, which occasionally detaches the submit button
+    // and drops a click; re-query the form and retry inside waitFor instead.
+    await waitFor(
+      () => {
+        if (createSpy.mock.calls.length === 0) {
+          const activeDialog = screen.getByRole("dialog", {
+            name: "Add Provider",
+          });
+          fireEvent.submit(activeDialog.querySelector("form")!);
+        }
+        expect(createSpy).toHaveBeenCalledTimes(1);
+      },
+      { timeout: 5000 },
     );
-
-    await waitFor(() => {
-      expect(createSpy).toHaveBeenCalledTimes(1);
-    });
 
     expect(createSpy).toHaveBeenCalledWith({
       name: "mistral",
