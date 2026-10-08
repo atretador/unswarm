@@ -295,13 +295,15 @@ public sealed class ApiKeyController : ControllerBase
     /// shed a permission it does not hold.
     /// </summary>
     public static bool CallerMayGrant(
-        ClaimsPrincipal caller,
+        ClaimsPrincipal? caller,
         IReadOnlyDictionary<string, string> requested,
         IReadOnlyDictionary<string, string>? targetCurrent = null)
     {
-        if (caller.IsInRole("Admin")) return true;
+        // Fail closed: an absent principal is never an Admin and holds nothing,
+        // so every non-empty request is denied rather than throwing.
+        if (caller?.IsInRole("Admin") == true) return true;
 
-        var held = PermissionCheck.ParsePermissions(caller.FindFirst("unswarm:permissions")?.Value);
+        var held = PermissionCheck.ParsePermissions(caller?.FindFirst("unswarm:permissions")?.Value);
         if (!PermissionCheck.IsSubsetOf(requested, held)) return false;
         if (targetCurrent is not null && !PermissionCheck.IsSubsetOf(targetCurrent, held)) return false;
         return true;

@@ -205,6 +205,13 @@ public sealed class ApiKeyControllerControlPlaneTests
         Assert.True(ApiKeyController.CallerMayGrant(key, Perms("{\"models\":\"r\"}"), target));
     }
 
+    [Fact]
+    public void CallerMayGrant_NullCaller_ReturnsFalse()
+    {
+        // Fail closed: an absent principal is never Admin and holds nothing.
+        Assert.False(ApiKeyController.CallerMayGrant(null, Perms("{\"users\":\"rw\"}")));
+    }
+
     private sealed class StubApiKeyStore : IApiKeyStore
     {
         private readonly Dictionary<string, ApiKeyItem> _keys = new();
